@@ -8,7 +8,7 @@ Widget properties on `GUITreeNode` directly determine which `ModelAction`s are a
 
 Scroll direction assignment is non-trivial because Android's accessibility API does not expose a first-class "scroll direction" attribute. `getScrollType()` infers direction from `className`: well-known horizontal containers receive `ScrollType.HORIZONTAL`; everything else defaults to `ScrollType.VERTICAL`. `RecyclerView` is explicitly excluded from the horizontal list because its scroll orientation is set programmatically at runtime via a `LayoutManager` and cannot be inferred from class name alone.
 
-`MODEL_BACK` is a global action issued at the device level, not targeting any particular widget. Allowing `resetActions()` to assign this type to a widget node would corrupt the per-node action set. This type MUST be rejected by `resetActions()` with an `IllegalStateException`.
+`MODEL_BACK` and `MODEL_MENU` are global actions issued at the device level, not targeting any particular widget. Allowing `resetActions()` to assign either type to a widget node would corrupt the per-node action set. Both types MUST be rejected by `resetActions()` with an `IllegalStateException`.
 
 ---
 
@@ -17,7 +17,7 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 ### Input
 
 - **`GUITreeBuilder`** receives an `AccessibilityNodeInfo` root obtained from the Android `AccessibilityService` via `AndroidDevice.getCurrentGUITree()`. Each node in the accessibility tree contributes one `GUITreeNode`. Attributes read per node: class name (String), resource-id (String, nullable), text (String, nullable), content-description (String, nullable), screen bounds (Rect), clickable (boolean), long-clickable (boolean), scrollable (boolean), enabled (boolean), child count (int).
-- **`GUITreeNode.resetActions(ActionType[])`** accepts an array of `ActionType` values. The array MUST NOT contain `MODEL_BACK`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `FUZZ`, or `EVENT_ACTIVATE`.
+- **`GUITreeNode.resetActions(ActionType[])`** accepts an array of `ActionType` values. The array MUST NOT contain `MODEL_BACK`, `MODEL_MENU`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `FUZZ`, or `EVENT_ACTIVATE`.
 - **`GUITreeWidgetDiffer`** accepts two `GUITree` instances (expected, observed) of compatible structure for diff computation.
 
 ### Output
@@ -32,10 +32,11 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 
 - `GUITreeBuilder` may call `AndroidDevice` APIs (accessibility service, display metrics) during construction.
 - `GUITreeNode.resetActions()` throws `IllegalStateException` if the type signature has already been built (the node is frozen).
+- `GUITreeNode.resetActions()` throws `IllegalStateException` if the input array contains `MODEL_BACK` or `MODEL_MENU`; the node's flags MUST NOT be modified after such a throw.
 
 ### Error
 
-- `GUITreeNode.resetActions()` MUST throw `IllegalStateException` when called with any of the globally blocked `ActionType` values: `MODEL_BACK`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `FUZZ`, `EVENT_ACTIVATE`.
+- `GUITreeNode.resetActions()` MUST throw `IllegalStateException` when called with any of the globally blocked `ActionType` values: `MODEL_BACK`, `MODEL_MENU`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `FUZZ`, `EVENT_ACTIVATE`.
 - `GUITreeNode.resetActions()` MUST throw `IllegalStateException` when called after `typeSignature` has been set (i.e., once the node is used by the naming layer).
 - `GUITreeNode.getDomNode()` MUST throw `IllegalStateException` if called before the DOM document has been attached to the tree.
 
@@ -44,9 +45,9 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 ## Invariants
 
 - **INV-TREE-01**: `GUITree.getRoot()` MUST return a non-null `GUITreeNode` for any `GUITree` instance produced by `GUITreeBuilder`.
-- **INV-TREE-02**: `GUITreeNode.getScrollType()` MUST return `"horizontal"` when `className` equals `"android.support.v4.view.ViewPager"` and `isScrollable()` returns `true`.
+- **INV-TREE-02**: `GUITreeNode.getScrollType()` MUST return `"horizontal"` when `className` equals `"android.support.v4.view.ViewPager"`, `"androidx.viewpager.widget.ViewPager"`, or `"androidx.viewpager2.widget.ViewPager2"` and `isScrollable()` returns `true`.
 - **INV-TREE-03**: `GUITreeNode.getScrollType()` MUST NOT return `"horizontal"` for a node whose `className` equals `"androidx.recyclerview.widget.RecyclerView"` based on class name alone.
-- **INV-TREE-04**: `GUITreeNode.resetActions()` MUST NOT assign `MODEL_BACK` to any widget node; the method MUST throw `IllegalStateException` if `MODEL_BACK` appears in the input array.
+- **INV-TREE-04**: `GUITreeNode.resetActions()` MUST NOT assign `MODEL_BACK` or `MODEL_MENU` to any widget node; the method MUST throw `IllegalStateException` if either appears in the input array.
 - **INV-TREE-05**: Every `GUITreeNode` in a tree produced by `GUITreeBuilder` MUST have screen bounds that are representable within the device's screen dimensions (no negative dimensions).
 - **INV-TREE-06**: Two `GUITree` instances built from structurally identical `AccessibilityNodeInfo` hierarchies MUST produce the same structural hash, enabling non-determinism detection by `NamingFactory`.
 - **INV-TREE-07**: `GUITreeNode.getScrollType()` MUST return `"none"` when `isScrollable()` returns `false`, regardless of `className`.
@@ -67,8 +68,24 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 
 ### Requirement: ViewPager Scroll Direction
 
+`GUITreeNode.getScrollType()` SHALL recognise all three ViewPager class name variants — legacy support library and both AndroidX variants — as horizontal-scroll containers. The complete set of class names that map to `"horizontal"` for the ViewPager family is:
+
+- `"android.support.v4.view.ViewPager"` (legacy support library)
+- `"androidx.viewpager.widget.ViewPager"` (AndroidX)
+- `"androidx.viewpager2.widget.ViewPager2"` (AndroidX 2)
+
+`RecyclerView` (`androidx.recyclerview.widget.RecyclerView`) SHALL NOT be added to any explicit horizontal-class list. RecyclerView's scroll orientation is set programmatically via `LayoutManager` and cannot be inferred from class name.
+
 #### Scenario: Legacy support ViewPager node is recognized as horizontal
 - **WHEN** a `GUITreeNode` has `className` equal to `"android.support.v4.view.ViewPager"` and `isScrollable()` returns `true`
+- **THEN** `getScrollType()` MUST return `"horizontal"`
+
+#### Scenario: AndroidX ViewPager node is recognised as horizontal
+- **WHEN** a `GUITreeNode` has `className` equal to `"androidx.viewpager.widget.ViewPager"` and `isScrollable()` returns `true`
+- **THEN** `getScrollType()` MUST return `"horizontal"`
+
+#### Scenario: AndroidX ViewPager2 node is recognised as horizontal
+- **WHEN** a `GUITreeNode` has `className` equal to `"androidx.viewpager2.widget.ViewPager2"` and `isScrollable()` returns `true`
 - **THEN** `getScrollType()` MUST return `"horizontal"`
 
 #### Scenario: RecyclerView is NOT assigned horizontal scroll direction by class name
@@ -92,12 +109,23 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 
 ---
 
-### Requirement: MODEL_BACK Exclusion from Widget Nodes
+### Requirement: MODEL_BACK and MODEL_MENU Exclusion from Widget Nodes
+
+`GUITreeNode.resetActions()` enforces a blocklist of `ActionType` values that operate at the device level and MUST NOT be assigned to individual widget nodes. These are `MODEL_BACK` and `MODEL_MENU`: both are issued to the Android device without targeting a specific UI element. Assigning either to a widget node would produce an invalid per-node action set.
+
+When `resetActions()` encounters `MODEL_BACK` or `MODEL_MENU` in its input array it MUST throw `IllegalStateException` immediately. The node's `clickable`, `longClickable`, and `scrollable` flags MUST remain unchanged after the exception.
+
+The following types also remain on the blocklist: `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `FUZZ`, `EVENT_ACTIVATE`.
 
 #### Scenario: resetActions() rejects MODEL_BACK
 - **WHEN** `GUITreeNode.resetActions()` is called with an array containing `MODEL_BACK`
 - **THEN** the method MUST throw an `IllegalStateException`
 - **AND** the node's action flags MUST NOT be modified
+
+#### Scenario: resetActions() rejects MODEL_MENU
+- **WHEN** `GUITreeNode.resetActions()` is called with an array containing `MODEL_MENU`
+- **THEN** the method MUST throw an `IllegalStateException`
+- **AND** the node's `clickable`, `longClickable`, and `scrollable` flags MUST NOT be modified
 
 ---
 

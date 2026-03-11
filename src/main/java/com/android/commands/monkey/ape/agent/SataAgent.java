@@ -355,6 +355,13 @@ public class SataAgent extends StatefulAgent {
                 return back;
             }
         }
+        ModelAction menu = newState.getMenuAction();
+        if (menu.isValid()) {
+            if (menu.isUnvisited()) {
+                Logger.iprintln("Select Menu because Menu action is unvisited.");
+                return menu;
+            }
+        }
         if (egreedy()) { // TODO: this is different from Sarsa.
             Logger.iformat("Try to select the least visited action.");
             return newState.greedyPickLeastVisited(ActionFilter.ENABLED_VALID);

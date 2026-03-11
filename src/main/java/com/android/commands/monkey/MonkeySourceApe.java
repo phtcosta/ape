@@ -614,6 +614,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
             return true;
         case MODEL_BACK:
             return true;
+        case MODEL_MENU:
+            return true;
         case MODEL_CLICK:
         case MODEL_LONG_CLICK:
             return validateClickAction(action);
@@ -842,6 +844,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
             break;
         case MODEL_BACK:
             generateKeyBackEvent();
+            break;
+        case MODEL_MENU:
+            generateKeyMenuEvent();
             break;
         case MODEL_CLICK:
             GUITreeNode node = action.getResolvedNode();

@@ -50,6 +50,7 @@ public class State extends GraphElement {
     private StateKey stateKey;
     private ModelAction[] actions;
     private ModelAction backAction;
+    private ModelAction menuAction;
 
     private List<GUITree> treeHistory;
 
@@ -61,6 +62,8 @@ public class State extends GraphElement {
         }
         backAction = new ModelAction(this, ActionType.MODEL_BACK);
         c.add(backAction);
+        menuAction = new ModelAction(this, ActionType.MODEL_MENU);
+        c.add(menuAction);
         actions = c.toArray(new ModelAction[c.size()]);
     }
 
@@ -225,6 +228,10 @@ public class State extends GraphElement {
 
     public ModelAction getBackAction() {
         return this.backAction;
+    }
+
+    public ModelAction getMenuAction() {
+        return this.menuAction;
     }
 
     public String toString() {

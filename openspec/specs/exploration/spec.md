@@ -48,11 +48,12 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 ## Invariants
 
 - **INV-EXPL-01**: The exploration loop SHALL continue dispatching actions until either `StopTestingException` is thrown (time/step limit reached) or the process is killed externally. No other condition MAY cause silent loop exit.
-- **INV-EXPL-02**: `ActionType.MODEL_BACK.requireTarget()` SHALL return `false`. `MODEL_BACK` does not require a widget target because it maps directly to the Android BACK key event.
+- **INV-EXPL-02**: `ActionType.MODEL_BACK.requireTarget()` and `ActionType.MODEL_MENU.requireTarget()` SHALL both return `false`. Neither `MODEL_BACK` nor `MODEL_MENU` requires a widget target; both map directly to Android key events.
 - **INV-EXPL-03**: The serialised exploration graph file (`sataModel.obj`) MUST contain a Java-serialised `Model` object, not a bare `Graph`. `StatefulAgent.saveGraph()` writes `oos.writeObject(model)`, where `model` is the `Model` instance (which in turn owns the `Graph`).
 - **INV-EXPL-04**: `ActionType.MODEL_CLICK.requireTarget()`, `MODEL_LONG_CLICK.requireTarget()`, `MODEL_SCROLL_BOTTOM_UP.requireTarget()`, `MODEL_SCROLL_TOP_DOWN.requireTarget()`, `MODEL_SCROLL_LEFT_RIGHT.requireTarget()`, and `MODEL_SCROLL_RIGHT_LEFT.requireTarget()` SHALL each return `true`.
-- **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`).
-- **INV-EXPL-06**: Every `State` object SHALL have a non-null `backAction` field holding a `ModelAction` of type `MODEL_BACK`. This field is initialised in the `State` constructor and MUST NOT be set to null at any point.
+- **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_MENU`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`).
+- **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point.
+- **INV-EXPL-13**: `MODEL_MENU` SHALL be positioned in the `ActionType` enum after `MODEL_BACK` and before `MODEL_CLICK`. This placement ensures that `requireTarget()`'s ordinal range check (`MODEL_CLICK` through `MODEL_SCROLL_RIGHT_LEFT`) continues to correctly identify target-requiring actions without any change to the range boundaries.
 - **INV-EXPL-09**: When `SataAgent` triggers a forced app restart due to graph stability (i.e., `graphStableCounter` reaching `ape.graphStableRestartThreshold`), the `graphStableCounter` MUST be reset to zero immediately after the restart is initiated.
 - **INV-EXPL-10**: `RandomAgent` extends `StatefulAgent` and uses the same priority-weighted selection infrastructure. It does NOT implement a separate pure-random algorithm. The distinction from `SataAgent` is that `RandomAgent` uses `StatefulAgent`'s base priority assignment without SATA's directed graph navigation heuristics.
 - **INV-EXPL-11**: `StatefulAgent.adjustActionsByGUITree()` SHALL be called after base priority assignment and before the agent's selection step. Any priority modifications made by external components (e.g., MOP guidance in Phase 3) MUST be applied inside or after this method, not before it.
@@ -111,7 +112,7 @@ At each exploration step, `MonkeySourceApe` MUST capture the current screen as a
 
 - **WHEN** the accessibility tree differs from all previously seen trees such that no existing `State` matches
 - **THEN** a new `State` SHALL be created and added to the `Graph`
-- **AND** the new `State` SHALL be initialised with a `backAction` (`MODEL_BACK`) plus one `ModelAction` per actionable widget identified by the current `Naming`
+- **AND** the new `State` SHALL be initialised with a `backAction` (`MODEL_BACK`), a `menuAction` (`MODEL_MENU`), plus one `ModelAction` per actionable widget identified by the current `Naming`
 
 #### Scenario: Revisit of a known screen
 
@@ -130,6 +131,7 @@ The full set of `MODEL_*` action types and their `requireTarget()` values are:
 | ActionType | requireTarget() | Description |
 |---|---|---|
 | `MODEL_BACK` | `false` | BACK key press; no widget target |
+| `MODEL_MENU` | `false` | MENU key press; no widget target |
 | `MODEL_CLICK` | `true` | Tap on a widget node |
 | `MODEL_LONG_CLICK` | `true` | Long-press on a widget node |
 | `MODEL_SCROLL_BOTTOM_UP` | `true` | Scroll-up gesture on a widget |
@@ -144,15 +146,50 @@ Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT
 - **WHEN** `ActionType.MODEL_BACK.requireTarget()` is called
 - **THEN** the return value SHALL be `false`
 
+#### Scenario: requireTarget() on MENU
+
+- **WHEN** `ActionType.MODEL_MENU.requireTarget()` is called
+- **THEN** the return value SHALL be `false`
+
 #### Scenario: requireTarget() on CLICK
 
 - **WHEN** `ActionType.MODEL_CLICK.requireTarget()` is called
+- **THEN** the return value SHALL be `true`
+
+#### Scenario: isModelAction() on MODEL_MENU
+
+- **WHEN** `ActionType.MODEL_MENU.isModelAction()` is called
 - **THEN** the return value SHALL be `true`
 
 #### Scenario: isModelAction() on EVENT_RESTART
 
 - **WHEN** `ActionType.EVENT_RESTART.isModelAction()` is called
 - **THEN** the return value SHALL be `false`
+
+---
+
+### Requirement: OptionsMenu Systematic Exploration (MODEL_MENU)
+
+Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, ActionType.MODEL_MENU)`, initialised in the `State` constructor immediately after `backAction`. The field SHALL be exposed via `State.getMenuAction()`. This mirrors the `backAction` / `getBackAction()` pattern exactly.
+
+`MonkeySourceApe.generateEventsForActionInternal()` SHALL handle `MODEL_MENU` in its switch statement by calling `generateKeyMenuEvent()`. No target widget node is required or inspected.
+
+`MonkeySourceApe.validateResolvedAction()` SHALL return `true` for `MODEL_MENU` without calling any widget validator (same pattern as `MODEL_BACK`).
+
+#### Scenario: State constructor initialises menuAction
+- **WHEN** a new `State` is constructed for any `StateKey`
+- **THEN** `state.getMenuAction()` MUST return a non-null `ModelAction` whose `getType()` returns `ActionType.MODEL_MENU`
+- **AND** the `menuAction` MUST be included in the actions array returned by `state.getActions()`
+
+#### Scenario: MODEL_MENU event generation
+- **WHEN** `MonkeySourceApe.generateEventsForActionInternal()` is called with a `ModelAction` whose type is `MODEL_MENU`
+- **THEN** `generateKeyMenuEvent()` SHALL be called
+- **AND** no target `GUITreeNode` SHALL be required or consulted
+
+#### Scenario: MODEL_MENU validation always passes
+- **WHEN** `MonkeySourceApe.validateResolvedAction()` is called with a `ModelAction` of type `MODEL_MENU`
+- **THEN** the method SHALL return `true`
+- **AND** no widget validator (`validateClickAction`, `validateScrollAction`) SHALL be invoked
 
 ---
 
@@ -171,13 +208,17 @@ flowchart TD
     ABA -->|null| UNVISITED{current state has\nunvisited actions?}
     UNVISITED -->|yes| BACK{backAction\nunvisited?}
     BACK -->|yes| RET_BACK[return backAction]
-    BACK -->|no| WIDGET[return least-visited\nwidget action]
+    BACK -->|no| MENU{menuAction\nunvisited?}
+    MENU -->|yes| RET_MENU[return menuAction]
+    MENU -->|no| WIDGET[return least-visited\nwidget action]
     UNVISITED -->|no| GREEDY[epsilon-greedy over\nall valid actions\n95% least-visited\n5% random]
 ```
 
 ### Requirement: SataAgent — Unvisited Action Priority
 
-`SataAgent` is the default and primary exploration strategy. Its core heuristic is to exhaustively visit all unvisited actions before re-visiting known actions. An action is considered unvisited when `ModelAction.isUnvisited()` returns `true` (i.e., its execution count is zero for that named widget). Among unvisited actions in the current state, `SataAgent` MUST check BACK first, then widget-targeted actions ordered by their natural priority. Only when all actions in the current state have been visited does the agent fall back to the epsilon-greedy path.
+`SataAgent` is the default and primary exploration strategy. Its core heuristic is to exhaustively visit all unvisited actions before re-visiting known actions. An action is considered unvisited when `ModelAction.isUnvisited()` returns `true` (i.e., its execution count is zero for that named widget). Among unvisited actions in the current state, `SataAgent` MUST check `backAction` first, then `menuAction`, then widget-targeted actions ordered by their natural priority. Only when all actions in the current state have been visited does the agent fall back to the epsilon-greedy path.
+
+The `menuAction` check is added to `SataAgent.selectNewActionEpsilonGreedyRandomly()` immediately after the existing `backAction` unvisited check and before the epsilon-greedy fallback.
 
 #### Scenario: State has unvisited BACK action
 
@@ -185,16 +226,24 @@ flowchart TD
 - **AND** the current `State`'s `backAction` passes `ActionFilter.ENABLED_VALID` and `ModelAction.isUnvisited()` returns `true`
 - **THEN** the BACK action SHALL be returned immediately, before any MENU or widget action is considered
 
+#### Scenario: State has visited BACK but unvisited MENU action
+
+- **WHEN** `SataAgent.selectNewActionEpsilonGreedyRandomly()` is called
+- **AND** the current `State`'s `backAction` has already been visited
+- **AND** the current `State`'s `menuAction` passes `ActionFilter.ENABLED_VALID` and `ModelAction.isUnvisited()` returns `true`
+- **THEN** the MENU action SHALL be returned immediately, before any widget action or epsilon-greedy selection
+
 #### Scenario: State has visited BACK but unvisited widget actions
 
 - **WHEN** `SataAgent.selectNewActionEpsilonGreedyRandomly()` is called
 - **AND** the current `State`'s `backAction` has already been visited
+- **AND** the current `State`'s `menuAction` has already been visited
 - **AND** at least one widget-targeted action in the current state is unvisited and passes `ActionFilter.ENABLED_VALID`
 - **THEN** the agent SHALL apply the epsilon-greedy decision: with probability `1 - ape.defaultEpsilon` (default: `1 - 0.05 = 0.95`) the least-visited valid action SHALL be returned; with probability `ape.defaultEpsilon` (default: `0.05`) a random valid action SHALL be returned
 
 #### Scenario: All actions in current state are visited
 
-- **WHEN** every `ModelAction` in the current `State` has been visited at least once
+- **WHEN** every `ModelAction` in the current `State` (including `backAction` and `menuAction`) has been visited at least once
 - **AND** no buffer path is available
 - **THEN** `SataAgent` SHALL fall through to `selectNewActionEpsilonGreedyRandomly()` and apply the epsilon-greedy rule over all valid actions in the current state
 

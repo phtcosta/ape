@@ -152,6 +152,7 @@ public class GUITreeNode implements Serializable {
             case EVENT_RESTART:
             case EVENT_CLEAN_RESTART:
             case MODEL_BACK:
+            case MODEL_MENU:
             case FUZZ:
             case EVENT_ACTIVATE:
                 throw new IllegalStateException("Cannot set " + at + " to widget.");
@@ -503,7 +504,9 @@ public class GUITreeNode implements Serializable {
             return "vertical";
         } else if (className.equals("android.widget.HorizontalScrollView")
                 || className.equals("android.support.v17.leanback.widget.HorizontalGridView")
-                || className.equals("android.support.v4.view.ViewPager")) {
+                || className.equals("android.support.v4.view.ViewPager")
+                || className.equals("androidx.viewpager.widget.ViewPager")
+                || className.equals("androidx.viewpager2.widget.ViewPager2")) {
             return "horizontal";
         }
         if (scrollable == 1) {

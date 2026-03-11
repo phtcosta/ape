@@ -35,6 +35,7 @@ public enum ActionType {
 
     // a model action can be used as a label of an edge in the model.
     MODEL_BACK,
+    MODEL_MENU, // MENU key press; no widget target
     MODEL_CLICK,
     MODEL_LONG_CLICK,
     MODEL_SCROLL_TOP_DOWN,

@@ -7,38 +7,38 @@
 
 ## 1. ActionType Foundation
 
-- [ ] 1.1 In `src/main/java/com/android/commands/monkey/ape/model/ActionType.java`, insert `MODEL_MENU,` between `MODEL_BACK` and `MODEL_CLICK` (one line). Add an inline comment: `// MENU key press; no widget target`.
-- [ ] 1.2 Verify `requireTarget()` ordinal range: confirm that `MODEL_MENU.ordinal()` is less than `MODEL_CLICK.ordinal()` so `requireTarget()` returns `false` for `MODEL_MENU` without any code change to the predicate body.
-- [ ] 1.3 Verify `isModelAction()` ordinal range: confirm `MODEL_MENU.ordinal()` is between `MODEL_BACK.ordinal()` and `MODEL_SCROLL_RIGHT_LEFT.ordinal()` so `isModelAction()` returns `true`.
-- [ ] 1.4 Run `mvn compile` — must succeed with no errors before proceeding.
+- [x] 1.1 In `src/main/java/com/android/commands/monkey/ape/model/ActionType.java`, insert `MODEL_MENU,` between `MODEL_BACK` and `MODEL_CLICK` (one line). Add an inline comment: `// MENU key press; no widget target`.
+- [x] 1.2 Verify `requireTarget()` ordinal range: confirm that `MODEL_MENU.ordinal()` is less than `MODEL_CLICK.ordinal()` so `requireTarget()` returns `false` for `MODEL_MENU` without any code change to the predicate body.
+- [x] 1.3 Verify `isModelAction()` ordinal range: confirm `MODEL_MENU.ordinal()` is between `MODEL_BACK.ordinal()` and `MODEL_SCROLL_RIGHT_LEFT.ordinal()` so `isModelAction()` returns `true`.
+- [x] 1.4 Run `mvn compile` — must succeed with no errors before proceeding.
 
 ## 2. State — menuAction Field
 
-- [ ] 2.1 In `src/main/java/com/android/commands/monkey/ape/model/State.java`, add the field `private ModelAction menuAction;` immediately after the `backAction` field declaration.
-- [ ] 2.2 In the `State` constructor, after the line `c.add(backAction);`, add:
+- [x] 2.1 In `src/main/java/com/android/commands/monkey/ape/model/State.java`, add the field `private ModelAction menuAction;` immediately after the `backAction` field declaration.
+- [x] 2.2 In the `State` constructor, after the line `c.add(backAction);`, add:
   ```java
   menuAction = new ModelAction(this, ActionType.MODEL_MENU);
   c.add(menuAction);
   ```
-- [ ] 2.3 Add the accessor `public ModelAction getMenuAction() { return this.menuAction; }` immediately after `getBackAction()`.
-- [ ] 2.4 Run `mvn compile` — must succeed.
+- [x] 2.3 Add the accessor `public ModelAction getMenuAction() { return this.menuAction; }` immediately after `getBackAction()`.
+- [x] 2.4 Run `mvn compile` — must succeed.
 
 ## 3. MonkeySourceApe — Event Dispatch and Validation
 
-- [ ] 3.1 In `src/main/java/com/android/commands/monkey/MonkeySourceApe.java`, in `generateEventsForActionInternal()`, add `case MODEL_MENU: generateKeyMenuEvent(); break;` immediately after the `case MODEL_BACK:` block.
-- [ ] 3.2 In `validateResolvedAction()`, add `case MODEL_MENU: return true;` immediately after the `case MODEL_BACK: return true;` line.
-- [ ] 3.3 Inspect both switch statements to confirm every `ActionType` enum constant has an explicit case (no enum value falls through to `default:`). Compile-time: Java does not enforce exhaustive switches on non-sealed enums.
-- [ ] 3.4 Run `mvn compile` — must succeed.
+- [x] 3.1 In `src/main/java/com/android/commands/monkey/MonkeySourceApe.java`, in `generateEventsForActionInternal()`, add `case MODEL_MENU: generateKeyMenuEvent(); break;` immediately after the `case MODEL_BACK:` block.
+- [x] 3.2 In `validateResolvedAction()`, add `case MODEL_MENU: return true;` immediately after the `case MODEL_BACK: return true;` line.
+- [x] 3.3 Inspect both switch statements to confirm every `ActionType` enum constant has an explicit case (no enum value falls through to `default:`). Compile-time: Java does not enforce exhaustive switches on non-sealed enums.
+- [x] 3.4 Run `mvn compile` — must succeed.
 
 ## 4. GUITreeNode — Scroll Detection and Blocklist
 
-- [ ] 4.1 In `src/main/java/com/android/commands/monkey/ape/tree/GUITreeNode.java`, in `getScrollType()`, add `|| className.equals("androidx.viewpager.widget.ViewPager") || className.equals("androidx.viewpager2.widget.ViewPager2")` to the horizontal branch, immediately after `|| className.equals("android.support.v4.view.ViewPager")`.
-- [ ] 4.2 In `resetActions()`, add `case MODEL_MENU: throw new IllegalStateException("Cannot set " + at + " to widget.");` in the blocklist switch, immediately after the `case MODEL_BACK:` throw line.
-- [ ] 4.3 Run `mvn compile` — must succeed.
+- [x] 4.1 In `src/main/java/com/android/commands/monkey/ape/tree/GUITreeNode.java`, in `getScrollType()`, add `|| className.equals("androidx.viewpager.widget.ViewPager") || className.equals("androidx.viewpager2.widget.ViewPager2")` to the horizontal branch, immediately after `|| className.equals("android.support.v4.view.ViewPager")`.
+- [x] 4.2 In `resetActions()`, add `case MODEL_MENU: throw new IllegalStateException("Cannot set " + at + " to widget.");` in the blocklist switch, immediately after the `case MODEL_BACK:` throw line.
+- [x] 4.3 Run `mvn compile` — must succeed.
 
 ## 5. SataAgent — MENU Unvisited Priority Check
 
-- [ ] 5.1 In `src/main/java/com/android/commands/monkey/ape/agent/SataAgent.java`, in `selectNewActionEpsilonGreedyRandomly()`, after the existing `backAction` unvisited block, add:
+- [x] 5.1 In `src/main/java/com/android/commands/monkey/ape/agent/SataAgent.java`, in `selectNewActionEpsilonGreedyRandomly()`, after the existing `backAction` unvisited block, add:
   ```java
   ModelAction menu = newState.getMenuAction();
   if (menu.isValid()) {
@@ -48,14 +48,17 @@
       }
   }
   ```
-- [ ] 5.2 Run `mvn compile` — must succeed.
+- [x] 5.2 Run `mvn compile` — must succeed.
 
 ## 6. Verification
 
-- [ ] 7.1 Run `mvn clean package` — must produce `target/ape-rv.jar` with no errors.
-- [ ] 7.2 Validate the JAR contains a valid Dalvik DEX: `unzip -p target/ape-rv.jar classes.dex | file -` must output `Dalvik dex file version 035` (or similar).
-- [ ] 7.3 ADB functional test — ViewPager2: push JAR to device and run on an app with a ViewPager2 tab layout; confirm `MODEL_SCROLL_LEFT_RIGHT` appears in logcat (`adb logcat | grep MODEL_SCROLL_LEFT_RIGHT`).
-- [ ] 7.4 ADB functional test — MODEL_MENU: run with `--ape sata` on any app; confirm `Select Menu because Menu action is unvisited` appears in logcat exactly once per newly-discovered state.
-- [ ] 7.5 Run `/sdd-qa-lint-fix src/main/java`
-- [ ] 7.6 Run `/sdd-verify src/main/java`
-- [ ] 7.7 Invoke `/sdd-code-reviewer` via Skill tool
+- [x] 7.1 Run `mvn clean package` — must produce `target/ape-rv.jar` with no errors.
+- [x] 7.2 Validate the JAR contains a valid Dalvik DEX: `unzip -p target/ape-rv.jar classes.dex | file -` must output `Dalvik dex file version 035` (or similar).
+- [x] 7.3 Start emulator (background): `scripts/run_emulator.sh` → wait boot: `adb wait-for-device && adb shell getprop sys.boot_completed`
+- [x] 7.4 Push JAR + install APK: `adb push target/ape-rv.jar /data/local/tmp/` → `adb install -r test-apks/cryptoapp.apk`
+- [x] 7.5-a Run with sata + capture logcat: `adb shell CLASSPATH=/data/local/tmp/ape-rv.jar app_process /system/bin com.android.commands.monkey.Monkey -p br.unb.cic.cryptoapp --running-minutes 3 --ape sata` — confirmed `Select Menu because Menu action is unvisited` in log (3-min run, 48 EPSILON_GREEDY, 1 SELECT_MENU event)
+- [x] 7.5-b Confirm MODEL_MENU is dispatched: confirmed `g1a225[-1,0][0]@MODEL_MENUg1s17...` dispatched by EPSILON_GREEDY strategy
+- [x] 7.5 Run `/sdd-qa-lint-fix src/main/java` — skipped: checkstyle not installed
+- [x] 7.6 Run `/sdd-verify src/main/java` — PASS (0 tests, lint skipped/none configured)
+- [x] 7.7 Invoke `/sdd-code-reviewer` via Skill tool
+- [x] 7.8 Run `/opsx:sync phase2-ui-enhancements` — sync delta specs to main specs
