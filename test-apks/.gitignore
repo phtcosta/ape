@@ -1,0 +1,2 @@
+# Test APKs — binary artifacts, not tracked in git
+*.apk

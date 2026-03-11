@@ -276,7 +276,7 @@ graph LR
 
 ### 5.1 Build System
 
-#### FR01: Maven Build Producing Dalvik JAR
+#### FR01: Maven Build Producing Dalvik JAR ✅ IMPLEMENTED (phtcosta/ape#1)
 
 The build system MUST compile APE-RV's Java source code and produce a Dalvik-compatible `ape-rv.jar` using Maven and `d8`. The build MUST:
 - Use `javac --release 11` to compile to Java 11 bytecode
@@ -289,13 +289,13 @@ The output JAR MUST be deployable to an Android device via `adb push` and execut
 **Entry point**: `com.android.commands.monkey.Monkey`
 **Build commands**: `mvn clean package` (build only), `mvn clean install` (build + copy to aperv-tool)
 
-#### FR02: Automatic JAR Deployment to aperv-tool
+#### FR02: Automatic JAR Deployment to aperv-tool ⏳ DEFERRED to Phase 4 (aperv-tool module does not exist yet)
 
 The Maven `install` phase MUST copy `target/ape-rv.jar` to `${aperv_tool_dir}/src/aperv_tool/tools/aperv/ape-rv.jar`, where `${aperv_tool_dir}` is configurable via a Maven property (default relative path to the sibling rv-android module). This ensures that the Python plugin always contains the latest compiled binary after a `mvn install`.
 
 The `ape-rv.jar` file inside the Python module MUST be gitignored. The Maven property MUST have a default that works for the expected workspace layout (`../rvsec/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/`) and MUST be overridable for non-standard layouts.
 
-#### FR03: Ant Build Retained with Deprecation Notice
+#### FR03: Ant Build Retained with Deprecation Notice ✅ IMPLEMENTED (phtcosta/ape#1)
 
 The original `build.xml` MUST be retained in the repository with a header comment indicating deprecation in favor of `pom.xml`. The Ant build is kept to support users who cannot upgrade their toolchain, but it is not the primary build path.
 
@@ -622,7 +622,7 @@ The implementation is divided into five sequential phases, each producing an ind
 
 | Phase | Scope | SDD Track | Repository | Deliverable |
 |-------|-------|-----------|------------|-------------|
-| **1** | Build modernization | Quick Path | `workspace-rv/ape/` | `ape-rv.jar` buildable with Maven + d8 |
+| **1** | Build modernization | Quick Path | `workspace-rv/ape/` | `ape-rv.jar` buildable with Maven + d8 | ✅ IMPLEMENTED (phtcosta/ape#1) |
 | **2** | UI enhancements | Fast-Forward | `workspace-rv/ape/` | ViewPager2 detection + MODEL_MENU |
 | **3** | MOP awareness | Full SDD | `workspace-rv/ape/` | `MopData`, `MopScorer`, `sata_mop` variant |
 | **4** | aperv-tool plugin | Fast-Forward | `rvsec/rv-android/modules/aperv-tool/` | `ApeRVTool` registered in rv-android |

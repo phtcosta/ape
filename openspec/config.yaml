@@ -3,7 +3,7 @@ schema: sdd-full
 context: |
   Project: APE (Android Property Explorer)
   Type: Model-based Android GUI testing tool (research, ICSE 2019)
-  Stack: Java 7+, Apache Ant, Android SDK, ADB
+  Stack: Java 11, Apache Maven, Android SDK (d8), ADB
   Architecture: Monkey extension — Agent → Model (State/Transitions) → NamingFactory (abstraction/refinement)
 
   DEVELOPMENT PRINCIPLES:
@@ -13,7 +13,7 @@ context: |
   P4 Current-state comments — no migration history, no promotional language
 
   Language: Java
-  Build: ant compile / ant assemble → ape.jar
+  Build: mvn package → target/ape-rv.jar (Dalvik JAR via d8)
   No automated test suite — validation via real Android devices
 
 references:

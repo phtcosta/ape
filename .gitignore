@@ -1,6 +1,9 @@
 # binary
 bin
 #ape.jar
+
+# Maven build output
+target/
 ape-bin/
 ape-bin.zip
 ape-java-proguard.jar

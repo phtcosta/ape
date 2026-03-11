@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- DEPRECATED: replaced by pom.xml (Maven + d8 + Java 11). See Phase 1 - phtcosta/ape#1. -->
 <project name="ape" basedir="." default="assemble">
     <property name="dist.loc" value="${ant.project.name}.jar" />
     <property name="dist-java.loc" value="${ant.project.name}-java.jar" />

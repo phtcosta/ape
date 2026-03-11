@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.android.commands.monkey</groupId>
+    <artifactId>ape-rv</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>APE-RV</name>
+    <description>Enhanced APE (Android Property Explorer) for the RVSEC research infrastructure at UnB</description>
+
+    <properties>
+        <maven.compiler.release>11</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!--
+            Android framework JAR with @hide APIs (ApeAPIAdapter.java uses
+            com.android.internal.*, android.app.UiAutomationConnection, etc.).
+            Compile-time only — must NOT appear in ape-rv.jar (runtime is on-device).
+        -->
+        <dependency>
+            <groupId>com.android</groupId>
+            <artifactId>framework-full-debug</artifactId>
+            <version>local</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/framework/classes-full-debug.jar</systemPath>
+        </dependency>
+
+        <!--
+            Dalvik stub classes required at compile time.
+            Compile-time only — must NOT appear in ape-rv.jar.
+        -->
+        <dependency>
+            <groupId>com.android</groupId>
+            <artifactId>dalvik-stub</artifactId>
+            <version>local</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/dalvik_stub/classes.jar</systemPath>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Explicit compiler plugin version — default 3.1 does not support <release> -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <release>11</release>
+                </configuration>
+            </plugin>
+
+            <!--
+                Step 1 (prepare-package): Package compiled .class files into an
+                intermediate JAR (ape-rv-classes.jar). Runs before the d8 step so
+                ordering is guaranteed regardless of POM declaration order.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <executions>
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>jar</goal></goals>
+                        <configuration>
+                            <finalName>ape-rv-classes</finalName>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                Step 2 (package): Convert ape-rv-classes.jar to Dalvik bytecode via d8.
+                Output: target/ape-rv.jar containing classes.dex.
+                min-api 23 = Android 6.0 Marshmallow (minimum supported by APE).
+                d8 must be on PATH (Android SDK build-tools 28+).
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>d8-dex</id>
+                        <phase>package</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>d8</executable>
+                            <arguments>
+                                <argument>--output</argument>
+                                <argument>${project.build.directory}/ape-rv.jar</argument>
+                                <argument>--min-api</argument>
+                                <argument>23</argument>
+                                <argument>${project.build.directory}/ape-rv-classes.jar</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
