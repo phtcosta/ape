@@ -14,6 +14,8 @@
     <properties>
         <maven.compiler.release>11</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Override with -Drvsec_home=... to point at a different workspace -->
+        <rvsec_home>${user.home}/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec</rvsec_home>
     </properties>
 
     <dependencies>
@@ -71,6 +73,34 @@
                         <goals><goal>jar</goal></goals>
                         <configuration>
                             <finalName>ape-rv-classes</finalName>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                Step 3 (install): Copy ape-rv.jar to the aperv-tool module in rv-android so
+                that `mvn install` keeps the Python plugin's JAR up to date automatically.
+                Override the destination with -Drvsec_home=<path>.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-jar-to-aperv-tool</id>
+                        <phase>install</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${rvsec_home}/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.build.directory}</directory>
+                                    <includes><include>ape-rv.jar</include></includes>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
                         </configuration>
                     </execution>
                 </executions>

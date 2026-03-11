@@ -4,8 +4,8 @@
 
 ## 1. ape/pom.xml — Install JAR Copy
 
-- [ ] 1.1 In `pom.xml`, add a `maven-resources-plugin` execution bound to the `install` phase that copies `target/ape-rv.jar` to `${rvsec_home}/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar`. Define `rvsec_home` property defaulting to `${user.home}/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec`. Use the `copy-resources` goal.
-- [ ] 1.2 Run `mvn install -Drvsec_home=/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec` — must succeed and produce `ape-rv.jar` at `modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar` in the rv-android repo.
+- [x] 1.1 In `pom.xml`, add a `maven-resources-plugin` execution bound to the `install` phase that copies `target/ape-rv.jar` to `${rvsec_home}/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar`. Define `rvsec_home` property defaulting to `${user.home}/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec`. Use the `copy-resources` goal.
+- [x] 1.2 Run `mvn install -Drvsec_home=/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec` — must succeed and produce `ape-rv.jar` at `modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar` in the rv-android repo.
 
 ## 2. rv-android change — aperv-tool module + e2e
 
