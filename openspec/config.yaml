@@ -1,0 +1,32 @@
+schema: sdd-full
+
+context: |
+  Project: APE (Android Property Explorer)
+  Type: Model-based Android GUI testing tool (research, ICSE 2019)
+  Stack: Java 7+, Apache Ant, Android SDK, ADB
+  Architecture: Monkey extension — Agent → Model (State/Transitions) → NamingFactory (abstraction/refinement)
+
+  DEVELOPMENT PRINCIPLES:
+  P1 Simplicity — minimal complexity, no premature abstractions
+  P2 Human-readable — deep narrative docs, self-contained for implementers
+  P3 No backward compatibility — delete dead code, no adapters/shims
+  P4 Current-state comments — no migration history, no promotional language
+
+  Language: Java
+  Build: ant compile / ant assemble → ape.jar
+  No automated test suite — validation via real Android devices
+
+references:
+  templates: []
+  docs:
+    - README.md
+
+rules:
+  specs:
+    - "Specs document the CURRENT behavior of the system — not aspirational or historical state"
+    - "Use RFC 2119 keywords (SHALL, SHOULD, MAY) for requirements"
+    - "Write scenarios in WHEN/THEN/AND format"
+    - "Invariants are verifiable assertions, prefixed with INV-<DOMAIN>-<NN>"
+  tasks:
+    - Include a final Verification group
+    - Annotate skill invocations as checkbox items where they add value

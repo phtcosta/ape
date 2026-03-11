@@ -1,0 +1,174 @@
+{
+  "language": "java",
+  "displayName": "Java",
+  "version": "1.1.0",
+  "ontologyMap": "ontology-map.json",
+
+  "detection": {
+    "extensions": [".java"],
+    "buildFiles": ["pom.xml", "build.gradle", "build.gradle.kts"],
+    "markers": ["src/main/java"]
+  },
+
+  "source": {
+    "patterns": ["**/src/main/java/**/*.java"],
+    "testPatterns": ["**/src/test/java/**/*.java"],
+    "resourcePatterns": ["**/src/main/resources/**/*"],
+    "exclude": ["**/target/**", "**/build/**", "**/.gradle/**"]
+  },
+
+  "extraction": {
+    "package": "^package\\s+([\\w.]+);",
+    "imports": "^import\\s+(?:static\\s+)?([\\w.]+(?:\\.\\*)?);",
+    "class": "(?:public\\s+)?(?:abstract\\s+)?(?:final\\s+)?(?:class|interface|enum|record)\\s+(\\w+)",
+    "extends": "extends\\s+(\\w+)",
+    "implements": "implements\\s+([\\w,\\s]+)",
+    "annotations": "@(\\w+)(?:\\([^)]*\\))?",
+    "methods": "(?:public|protected|private)?\\s*(?:static\\s+)?(?:final\\s+)?(?:<[^>]+>\\s+)?\\w+\\s+(\\w+)\\s*\\([^)]*\\)"
+  },
+
+  "layers": {
+    "controller": {
+      "annotations": ["@Controller", "@RestController", "@RequestMapping"],
+      "nameSuffixes": ["Controller", "Resource", "Endpoint"],
+      "packages": ["controller", "web", "rest", "api"]
+    },
+    "service": {
+      "annotations": ["@Service", "@Component"],
+      "nameSuffixes": ["Service", "ServiceImpl", "Manager", "Handler"],
+      "packages": ["service", "business", "usecase"]
+    },
+    "repository": {
+      "annotations": ["@Repository"],
+      "nameSuffixes": ["Repository", "Dao", "DaoImpl"],
+      "packages": ["repository", "dao", "persistence"]
+    },
+    "model": {
+      "annotations": ["@Entity", "@Table", "@Document"],
+      "nameSuffixes": ["Entity", "Model", "Dto", "VO"],
+      "packages": ["model", "entity", "domain", "dto"]
+    },
+    "config": {
+      "annotations": ["@Configuration", "@EnableAutoConfiguration", "@SpringBootApplication"],
+      "nameSuffixes": ["Config", "Configuration", "Properties"],
+      "packages": ["config", "configuration"]
+    }
+  },
+
+  "patterns": {
+    "dependency_injection": ["@Autowired", "@Inject", "@Resource"],
+    "transactional": ["@Transactional"],
+    "async": ["@Async", "@EnableAsync"],
+    "caching": ["@Cacheable", "@CacheEvict", "@EnableCaching"],
+    "security": ["@PreAuthorize", "@Secured", "@RolesAllowed"],
+    "validation": ["@Valid", "@Validated", "@NotNull", "@NotBlank"]
+  },
+
+  "build": {
+    "compile": "mvn compile -DskipTests",
+    "test": "mvn test",
+    "package": "mvn package -DskipTests",
+    "run": "java -jar target/*.jar"
+  },
+
+  "build_extraction": {
+    "maven": {
+      "dependencyBlock": "(?s)<dependency>\\s*<groupId>([^<]+)</groupId>\\s*<artifactId>([^<]+)</artifactId>(?:\\s*<version>([^<]+)</version>)?(?:\\s*<scope>([^<]+)</scope>)?\\s*</dependency>",
+      "groupId": "<groupId>([^<]+)</groupId>",
+      "artifactId": "<artifactId>([^<]+)</artifactId>",
+      "version": "<version>([^<]+)</version>",
+      "scope": "<scope>([^<]+)</scope>",
+      "module": "<module>([^<]+)</module>",
+      "parentBlock": "(?s)<parent>\\s*<groupId>([^<]+)</groupId>\\s*<artifactId>([^<]+)</artifactId>\\s*<version>([^<]+)</version>",
+      "defaultScope": "compile",
+      "scopeMapping": {
+        "compile": "compile",
+        "test": "test",
+        "runtime": "runtime",
+        "provided": "provided",
+        "system": "system"
+      }
+    },
+    "gradle": {
+      "dependency": "(?:implementation|api|compileOnly|runtimeOnly|testImplementation|testRuntimeOnly|annotationProcessor)\\s*[('\"]([^'\"()]+)['\")]",
+      "subproject": "include\\s*['\"]([^'\"]+)['\"]",
+      "scopeMapping": {
+        "implementation": "compile",
+        "api": "compile",
+        "compileOnly": "provided",
+        "runtimeOnly": "runtime",
+        "testImplementation": "test",
+        "testRuntimeOnly": "test",
+        "annotationProcessor": "compile"
+      }
+    },
+    "categories": {
+      "framework": [
+        "org.springframework",
+        "org.springframework.boot",
+        "io.quarkus",
+        "io.micronaut",
+        "jakarta."
+      ],
+      "database": [
+        "org.hibernate",
+        "com.zaxxer",
+        "org.mybatis",
+        "org.jooq",
+        "org.flywaydb",
+        "org.liquibase"
+      ],
+      "testing": [
+        "junit",
+        "org.junit",
+        "org.mockito",
+        "org.assertj",
+        "org.testcontainers",
+        "org.hamcrest"
+      ],
+      "logging": [
+        "org.slf4j",
+        "ch.qos.logback",
+        "org.apache.logging",
+        "log4j"
+      ],
+      "security": [
+        "org.springframework.security",
+        "io.jsonwebtoken",
+        "org.keycloak",
+        "org.bouncycastle"
+      ],
+      "serialization": [
+        "com.fasterxml.jackson",
+        "com.google.gson",
+        "org.json",
+        "com.google.protobuf"
+      ],
+      "documentation": [
+        "io.swagger",
+        "org.springdoc"
+      ],
+      "utility": [
+        "org.apache.commons",
+        "com.google.guava",
+        "org.projectlombok"
+      ],
+      "observability": [
+        "io.micrometer",
+        "io.prometheus",
+        "io.opentelemetry"
+      ]
+    }
+  },
+
+  "documentation": {
+    "javadoc": "/**",
+    "singleLine": "//",
+    "multiLine": ["/*", "*/"]
+  },
+
+  "analysis": {
+    "entryPoints": ["main", "Application.main"],
+    "frameworkLifecycle": ["@PostConstruct", "@PreDestroy", "@Bean", "@EventListener", "@Scheduled"]
+  }
+}

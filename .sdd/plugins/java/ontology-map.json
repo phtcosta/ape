@@ -1,0 +1,247 @@
+{
+  "version": "1.0",
+  "language": "java",
+  "description": "Mapeamento de entidades Java para ontologia universal do Knowledge Graph",
+
+  "entity_mappings": {
+    "package": {
+      "label": "Container",
+      "type": "package",
+      "properties": ["qualified_name", "purpose", "layer"]
+    },
+    "class": {
+      "label": "Unit",
+      "type": "class",
+      "properties": ["name", "qualified_name", "visibility", "stereotype", "layer", "purpose"]
+    },
+    "interface": {
+      "label": "Unit",
+      "type": "interface",
+      "properties": ["name", "qualified_name", "visibility", "stereotype", "layer", "purpose"]
+    },
+    "enum": {
+      "label": "Unit",
+      "type": "enum",
+      "properties": ["name", "qualified_name", "visibility"]
+    },
+    "record": {
+      "label": "Unit",
+      "type": "record",
+      "properties": ["name", "qualified_name", "visibility"]
+    },
+    "annotation": {
+      "label": "Unit",
+      "type": "annotation",
+      "properties": ["name", "qualified_name"]
+    },
+    "method": {
+      "label": "Callable",
+      "type": "method",
+      "properties": ["name", "signature", "visibility", "return_type", "is_static", "is_async"]
+    },
+    "constructor": {
+      "label": "Callable",
+      "type": "constructor",
+      "properties": ["name", "signature", "visibility"]
+    },
+    "field": {
+      "label": "Member",
+      "type": "field",
+      "properties": ["name", "type", "visibility", "is_static", "is_final"]
+    }
+  },
+
+  "stereotype_mappings": {
+    "@Controller": {
+      "stereotype": "controller",
+      "layer": "presentation"
+    },
+    "@RestController": {
+      "stereotype": "rest_controller",
+      "layer": "presentation"
+    },
+    "@RequestMapping": {
+      "stereotype": "endpoint",
+      "layer": "presentation"
+    },
+    "@Service": {
+      "stereotype": "service",
+      "layer": "application"
+    },
+    "@Component": {
+      "stereotype": "component",
+      "layer": "application"
+    },
+    "@Repository": {
+      "stereotype": "repository",
+      "layer": "infrastructure"
+    },
+    "@Entity": {
+      "stereotype": "entity",
+      "layer": "domain"
+    },
+    "@Table": {
+      "stereotype": "entity",
+      "layer": "domain"
+    },
+    "@Embeddable": {
+      "stereotype": "value_object",
+      "layer": "domain"
+    },
+    "@Configuration": {
+      "stereotype": "config",
+      "layer": "infrastructure"
+    },
+    "@Bean": {
+      "stereotype": "factory",
+      "layer": "infrastructure"
+    },
+    "@Aspect": {
+      "stereotype": "aspect",
+      "layer": "crosscutting"
+    },
+    "@ControllerAdvice": {
+      "stereotype": "exception_handler",
+      "layer": "crosscutting"
+    }
+  },
+
+  "layer_detection": {
+    "presentation": {
+      "annotations": ["@Controller", "@RestController", "@RequestMapping", "@GetMapping", "@PostMapping"],
+      "packages": ["controller", "web", "rest", "api", "endpoint"],
+      "suffixes": ["Controller", "Resource", "Endpoint", "Handler"]
+    },
+    "application": {
+      "annotations": ["@Service", "@Component", "@Transactional"],
+      "packages": ["service", "business", "usecase", "application"],
+      "suffixes": ["Service", "ServiceImpl", "Manager", "UseCase"]
+    },
+    "domain": {
+      "annotations": ["@Entity", "@Embeddable", "@Value", "@Aggregate"],
+      "packages": ["model", "entity", "domain", "core"],
+      "suffixes": ["Entity", "Model", "Aggregate", "ValueObject"]
+    },
+    "infrastructure": {
+      "annotations": ["@Repository", "@Configuration", "@Bean", "@EnableJpaRepositories"],
+      "packages": ["repository", "dao", "persistence", "infrastructure", "config"],
+      "suffixes": ["Repository", "Dao", "DaoImpl", "Config", "Configuration"]
+    },
+    "crosscutting": {
+      "annotations": ["@Aspect", "@ControllerAdvice", "@ExceptionHandler"],
+      "packages": ["aspect", "aop", "security", "logging", "exception"],
+      "suffixes": ["Aspect", "Interceptor", "Filter", "Advice"]
+    }
+  },
+
+  "relationship_mappings": {
+    "extends": {
+      "type": "EXTENDS",
+      "direction": "outgoing"
+    },
+    "implements": {
+      "type": "IMPLEMENTS",
+      "direction": "outgoing"
+    },
+    "import": {
+      "type": "IMPORTS",
+      "direction": "outgoing"
+    },
+    "autowired": {
+      "type": "INJECTS",
+      "direction": "outgoing",
+      "annotations": ["@Autowired", "@Inject", "@Resource"]
+    },
+    "instantiates": {
+      "type": "INSTANTIATES",
+      "direction": "outgoing",
+      "pattern": "new\\s+(\\w+)\\s*\\("
+    },
+    "calls": {
+      "type": "CALLS",
+      "direction": "outgoing"
+    },
+    "throws": {
+      "type": "THROWS",
+      "direction": "outgoing"
+    }
+  },
+
+  "pattern_indicators": {
+    "Factory": {
+      "category": "creational",
+      "indicators": ["Factory", "create", "newInstance", "build"],
+      "annotations": ["@Bean"]
+    },
+    "Builder": {
+      "category": "creational",
+      "indicators": ["Builder", ".builder()", "build()"],
+      "patterns": ["static class.*Builder"]
+    },
+    "Singleton": {
+      "category": "creational",
+      "indicators": ["getInstance", "private constructor", "static instance"],
+      "annotations": ["@Singleton"]
+    },
+    "Repository": {
+      "category": "data",
+      "indicators": ["Repository", "Dao"],
+      "annotations": ["@Repository"],
+      "extends": ["JpaRepository", "CrudRepository", "MongoRepository"]
+    },
+    "Service": {
+      "category": "business",
+      "indicators": ["Service", "Manager"],
+      "annotations": ["@Service"]
+    },
+    "Observer": {
+      "category": "behavioral",
+      "indicators": ["Listener", "publish", "subscribe", "notify"],
+      "annotations": ["@EventListener", "@TransactionalEventListener"]
+    },
+    "Strategy": {
+      "category": "behavioral",
+      "indicators": ["Strategy", "interface + multiple implementations"],
+      "patterns": ["interface.*Strategy"]
+    },
+    "Template": {
+      "category": "behavioral",
+      "indicators": ["Template", "abstract.*protected"],
+      "patterns": ["abstract class.*Template"]
+    },
+    "Adapter": {
+      "category": "structural",
+      "indicators": ["Adapter", "Wrapper"],
+      "patterns": ["class.*Adapter.*implements"]
+    },
+    "Facade": {
+      "category": "structural",
+      "indicators": ["Facade", "Gateway"],
+      "patterns": ["class.*Facade"]
+    },
+    "DTO": {
+      "category": "data",
+      "indicators": ["DTO", "Dto", "Request", "Response"],
+      "suffixes": ["DTO", "Dto", "Request", "Response"]
+    }
+  },
+
+  "nfr_indicators": {
+    "performance": {
+      "annotations": ["@Cacheable", "@CacheEvict", "@Async"],
+      "patterns": ["Cache", "ThreadPool", "Executor", "@Scheduled"]
+    },
+    "security": {
+      "annotations": ["@PreAuthorize", "@Secured", "@RolesAllowed", "@EnableWebSecurity"],
+      "patterns": ["SecurityConfig", "AuthenticationProvider", "UserDetails"]
+    },
+    "reliability": {
+      "annotations": ["@Transactional", "@Retryable", "@CircuitBreaker"],
+      "patterns": ["retry", "fallback", "circuit"]
+    },
+    "observability": {
+      "annotations": ["@Timed", "@Counted"],
+      "patterns": ["Micrometer", "Prometheus", "Actuator", "MetricsEndpoint"]
+    }
+  }
+}
