@@ -152,19 +152,17 @@ Cross-reference: `windows[i].widgets[j].listeners[k].handler` matches `reachabil
 ### `StatefulAgent.adjustActionsByGUITree()` injection (pseudo-code)
 
 ```java
-// Existing base priority loop runs first (unchanged)
-// Then, if MOP data is available:
+// Existing base priority loop (lines ~1061-1114) runs first — unchanged.
+// Append a second MOP pass at the end of adjustActionsByGUITree():
 if (_mopData != null) {
     String activity = newState.getActivity();
-    for (ModelAction action : candidateActions) {
-        if (action.requireTarget() && action.isValid()) {
-            GUITreeNode node = action.getResolvedNode();
-            String shortId = extractShortResourceId(node.getResourceId());
-            int boost = MopScorer.score(activity, shortId, _mopData);
-            if (boost > 0) {
-                action.setPriority(action.getPriority() + boost);
-            }
-        }
+    // newState.getActions() — same iterable as the base loop above
+    for (ModelAction action : newState.getActions()) {
+        if (!action.requireTarget() || !action.isValid()) continue;
+        GUITreeNode node = action.getResolvedNode();
+        String shortId = MopData.extractShortId(node.getResourceId());
+        int boost = MopScorer.score(activity, shortId, _mopData);
+        if (boost > 0) action.setPriority(action.getPriority() + boost);
     }
 }
 ```
@@ -172,16 +170,31 @@ if (_mopData != null) {
 ### `aperv-tool sata_mop` wiring (Python)
 
 ```python
-# In execute_tool_specific_logic(), before _build_main_command():
-if self._tool_config.get("strategy") == "sata" and self._tool_config.get("mop_data") is not None:
-    static_json = self._find_static_analysis_file(task)
+# In execute_tool_specific_logic(), after JAR push, before _push_properties():
+mop_json_pushed = False
+if self._tool_config.get("mop_data") == "static_analysis":
+    static_json = self._find_static_analysis_file(task)   # new method, see tasks.md 2.2
     if static_json:
-        self._push_file_to_device(static_json, "/data/local/tmp/static_analysis.json", ...)
-        # ape.properties already pushed by _push_properties();
-        # add ape.mopDataPath=/data/local/tmp/static_analysis.json to properties content
+        self._push_file_to_device(
+            static_json,
+            "/data/local/tmp/static_analysis.json",
+            device_serial,           # 3rd param: ADB serial
+            task.result.trace_file   # 4th param: trace file (append mode)
+        )
+        mop_json_pushed = True
+    else:
+        self.logger.warning(
+            "sata_mop: static analysis file not found in results_dir, "
+            "running without MOP data"
+        )
+
+# _push_properties extended with optional flag:
+# def _push_properties(self, device_serial, trace_file_path, mop_json_pushed=False)
+# When True, appends: ape.mopDataPath=/data/local/tmp/static_analysis.json
+self._push_properties(device_serial, task.result.trace_file, mop_json_pushed)
 ```
 
-The `mop_data` key in `sata_mop` variant config transitions from `None` (placeholder) to a sentinel value (e.g., `"static_analysis"`) that signals the tool to push the JSON. The actual path comes from `task.results_dir/<apk_name>.json` (same as rvsmart).
+The `mop_data` key transitions from `None` (Phase 4 placeholder) to `"static_analysis"` to signal the push. The JSON path comes from `task.results_dir/<apk_name>.json` via `_find_static_analysis_file()` — same logic as rvsmart-tool (method copied, not inherited).
 
 ## Data Flow
 
