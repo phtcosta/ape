@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 APE-RV is a fork of APE (Android Property Explorer), a model-based Android GUI testing tool from ETH Zurich's AST Lab (ICSE 2019). This fork is developed at the University of Brasília as part of the RVSEC research infrastructure. It extends the original APE with: a modernized build system (Phase 1), AndroidX UI coverage improvements and MODEL_MENU exploration (Phase 2), MOP-guided action scoring (Phase 3), and an aperv plugin for rv-android (Phase 4).
 
-**Current repository state**: Ant+dx+Java 1.7 build → `ape.jar`. Phases 1–4 are not yet implemented.
+**Current repository state**: Maven+d8+Java 11 build → `target/ape-rv.jar`. Phase 1 (build), Phase 2 (AndroidX/MODEL_MENU), and Phase 4 (aperv-tool in rv-android) are complete. Phase 3 (MOP/RV Awareness) is not yet implemented.
 
 ## Build Commands
 
@@ -16,6 +16,9 @@ Requires: Java 11+, Apache Maven, Android SDK with `d8` in PATH (build-tools 28+
 mvn compile    # Compile Java source to bytecode (target/classes/)
 mvn package    # Compile + convert to Dalvik bytecode → produces target/ape-rv.jar
 mvn clean      # Remove build artifacts (target/)
+mvn install -Drvsec_home=<path>   # package + copy ape-rv.jar to aperv-tool module in rv-android
+                                  # <path> = root of rvsec workspace (e.g. /pedro/.../workspace-rv/rvsec)
+                                  # copies to: <path>/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar
 ```
 
 The build uses `framework/classes-full-debug.jar` and `dalvik_stub/classes.jar` as compile-time-only dependencies (system scope). They must not appear in `target/ape-rv.jar`. Source layout: `src/main/java/`. Java release compatibility: 11.

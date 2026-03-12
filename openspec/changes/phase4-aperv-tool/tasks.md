@@ -9,12 +9,12 @@
 
 ## 2. rv-android change — aperv-tool module + e2e
 
-- [ ] 2.1 Create GitHub issue in rv-android repo for the aperv-tool Python module (references ape issue #3). Title: "Phase 4: Add aperv-tool Python module and rv-platform registration".
-- [ ] 2.2 Run `/opsx:ff phase4-aperv-tool` in the rv-android repo context to generate all artifacts for the aperv-tool change (module structure, ApeRVTool implementation, rv-platform registration, e2e verification). Use design.md from this change as primary reference.
-- [ ] 2.3 Run `/opsx:apply phase4-aperv-tool` in rv-android — implement all tasks: aperv-tool module files (pyproject.toml, __init__.py files, .gitignore, tool.py), rv-platform registration, uv sync, smoke test, ADB e2e run, lint, verify, code-review.
-- [ ] 2.4 Confirm rv-android change is archived (`/opsx:archive phase4-aperv-tool` in rv-android).
+- [x] 2.1 Create GitHub issue in rv-android repo for the aperv-tool Python module (references ape issue #3). Title: "Phase 4: Add aperv-tool Python module and rv-platform registration".
+- [x] 2.2 Run `/opsx:ff phase4-aperv-tool` in the rv-android repo context to generate all artifacts for the aperv-tool change (module structure, ApeRVTool implementation, rv-platform registration, e2e verification). Use design.md from this change as primary reference.
+- [x] 2.3 Run `/opsx:apply phase4-aperv-tool` in rv-android — implement all tasks: aperv-tool module files (pyproject.toml, __init__.py files, .gitignore, tool.py), rv-platform registration, uv sync, smoke test, ADB e2e run, lint, verify, code-review. (commit ec63c07a, closes #36)
+- [x] 2.4 Confirm rv-android change is archived (`/opsx:archive phase4-aperv-tool` in rv-android).
 
 ## 3. Close-out (ape repo)
 
-- [ ] 3.1 Run `/opsx:sync phase4-aperv-tool` — sync delta specs to main specs (pom.xml install hook).
-- [ ] 3.2 Invoke `/sdd-code-reviewer` via Skill tool.
+- [x] 3.1 Run `/opsx:sync phase4-aperv-tool` — sync delta specs to main specs (pom.xml install hook).
+- [x] 3.2 Invoke `/sdd-code-reviewer` via Skill tool.

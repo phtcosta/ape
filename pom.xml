@@ -79,34 +79,6 @@
             </plugin>
 
             <!--
-                Step 3 (install): Copy ape-rv.jar to the aperv-tool module in rv-android so
-                that `mvn install` keeps the Python plugin's JAR up to date automatically.
-                Override the destination with -Drvsec_home=<path>.
-            -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-resources-plugin</artifactId>
-                <version>3.3.1</version>
-                <executions>
-                    <execution>
-                        <id>copy-jar-to-aperv-tool</id>
-                        <phase>install</phase>
-                        <goals><goal>copy-resources</goal></goals>
-                        <configuration>
-                            <outputDirectory>${rvsec_home}/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv</outputDirectory>
-                            <resources>
-                                <resource>
-                                    <directory>${project.build.directory}</directory>
-                                    <includes><include>ape-rv.jar</include></includes>
-                                    <filtering>false</filtering>
-                                </resource>
-                            </resources>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <!--
                 Step 2 (package): Convert ape-rv-classes.jar to Dalvik bytecode via d8.
                 Output: target/ape-rv.jar containing classes.dex.
                 min-api 23 = Android 6.0 Marshmallow (minimum supported by APE).
@@ -130,6 +102,37 @@
                                 <argument>23</argument>
                                 <argument>${project.build.directory}/ape-rv-classes.jar</argument>
                             </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                Step 3 (install): Copy ape-rv.jar to the aperv-tool module in rv-android so
+                that `mvn install` keeps the Python plugin's JAR up to date automatically.
+                Override the root workspace with -Drvsec_home=<path> (default:
+                ${user.home}/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec).
+                JAR is copied to <rvsec_home>/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-jar-to-aperv-tool</id>
+                        <phase>install</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${rvsec_home}/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv</outputDirectory>
+                            <overwrite>true</overwrite>
+                            <resources>
+                                <resource>
+                                    <directory>${project.build.directory}</directory>
+                                    <includes><include>ape-rv.jar</include></includes>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
                         </configuration>
                     </execution>
                 </executions>
