@@ -74,7 +74,10 @@ import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.tree.GUITreeWidgetDiffer;
+import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
+import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.Utils;
 
 import android.content.ComponentName;
@@ -120,6 +123,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     protected GUITreeWidgetDiffer widgetDiffer = new GUITreeWidgetDiffer();
 
+    private final MopData _mopData;
+
     protected ActionFilter validatedActionFilter = new BaseActionFilter() {
         @Override
         public boolean include(ModelAction action) {
@@ -135,6 +140,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         graph.addListener(this);
         this.model = new Model(graph);
         this.timestamp = graph.getTimestamp();
+        this._mopData = MopData.load(Config.mopDataPath);
     }
 
     public void updateModel(Model newModel) {
@@ -1111,6 +1117,19 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 priority = 1;
             }
             action.setPriority(priority);
+        }
+        // MOP guidance pass (Phase 3) — runs only when mopDataPath is set
+        if (_mopData != null) {
+            String activity = newState.getActivity();
+            for (ModelAction action : newState.getActions()) {
+                if (!action.requireTarget() || !action.isValid()) continue;
+                if (!action.isResolvedAt(timestamp)) continue;
+                GUITreeNode node = action.getResolvedNode();
+                if (node == null) continue;
+                String shortId = MopData.extractShortId(node.getResourceID());
+                int boost = MopScorer.score(activity, shortId, _mopData);
+                if (boost > 0) action.setPriority(action.getPriority() + boost);
+            }
         }
     }
 

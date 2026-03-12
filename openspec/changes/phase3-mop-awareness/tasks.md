@@ -7,7 +7,7 @@
 
 ## 1. Java Core (ape repo)
 
-- [ ] 1.1 Create `src/main/java/com/android/commands/monkey/ape/utils/MopData.java`:
+- [x] 1.1 Create `src/main/java/com/android/commands/monkey/ape/utils/MopData.java`:
   - Inner class `WidgetMopFlags { boolean directMop; boolean transitiveMop; }`
   - Fields: `Map<String, Map<String, WidgetMopFlags>> widgetData` (activity → shortId → flags); `Set<String> mopActivities` (activities with any MOP-reachable widget)
   - `static MopData load(String path)` — returns null on null/missing/malformed; logs WARNING via `android.util.Log` or APE's Logger
@@ -26,7 +26,7 @@
     ```
   - **Use `android.util.JsonReader`** (streaming) — available in `framework/classes-full-debug.jar`. Do NOT add `org.json` to pom.xml.
 
-- [ ] 1.2 Create `src/main/java/com/android/commands/monkey/ape/utils/MopScorer.java`:
+- [x] 1.2 Create `src/main/java/com/android/commands/monkey/ape/utils/MopScorer.java`:
   - `static int score(String activity, String shortId, MopData data)`:
     - `WidgetMopFlags f = data.getWidget(activity, shortId)`
     - `f != null && f.directMop` → `500`
@@ -34,14 +34,14 @@
     - `f == null && data.activityHasMop(activity)` → `100`
     - else → `0`
 
-- [ ] 1.3 In `src/main/java/com/android/commands/monkey/ape/utils/Config.java`, add after the existing String fields:
+- [x] 1.3 In `src/main/java/com/android/commands/monkey/ape/utils/Config.java`, add after the existing String fields:
   ```java
   // Path to static analysis JSON on device (null = MOP scoring disabled).
   // Loaded once at class init from ape.properties; not updated if file changes at runtime.
   public static final String mopDataPath = Config.get("ape.mopDataPath", null);
   ```
 
-- [ ] 1.4 In `src/main/java/com/android/commands/monkey/ape/agent/StatefulAgent.java`:
+- [x] 1.4 In `src/main/java/com/android/commands/monkey/ape/agent/StatefulAgent.java`:
   - Add field: `private final MopData _mopData;`
   - In constructor: `_mopData = MopData.load(Config.mopDataPath);`
   - In `adjustActionsByGUITree()` (line ~1059), **append a second loop after the existing loop** that ends at line ~1114:
@@ -61,16 +61,16 @@
   - Note: the loop variable is `newState.getActions()` — same as the existing loop at line 1061. `candidateActions` does NOT exist in this method.
   - `MopData.extractShortId()` is the static helper from task 1.1 — make it package-visible (`static String`, not `private`).
 
-- [ ] 1.5 Run `mvn package` — must succeed; `target/ape-rv.jar` must contain `MopData.class` and `MopScorer.class`:
+- [x] 1.5 Run `mvn package` — must succeed; `target/ape-rv.jar` must contain `MopData.class` and `MopScorer.class`:
   ```bash
   mvn package && unzip -l target/ape-rv.jar | grep -E "MopData|MopScorer"
   ```
 
 ## 2. aperv-tool sata_mop Wiring (rv-android repo)
 
-- [ ] 2.1 In `modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py`, update `get_variants()`: change `sata_mop` entry from `"mop_data": None` to `"mop_data": "static_analysis"`.
+- [x] 2.1 In `modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py`, update `get_variants()`: change `sata_mop` entry from `"mop_data": None` to `"mop_data": "static_analysis"`.
 
-- [ ] 2.2 Add `_find_static_analysis_file(self, task: Task) -> str | None` to `ApeRVTool` (copy from rvsmart-tool's identical method):
+- [x] 2.2 Add `_find_static_analysis_file(self, task: Task) -> str | None` to `ApeRVTool` (copy from rvsmart-tool's identical method):
   ```python
   def _find_static_analysis_file(self, task: Task):
       if not hasattr(task, "results_dir") or not task.results_dir:
@@ -84,7 +84,7 @@
       return None
   ```
 
-- [ ] 2.3 In `execute_tool_specific_logic()`, between Step 1 (JAR push) and Step 2 (properties push), add:
+- [x] 2.3 In `execute_tool_specific_logic()`, between Step 1 (JAR push) and Step 2 (properties push), add:
   ```python
   # Step 1b: Optionally push static analysis JSON for sata_mop variant
   mop_json_pushed = False
@@ -105,7 +105,7 @@
           )
   ```
 
-- [ ] 2.4 Change `_push_properties(device_serial, trace_file_path)` signature to `_push_properties(device_serial, trace_file_path, mop_json_pushed=False)` and add `ape.mopDataPath` line when flag is True:
+- [x] 2.4 Change `_push_properties(device_serial, trace_file_path)` signature to `_push_properties(device_serial, trace_file_path, mop_json_pushed=False)` and add `ape.mopDataPath` line when flag is True:
   ```python
   def _push_properties(self, device_serial, trace_file_path, mop_json_pushed=False):
       throttle_ms = self._tool_config.get("throttle_ms", 200)
@@ -116,29 +116,29 @@
   ```
   Update the call in `execute_tool_specific_logic()` to pass `mop_json_pushed`.
 
-- [ ] 2.5 Run `mvn install -Drvsec_home=...` to deploy updated `ape-rv.jar` to aperv-tool module.
+- [x] 2.5 Run `mvn install -Drvsec_home=...` to deploy updated `ape-rv.jar` to aperv-tool module.
 
 ## 3. Verification
 
-- [ ] 3.1 Device run — `sata` regression: run `aperv:sata` on `cryptoapp.apk`; confirm no MOP-related log lines, identical behaviour to pre-Phase-3:
+- [x] 3.1 Device run — `sata` regression: run `aperv:sata` on `cryptoapp.apk`; confirm no MOP-related log lines, identical behaviour to pre-Phase-3:
   ```bash
   uv run rv-platform run --tools aperv:sata --apk test-apks/cryptoapp.apk --timeout 60
   ```
 
-- [ ] 3.2 Device run — `sata_mop` with MOP data: run `aperv:sata_mop` on `cryptoapp.apk` (with `test-apks/cryptoapp.apk.json` present in results_dir); confirm:
+- [x] 3.2 Device run — `sata_mop` with MOP data: run `aperv:sata_mop` on `cryptoapp.apk` (with `test-apks/cryptoapp.apk.json` present in results_dir); confirm:
   - JSON pushed to `/data/local/tmp/static_analysis.json`
   - `ape.properties` contains `ape.mopDataPath=/data/local/tmp/static_analysis.json`
   - Logcat / trace shows MOP-related activity (MopData loaded, boost applied)
   - Trace file non-empty
 
-- [ ] 3.3 Verify `sata_mop` without JSON (absent file): confirm WARNING logged and run completes as plain `sata`.
+- [x] 3.3 Verify `sata_mop` without JSON (absent file): confirm WARNING logged and run completes as plain `sata`.
 
-- [ ] 3.4 Run `/sdd-qa-lint-fix` on changed Python files in rv-android — fix any ruff issues.
+- [x] 3.4 Run `/sdd-qa-lint-fix` on changed Python files in rv-android — fix any ruff issues.
 
-- [ ] 3.5 Run `/sdd-verify` on changed Python files — PASS (lint clean).
+- [x] 3.5 Run `/sdd-verify` on changed Python files — PASS (lint clean).
 
 ## 4. Close-out (ape repo)
 
-- [ ] 4.1 Run `/opsx:sync phase3-mop-awareness` — sync delta specs to main specs.
-- [ ] 4.2 Update `docs/plans/20260311_pre_plan.md` — mark Phase 3 done.
-- [ ] 4.3 Invoke `/sdd-code-reviewer` via Skill tool.
+- [x] 4.1 Run `/opsx:sync phase3-mop-awareness` — sync delta specs to main specs.
+- [x] 4.2 Update `docs/plans/20260311_pre_plan.md` — mark Phase 3 done.
+- [x] 4.3 Invoke `/sdd-code-reviewer` via Skill tool.

@@ -117,6 +117,11 @@ public class Config {
 
     public static final boolean usePatchNamer = Config.getBoolean("ape.usePatchNamer", true);
 
+    // Path to static analysis JSON on device (null = MOP scoring disabled).
+    // Loaded once at class init from ape.properties; not updated if file changes at runtime.
+    // Note: Config.get(key) returns null when key is absent — safe for Hashtable.
+    public static final String mopDataPath = Config.get("ape.mopDataPath");
+
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
         if (configFile.exists()) {
