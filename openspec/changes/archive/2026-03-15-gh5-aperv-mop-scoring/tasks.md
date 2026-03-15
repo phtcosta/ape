@@ -28,5 +28,5 @@
 ## 6. Verification
 
 - [x] 6.1 Update `CLAUDE.md` — mark Phase 3 as implemented, document new config keys
-- [ ] 6.2 Commit all changes with `refs #5` in message
-- [ ] 6.3 Push to remote
+- [x] 6.2 Commit all changes with `refs #5` in message
+- [x] 6.3 Push to remote
