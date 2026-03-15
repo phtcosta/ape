@@ -39,7 +39,7 @@ When multiple candidate greedy states along a forward path have equal visit coun
 
 ### Requirement: SataAgent — Trivial Activity Detection
 
-`SataAgent` identifies activities that are difficult to explore further as "trivial" and avoids spending excessive time in them. An activity is trivial when it has fewer states than `ape.trivialActivityRankThreshold` (default: `3`) OR when its visited rate is below a threshold relative to the median/mean visit count across all activities. When the current activity is non-trivial and a trivial activity has unvisited actions reachable via strong transitions, `SataAgent` SHOULD navigate to that trivial activity to exploit unexplored actions there.
+`SataAgent` identifies activities that are difficult to explore further as "trivial" and avoids spending excessive time in them. An activity is trivial when it has fewer states than `ape.trivialActivityRankThreshold` (default: `3`) OR when its visited rate is below a threshold relative to the median/mean visit count across all activities. When the current activity is non-trivial and a trivial activity has unvisited actions reachable via strong transitions, `SataAgent` SHALL navigate to that trivial activity to exploit unexplored actions there.
 
 When multiple shortest paths to trivial activities are available and `_mopData` is non-null, `SataAgent` SHALL prefer the path whose target state has higher MOP density (as computed by `MopScorer.stateMopDensity()`). When MOP densities are equal or `_mopData` is null, random selection among paths is preserved.
 
