@@ -50,6 +50,7 @@ import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.utils.Logger;
+import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.RandomHelper;
 
 import android.content.ComponentName;
@@ -533,6 +534,11 @@ public class SataAgent extends StatefulAgent {
                         if (target.getVisitedCount() < lastTarget.getVisitedCount()) {
                             lastIndex = i;
                             lastTarget = target; // prefer colder state
+                        } else if (target.getVisitedCount() == lastTarget.getVisitedCount()
+                                && getMopData() != null
+                                && MopScorer.stateMopDensity(target, getMopData()) > MopScorer.stateMopDensity(lastTarget, getMopData())) {
+                            lastIndex = i;
+                            lastTarget = target; // MOP density tiebreaker
                         }
                     } else { // prefer colder activity
                         ActivityNode an1 = getGraph().getActivityNode(target.getActivity());
@@ -540,6 +546,11 @@ public class SataAgent extends StatefulAgent {
                         if (an1.getVisitedCount() < an2.getVisitedCount()) {
                             lastIndex = i;
                             lastTarget = target;
+                        } else if (an1.getVisitedCount() == an2.getVisitedCount()
+                                && getMopData() != null
+                                && MopScorer.stateMopDensity(target, getMopData()) > MopScorer.stateMopDensity(lastTarget, getMopData())) {
+                            lastIndex = i;
+                            lastTarget = target; // MOP density tiebreaker
                         }
                     }
                 }
@@ -758,7 +769,27 @@ public class SataAgent extends StatefulAgent {
         {
             List<Subsequence> selectedPaths = getGraph().findShortestPaths(newState, filter, pathLength);
             if (!selectedPaths.isEmpty()) {
-                Subsequence path = RandomHelper.randomPick(selectedPaths);
+                Subsequence path;
+                if (getMopData() != null && selectedPaths.size() > 1) {
+                    // Prefer path to state with highest MOP density
+                    Subsequence best = selectedPaths.get(0);
+                    int bestDensity = MopScorer.stateMopDensity(best.getLastState(), getMopData());
+                    for (int pi = 1; pi < selectedPaths.size(); pi++) {
+                        Subsequence candidate = selectedPaths.get(pi);
+                        int density = MopScorer.stateMopDensity(candidate.getLastState(), getMopData());
+                        if (density > bestDensity) {
+                            best = candidate;
+                            bestDensity = density;
+                        }
+                    }
+                    // If all densities equal, fall back to random
+                    int finalDensity = bestDensity;
+                    boolean allEqual = selectedPaths.stream()
+                            .allMatch(p -> MopScorer.stateMopDensity(p.getLastState(), getMopData()) == finalDensity);
+                    path = allEqual ? RandomHelper.randomPick(selectedPaths) : best;
+                } else {
+                    path = RandomHelper.randomPick(selectedPaths);
+                }
                 Logger.iformat("Find a path (1/%d) to a trivial activity %s.", selectedPaths.size(),
                         getGraph().getActivityNode(path.getLastState().getActivity()));
                 return refillBuffer(path);

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 APE-RV is a fork of APE (Android Property Explorer), a model-based Android GUI testing tool from ETH Zurich's AST Lab (ICSE 2019). This fork is developed at the University of Brasília as part of the RVSEC research infrastructure. It extends the original APE with: a modernized build system (Phase 1), AndroidX UI coverage improvements and MODEL_MENU exploration (Phase 2), MOP-guided action scoring (Phase 3), and an aperv plugin for rv-android (Phase 4).
 
-**Current repository state**: Maven+d8+Java 11 build → `target/ape-rv.jar`. Phase 1 (build), Phase 2 (AndroidX/MODEL_MENU), and Phase 4 (aperv-tool in rv-android) are complete. Phase 3 (MOP/RV Awareness) is not yet implemented.
+**Current repository state**: Maven+d8+Java 11 build → `target/ape-rv.jar`. All phases complete: Phase 1 (build), Phase 2 (AndroidX/MODEL_MENU), Phase 3 (MOP-guided action scoring with configurable weights + navigation-level MOP density tiebreaker), Phase 4 (aperv-tool in rv-android).
 
 ## Build Commands
 
@@ -118,6 +118,8 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `maxStatesPerActivity` / `maxGUITreesPerState` — state space limits
 - `takeScreenshot` / `saveGUITreeToXmlEveryStep` — debug output
 - `defaultGUIThrottle` — delay between actions
+- `mopDataPath` — path to static analysis JSON on device (null = MOP scoring disabled)
+- `mopWeightDirect` / `mopWeightTransitive` / `mopWeightActivity` — MOP scoring weights (defaults: 100/60/20), configurable via `ape.properties`
 
 ## Notes
 

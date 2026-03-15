@@ -122,6 +122,13 @@ public class Config {
     // Note: Config.get(key) returns null when key is absent — safe for Hashtable.
     public static final String mopDataPath = Config.get("ape.mopDataPath");
 
+    // MOP scoring weights — configurable via ape.properties.
+    // Controls how strongly MOP reachability boosts action priority relative to SATA base (~32-50).
+    // Defaults chosen so MOP is influential (2-3x base) but does not dominate exploration.
+    public static final int mopWeightDirect = Config.getInteger("ape.mopWeightDirect", 100);
+    public static final int mopWeightTransitive = Config.getInteger("ape.mopWeightTransitive", 60);
+    public static final int mopWeightActivity = Config.getInteger("ape.mopWeightActivity", 20);
+
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
         if (configFile.exists()) {

@@ -1,12 +1,15 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.model.State;
+
 /**
  * Maps MOP reachability flags to integer priority boosts for action scoring.
  *
- * Scale (mirrors rvsmart):
- *   directMop              → +500
- *   transitiveMop (only)   → +300
- *   activityHasMop (no widget match) → +100
+ * Weights are read from Config (configurable via ape.properties):
+ *   directMop              → Config.mopWeightDirect     (default 100)
+ *   transitiveMop (only)   → Config.mopWeightTransitive (default  60)
+ *   activityHasMop (no widget match) → Config.mopWeightActivity (default 20)
  *   no match               →    0
  */
 public class MopScorer {
@@ -23,17 +26,46 @@ public class MopScorer {
         MopData.WidgetMopFlags f = data.getWidget(activity, shortId);
         if (f != null) {
             if (f.directMop) {
-                return 500;
+                return Config.mopWeightDirect;
             }
             if (f.transitiveMop) {
-                return 300;
+                return Config.mopWeightTransitive;
             }
-            // Widget found but no MOP flags — no boost (not the activity-level fallback case)
             return 0;
         }
         if (data.activityHasMop(activity)) {
-            return 100;
+            return Config.mopWeightActivity;
         }
         return 0;
+    }
+
+    /**
+     * Counts the number of target-requiring, valid actions in a state whose activity
+     * has MOP-reachable widgets. Used as a tiebreaker when selecting navigation targets
+     * in ABA and trivial-activity exploration.
+     *
+     * For non-current states, individual widget resolution is unavailable (getResolvedNode()
+     * only works for the current GUITree). The density metric counts target actions in
+     * MOP-bearing activities as a proxy for MOP reachability at that state.
+     *
+     * @param state the state to evaluate
+     * @param data  loaded MOP data (returns 0 if null)
+     * @return count of target-requiring valid actions if the activity has MOP data, else 0
+     */
+    public static int stateMopDensity(State state, MopData data) {
+        if (data == null) {
+            return 0;
+        }
+        String activity = state.getActivity();
+        if (!data.activityHasMop(activity)) {
+            return 0;
+        }
+        int count = 0;
+        for (ModelAction action : state.getActions()) {
+            if (action.requireTarget() && action.isValid()) {
+                count++;
+            }
+        }
+        return count;
     }
 }

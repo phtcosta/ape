@@ -143,6 +143,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this._mopData = MopData.load(Config.mopDataPath);
     }
 
+    protected MopData getMopData() {
+        return _mopData;
+    }
+
     public void updateModel(Model newModel) {
         this.model = newModel;
         if (currentState != null) {
@@ -1118,18 +1122,28 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             }
             action.setPriority(priority);
         }
-        // MOP guidance pass (Phase 3) — runs only when mopDataPath is set
+        // MOP guidance pass — runs only when mopDataPath is set
         if (_mopData != null) {
             String activity = newState.getActivity();
+            int boostedCount = 0;
+            int totalTarget = 0;
+            int maxBoost = 0;
             for (ModelAction action : newState.getActions()) {
                 if (!action.requireTarget() || !action.isValid()) continue;
                 if (!action.isResolvedAt(timestamp)) continue;
+                totalTarget++;
                 GUITreeNode node = action.getResolvedNode();
                 if (node == null) continue;
                 String shortId = MopData.extractShortId(node.getResourceID());
                 int boost = MopScorer.score(activity, shortId, _mopData);
-                if (boost > 0) action.setPriority(action.getPriority() + boost);
+                if (boost > 0) {
+                    action.setPriority(action.getPriority() + boost);
+                    boostedCount++;
+                    if (boost > maxBoost) maxBoost = boost;
+                }
             }
+            Logger.iformat("[APE-RV] MOP boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
+                    activity, newState.getStateKey(), boostedCount, totalTarget, maxBoost);
         }
     }
 
