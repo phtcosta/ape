@@ -31,11 +31,9 @@ StatefulAgent
   │
   └── selectNewActionNonnull() [SataAgent]
         ├── [NEW] LLM new-state check (isNewState → before SATA chain)
+        ├── [NEW] LLM stagnation check (graphStableCounter > threshold/2 → before SATA chain)
         ├── SATA chain (existing: buffer → ABA → trivial → greedy)
         └── epsilon-greedy fallback (existing, unchanged)
-
-checkStable() / onGraphStable()
-  └── [NEW] LLM stagnation check (graphStableCounter > threshold/2 → before restart)
 ```
 
 ### Key Components
@@ -64,13 +62,13 @@ checkStable() / onGraphStable()
 | llm-infrastructure: Circuit breaker | `ape/llm/LlmCircuitBreaker.java` | Unit: `LlmCircuitBreakerTest` (state transitions) |
 | llm-infrastructure: LLM exception type | `ape/llm/LlmException.java` | N/A (internal to SglangClient) |
 | llm-routing: New-state mode | `LlmRouter.shouldRouteNewState()` + `SataAgent.selectNewActionNonnull()` | Unit: `LlmRouterTest` + Manual: LLM called on first state visit |
-| llm-routing: Stagnation mode | `LlmRouter.shouldRouteStagnation()` + stagnation check | Unit: `LlmRouterTest` + Manual: LLM called when graphStableCounter > threshold/2 |
+| llm-routing: Stagnation mode | `LlmRouter.shouldRouteStagnation()` + `SataAgent.selectNewActionNonnull()` | Unit: `LlmRouterTest` + Manual: LLM called when graphStableCounter > threshold/2 |
 | llm-routing: Boundary reject | `LlmRouter.mapToModelAction()` | Unit: `LlmRouterTest` (status bar, nav bar rejection) |
 | llm-prompt: GUITree → prompt | `ape/llm/ApePromptBuilder.java` | Unit: `ApePromptBuilderTest` |
 | llm-prompt: Coordinate → ModelAction mapping | `LlmRouter.mapToModelAction()` | Unit: `LlmRouterTest` (bounds, Euclidean, type_text, long_click) |
 | exploration: isNewState capture before markVisited | `StatefulAgent.updateStateInternal()` | Unit: `LlmRouterTest` (via integration) + Manual |
 | exploration: LLM new-state hook in SataAgent | `SataAgent.selectNewActionNonnull()` top | Manual: LLM called on first state visit |
-| exploration: LLM stagnation hook | `SataAgent` stability check path | Manual: LLM called when graphStableCounter > threshold/2 |
+| exploration: LLM stagnation hook | `SataAgent.selectNewActionNonnull()` stagnation check | Manual: LLM called when graphStableCounter > threshold/2 |
 | exploration: Action history ring buffer | `StatefulAgent._actionHistory` | Unit: `ApePromptBuilderTest` (consumes history) |
 | exploration: LLM telemetry at tearDown | `StatefulAgent.tearDown()` | Manual: summary printed on termination |
 | mop-guidance: Weight revert v2→v1 | `ape/utils/Config.java` lines 128-130 | Manual: MOP boosts are 500/300/100 |
@@ -118,9 +116,9 @@ checkStable() / onGraphStable()
 
 **Decision**:
 - **New-state**: At the top of `selectNewActionNonnull()`, before the SATA strategy chain, guarded by the `_isNewState` flag (captured before `markVisited()` in `updateStateInternal()`)
-- **Stagnation**: In the stability check path, when `graphStableCounter > graphStableRestartThreshold / 2`, before the exploration reaches the restart threshold
+- **Stagnation**: Also in `selectNewActionNonnull()`, after the new-state check and before the SATA chain, guarded by `graphStableCounter > graphStableRestartThreshold / 2`. The `graphStableCounter` is a `protected` field in `StatefulAgent`, accessible from `SataAgent`. Note: `StatefulAgent.onGraphStable()` still handles the restart logic at `counter > threshold` — the LLM hook does NOT modify the restart mechanism.
 
-**Rationale**: Follows the MOP integration precedent — minimal changes to existing control flow, guarded by config flags, null return falls through to existing behavior. The `isNewState` flag fix addresses a bug where `state.getVisitedCount() == 0` would never be true at the point of the hook because `markVisited()` has already been called.
+**Rationale**: Both hooks are placed in `selectNewActionNonnull()` for simplicity and consistency. Placing the stagnation hook in `onGraphStable()` would require storing a pending action across steps (since `checkStable()` runs after action execution, not during selection), adding unnecessary complexity. By checking `graphStableCounter` at action selection time, the LLM can directly return an action. Follows the MOP integration precedent — minimal changes to existing control flow, guarded by config flags, null return falls through to existing behavior. The `isNewState` flag fix addresses a bug where `state.getVisitedCount() == 0` would never be true at the point of the hook because `markVisited()` has already been called.
 
 ### D5: Coordinate → ModelAction mapping strategy
 
@@ -207,7 +205,7 @@ class LlmActionResult {
 11. If no match (dynamic element) → return `LlmActionResult(null, pixelX, pixelY, actionType, text)` — caller executes raw click via MonkeyTouchEvent
 12. Memory cleanup in `finally`: null out pngBytes, base64Image, messages
 
-**Raw click execution**: When `isRawClick()`, the caller injects a `MonkeyTouchEvent` at the device pixel coordinates. The action is NOT tracked as a `StateTransition` in the Model, but its effect (screen change, new GUITree) is captured in the next exploration cycle. This is analogous to APE's existing fuzzing mechanism which also injects untracked raw events.
+**Raw click execution**: When `isRawClick()`, the caller (`SataAgent`) creates and injects `MonkeyTouchEvent` (ACTION_DOWN + ACTION_UP) at the device pixel coordinates directly into `MonkeySourceApe`'s event queue via `addEvent()`. This bypasses the normal Action→Event pipeline since there is no ModelAction to map to. The raw click is NOT tracked as a `StateTransition` in the Model, but its effect (screen change, new GUITree) is captured in the next exploration cycle. This is analogous to APE's existing fuzzing mechanism which also injects untracked raw events. After injecting the raw click events, `selectNewActionNonnull()` returns a `MODEL_BACK` sentinel (which will be overridden by the injected events) to satisfy the non-null return contract.
 
 ### `ApePromptBuilder.build(...)` → `List<SglangClient.Message>`
 
@@ -219,16 +217,18 @@ You are an Android UI testing agent exploring an app.
 DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
 PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
 AVOID: status bar (top), navigation bar (bottom).
-RULES: Don't click same position twice. Use type_text for input fields.
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
 Tools (coordinates in [0,1000) normalized space):
   click(x, y) — tap element
   long_click(x, y) — long press element
-  type_text(x, y, text) — type into field
+  type_text(x, y, text) — type into field [only when input fields are available]
   back() — press back
 Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
 ```
 
-Design rationale: rvsmart V13 (~120 tokens) performs well with a compact system message. The compact format saves ~300 tokens per call vs verbose V17-style reasoning steps, reducing inference latency by ~0.5-1s. All essential info (dialog handling, priority, coordinate convention, tools, response format) fits in ~120 tokens.
+**Dynamic tool schema**: `type_text` SHALL be included in the tool list only when the current widget list contains at least one input-capable widget (EditText, SearchView, AutoCompleteTextView). When no input widgets are present, `type_text` is omitted to reduce LLM confusion and unnecessary calls. The `ApePromptBuilder` checks for input widgets before generating the system message.
+
+Design rationale: rvsmart V13 (~120 tokens) performs well with a compact system message. The compact format saves ~300 tokens per call vs verbose V17-style reasoning steps, reducing inference latency by ~0.5-1s. All essential info (dialog handling, priority, coordinate convention, tools, response format) fits in ~120 tokens. Dynamic tool schema avoids wasting LLM tokens on inapplicable actions.
 
 **User message** — two content parts, compact text:
 1. Image: base64 JPEG data URI (`data:image/jpeg;base64,...`)
@@ -326,6 +326,11 @@ Step N in exploration loop
   │   │       ├─ normalize Qwen [0,1000) coords → device pixels
   │   │       └─ map to nearest ModelAction (bounds containment → Euclidean fallback)
   │   │   If non-null → return (skip SATA chain)
+  │   │   If null → fall through
+  │   │
+  │   ├─ [MODE 2: Stagnation] if graphStableCounter > threshold/2 && llmOnStagnation
+  │   │   └─ LlmRouter.selectAction(...)
+  │   │   If non-null → reset graphStableCounter, return (skip SATA chain)
   │   │   If null → fall through to SATA
   │   │
   │   ├─ SATA chain: buffer → ABA → trivial → backward
@@ -335,14 +340,6 @@ Step N in exploration loop
   │   │   └─ epsilon-greedy: 95% least-visited / 5% random (unchanged)
   │   │
   │   └─ handleNullAction() (emergency)
-  │
-  ├─ [MODE 2: Stagnation] checkStable() / onGraphStable()
-  │   ├─ if graphStableCounter > threshold/2 && llmOnStagnation
-  │   │   └─ LlmRouter.selectAction(...)
-  │   │   If non-null → use action, reset graphStableCounter
-  │   │   If null → continue stagnation logic
-  │   ├─ if graphStableCounter >= threshold → requestRestart() (existing)
-  │   └─ else → continue
   │
   ├─ Record action in history ring buffer (for next prompt)
   └─ Execute chosen action → capture next GUITree → loop
@@ -384,7 +381,7 @@ All new classes in `ape/llm/` SHALL have JUnit unit tests. Test location: `src/t
 | `ToolCallParserTest` | Native format, XML tag format, inline JSON, Qwen3-VL malformed JSON fixes (missing y, array format, missing leading zero, truncated), type_text extraction, long_click extraction, all-fail returns null |
 | `CoordinateNormalizerTest` | Center of display, edge clamping (negative, >1000), zero coords, various device dimensions |
 | `LlmCircuitBreakerTest` | CLOSED→OPEN after 3 failures, OPEN→HALF_OPEN after timeout, HALF_OPEN→CLOSED on success, HALF_OPEN→OPEN on failure, success resets from any state |
-| `ApePromptBuilderTest` | Widget list format with MOP markers, coordinate normalization in widget list, action history with results, text truncation, null MopData (no markers), empty history omitted |
+| `ApePromptBuilderTest` | Widget list format with MOP markers, coordinate normalization in widget list, action history with results, text truncation, null MopData (no markers), empty history omitted, dynamic tool schema (type_text present/absent based on input widgets) |
 | `LlmRouterTest` | Boundary reject (status bar, nav bar), bounds containment matching, Euclidean distance fallback, smallest-area tiebreaker, back action shortcut, type_text setInputText, long_click action type, no match returns raw click, budget exhausted returns null |
 | `ImageProcessorTest` | Large image resize (longest edge ≤ 1000), small image no resize, null input returns null |
 | `SglangClientTest` | Request JSON format (model, temperature, messages), null response handling, timeout handling |

@@ -57,7 +57,7 @@ You are an Android UI testing agent exploring an app.
 DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
 PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
 AVOID: status bar (top), navigation bar (bottom).
-RULES: Don't click same position twice. Use type_text for input fields.
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
 Tools (coordinates in [0,1000) normalized space):
   click(x, y) — tap element
   long_click(x, y) — long press element
@@ -66,22 +66,37 @@ Tools (coordinates in [0,1000) normalized space):
 Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
 ```
 
+**Dynamic tool schema**: The `type_text` tool SHALL be included in the system message only when the current widget list contains at least one input-capable widget (EditText, SearchView, AutoCompleteTextView). When no input widgets are present, `type_text` is omitted from the tool list. This reduces LLM confusion and prevents wasted calls on inapplicable tools. The check is performed by `ApePromptBuilder.build()` when generating the system message.
+
 Key design choices:
 - **Compact format**: ~120 tokens saves ~300 tokens/call vs verbose V17. At 85 calls/session this saves ~25K tokens and ~0.5-1s latency per call.
 - **[DM]/[M] notation**: Compact markers matching rvsmart V17 (DM = direct monitored, M = transitive monitored)
 - **Coordinate convention**: Explicit [0, 1000) normalized space matching Qwen3-VL's native output format
 - **JSON response format**: `{"name": "<action>", "arguments": {<args>}}` — compatible with ToolCallParser's 3-level fallback
 - **Dialog handling**: Single line, covers permission and error dialogs
-- **type_text**: Mandatory for exploring apps with forms, login screens, search fields
+- **type_text**: Included when input fields are available; hints for semantically valid text (email, password, domain, etc.)
+- **Dynamic tool schema**: type_text omitted when no input widgets on screen, reducing token waste
 
 #### Scenario: System message content
 
 - **WHEN** `build()` is called with any valid inputs
 - **THEN** the first message SHALL have role `"system"`
-- **AND** it SHALL contain the REASONING STEPS, DIALOG HANDLING, PRIORITY, and RULES sections
-- **AND** it SHALL declare the `click`, `long_click`, `type_text`, and `back` tool schemas
+- **AND** it SHALL contain the DIALOG HANDLING, PRIORITY, and RULES sections
+- **AND** it SHALL declare the `click`, `long_click`, and `back` tool schemas
 - **AND** it SHALL specify that coordinates use [0, 1000) normalized space
 - **AND** it SHALL explain the meaning of [DM] and [M] markers
+
+#### Scenario: Dynamic tool schema — type_text included
+
+- **WHEN** `build()` is called and the actions list contains at least one action targeting an EditText, SearchView, or AutoCompleteTextView
+- **THEN** the system message SHALL include `type_text(x, y, text)` in the tool list
+- **AND** the RULES section SHALL include text input hints
+
+#### Scenario: Dynamic tool schema — type_text omitted
+
+- **WHEN** `build()` is called and no action in the list targets an input-capable widget
+- **THEN** `type_text` SHALL NOT appear in the tool list
+- **AND** the system message SHALL list only `click`, `long_click`, and `back`
 
 ---
 

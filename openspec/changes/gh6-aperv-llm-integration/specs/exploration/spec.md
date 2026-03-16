@@ -133,14 +133,16 @@ When `_llmRouter` is null (LLM disabled), the check is a single null comparison 
 ```mermaid
 flowchart TD
     START([selectNewAction called]) --> LLM_NEW{_llmRouter != null\nAND isNewState?}
-    LLM_NEW -->|yes| LLM_CALL[LlmRouter.selectAction]
-    LLM_CALL -->|non-null| LLM_RET[return LLM action]
-    LLM_CALL -->|null| BUFFER
-    LLM_NEW -->|no| BUFFER{actionBuffer\nnon-empty?}
+    LLM_NEW -->|yes| LLM_CALL1[LlmRouter.selectAction]
+    LLM_CALL1 -->|non-null| LLM_RET[return LLM action]
+    LLM_CALL1 -->|null| LLM_STAG
+    LLM_NEW -->|no| LLM_STAG{graphStableCounter\n> threshold/2\nAND llmOnStagnation?}
+    LLM_STAG -->|yes| LLM_CALL2[LlmRouter.selectAction]
+    LLM_CALL2 -->|non-null| LLM_STAG_RET[reset counter\nreturn LLM action]
+    LLM_CALL2 -->|null| BUFFER
+    LLM_STAG -->|no| BUFFER{actionBuffer\nnon-empty?}
     BUFFER -->|yes| BUFFERED[return next buffered action\nclear if last]
-    BUFFER -->|no| STABLE{graphStableCounter\n>= threshold?}
-    STABLE -->|yes| RESTART[trigger EVENT_RESTART\nreset counter]
-    STABLE -->|no| TRIVIAL[selectNewActionForTrivialActivity]
+    BUFFER -->|no| TRIVIAL[selectNewActionForTrivialActivity]
     TRIVIAL -->|path found| PATH[return first step\nstore rest in buffer]
     TRIVIAL -->|null| ABA[selectNewActionEarlyStageForABA]
     ABA -->|path found| PATH
@@ -179,22 +181,22 @@ flowchart TD
 
 ### Requirement: SataAgent — LLM Stagnation Hook
 
-The stability check path (where `graphStableCounter` is evaluated against thresholds) SHALL include an LLM stagnation hook at `graphStableCounter > graphStableRestartThreshold / 2`, earlier than the existing restart at `graphStableCounter >= graphStableRestartThreshold`.
+The `SataAgent.selectNewActionNonnull()` method SHALL include an LLM stagnation check **after** the new-state check and **before** the SATA chain, guarded by `graphStableCounter > graphStableRestartThreshold / 2`.
 
-This modifies the existing `SataAgent — Forced App Restart on Graph Stability` requirement by inserting an intermediate check:
+The `graphStableCounter` is a `protected` field in `StatefulAgent`, accessible from `SataAgent`. It is updated by `checkStable()` after each action execution, so by the time `selectNewActionNonnull()` runs for the next step, it reflects the current stagnation level. Note: `StatefulAgent.onGraphStable()` still handles the existing restart logic at `counter > threshold` — this hook does NOT modify the restart mechanism.
 
 ```
-if (graphStableCounter > threshold/2 && _llmRouter != null
+// In SataAgent.selectNewActionNonnull(), after new-state check:
+if (graphStableCounter > graphStableRestartThreshold / 2
+    && _llmRouter != null
     && _llmRouter.shouldRouteStagnation(graphStableCounter)) {
     LlmActionResult result = _llmRouter.selectAction(...);
     if (result != null) {
-        // use LLM action, reset graphStableCounter
-        graphStableCounter = 0;
-        return result;
+        graphStableCounter = 0;  // unblock exploration
+        return result.isModelAction() ? result.modelAction : handleRawClick(result);
     }
-    // null → continue stagnation logic (may eventually reach restart)
+    // null → fall through to SATA chain
 }
-// existing: if (graphStableCounter >= threshold) → requestRestart()
 ```
 
 #### Scenario: LLM breaks stagnation

@@ -6,7 +6,7 @@ The two modes target different exploration bottlenecks:
 
 1. **New-state mode** (`Config.llmOnNewState`): fires on the first visit to each newly discovered state. The `isNewState` flag is captured in `StatefulAgent.updateStateInternal()` **before** `Graph.markVisited()` to ensure accurate first-visit detection. This is the highest-value intervention point because the LLM sees a screen for the first time and can identify the most promising action using visual understanding that SATA lacks. Cost: ~50-100 calls per 10-minute run.
 
-2. **Stagnation mode** (`Config.llmOnStagnation`): fires when `graphStableCounter` exceeds half the restart threshold (`graphStableRestartThreshold / 2`), indicating the exploration is stagnating but has not yet reached the restart point. This concentrates LLM calls where there is evidence of SATA being stuck, rather than wasting calls probabilistically. This replaces both the original epsilon-LLM mode (wasteful 5% random trigger) and stuck-recovery mode (too late, only at restart threshold). Cost: ~10-30 calls per 10-minute run, concentrated during stagnation periods.
+2. **Stagnation mode** (`Config.llmOnStagnation`): checked in `SataAgent.selectNewActionNonnull()` when `graphStableCounter` exceeds half the restart threshold (`graphStableRestartThreshold / 2`), indicating the exploration is stagnating but has not yet reached the restart point. The `graphStableCounter` is a `protected` field in `StatefulAgent` updated by `checkStable()` after each action execution, so it reflects stagnation level at action selection time. This concentrates LLM calls where there is evidence of SATA being stuck, rather than wasting calls probabilistically. This replaces both the original epsilon-LLM mode (wasteful 5% random trigger) and stuck-recovery mode (too late, only at restart threshold). Cost: ~10-30 calls per 10-minute run, concentrated during stagnation periods. Note: `StatefulAgent.onGraphStable()` still handles the restart logic at `counter > threshold` — the LLM hook does NOT modify the restart mechanism.
 
 `LlmRouter` owns the lifecycle of all infrastructure components (`SglangClient`, `LlmCircuitBreaker`, `ScreenshotCapture`, `ImageProcessor`, `ToolCallParser`, `CoordinateNormalizer`, `ApePromptBuilder`). It is instantiated once in `StatefulAgent`'s constructor when `Config.llmUrl` is non-null, and the same instance is used for the entire exploration session. It maintains a call counter to enforce the `Config.llmMaxCalls` budget.
 
@@ -135,7 +135,7 @@ The check SHALL occur after `adjustActionsByGUITree()` has assigned priorities (
 
 When `Config.llmOnStagnation` is `true` and `graphStableCounter` exceeds half the restart threshold, the LLM router SHALL be consulted to attempt breaking out of stagnation before the exploration reaches the restart point.
 
-The trigger condition is: `graphStableCounter > Config.graphStableRestartThreshold / 2`. This is evaluated during the stability check phase, earlier than the existing restart mechanism which fires at `counter >= threshold`.
+The trigger condition is: `graphStableCounter > Config.graphStableRestartThreshold / 2`. This is evaluated in `SataAgent.selectNewActionNonnull()` after the new-state check and before the SATA chain. The `graphStableCounter` is a `protected` field in `StatefulAgent`, updated by `checkStable()` after each action execution, and reflects the current stagnation level at action selection time.
 
 #### Scenario: LLM provides escape action during stagnation
 
