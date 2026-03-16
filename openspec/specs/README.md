@@ -6,13 +6,13 @@ This directory contains the main specifications for APE-RV. Each subdirectory co
 
 | Domain | Spec | Phase | Status | Description |
 |--------|------|-------|--------|-------------|
-| [build](build/spec.md) | Build Infrastructure | 1 | **Current** | Ant + dx build system producing `ape.jar` |
+| [build](build/spec.md) | Build Infrastructure | 1 | **Current** | Maven + d8 build system producing `ape-rv.jar` |
 | [exploration](exploration/spec.md) | Exploration Engine | 1–2 | **Current** | Agent interface, 5 strategies, SATA heuristic |
 | [model](model/spec.md) | Exploration Model | 1–2 | **Current** | Graph of States, Transitions, ModelActions, ActionType |
 | [naming](naming/spec.md) | Naming & Abstraction | 1 | **Current** | Core CEGAR algorithm: Naming lattice, NamingFactory, refinement |
 | [ui-tree](ui-tree/spec.md) | UI Tree | 1–2 | **Current** | GUITree, GUITreeNode, scroll detection |
-| [mop-guidance](mop-guidance/spec.md) | MOP Guidance | 3 (optional) | **Planned** | MopData loader, MopScorer, sata_mop variant |
-| [aperv-tool](aperv-tool/spec.md) | aperv-tool Plugin | 4 | **Planned** | Python ApeRVTool for rv-android, 4 variants, JAR resolution |
+| [mop-guidance](mop-guidance/spec.md) | MOP Guidance | 3 | **Current** | MopData loader, MopScorer, configurable weights (500/300/100) |
+| [aperv-tool](aperv-tool/spec.md) | aperv-tool Plugin | 4 | **Current** | Python ApeRVTool for rv-android, 5 variants, JAR resolution |
 
 ## Spec→PRD Traceability
 

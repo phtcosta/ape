@@ -60,6 +60,7 @@ AVOID: status bar (top), navigation bar (bottom).
 RULES: Don't click same position twice. Use type_text for input fields.
 Tools (coordinates in [0,1000) normalized space):
   click(x, y) — tap element
+  long_click(x, y) — long press element
   type_text(x, y, text) — type into field
   back() — press back
 Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
@@ -78,7 +79,7 @@ Key design choices:
 - **WHEN** `build()` is called with any valid inputs
 - **THEN** the first message SHALL have role `"system"`
 - **AND** it SHALL contain the REASONING STEPS, DIALOG HANDLING, PRIORITY, and RULES sections
-- **AND** it SHALL declare the `click`, `type_text`, and `back` tool schemas
+- **AND** it SHALL declare the `click`, `long_click`, `type_text`, and `back` tool schemas
 - **AND** it SHALL specify that coordinates use [0, 1000) normalized space
 - **AND** it SHALL explain the meaning of [DM] and [M] markers
 
@@ -196,7 +197,7 @@ Recent:
 - <action_type> @(<normX>,<normY>) <WidgetClass> "<text>" → <result>
 ```
 
-Where `<result>` is a brief outcome: `same`, `new screen`, `previous screen`, `no effect`.
+Where `<result>` is a brief outcome: `same`, `new screen`, `previous screen`. Result is determined by comparing states: if `newState == lastState` → "same"; if `newState == stateBeforeLast` → "previous screen"; else → "new screen".
 
 For `type_text` actions, include the typed text: `- type_text @(x,y) "typed text" → result`.
 

@@ -135,7 +135,7 @@ The check SHALL occur after `adjustActionsByGUITree()` has assigned priorities (
 
 When `Config.llmOnStagnation` is `true` and `graphStableCounter` exceeds half the restart threshold, the LLM router SHALL be consulted to attempt breaking out of stagnation before the exploration reaches the restart point.
 
-The trigger condition is: `graphStableCounter > Config.graphStableRestartThreshold / 2`. This is evaluated during the stability check phase, earlier than the existing restart mechanism which fires at `counter > threshold`.
+The trigger condition is: `graphStableCounter > Config.graphStableRestartThreshold / 2`. This is evaluated during the stability check phase, earlier than the existing restart mechanism which fires at `counter >= threshold`.
 
 #### Scenario: LLM provides escape action during stagnation
 
@@ -216,9 +216,12 @@ The trigger condition is: `graphStableCounter > Config.graphStableRestartThresho
 
 `LlmRouter.mapToModelAction(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions)` SHALL map LLM output coordinates to the nearest valid `ModelAction` in the current state.
 
+**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * 0.05` (status bar) or `pixelY > deviceHeight * 0.94` (navigation bar), `mapToModelAction` SHALL return null and log `[APE-RV] LLM click in system UI, rejecting`. This prevents the LLM from wasting budget on system UI elements.
+
 **Special action types**:
 - If `actionType` equals `"back"`, the state's `backAction` SHALL be returned directly without coordinate matching.
-- If `actionType` equals `"type_text"`, only actions targeting input-capable widgets (EditText, SearchView, AutoCompleteTextView) SHALL be considered for matching. The `text` parameter SHALL be stored for use by the input generation mechanism.
+- If `actionType` equals `"long_click"`, coordinate matching SHALL proceed normally (bounds containment → Euclidean fallback), but if a matching widget has a MODEL_LONG_CLICK action available, that action SHALL be preferred. If only MODEL_CLICK is available, it SHALL be returned as fallback.
+- If `actionType` equals `"type_text"`, only actions targeting input-capable widgets (EditText, SearchView, AutoCompleteTextView) SHALL be considered for matching. When a match is found, the caller SHALL call `action.getResolvedNode().setInputText(text)` to inject the LLM-provided text into APE's existing input event generation pipeline.
 
 **Bounds containment (primary matching strategy)**: For each action where `action.requireTarget() == true` AND `action.isValid() == true` AND `action.getResolvedNode() != null`, check if `(pixelX, pixelY)` falls within the node's `getBoundsInScreen()` rectangle. If exactly one action's bounds contain the point, return that action. If multiple actions' bounds contain the point, return the one with the smallest area (most specific widget).
 
@@ -260,7 +263,27 @@ The trigger condition is: `graphStableCounter > Config.graphStableRestartThresho
 - **WHEN** `mapToModelAction(225, 325, "type_text", "user@example.com", actions)` is called
 - **AND** action C is an EditText at bounds `[50, 300, 400, 350]` (contains point)
 - **THEN** action C SHALL be returned
-- **AND** the text `"user@example.com"` SHALL be available for input generation
+- **AND** the caller SHALL call `action.getResolvedNode().setInputText("user@example.com")` to inject the text
+
+#### Scenario: long_click targets widget
+
+- **WHEN** `mapToModelAction(200, 230, "long_click", null, actions)` is called
+- **AND** action A has resolved node bounds `[100, 200, 300, 250]` (contains point) with actionType MODEL_LONG_CLICK
+- **AND** action B has bounds `[100, 200, 300, 250]` (same widget) with actionType MODEL_CLICK
+- **THEN** action A (MODEL_LONG_CLICK) SHALL be returned (preferred over MODEL_CLICK)
+
+#### Scenario: Boundary reject — status bar
+
+- **WHEN** `mapToModelAction(540, 50, "click", null, actions)` is called on a 1080x1920 device
+- **AND** `pixelY (50) < deviceHeight * 0.05 (96)`
+- **THEN** `mapToModelAction` SHALL return null
+- **AND** a log SHALL be emitted: `[APE-RV] LLM click in system UI, rejecting`
+
+#### Scenario: Boundary reject — navigation bar
+
+- **WHEN** `mapToModelAction(540, 1850, "click", null, actions)` is called on a 1080x1920 device
+- **AND** `pixelY (1850) > deviceHeight * 0.94 (1804.8)`
+- **THEN** `mapToModelAction` SHALL return null
 
 ---
 

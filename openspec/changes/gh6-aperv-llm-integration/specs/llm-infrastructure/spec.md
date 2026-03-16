@@ -148,7 +148,7 @@ Before parsing JSON at any level, the parser SHALL apply Qwen3-VL malformed JSON
 
 JSON parsing SHALL use `new JSONObject(fixedJson)` and field extraction via `obj.optString("name")`, `obj.optInt("x")`, etc.
 
-The returned `ParsedAction` SHALL contain `actionType` (String), `x` and `y` (int, in [0,1000) normalized Qwen3-VL space), and optional `text` (String, for type_text actions).
+The returned `ParsedAction` SHALL contain `actionType` (String — one of "click", "long_click", "type_text", "back"), `x` and `y` (int, in [0,1000) normalized Qwen3-VL space), and optional `text` (String, for type_text actions).
 
 #### Scenario: Native tool call format
 
@@ -171,6 +171,11 @@ The returned `ParsedAction` SHALL contain `actionType` (String), `x` and `y` (in
 
 - **WHEN** the response contains `{"name": "type_text", "arguments": {"x": 300, "y": 500, "text": "user@example.com"}}`
 - **THEN** a `ParsedAction` SHALL be returned with `actionType="type_text"`, `x=300`, `y=500`, `text="user@example.com"`
+
+#### Scenario: long_click action
+
+- **WHEN** the response contains `{"name": "long_click", "arguments": {"x": 450, "y": 600}}`
+- **THEN** a `ParsedAction` SHALL be returned with `actionType="long_click"`, `x=450`, `y=600`
 
 #### Scenario: All levels fail
 

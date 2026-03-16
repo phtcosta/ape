@@ -56,17 +56,23 @@ checkStable() / onGraphStable()
 
 | Requirement | Implementation | Test |
 |-------------|---------------|------|
-| llm-infrastructure: SGLang HTTP client (org.json) | `ape/llm/SglangClient.java` | Manual: SGLang responds to chat request |
+| llm-infrastructure: SGLang HTTP client (org.json) | `ape/llm/SglangClient.java` | Unit: `SglangClientTest` + Manual: SGLang responds to chat request |
 | llm-infrastructure: Screenshot capture | `ape/llm/ScreenshotCapture.java` | Manual: PNG bytes non-null on emulator |
-| llm-infrastructure: Image processing | `ape/llm/ImageProcessor.java` | Manual: base64 output ≤ expected size |
-| llm-infrastructure: Tool call parsing (org.json) | `ape/llm/ToolCallParser.java` | Manual: parse native/XML/JSON responses |
-| llm-infrastructure: Coordinate normalization | `ape/llm/CoordinateNormalizer.java` | Manual: pixel coords within device bounds |
-| llm-infrastructure: Circuit breaker | `ape/llm/LlmCircuitBreaker.java` | Manual: breaker trips after 3 failures |
+| llm-infrastructure: Image processing | `ape/llm/ImageProcessor.java` | Unit: `ImageProcessorTest` + Manual: base64 output ≤ expected size |
+| llm-infrastructure: Tool call parsing (org.json) | `ape/llm/ToolCallParser.java` | Unit: `ToolCallParserTest` (all 3 fallback levels + Qwen fixes) |
+| llm-infrastructure: Coordinate normalization | `ape/llm/CoordinateNormalizer.java` | Unit: `CoordinateNormalizerTest` |
+| llm-infrastructure: Circuit breaker | `ape/llm/LlmCircuitBreaker.java` | Unit: `LlmCircuitBreakerTest` (state transitions) |
 | llm-infrastructure: LLM exception type | `ape/llm/LlmException.java` | N/A (internal to SglangClient) |
-| llm-routing: New-state mode | `LlmRouter.shouldRouteNewState()` + `SataAgent.selectNewActionNonnull()` | Manual: LLM called on first state visit |
-| llm-routing: Stagnation mode | `LlmRouter.shouldRouteStagnation()` + stagnation check | Manual: LLM called when graphStableCounter > threshold/2 |
-| llm-prompt: GUITree → prompt | `ape/llm/ApePromptBuilder.java` | Manual: prompt includes widget list + screenshot + history |
-| llm-prompt: Coordinate → ModelAction mapping | `LlmRouter.mapToModelAction()` | Manual: bounds containment + Euclidean fallback verified in logs |
+| llm-routing: New-state mode | `LlmRouter.shouldRouteNewState()` + `SataAgent.selectNewActionNonnull()` | Unit: `LlmRouterTest` + Manual: LLM called on first state visit |
+| llm-routing: Stagnation mode | `LlmRouter.shouldRouteStagnation()` + stagnation check | Unit: `LlmRouterTest` + Manual: LLM called when graphStableCounter > threshold/2 |
+| llm-routing: Boundary reject | `LlmRouter.mapToModelAction()` | Unit: `LlmRouterTest` (status bar, nav bar rejection) |
+| llm-prompt: GUITree → prompt | `ape/llm/ApePromptBuilder.java` | Unit: `ApePromptBuilderTest` |
+| llm-prompt: Coordinate → ModelAction mapping | `LlmRouter.mapToModelAction()` | Unit: `LlmRouterTest` (bounds, Euclidean, type_text, long_click) |
+| exploration: isNewState capture before markVisited | `StatefulAgent.updateStateInternal()` | Unit: `LlmRouterTest` (via integration) + Manual |
+| exploration: LLM new-state hook in SataAgent | `SataAgent.selectNewActionNonnull()` top | Manual: LLM called on first state visit |
+| exploration: LLM stagnation hook | `SataAgent` stability check path | Manual: LLM called when graphStableCounter > threshold/2 |
+| exploration: Action history ring buffer | `StatefulAgent._actionHistory` | Unit: `ApePromptBuilderTest` (consumes history) |
+| exploration: LLM telemetry at tearDown | `StatefulAgent.tearDown()` | Manual: summary printed on termination |
 | mop-guidance: Weight revert v2→v1 | `ape/utils/Config.java` lines 128-130 | Manual: MOP boosts are 500/300/100 |
 
 ## Goals / Non-Goals
@@ -136,9 +142,23 @@ checkStable() / onGraphStable()
 
 ### D8: type_text support
 
-**Decision**: Include `type_text(x, y, text)` in the LLM tool schema. When the LLM suggests typing text, `mapToModelAction` finds the nearest input-capable widget (EditText, SearchView). The text parameter is available for the existing APE fuzzing/input mechanism.
+**Decision**: Include `type_text(x, y, text)` in the LLM tool schema. When the LLM suggests typing text, `mapToModelAction` finds the nearest input-capable widget (EditText, SearchView) and injects the text via `resolvedNode.setInputText(text)`.
 
-**Rationale**: Many apps require text input (login, search, forms) to advance to deeper screens. Without type_text, the LLM can only click on input fields without generating meaningful text. Both rvsmart and rvagent include type_text as a core tool. The implementation reuses APE's existing input handling — the LLM provides the text content, APE handles the mechanical input event generation.
+**Rationale**: Many apps require text input (login, search, forms) to advance to deeper screens. Without type_text, the LLM can only click on input fields without generating meaningful text. Both rvsmart and rvagent include type_text as a core tool.
+
+**Integration mechanism**: When `LlmActionResult.text != null` and the matched ModelAction targets an input-capable widget, the caller calls `action.getResolvedNode().setInputText(text)` before returning. This injects the LLM-provided text into APE's existing input event generation pipeline — `MonkeySourceApe.generateEventsForActionInternal()` checks `node.getInputText()` and generates character events from it.
+
+### D9: long_click support
+
+**Decision**: Include `long_click(x, y)` in the LLM tool schema. When the LLM suggests a long press, `mapToModelAction` finds the matching widget and returns the MODEL_LONG_CLICK action if available.
+
+**Rationale**: Some apps use long press for context menus, selection mode, drag-and-drop, etc. Without long_click, the LLM can only perform regular taps even when it visually identifies that a long press is appropriate. Note: scroll is deliberately excluded from the tool schema because it doesn't benefit from LLM semantic understanding and would waste ~3-5s of LLM call time on a mechanical action SATA already handles.
+
+### D10: Boundary reject
+
+**Decision**: Reject LLM clicks in the status bar (top 5% of screen height) and navigation bar (bottom 6%). Return null → SATA fallback.
+
+**Rationale**: Copied from rvsmart. LLM occasionally targets system UI elements (clock, battery, back/home/recent buttons). These clicks waste LLM call budget and never contribute to app exploration.
 
 ## API Design
 
@@ -165,7 +185,7 @@ Returns an `LlmActionResult` which can be either a matched `ModelAction` (widget
 class LlmActionResult {
     ModelAction modelAction;  // non-null if widget found in current state
     int pixelX, pixelY;       // device pixel coords (always set for click/type_text)
-    String actionType;        // "click", "type_text", "back"
+    String actionType;        // "click", "long_click", "type_text", "back"
     String text;              // for type_text
 
     boolean isModelAction()   // modelAction != null — tracked by Model
@@ -202,6 +222,7 @@ AVOID: status bar (top), navigation bar (bottom).
 RULES: Don't click same position twice. Use type_text for input fields.
 Tools (coordinates in [0,1000) normalized space):
   click(x, y) — tap element
+  long_click(x, y) — long press element
   type_text(x, y, text) — type into field
   back() — press back
 Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
@@ -236,7 +257,9 @@ Recent:
 - back → previous screen
 ```
 
-Each entry: action type + coords (in [0,1000) space) + widget context + result. Coords in the same space as the widget list orient the LLM about spatial history. type_text includes the text that was typed. Result (same/new screen/previous screen/no effect) informs whether to retry.
+Each entry: action type + coords (in [0,1000) space) + widget context + result. Coords in the same space as the widget list orient the LLM about spatial history. type_text includes the text that was typed. Result (same/new screen/previous screen) informs whether to retry.
+
+**Result determination**: After each action is executed, the result is inferred by comparing the new state to the previous state in `StatefulAgent.updateStateInternal()`: if `newState == lastState` → "same"; if `newState == stateBeforeLast` → "previous screen"; else → "new screen". The result is stored in the `ActionHistoryEntry` ring buffer for use in the next prompt.
 
 **Context** (one line):
 ```
@@ -276,7 +299,9 @@ The LLM understands that "Domain" expects a valid domain name, not random charac
 
 **Phase 2 — Euclidean distance fallback**: If no bounds contain the point, find nearest widget within `max(50, min(width, height) / 2)` pixel tolerance.
 
-**Special types**: `"back"` → return backAction directly. `"type_text"` → filter to input-capable widgets, store text.
+**Special types**: `"back"` → return backAction directly. `"long_click"` → match using bounds/Euclidean like `"click"`, but the returned ModelAction should target MODEL_LONG_CLICK if available. `"type_text"` → filter to input-capable widgets; when matched, call `resolvedNode.setInputText(text)` on the GUITreeNode before returning the ModelAction (this injects the LLM-provided text into APE's existing input event generation pipeline in `MonkeySourceApe.generateEventsForActionInternal()`).
+
+**Boundary reject**: Before coordinate matching, reject clicks in the status bar (top 5% of screen) and navigation bar (bottom 6% of screen). If `pixelY < deviceHeight * 0.05` or `pixelY > deviceHeight * 0.94`, log a warning and return null (SATA fallback). This prevents the LLM from wasting budget on system UI elements.
 
 ## Data Flow
 
@@ -316,7 +341,7 @@ Step N in exploration loop
   │   │   └─ LlmRouter.selectAction(...)
   │   │   If non-null → use action, reset graphStableCounter
   │   │   If null → continue stagnation logic
-  │   ├─ if graphStableCounter > threshold → requestRestart() (existing)
+  │   ├─ if graphStableCounter >= threshold → requestRestart() (existing)
   │   └─ else → continue
   │
   ├─ Record action in history ring buffer (for next prompt)
@@ -350,17 +375,31 @@ Step N in exploration loop
 
 ## Testing Strategy
 
+### Unit Tests (JUnit — all new code)
+
+All new classes in `ape/llm/` SHALL have JUnit unit tests. Test location: `src/test/java/com/android/commands/monkey/ape/llm/`.
+
+| Class | Key test cases |
+|-------|---------------|
+| `ToolCallParserTest` | Native format, XML tag format, inline JSON, Qwen3-VL malformed JSON fixes (missing y, array format, missing leading zero, truncated), type_text extraction, long_click extraction, all-fail returns null |
+| `CoordinateNormalizerTest` | Center of display, edge clamping (negative, >1000), zero coords, various device dimensions |
+| `LlmCircuitBreakerTest` | CLOSED→OPEN after 3 failures, OPEN→HALF_OPEN after timeout, HALF_OPEN→CLOSED on success, HALF_OPEN→OPEN on failure, success resets from any state |
+| `ApePromptBuilderTest` | Widget list format with MOP markers, coordinate normalization in widget list, action history with results, text truncation, null MopData (no markers), empty history omitted |
+| `LlmRouterTest` | Boundary reject (status bar, nav bar), bounds containment matching, Euclidean distance fallback, smallest-area tiebreaker, back action shortcut, type_text setInputText, long_click action type, no match returns raw click, budget exhausted returns null |
+| `ImageProcessorTest` | Large image resize (longest edge ≤ 1000), small image no resize, null input returns null |
+| `SglangClientTest` | Request JSON format (model, temperature, messages), null response handling, timeout handling |
+
+### Manual Tests (on emulator)
+
 | Layer | What to test | How | Count |
 |-------|-------------|-----|-------|
-| Build verification | All 9 new classes compile and d8 converts to Dalvik | `mvn package` succeeds | 1 check |
+| Build verification | All new classes compile and d8 converts to Dalvik | `mvn package` succeeds | 1 check |
 | Smoke test (no LLM) | APE-RV runs normally when `llmUrl` is null (no regression) | Run `--ape sata` on cryptoapp for 1 min | 1 run |
 | Smoke test (LLM) | APE-RV invokes LLM on new states and during stagnation | Run `--ape sata` on cryptoapp for 5 min with SGLang running, check logs for `[APE-RV] LLM` entries | 1 run |
 | Circuit breaker | LLM failures trigger breaker, SATA takes over | Run without SGLang, verify 3 failures → 60s block in logs | 1 run |
 | MOP weight revert | MOP boosts are 500/300/100 | Run `sata_mop` on cryptoapp, check logs for `MOP boost ... maxBoost=500` | 1 run |
 | Coordinate mapping | LLM coordinates map to correct ModelAction | Inspect logs for bounds containment and Euclidean matching entries | Manual inspection |
 | Call budget | LLM stops after llmMaxCalls | Set `llmMaxCalls=10`, verify "budget exhausted" log appears | 1 run |
-
-All tests are manual (on emulator) — no automated test suite exists in this project.
 
 ## LLM Telemetry and Metrics
 
@@ -398,4 +437,4 @@ Token counts are extracted from the OpenAI-compatible response: `response.usage.
 
 2. **LLM model configuration**: The prompt is tuned for Qwen3-VL. If the model changes (e.g., to Gemma-3 or Fara-7B), the prompt and tool-call parsing may need adjustment. `Config.llmModel` allows changing the model name, but prompt/parser adaptations would require code changes. Defer model flexibility to a future change.
 
-3. **type_text integration**: The LLM can suggest text via `type_text(x, y, "text")`, but the exact mechanism for injecting this text into APE's event system needs implementation. Options: (a) modify the selected ModelAction's input text, (b) use APE's existing fuzzing mechanism with the LLM-provided text, (c) generate a sequence of ApeKeyEvent characters. Option (b) is simplest.
+3. **type_text integration**: ~~RESOLVED~~ — When `LlmActionResult.text != null` and the matched ModelAction targets an input-capable widget (EditText, SearchView, AutoCompleteTextView), the caller calls `action.getResolvedNode().setInputText(text)` before returning the ModelAction. `MonkeySourceApe.generateEventsForActionInternal()` already checks `node.getInputText()` and generates character events from it. This reuses APE's existing input handling with zero new event generation code.
