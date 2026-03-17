@@ -114,10 +114,16 @@ The text content of the user message SHALL contain a structured list of all avai
 [<index>] <WidgetClass> "<text>" @(<normX>,<normY>) <MOP_MARKER> (v:<N>)
 ```
 
+For input-capable widgets (EditText, SearchView, AutoCompleteTextView) with a non-null hint:
+```
+[<index>] <WidgetClass> "<text>" hint="<hint>" @(<normX>,<normY>) <MOP_MARKER> (v:<N>)
+```
+
 Where:
 - `<index>` is the 0-based position in the actions list
 - `<WidgetClass>` is the widget's Android class simple name (e.g., `Button`, `EditText`, `ImageView`)
 - `<text>` is the widget's text or content-description, truncated to 50 characters; omitted if empty
+- `hint="<hint>"` is the widget's hint text, included only for input-capable widgets when `GUITreeNode.getHint()` is non-null and non-empty; truncated to 30 characters. Helps the LLM generate contextually appropriate text for type_text actions.
 - `@(<normX>,<normY>)` is the center of the widget's bounds converted to Qwen3-VL [0,1000) normalized space: `normX = (int)((centerPixelX / deviceWidth) * 1000)`, `normY = (int)((centerPixelY / deviceHeight) * 1000)`. This is the SAME coordinate space the LLM responds in — critical for consistency (follows rvagent design, avoids rvsmart's device-pixel mismatch). Omitted if node is not resolved.
 - `<MOP_MARKER>` is `[DM]` (direct monitored), `[M]` (transitive monitored), or omitted if no MOP match
 - `(v:<N>)` is the action's visited count in compact form
@@ -127,7 +133,7 @@ The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`
 #### Scenario: Mixed action list with MOP data and visited counts
 
 - **WHEN** `build()` is called with a state on `com.example.MainActivity` on a 1080x1920 device
-- **AND** actions include BACK, MENU, a Button "Encrypt" with directMop (visited 0 times, device center 200,225), an EditText "Password" (visited 3 times, device center 225,325), and a TextView "Help" with transitiveMop (visited 1 time, device center 250,420)
+- **AND** actions include BACK, MENU, a Button "Encrypt" with directMop (visited 0 times, device center 200,225), an EditText "Password" with hint "Enter password" (visited 3 times, device center 225,325), and a TextView "Help" with transitiveMop (visited 1 time, device center 250,420)
 - **AND** `mopData` is non-null
 - **THEN** the text content SHALL contain:
   ```
@@ -135,7 +141,7 @@ The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`
   [0] BACK (key)
   [1] MENU (key)
   [2] Button "Encrypt" @(185,117) [DM] (v:0)
-  [3] EditText "Password" @(208,169) (v:3)
+  [3] EditText "Password" hint="Enter password" @(208,169) (v:3)
   [4] TextView "Help" @(231,219) [M] (v:1)
   ```
 

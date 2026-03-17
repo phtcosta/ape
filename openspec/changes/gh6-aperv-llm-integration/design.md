@@ -20,7 +20,7 @@ StatefulAgent
   ├── [NEW] LlmRouter (injected at construction when Config.llmUrl != null)
   │     ├── shouldRouteNewState(boolean isNewState) → bool
   │     ├── shouldRouteStagnation(int graphStableCounter) → bool
-  │     └── selectAction(GUITree, State, List<ModelAction>, MopData, List<ActionHistoryEntry>) → LlmActionResult|null
+  │     └── selectAction(GUITree, State, List<ModelAction>, MopData, List<ActionHistoryEntry>) → ModelAction|null
   │           ├── ScreenshotCapture.capture()
   │           ├── ImageProcessor.processScreenshot()
   │           ├── ApePromptBuilder.build()
@@ -30,8 +30,9 @@ StatefulAgent
   │           └── mapToModelAction(x, y, actionType, text, actions)
   │
   └── selectNewActionNonnull() [SataAgent]
+        ├── [NEW] Guards: actionBuffer.isEmpty() AND actions.size() > 2
         ├── [NEW] LLM new-state check (isNewState → before SATA chain)
-        ├── [NEW] LLM stagnation check (graphStableCounter > threshold/2 → before SATA chain)
+        ├── [NEW] LLM stagnation check (graphStableCounter == threshold/2 → single shot)
         ├── SATA chain (existing: buffer → ABA → trivial → greedy)
         └── epsilon-greedy fallback (existing, unchanged)
 ```
@@ -40,7 +41,7 @@ StatefulAgent
 
 | Component | Responsibility | Input | Output |
 |-----------|---------------|-------|--------|
-| `LlmRouter` | Routing decisions for 2 LLM modes; owns SglangClient + circuit breaker lifecycle; enforces call budget | GUITree, State, actions, MopData, history, config flags | `LlmActionResult` or null (SATA fallback) |
+| `LlmRouter` | Routing decisions for 2 LLM modes; owns SglangClient + circuit breaker lifecycle; enforces call budget | GUITree, State, actions, MopData, history, config flags | `ModelAction` or null (SATA fallback) |
 | `ApePromptBuilder` | Converts APE data structures to multimodal LLM prompt with action history, MOP markers, and coordinate context | GUITree, State, MopData, base64Image, recentActions | `List<SglangClient.Message>` |
 | `SglangClient` | HTTP client for SGLang OpenAI-compatible endpoint (org.json for JSON) | Messages (text + base64 image) | ChatResponse (content + tool calls) |
 | `ScreenshotCapture` | Screenshot via SurfaceControl reflection | display width/height | PNG byte array or null |
@@ -62,13 +63,13 @@ StatefulAgent
 | llm-infrastructure: Circuit breaker | `ape/llm/LlmCircuitBreaker.java` | Unit: `LlmCircuitBreakerTest` (state transitions) |
 | llm-infrastructure: LLM exception type | `ape/llm/LlmException.java` | N/A (internal to SglangClient) |
 | llm-routing: New-state mode | `LlmRouter.shouldRouteNewState()` + `SataAgent.selectNewActionNonnull()` | Unit: `LlmRouterTest` + Manual: LLM called on first state visit |
-| llm-routing: Stagnation mode | `LlmRouter.shouldRouteStagnation()` + `SataAgent.selectNewActionNonnull()` | Unit: `LlmRouterTest` + Manual: LLM called when graphStableCounter > threshold/2 |
+| llm-routing: Stagnation mode | `LlmRouter.shouldRouteStagnation()` + `SataAgent.selectNewActionNonnull()` | Unit: `LlmRouterTest` + Manual: LLM called when graphStableCounter == threshold/2 |
 | llm-routing: Boundary reject | `LlmRouter.mapToModelAction()` | Unit: `LlmRouterTest` (status bar, nav bar rejection) |
 | llm-prompt: GUITree → prompt | `ape/llm/ApePromptBuilder.java` | Unit: `ApePromptBuilderTest` |
 | llm-prompt: Coordinate → ModelAction mapping | `LlmRouter.mapToModelAction()` | Unit: `LlmRouterTest` (bounds, Euclidean, type_text, long_click) |
 | exploration: isNewState capture before markVisited | `StatefulAgent.updateStateInternal()` | Unit: `LlmRouterTest` (via integration) + Manual |
 | exploration: LLM new-state hook in SataAgent | `SataAgent.selectNewActionNonnull()` top | Manual: LLM called on first state visit |
-| exploration: LLM stagnation hook | `SataAgent.selectNewActionNonnull()` stagnation check | Manual: LLM called when graphStableCounter > threshold/2 |
+| exploration: LLM stagnation hook | `SataAgent.selectNewActionNonnull()` stagnation check | Manual: LLM called when graphStableCounter == threshold/2 |
 | exploration: Action history ring buffer | `StatefulAgent._actionHistory` | Unit: `ApePromptBuilderTest` (consumes history) |
 | exploration: LLM telemetry at tearDown | `StatefulAgent.tearDown()` | Manual: summary printed on termination |
 | mop-guidance: Weight revert v2→v1 | `ape/utils/Config.java` lines 128-130 | Manual: MOP boosts are 500/300/100 |
@@ -83,7 +84,7 @@ StatefulAgent
 - Graceful degradation: LLM unavailable → pure SATA+MOP behavior (identical to current)
 
 **Goals (secondary):**
-- Enable semantic clicks on dynamic elements invisible to UIAutomator (WebView content, custom views, canvas elements) — the LLM sees the screenshot and can identify visual elements that have no accessibility node
+- Identify dynamic elements invisible to UIAutomator via LLM screenshots (WebView content, custom views) — coordinates logged in telemetry for future analysis; actual raw click execution deferred to v2
 
 **Non-Goals:**
 - LLM as primary exploration strategy (rvsmart already does this)
@@ -115,16 +116,17 @@ StatefulAgent
 ### D4: LLM hook placement
 
 **Decision**:
-- **New-state**: At the top of `selectNewActionNonnull()`, before the SATA strategy chain, guarded by the `_isNewState` flag (captured before `markVisited()` in `updateStateInternal()`)
-- **Stagnation**: Also in `selectNewActionNonnull()`, after the new-state check and before the SATA chain, guarded by `graphStableCounter > graphStableRestartThreshold / 2`. The `graphStableCounter` is a `protected` field in `StatefulAgent`, accessible from `SataAgent`. Note: `StatefulAgent.onGraphStable()` still handles the restart logic at `counter > threshold` — the LLM hook does NOT modify the restart mechanism.
+- **Both hooks** in `selectNewActionNonnull()`, guarded by `actionBuffer.isEmpty() && actions.size() > 2` (don't interrupt multi-step navigation, don't waste budget on trivial states)
+- **New-state**: At the top, guarded by `_isNewState` flag (captured before `markVisited()` in `updateStateInternal()`)
+- **Stagnation**: After new-state check, guarded by `graphStableCounter == graphStableRestartThreshold / 2` (equality — fires exactly once per stagnation phase, no flags needed). Note: `StatefulAgent.onGraphStable()` still handles restart at `counter > threshold`.
 
-**Rationale**: Both hooks are placed in `selectNewActionNonnull()` for simplicity and consistency. Placing the stagnation hook in `onGraphStable()` would require storing a pending action across steps (since `checkStable()` runs after action execution, not during selection), adding unnecessary complexity. By checking `graphStableCounter` at action selection time, the LLM can directly return an action. Follows the MOP integration precedent — minimal changes to existing control flow, guarded by config flags, null return falls through to existing behavior. The `isNewState` flag fix addresses a bug where `state.getVisitedCount() == 0` would never be true at the point of the hook because `markVisited()` has already been called.
+**Rationale**: Both hooks in `selectNewActionNonnull()` for simplicity. The equality check (`==`) instead of greater-than (`>`) eliminates the need for a "stagnation attempted" flag — the counter increments by 1 each step, so equality holds for exactly one step. If LLM succeeds, counter resets to 0; if it fails, counter passes the midpoint and the hook never fires again until next stagnation phase. The buffer-empty guard prevents interrupting navigation sequences. The `actions.size() > 2` guard skips trivial states (permission dialogs have BACK + 1-2 buttons) that SATA handles trivially.
 
 ### D5: Coordinate → ModelAction mapping strategy
 
 **Decision**: Two-phase matching: (1) bounds containment — if LLM pixel coordinates fall within a widget's bounds rectangle, select it directly; if multiple widgets contain the point, select the smallest (most specific). (2) Euclidean distance fallback — if no bounds contain the point, find nearest widget within a proportional tolerance of `max(50, min(nodeWidth, nodeHeight) / 2)` pixels.
 
-**Rationale**: Qwen3-VL has ~84% coordinate accuracy. Bounds containment is the most natural match — the LLM clicked "inside" the widget. Euclidean distance handles near-misses. Proportional tolerance ensures large widgets (buttons) accept more imprecision than small icons. When no match is found, falling back to SATA is safer than injecting a raw click that the Model cannot track.
+**Rationale**: Qwen3-VL has ~84% coordinate accuracy. Bounds containment is the most natural match — the LLM clicked "inside" the widget. Euclidean distance handles near-misses. Proportional tolerance ensures large widgets (buttons) accept more imprecision than small icons. When no match is found, `selectAction()` returns null and SATA takes over — simpler than injecting raw clicks that the Model cannot track.
 
 ### D6: MOP markers in LLM prompt
 
@@ -144,7 +146,7 @@ StatefulAgent
 
 **Rationale**: Many apps require text input (login, search, forms) to advance to deeper screens. Without type_text, the LLM can only click on input fields without generating meaningful text. Both rvsmart and rvagent include type_text as a core tool.
 
-**Integration mechanism**: When `LlmActionResult.text != null` and the matched ModelAction targets an input-capable widget, the caller calls `action.getResolvedNode().setInputText(text)` before returning. This injects the LLM-provided text into APE's existing input event generation pipeline — `MonkeySourceApe.generateEventsForActionInternal()` checks `node.getInputText()` and generates character events from it.
+**Integration mechanism**: `LlmRouter.selectAction()` calls `match.getResolvedNode().setInputText(text)` before returning the ModelAction. The caller receives a ready-to-execute action — no special handling needed. APE's existing `MonkeySourceApe.generateEventsForActionInternal()` checks `node.getInputText()` and generates character events from it.
 
 ### D9: long_click support
 
@@ -172,40 +174,26 @@ No-arg constructor. Created in `StatefulAgent` constructor when `Config.llmUrl !
 ### `LlmRouter.shouldRouteStagnation(int graphStableCounter) → boolean`
 
 **Precondition**: `Config.llmOnStagnation == true`
-**Returns**: `true` if `graphStableCounter > Config.graphStableRestartThreshold / 2` AND circuit breaker allows attempt AND `callCount < Config.llmMaxCalls`.
+**Returns**: `true` if `graphStableCounter == Config.graphStableRestartThreshold / 2` AND circuit breaker allows attempt AND `callCount < Config.llmMaxCalls`.
 
-### `LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions) → LlmActionResult|null`
+### `LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions) → ModelAction|null`
 
-Returns an `LlmActionResult` which can be either a matched `ModelAction` (widget found in UIAutomator dump) or a **raw click** with device pixel coordinates (for dynamic elements invisible to UIAutomator — WebView content, custom views, canvas elements). Returns null only on pipeline failure.
-
-**`LlmActionResult`**:
-```java
-class LlmActionResult {
-    ModelAction modelAction;  // non-null if widget found in current state
-    int pixelX, pixelY;       // device pixel coords (always set for click/type_text)
-    String actionType;        // "click", "long_click", "type_text", "back"
-    String text;              // for type_text
-
-    boolean isModelAction()   // modelAction != null — tracked by Model
-    boolean isRawClick()      // modelAction == null — dynamic element, raw touch event
-}
-```
+Returns a matched `ModelAction` from the input actions list, or null on any failure. For type_text actions, `resolvedNode.setInputText(text)` is called before returning — the caller receives a ready-to-execute ModelAction.
 
 **Flow**:
-1. Check budget: `callCount < Config.llmMaxCalls` (else return null)
-2. `screenshot.capture(width, height)` → PNG bytes (null → return null)
-3. `imageProcessor.processScreenshot(pngBytes)` → base64 JPEG
-4. `ApePromptBuilder.build(tree, state, actions, mopData, base64Image, recentActions)` → messages
-5. `client.chat(messages)` → ChatResponse (IOException → `breaker.recordFailure()`, return null)
-6. `ToolCallParser.parse(response)` → ParsedAction (null → `breaker.recordFailure()`, return null)
-7. `CoordinateNormalizer.normalize(x, y, deviceWidth, deviceHeight)` → pixel coords
-8. `mapToModelAction(pixelX, pixelY, parsedAction.actionType, parsedAction.text, actions)` → ModelAction|null
-9. `callCount++`; `breaker.recordSuccess()`
-10. If ModelAction found → return `LlmActionResult(modelAction, pixelX, pixelY, actionType, text)`
-11. If no match (dynamic element) → return `LlmActionResult(null, pixelX, pixelY, actionType, text)` — caller executes raw click via MonkeyTouchEvent
-12. Memory cleanup in `finally`: null out pngBytes, base64Image, messages
-
-**Raw click execution**: When `isRawClick()`, the caller (`SataAgent`) creates and injects `MonkeyTouchEvent` (ACTION_DOWN + ACTION_UP) at the device pixel coordinates directly into `MonkeySourceApe`'s event queue via `addEvent()`. This bypasses the normal Action→Event pipeline since there is no ModelAction to map to. The raw click is NOT tracked as a `StateTransition` in the Model, but its effect (screen change, new GUITree) is captured in the next exploration cycle. This is analogous to APE's existing fuzzing mechanism which also injects untracked raw events. After injecting the raw click events, `selectNewActionNonnull()` returns a `MODEL_BACK` sentinel (which will be overridden by the injected events) to satisfy the non-null return contract.
+1. Check budget: `callCount < Config.llmMaxCalls` (else log, return null)
+2. `callCount++` — counts this attempt regardless of outcome
+3. `screenshot.capture(width, height)` → PNG bytes (null → return null)
+4. `imageProcessor.processScreenshot(pngBytes)` → base64 JPEG
+5. `ApePromptBuilder.build(tree, state, actions, mopData, base64Image, recentActions)` → messages
+6. `client.chat(messages)` → ChatResponse (IOException → `breaker.recordFailure()`, return null)
+7. `ToolCallParser.parse(response)` → ParsedAction (null → `breaker.recordFailure()`, return null)
+8. `CoordinateNormalizer.normalize(x, y, deviceWidth, deviceHeight)` → pixel coords
+9. `mapToModelAction(pixelX, pixelY, parsedAction.actionType, parsedAction.text, actions)` → ModelAction|null
+10. `breaker.recordSuccess()`
+11. If ModelAction found → for type_text, call `match.getResolvedNode().setInputText(text)` → return ModelAction
+12. If no match → log coordinates for telemetry, return null (SATA fallback)
+13. Memory cleanup in `finally`: null out pngBytes, base64Image, messages
 
 ### `ApePromptBuilder.build(...)` → `List<SglangClient.Message>`
 
@@ -240,11 +228,11 @@ Screen "MainActivity":
 [0] BACK (key)
 [1] MENU (key)
 [2] Button "Encrypt" @(185,117) [DM] (v:0)
-[3] EditText "Password" @(208,169) (v:3)
+[3] EditText "Password" hint="Enter password" @(208,169) (v:3)
 [4] TextView "Help" @(231,219) [M] (v:1)
 ```
 
-Format: `[index] WidgetClass "text" @(normX,normY) [MOP] (v:N)`. Coordinates are in Qwen3-VL [0,1000) normalized space — the SAME space the LLM responds in. This is critical: rvagent converts device pixels → [0,1000) before building the prompt, ensuring input/output coordinate consistency. rvsmart has a mismatch (device pixels in prompt, [0,1000) in response) which we explicitly avoid.
+Format: `[index] WidgetClass "text" @(normX,normY) [MOP] (v:N)`. Input widgets with a non-null hint include `hint="..."` (truncated to 30 chars) to help the LLM generate contextually appropriate text. Coordinates are in Qwen3-VL [0,1000) normalized space — the SAME space the LLM responds in. This is critical: rvagent converts device pixels → [0,1000) before building the prompt, ensuring input/output coordinate consistency. rvsmart has a mismatch (device pixels in prompt, [0,1000) in response) which we explicitly avoid.
 
 Conversion: `normX = (int)((devicePixelX / deviceWidth) * 1000)`, `normY = (int)((devicePixelY / deviceHeight) * 1000)`.
 
@@ -299,7 +287,7 @@ The LLM understands that "Domain" expects a valid domain name, not random charac
 
 **Phase 2 — Euclidean distance fallback**: If no bounds contain the point, find nearest widget within `max(50, min(width, height) / 2)` pixel tolerance.
 
-**Special types**: `"back"` → return backAction directly. `"long_click"` → match using bounds/Euclidean like `"click"`, but the returned ModelAction should target MODEL_LONG_CLICK if available. `"type_text"` → filter to input-capable widgets; when matched, call `resolvedNode.setInputText(text)` on the GUITreeNode before returning the ModelAction (this injects the LLM-provided text into APE's existing input event generation pipeline in `MonkeySourceApe.generateEventsForActionInternal()`).
+**Special types**: `"back"` → return backAction directly. `"long_click"` → match using bounds/Euclidean like `"click"`, but prefer MODEL_LONG_CLICK if available. `"type_text"` → filter to input-capable widgets; when matched, `selectAction()` calls `resolvedNode.setInputText(text)` before returning (APE's existing `generateEventsForActionInternal()` handles the rest).
 
 **Boundary reject**: Before coordinate matching, reject clicks in the status bar (top 5% of screen) and navigation bar (bottom 6% of screen). If `pixelY < deviceHeight * 0.05` or `pixelY > deviceHeight * 0.94`, log a warning and return null (SATA fallback). This prevents the LLM from wasting budget on system UI elements.
 
@@ -316,19 +304,23 @@ Step N in exploration loop
   │
   ├─ selectNewActionNonnull() [SataAgent]
   │   │
+  │   ├─ [GUARDS] actionBuffer.isEmpty() AND actions.size() > 2
+  │   │
   │   ├─ [MODE 1: New State] if _isNewState && llmOnNewState
   │   │   └─ LlmRouter.selectAction(tree, state, actions, mopData, recentActions)
+  │   │       ├─ callCount++ (counts attempt)
   │   │       ├─ capture screenshot → PNG
   │   │       ├─ process → JPEG base64
-  │   │       ├─ build prompt (widgets + [DM]/[M] markers + history + image)
+  │   │       ├─ build prompt (widgets + hints + [DM]/[M] markers + history + image)
   │   │       ├─ SGLang HTTP POST → ChatResponse
   │   │       ├─ parse tool call → (actionType, x, y, text)
   │   │       ├─ normalize Qwen [0,1000) coords → device pixels
-  │   │       └─ map to nearest ModelAction (bounds containment → Euclidean fallback)
-  │   │   If non-null → return (skip SATA chain)
+  │   │       ├─ map to nearest ModelAction (bounds containment → Euclidean fallback)
+  │   │       └─ if type_text: resolvedNode.setInputText(text)
+  │   │   If non-null ModelAction → return (skip SATA chain)
   │   │   If null → fall through
   │   │
-  │   ├─ [MODE 2: Stagnation] if graphStableCounter > threshold/2 && llmOnStagnation
+  │   ├─ [MODE 2: Stagnation] if graphStableCounter == threshold/2 (single shot)
   │   │   └─ LlmRouter.selectAction(...)
   │   │   If non-null → reset graphStableCounter, return (skip SATA chain)
   │   │   If null → fall through to SATA
@@ -352,7 +344,7 @@ Step N in exploration loop
 | `IOException` / `SocketTimeoutException` | `SglangClient.chat()` — SGLang unreachable or slow | Log warning, `breaker.recordFailure()` | Return null → SATA fallback. After 3 failures, circuit breaker blocks for 60s. |
 | `null` PNG bytes | `ScreenshotCapture.capture()` — SurfaceControl reflection fails | Log warning | Return null → SATA fallback. No circuit breaker trip (not a network error). |
 | `null` ParsedAction | `ToolCallParser.parse()` — LLM response unparseable | Log warning, `breaker.recordFailure()` | Return null → SATA fallback. |
-| No ModelAction within tolerance | `mapToModelAction()` — LLM targets dynamic element not in UIAutomator dump | Log info, return `LlmActionResult` with `isRawClick()=true` | Raw click executed via MonkeyTouchEvent; effect captured in next GUITree cycle. |
+| No ModelAction within tolerance | `mapToModelAction()` — LLM targets dynamic element not in UIAutomator dump | Log coordinates for telemetry, return null | SATA fallback. Coordinates available in telemetry for future analysis. |
 | `JSONException` | `SglangClient` — malformed JSON from SGLang | Caught inside SglangClient, returns null ChatResponse | Propagates as null → SATA fallback. |
 | Circuit breaker OPEN | `LlmCircuitBreaker.shouldAttempt()` returns false | Skip LLM entirely | Pure SATA+MOP for 60s, then half-open probe. |
 | Budget exhausted | `callCount >= Config.llmMaxCalls` | Skip LLM entirely | Pure SATA+MOP for remainder of session. |
@@ -382,7 +374,7 @@ All new classes in `ape/llm/` SHALL have JUnit unit tests. Test location: `src/t
 | `CoordinateNormalizerTest` | Center of display, edge clamping (negative, >1000), zero coords, various device dimensions |
 | `LlmCircuitBreakerTest` | CLOSED→OPEN after 3 failures, OPEN→HALF_OPEN after timeout, HALF_OPEN→CLOSED on success, HALF_OPEN→OPEN on failure, success resets from any state |
 | `ApePromptBuilderTest` | Widget list format with MOP markers, coordinate normalization in widget list, action history with results, text truncation, null MopData (no markers), empty history omitted, dynamic tool schema (type_text present/absent based on input widgets) |
-| `LlmRouterTest` | Boundary reject (status bar, nav bar), bounds containment matching, Euclidean distance fallback, smallest-area tiebreaker, back action shortcut, type_text setInputText, long_click action type, no match returns raw click, budget exhausted returns null |
+| `LlmRouterTest` | Boundary reject (status bar, nav bar), bounds containment matching, Euclidean distance fallback, smallest-area tiebreaker, back action shortcut, type_text setInputText, long_click action type, no match returns null, budget exhausted returns null, callCount increments on all attempts |
 | `ImageProcessorTest` | Large image resize (longest edge ≤ 1000), small image no resize, null input returns null |
 | `SglangClientTest` | Request JSON format (model, temperature, messages), null response handling, timeout handling |
 
@@ -407,11 +399,11 @@ LLM telemetry follows the `[RVTRACK:LLM]` pattern already established in rvsmart
 Each LLM call emits a structured log line:
 ```
 [APE-RV] LLM iter=47 mode=new-state tokens_in=1250 tokens_out=85 time_ms=3214 result=model_action widget=btn_encrypt
-[APE-RV] LLM iter=52 mode=stagnation tokens_in=1180 tokens_out=92 time_ms=2890 result=raw_click coords=(540,874)
+[APE-RV] LLM iter=52 mode=stagnation tokens_in=1180 tokens_out=92 time_ms=2890 result=no_match coords=(540,874)
 [APE-RV] LLM iter=60 mode=new-state tokens_in=1300 tokens_out=0 time_ms=15001 result=timeout
 ```
 
-Fields: `iter` (step number), `mode` (new-state/stagnation), `tokens_in`/`tokens_out` (from SGLang response `usage` field), `time_ms` (wall clock), `result` (model_action/raw_click/null/timeout/breaker_open/budget_exhausted), optional `widget` or `coords`.
+Fields: `iter` (step number), `mode` (new-state/stagnation), `tokens_in`/`tokens_out` (from SGLang response `usage` field), `time_ms` (wall clock), `result` (model_action/no_match/null/timeout/breaker_open/budget_exhausted/parse_failed), optional `widget` or `coords`.
 
 Token counts are extracted from the OpenAI-compatible response: `response.usage.prompt_tokens` and `response.usage.completion_tokens`.
 
@@ -419,7 +411,7 @@ Token counts are extracted from the OpenAI-compatible response: `response.usage.
 
 `LlmRouter` maintains cumulative counters, printed during `StatefulAgent.tearDown()`:
 ```
-[APE-RV] LLM Summary: calls=85/200 tokens_in=106250 tokens_out=7225 time_ms=272900 avg_ms=3211 model=62 raw=15 null=8 breaker_trips=1
+[APE-RV] LLM Summary: calls=85/200 tokens_in=106250 tokens_out=7225 time_ms=272900 avg_ms=3211 matched=62 no_match=15 null=8 breaker_trips=1
 [APE-RV] Decision ratio: LLM=77/600 (12.8%), SATA=523/600 (87.2%)
 ```
 
@@ -434,4 +426,4 @@ Token counts are extracted from the OpenAI-compatible response: `response.usage.
 
 2. **LLM model configuration**: The prompt is tuned for Qwen3-VL. If the model changes (e.g., to Gemma-3 or Fara-7B), the prompt and tool-call parsing may need adjustment. `Config.llmModel` allows changing the model name, but prompt/parser adaptations would require code changes. Defer model flexibility to a future change.
 
-3. **type_text integration**: ~~RESOLVED~~ — When `LlmActionResult.text != null` and the matched ModelAction targets an input-capable widget (EditText, SearchView, AutoCompleteTextView), the caller calls `action.getResolvedNode().setInputText(text)` before returning the ModelAction. `MonkeySourceApe.generateEventsForActionInternal()` already checks `node.getInputText()` and generates character events from it. This reuses APE's existing input handling with zero new event generation code.
+3. **type_text integration**: ~~RESOLVED~~ — `LlmRouter.selectAction()` calls `match.getResolvedNode().setInputText(text)` before returning the ModelAction. The caller receives a ready-to-execute action. `MonkeySourceApe.generateEventsForActionInternal()` already checks `node.getInputText()` and generates character events from it. This reuses APE's existing input handling with zero new event generation code.

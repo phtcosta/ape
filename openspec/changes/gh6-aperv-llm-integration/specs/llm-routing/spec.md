@@ -6,7 +6,7 @@ The two modes target different exploration bottlenecks:
 
 1. **New-state mode** (`Config.llmOnNewState`): fires on the first visit to each newly discovered state. The `isNewState` flag is captured in `StatefulAgent.updateStateInternal()` **before** `Graph.markVisited()` to ensure accurate first-visit detection. This is the highest-value intervention point because the LLM sees a screen for the first time and can identify the most promising action using visual understanding that SATA lacks. Cost: ~50-100 calls per 10-minute run.
 
-2. **Stagnation mode** (`Config.llmOnStagnation`): checked in `SataAgent.selectNewActionNonnull()` when `graphStableCounter` exceeds half the restart threshold (`graphStableRestartThreshold / 2`), indicating the exploration is stagnating but has not yet reached the restart point. The `graphStableCounter` is a `protected` field in `StatefulAgent` updated by `checkStable()` after each action execution, so it reflects stagnation level at action selection time. This concentrates LLM calls where there is evidence of SATA being stuck, rather than wasting calls probabilistically. This replaces both the original epsilon-LLM mode (wasteful 5% random trigger) and stuck-recovery mode (too late, only at restart threshold). Cost: ~10-30 calls per 10-minute run, concentrated during stagnation periods. Note: `StatefulAgent.onGraphStable()` still handles the restart logic at `counter > threshold` — the LLM hook does NOT modify the restart mechanism.
+2. **Stagnation mode** (`Config.llmOnStagnation`): checked in `SataAgent.selectNewActionNonnull()` when `graphStableCounter` **equals** half the restart threshold (`graphStableRestartThreshold / 2`), providing exactly one LLM attempt per stagnation phase. The equality check (not greater-than) ensures the hook fires once when the counter hits the midpoint, then never again during that phase — no flags or extra state needed. The `graphStableCounter` is a `protected` field in `StatefulAgent`, increments by 1 each step via `checkStable()`, and resets to 0 on new state discovery. Cost: ~5-15 calls per 10-minute run (one per stagnation phase). Note: `StatefulAgent.onGraphStable()` still handles the restart logic at `counter > threshold` — the LLM hook does NOT modify the restart mechanism.
 
 `LlmRouter` owns the lifecycle of all infrastructure components (`SglangClient`, `LlmCircuitBreaker`, `ScreenshotCapture`, `ImageProcessor`, `ToolCallParser`, `CoordinateNormalizer`, `ApePromptBuilder`). It is instantiated once in `StatefulAgent`'s constructor when `Config.llmUrl` is non-null, and the same instance is used for the entire exploration session. It maintains a call counter to enforce the `Config.llmMaxCalls` budget.
 
@@ -26,16 +26,14 @@ The two modes target different exploration bottlenecks:
 
 ### Output
 
-- `LlmActionResult` containing either:
-  - A matched `ModelAction` (`isModelAction()=true`) — widget found in UIAutomator dump, tracked by Model
-  - A raw click (`isRawClick()=true`) — LLM targets a dynamic element invisible to UIAutomator (WebView, custom view, canvas); executed via MonkeyTouchEvent, NOT tracked by Model, but effect captured in next GUITree cycle
-- `null` — LLM pipeline failed, blocked by circuit breaker, or budget exhausted; caller falls back to SATA
+- `ModelAction` — matched action from the input actions list, ready to execute (for type_text actions, `resolvedNode.setInputText(text)` is already called before returning)
+- `null` — LLM pipeline failed, no matching action found, blocked by circuit breaker, or budget exhausted; caller falls back to SATA
 
 ### Side-Effects
 
 - **Logging**: `[APE-RV] LLM` prefixed log entries for routing decisions, action selections, and fallbacks
 - **Circuit breaker state**: success/failure recorded after each LLM attempt, affecting future routing decisions
-- **Call counter**: incremented after each LLM attempt, checked against `Config.llmMaxCalls` budget
+- **Call counter**: incremented at the start of each `selectAction()` invocation (per INV-RTR-07), checked against `Config.llmMaxCalls` budget
 - **Network**: HTTP request to SGLang server (via `SglangClient`)
 - **Device framebuffer**: screenshot capture (via `ScreenshotCapture`)
 
@@ -51,10 +49,11 @@ The two modes target different exploration bottlenecks:
 
 - **INV-RTR-01**: `LlmRouter` SHALL only be instantiated when `Config.llmUrl` is non-null. When `Config.llmUrl` is null, `StatefulAgent` SHALL set its `_llmRouter` field to null and all LLM routing checks SHALL be skipped.
 - **INV-RTR-02**: `LlmRouter.selectAction()` SHALL never throw an exception to the caller. All failures SHALL result in a null return with a warning log.
-- **INV-RTR-03**: When `LlmActionResult.isModelAction()` is true, the `modelAction` MUST be a member of the `actions` list passed as input (i.e., a valid action on the current state). When `isRawClick()` is true (dynamic element not in UIAutomator dump), the raw click is executed via MonkeyTouchEvent at the device pixel coordinates — not tracked by Model, but its effect is captured in the next GUITree cycle.
+- **INV-RTR-03**: The returned `ModelAction` MUST be a member of the `actions` list passed as input (i.e., a valid action on the current state). When no matching action is found (dynamic element not in UIAutomator dump), `selectAction()` returns null and the LLM coordinates are logged for telemetry.
 - **INV-RTR-04**: LLM routing SHALL NOT modify `ModelAction.priority` values. LLM selects an action directly; it does not boost priorities. The MOP scoring pass runs independently before LLM routing.
 - **INV-RTR-05**: The 2 LLM modes are independent: disabling one mode SHALL NOT affect the other. Each mode is gated by its own Config flag.
 - **INV-RTR-06**: `LlmRouter.selectAction()` SHALL explicitly null out large intermediate objects (`pngBytes`, `base64Image`, `messages`) in a `finally` block to prevent memory pressure from accumulated screenshots.
+- **INV-RTR-07**: `callCount` SHALL be incremented at the start of each `selectAction()` invocation (after budget check), counting all attempts regardless of success or failure. The budget limits total attempts; the circuit breaker independently limits consecutive failures.
 
 ---
 
@@ -71,7 +70,7 @@ The two modes target different exploration bottlenecks:
 - `CoordinateNormalizer` (static utility, no instantiation)
 - `ApePromptBuilder` (no-arg constructor)
 
-All fields SHALL be final. The router instance SHALL be reused for the entire exploration session. A `callCount` field SHALL be initialized to 0 and incremented after each `selectAction()` attempt.
+All fields SHALL be final. The router instance SHALL be reused for the entire exploration session. A `callCount` field SHALL be initialized to 0 and incremented at the start of each `selectAction()` invocation (after budget check, before pipeline — per INV-RTR-07).
 
 #### Scenario: LLM URL configured
 
@@ -133,52 +132,55 @@ The check SHALL occur after `adjustActionsByGUITree()` has assigned priorities (
 
 ### Requirement: Stagnation LLM Mode
 
-When `Config.llmOnStagnation` is `true` and `graphStableCounter` exceeds half the restart threshold, the LLM router SHALL be consulted to attempt breaking out of stagnation before the exploration reaches the restart point.
+When `Config.llmOnStagnation` is `true` and `graphStableCounter` **equals** half the restart threshold, the LLM router SHALL be consulted exactly once to attempt breaking out of stagnation.
 
-The trigger condition is: `graphStableCounter > Config.graphStableRestartThreshold / 2`. This is evaluated in `SataAgent.selectNewActionNonnull()` after the new-state check and before the SATA chain. The `graphStableCounter` is a `protected` field in `StatefulAgent`, updated by `checkStable()` after each action execution, and reflects the current stagnation level at action selection time.
+The trigger condition is: `graphStableCounter == Config.graphStableRestartThreshold / 2` (equality). Since the counter increments by 1 each step, equality is always reached. The hook fires once at the midpoint; on the next step the counter is midpoint+1 and the condition is false. No flags or extra state needed.
 
-#### Scenario: LLM provides escape action during stagnation
+#### Scenario: LLM provides escape action at stagnation midpoint
 
-- **WHEN** `graphStableCounter` exceeds `graphStableRestartThreshold / 2`
+- **WHEN** `graphStableCounter` equals `graphStableRestartThreshold / 2`
 - **AND** `Config.llmOnStagnation` is `true`
 - **AND** `_llmRouter` is non-null and circuit breaker allows and budget not exhausted
-- **THEN** `_llmRouter.selectAction(newGUITree, newState, actions, _mopData, recentActions)` SHALL be called
-- **AND** if the result is non-null, the action SHALL be used as the next action
+- **THEN** `_llmRouter.selectAction(...)` SHALL be called
+- **AND** if the result is non-null, the action SHALL be used
 - **AND** `graphStableCounter` SHALL be reset to 0 (exploration unblocked)
 
-#### Scenario: LLM fails during stagnation, eventually reaches restart
+#### Scenario: LLM fails at midpoint, stagnation continues to restart
 
-- **WHEN** `graphStableCounter` exceeds `graphStableRestartThreshold / 2`
+- **WHEN** `graphStableCounter` equals `graphStableRestartThreshold / 2`
 - **AND** LLM returns null (failure, timeout, or circuit breaker)
-- **THEN** normal stagnation logic continues
+- **THEN** counter continues incrementing (midpoint+1, midpoint+2, ...)
+- **AND** the stagnation hook SHALL NOT fire again (equality no longer holds)
 - **AND** if `graphStableCounter` eventually reaches `graphStableRestartThreshold`, `requestRestart()` SHALL be called (existing behavior)
 
 #### Scenario: Stagnation mode disabled
 
 - **WHEN** `Config.llmOnStagnation` is `false`
-- **AND** `graphStableCounter` exceeds any threshold
-- **THEN** the LLM SHALL NOT be consulted
+- **THEN** the LLM SHALL NOT be consulted regardless of counter value
 - **AND** the existing restart behavior SHALL proceed unchanged
 
 ---
 
 ### Requirement: Action Selection Pipeline
 
-`LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` SHALL execute the following pipeline:
+`LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` returns `ModelAction` or `null`. Pipeline:
 
-1. Check `callCount < Config.llmMaxCalls`. If not → return null (budget exhausted).
-2. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → return null.
-3. `ImageProcessor.processScreenshot(pngBytes)` → base64 JPEG. If null → return null.
-4. `ApePromptBuilder.build(tree, state, actions, mopData, base64Image, recentActions)` → messages.
-5. `SglangClient.chat(messages)` → `ChatResponse`. If IOException → `breaker.recordFailure()`, return null.
-6. `ToolCallParser.parse(response)` → `ParsedAction`. If null → `breaker.recordFailure()`, return null.
-7. `CoordinateNormalizer.normalize(parsedAction.x, parsedAction.y, deviceWidth, deviceHeight)` → pixel coords.
-8. `mapToModelAction(pixelX, pixelY, parsedAction.actionType, parsedAction.text, actions)` → ModelAction|null.
-9. `breaker.recordSuccess()`, `callCount++`.
-10. If ModelAction found → log `[APE-RV] LLM selected: <action>`, return `LlmActionResult(modelAction, pixelX, pixelY, actionType, text)`.
-11. If no match (dynamic element) → log `[APE-RV] LLM raw click at (<pixelX>,<pixelY>)`, return `LlmActionResult(null, pixelX, pixelY, actionType, text)` — caller executes raw click via MonkeyTouchEvent.
+1. Check `callCount < Config.llmMaxCalls`. If not → log budget exhausted, return null.
+2. `callCount++` — counts this attempt regardless of outcome (per INV-RTR-07).
+3. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → return null.
+4. `ImageProcessor.processScreenshot(pngBytes)` → base64 JPEG. If null → return null.
+5. `ApePromptBuilder.build(tree, state, actions, mopData, base64Image, recentActions)` → messages.
+6. `SglangClient.chat(messages)` → `ChatResponse`. If IOException → `breaker.recordFailure()`, return null.
+7. `ToolCallParser.parse(response)` → `ParsedAction`. If null → `breaker.recordFailure()`, return null.
+8. `CoordinateNormalizer.normalize(parsedAction.x, parsedAction.y, deviceWidth, deviceHeight)` → pixel coords.
+9. `mapToModelAction(pixelX, pixelY, parsedAction.actionType, parsedAction.text, actions)` → ModelAction or null.
+10. `breaker.recordSuccess()`.
+11. If ModelAction found → log `[APE-RV] LLM selected: <action>`, return the ModelAction.
+12. If no match → log `[APE-RV] LLM no match at (<pixelX>,<pixelY>), SATA fallback`, return null.
 
-**Memory cleanup**: Steps 2-8 SHALL be wrapped in a `try-finally` block that nulls out `pngBytes`, `base64Image`, and `messages` to prevent memory pressure.
+**type_text handling**: When `mapToModelAction` finds a matching input widget and `parsedAction.text` is non-null, `selectAction()` calls `match.getResolvedNode().setInputText(text)` before returning. The caller receives a ready-to-execute ModelAction.
+
+**Memory cleanup**: Steps 3-9 SHALL be wrapped in a `try-finally` block that nulls out `pngBytes`, `base64Image`, and `messages`.
 
 **Error behavior**: Any step failure → log warning, record circuit breaker failure if network-related, return null (SATA fallback).
 
@@ -186,10 +188,16 @@ The trigger condition is: `graphStableCounter > Config.graphStableRestartThresho
 
 - **WHEN** `selectAction()` is called with a valid GUITree and SGLang is responsive
 - **AND** the LLM returns `click` at normalized coordinates `(450, 300)`
-- **AND** the nearest ModelAction's GUITreeNode bounds contain the normalized pixel coordinates
+- **AND** the nearest ModelAction's GUITreeNode bounds contain the pixel coordinates
 - **THEN** that ModelAction SHALL be returned
 - **AND** `breaker.recordSuccess()` SHALL be called
-- **AND** `callCount` SHALL be incremented
+
+#### Scenario: No matching ModelAction (dynamic element)
+
+- **WHEN** the LLM pipeline succeeds but `mapToModelAction()` returns null
+- **THEN** `selectAction()` SHALL return null (SATA fallback)
+- **AND** a log SHALL be emitted: `[APE-RV] LLM no match at (pixelX,pixelY), SATA fallback`
+- **AND** `breaker.recordSuccess()` SHALL be called (LLM worked, just no match)
 
 #### Scenario: Screenshot capture fails
 
@@ -227,7 +235,7 @@ The trigger condition is: `graphStableCounter > Config.graphStableRestartThresho
 
 **Euclidean distance (fallback matching)**: If no action's bounds contain the point, compute the Euclidean distance from `(pixelX, pixelY)` to the center of each valid action's resolved node bounds. Return the action with the minimum distance if that distance is within a proportional tolerance: `max(50, min(nodeWidth, nodeHeight) / 2)` pixels. This ensures larger widgets accept more coordinate imprecision.
 
-**No match (dynamic element)**: If no action's bounds contain the point AND no action is within Euclidean tolerance, return null from `mapToModelAction`. However, `selectAction()` SHALL still return a valid `LlmActionResult` with `isRawClick()=true` — the LLM likely targeted a dynamic element (WebView content, custom view, canvas) invisible to UIAutomator. The caller SHALL execute a raw MonkeyTouchEvent at the device pixel coordinates. The effect (screen change) is captured in the next GUITree cycle.
+**No match (dynamic element)**: If no action's bounds contain the point AND no action is within Euclidean tolerance, `mapToModelAction` returns null. `selectAction()` logs the LLM coordinates for telemetry and returns null (SATA fallback). The LLM likely targeted a dynamic element (WebView content, custom view) invisible to UIAutomator — this data is available in telemetry for future analysis.
 
 #### Scenario: LLM says "back"
 
@@ -255,8 +263,8 @@ The trigger condition is: `graphStableCounter > Config.graphStableRestartThresho
 - **WHEN** `mapToModelAction(50, 50, "click", null, actions)` is called
 - **AND** the nearest action's bounds center is at `(300, 400)` (distance ~420px, well beyond any tolerance)
 - **THEN** `mapToModelAction` SHALL return `null`
-- **AND** `selectAction()` SHALL return `LlmActionResult(null, 50, 50, "click", null)` with `isRawClick()=true`
-- **AND** the caller SHALL execute a raw MonkeyTouchEvent at device pixel (50, 50)
+- **AND** `selectAction()` SHALL log `[APE-RV] LLM no match at (50,50), SATA fallback`
+- **AND** `selectAction()` SHALL return null (SATA takes over)
 
 #### Scenario: type_text targets EditText
 
@@ -299,7 +307,7 @@ The trigger condition is: `graphStableCounter > Config.graphStableRestartThresho
 | Field | Values |
 |-------|--------|
 | `mode` | `new-state`, `stagnation` |
-| `result` | `model_action`, `raw_click`, `null`, `timeout`, `breaker_open`, `budget_exhausted`, `parse_failed` |
+| `result` | `model_action`, `no_match`, `null`, `timeout`, `breaker_open`, `budget_exhausted`, `parse_failed` |
 | `tokens_in/out` | From `ChatResponse.usage.prompt_tokens` / `completion_tokens` (0 if unavailable) |
 | `time_ms` | Wall clock milliseconds for the full pipeline (screenshot → response) |
 
@@ -313,7 +321,7 @@ The trigger condition is: `graphStableCounter > Config.graphStableRestartThresho
 
 **Aggregate summary** (printed at `StatefulAgent.tearDown()`):
 ```
-[APE-RV] LLM Summary: calls=<N>/<budget> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> model=<N> raw=<N> null=<N> breaker_trips=<N>
+[APE-RV] LLM Summary: calls=<N>/<budget> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> matched=<N> no_match=<N> null=<N> breaker_trips=<N>
 [APE-RV] Decision ratio: LLM=<N>/<total> (<pct>%), SATA=<N>/<total> (<pct>%)
 ```
 

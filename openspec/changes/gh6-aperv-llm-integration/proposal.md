@@ -16,13 +16,13 @@ Experiment exp1+exp2 (169 APKs, 5 variants) showed that MOP-guided scoring works
 ### New Capabilities
 
 - `llm-infrastructure`: HTTP client for SGLang/OpenAI-compatible endpoints, screenshot capture via SurfaceControl, image processing (PNG→JPEG+base64), tool-call response parsing with 3-level fallback, coordinate normalization, circuit breaker for fault tolerance, and typed LlmException; all JSON handling uses org.json (no new dependency)
-- `llm-routing`: Two-mode LLM integration into the exploration loop — new-state mode (first visit to each state, triggered before SATA chain) and stagnation mode (triggered when `graphStableCounter > threshold/2`, earlier than the existing restart threshold) — with fallback to SATA when LLM is unavailable, times out, or `llmMaxCalls` budget is exhausted
-- `llm-prompt`: APE-specific prompt construction that includes screenshot, structured widget list with per-action visited counts, MOP reachability markers (indicating monitored operations), and last 3-5 action history with results; tool schema exposes `click(x, y)`, `long_click(x, y)`, `type_text(x, y, text)`, and `back()` (no scroll — it doesn't benefit from LLM semantic understanding); coordinate mapping uses bounds containment first, Euclidean distance as fallback
+- `llm-routing`: Two-mode LLM integration into the exploration loop — new-state mode (first visit to each non-trivial state, triggered before SATA chain, guarded by buffer-empty and actions>2) and stagnation mode (triggered once when `graphStableCounter == threshold/2`, single shot per stagnation phase) — with fallback to SATA when LLM is unavailable, times out, or `llmMaxCalls` budget is exhausted
+- `llm-prompt`: APE-specific prompt construction that includes screenshot, structured widget list with per-action visited counts and input hints, MOP reachability markers (indicating monitored operations), and last 3-5 action history with results; tool schema exposes `click(x, y)`, `long_click(x, y)`, `type_text(x, y, text)`, and `back()` (no scroll — it doesn't benefit from LLM semantic understanding); coordinate mapping uses bounds containment first, Euclidean distance as fallback
 
 ### Modified Capabilities
 
 - `mop-guidance`: Revert default weight values from v2 (100/60/20) to v1 (500/300/100) based on experimental evidence; no structural changes to scoring logic
-- `exploration`: Capture `isNewState` flag before `markVisited()` in `updateStateInternal()`; add `_llmRouter` field and action history ring buffer to `StatefulAgent`; add 2 LLM hooks to `SataAgent` (new-state before SATA chain, stagnation at `graphStableCounter > threshold/2`)
+- `exploration`: Capture `isNewState` flag before `markVisited()` in `updateStateInternal()`; add `_llmRouter` field and action history ring buffer to `StatefulAgent`; add 2 LLM hooks to `SataAgent` guarded by buffer-empty and actions>2 (new-state before SATA chain, stagnation at `graphStableCounter == threshold/2`)
 
 ## Impact
 
@@ -31,7 +31,7 @@ Experiment exp1+exp2 (169 APKs, 5 variants) showed that MOP-guided scoring works
 - `ape/utils/MopScorer.java` — update documentation comments only (logic unchanged)
 - `ape/agent/StatefulAgent.java` — capture `isNewState` flag before `markVisited()` in `updateStateInternal()`; add `_llmRouter` field
 - `ape/agent/SataAgent.java` — 2 hooks: new-state LLM in `selectNewActionNonnull()`, stagnation LLM in stagnation check
-- New package `ape/llm/` — 9 new classes (~1400 LOC total: 7 copied from rvsmart with Gson→org.json conversion + 2 new APE-specific classes)
+- New package `ape/llm/` — 9 new classes (~1300 LOC total: 7 copied from rvsmart with Gson→org.json conversion + 2 new APE-specific classes: `LlmRouter`, `ApePromptBuilder`)
 
 **Runtime dependency**:
 - SGLang server at `10.0.2.2:30000` (emulator→host) or `host.docker.internal:30000` (Docker); LLM features degrade gracefully when server is unavailable (circuit breaker → SATA fallback)

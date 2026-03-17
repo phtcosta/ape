@@ -1,16 +1,40 @@
-<!-- Subagent dispatch hints:
-     - Groups 1, 2 are independent and can run in parallel.
-     - Group 3 depends on Group 2 (uses SglangClient.Message type).
-     - Group 4 depends on Groups 2, 3 (uses all infra + prompt builder).
-     - Group 5 depends on Group 4 (hooks LlmRouter into StatefulAgent/SataAgent).
-     - Group 6 depends on Groups 2, 3, 4, 5 (unit tests for all new code).
-     - Group 7 is final verification — must run after all other groups.
-     - Critical path: 2 -> 3 -> 4 -> 5 -> 6 -> 7. -->
+<!-- ================================================================
+     SUBAGENT DISPATCH STRATEGY
+     ================================================================
+     The main agent (orchestrator) should keep its context clean by
+     dispatching implementation work to subagents. Each group below
+     marks which tasks can be dispatched and which need orchestration.
+
+     Parallelism:
+       - Groups 1, 2 are INDEPENDENT → dispatch as 2 parallel subagents
+       - Group 3 depends on Group 2 (uses SglangClient.Message type)
+       - Group 4 depends on Groups 2, 3 (uses all infra + prompt builder)
+       - Group 5 depends on Group 4 (hooks LlmRouter into agents)
+       - Group 6 depends on Groups 2-5 (unit tests for new code)
+       - Group 7 depends on Group 6 (integration tests with real data)
+       - Group 8 is final verification — must run after all groups
+
+     Critical path: 2 → 3 → 4 → 5 → 6 → 7 → 8
+
+     Subagent dispatch:
+       - Groups 1, 2: each a standalone subagent (parallel, isolated)
+       - Groups 3, 4, 5: sequential subagents (each depends on previous)
+       - Group 6: one subagent per test class (6.2-6.8 parallelizable)
+       - Group 7: one subagent (integration tests, requires SGLang)
+       - Group 8: orchestrator runs directly (verification, docs, review)
+
+     NOTE: MOP scoring and LLM are COMPOSABLE, not exclusive.
+     adjustActionsByGUITree() runs FIRST (base priority + MOP boosts),
+     then LLM hooks run with the already-MOP-boosted action list.
+     The LLM also receives [DM]/[M] markers in the prompt.
+     ================================================================ -->
 
 ## 1. Configuration: MOP Weight Revert + LLM Config Keys
 
-- [ ] 1.1 Revert MOP weight defaults in `src/main/java/com/android/commands/monkey/ape/utils/Config.java`: `mopWeightDirect` 100→500, `mopWeightTransitive` 60→300, `mopWeightActivity` 20→100 (ref: `specs/mop-guidance/spec.md`)
-- [ ] 1.2 Update documentation comments in `src/main/java/com/android/commands/monkey/ape/utils/MopScorer.java` to reflect v1 defaults (500/300/100)
+<!-- DISPATCH: standalone subagent, parallel with Group 2 -->
+
+- [ ] 1.1 Revert MOP weight defaults in `Config.java`: `mopWeightDirect` 100→500, `mopWeightTransitive` 60→300, `mopWeightActivity` 20→100 (ref: `specs/mop-guidance/spec.md`)
+- [ ] 1.2 Update documentation comments in `MopScorer.java` to reflect v1 defaults (500/300/100)
 - [ ] 1.3 Add LLM config keys in `Config.java` (ref: `specs/llm-infrastructure/spec.md` — LLM Configuration Keys):
   - `llmUrl` (String, null) — SGLang base URL; null disables all LLM features
   - `llmOnNewState` (boolean, true) — enable new-state LLM mode
@@ -25,67 +49,147 @@
 
 ## 2. LLM Infrastructure: Copy rvsmart Classes (Gson→org.json conversion)
 
+<!-- DISPATCH: standalone subagent, parallel with Group 1.
+     Source: rvsec/rvsec-android/rvsmart/src/main/java/br/unb/cic/rvsmart/llm/
+     Target: src/main/java/com/android/commands/monkey/ape/llm/
+     Backup originals from rvsmart to backup/ before converting. -->
+
 - [ ] 2.1 Create package `src/main/java/com/android/commands/monkey/ape/llm/`
-- [ ] 2.2 Copy+convert `SglangClient.java` from rvsmart: rename package to `com.android.commands.monkey.ape.llm` AND convert all Gson usage (`JsonObject`, `JsonArray`, `Gson.toJson()`/`fromJson()`) to org.json (`JSONObject`, `JSONArray`, `.toString()`/`new JSONObject()`) (ref: `specs/llm-infrastructure/spec.md` — SglangClient requirement)
-- [ ] 2.3 Copy `ScreenshotCapture.java`, rename package (no Gson — copy as-is) (ref: `specs/llm-infrastructure/spec.md` — ScreenshotCapture requirement)
-- [ ] 2.4 Copy `ImageProcessor.java`, rename package (no Gson — copy as-is) (ref: `specs/llm-infrastructure/spec.md` — ImageProcessor requirement)
-- [ ] 2.5 Copy+convert `ToolCallParser.java` from rvsmart: rename package AND convert Gson to org.json (ref: `specs/llm-infrastructure/spec.md` — ToolCallParser requirement)
-- [ ] 2.6 Copy `CoordinateNormalizer.java`, rename package (no Gson — copy as-is) (ref: `specs/llm-infrastructure/spec.md` — CoordinateNormalizer requirement)
-- [ ] 2.7 Copy `LlmCircuitBreaker.java`, rename package (no Gson — copy as-is) (ref: `specs/llm-infrastructure/spec.md` — LlmCircuitBreaker requirement)
-- [ ] 2.8 Copy `LlmException.java`, rename package (simple RuntimeException subclass — copy as-is) (ref: `specs/llm-infrastructure/spec.md`)
-- [ ] 2.9 Verify `mvn compile` succeeds with all 7 copied classes (no new Maven dependency needed — org.json is available in Android runtime)
+- [ ] 2.2 Copy+convert `SglangClient.java`: rename package AND convert Gson→org.json (`JsonObject`→`JSONObject`, `JsonArray`→`JSONArray`, `Gson.toJson()`→`.toString()`, `Gson.fromJson()`→`new JSONObject()`) (ref: `specs/llm-infrastructure/spec.md`)
+- [ ] 2.3 Copy `ScreenshotCapture.java`, rename package (no Gson — as-is)
+- [ ] 2.4 Copy `ImageProcessor.java`, rename package (no Gson — as-is)
+- [ ] 2.5 Copy+convert `ToolCallParser.java`: rename package AND convert Gson→org.json
+- [ ] 2.6 Copy `CoordinateNormalizer.java`, rename package (no Gson — as-is)
+- [ ] 2.7 Copy `LlmCircuitBreaker.java`, rename package (no Gson — as-is)
+- [ ] 2.8 Copy `LlmException.java`, rename package (as-is)
+- [ ] 2.9 Verify `mvn compile` succeeds with all 7 copied classes
 
 ## 3. Prompt Builder: ApePromptBuilder
 
-- [ ] 3.1 Create `src/main/java/com/android/commands/monkey/ape/llm/ApePromptBuilder.java` with `build(GUITree, State, List<ModelAction>, MopData, String base64Image, List<ActionHistoryEntry> recentActions)` method (ref: `specs/llm-prompt/spec.md`)
-- [ ] 3.2 Implement system message with **dynamic tool schema**: `click(x, y)`, `long_click(x, y)`, `back()` always present; `type_text(x, y, text)` included only when the actions list contains at least one input-capable widget (EditText, SearchView, AutoCompleteTextView). Include MOP explanation: "Elements marked [DM] or [M] reach operations monitored by runtime verification specifications. Prefer exploring these when they haven't been visited yet." Use [DM] (direct monitored) and [M] (transitive monitored) compact notation matching rvsmart V17. Include type_text hints in RULES: "Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term)." (ref: `specs/llm-prompt/spec.md` — System Message requirement, Dynamic Tool Schema)
-- [ ] 3.3 Implement widget list generation: `[i] Class "text" @(normX,normY) [DM] (v:N)`. Coordinates in [0,1000) Qwen normalized space (convert device pixel center via `normX=(centerX/deviceWidth)*1000`). Compact format: `(v:N)` for visited count, `(key)` for non-target actions. (ref: `specs/llm-prompt/spec.md` — Widget List Generation requirement)
-- [ ] 3.4 Implement MOP marker annotation using `MopData.getWidget()` and `activityHasMop()` (ref: `specs/llm-prompt/spec.md` — MOP Marker Annotation requirement)
-- [ ] 3.5 Implement action history section: last 3-5 executed actions with results, format: `- CLICK [i] Widget "text" → result` (ref: `specs/llm-prompt/spec.md` — Action History requirement)
-- [ ] 3.6 Implement exploration context section (visit count, new state indicator, MOP action count) (ref: `specs/llm-prompt/spec.md` — Exploration Context requirement)
-- [ ] 3.7 Verify `mvn compile` succeeds with ApePromptBuilder
+<!-- DISPATCH: subagent, sequential after Group 2 (uses SglangClient.Message) -->
+
+- [ ] 3.1 Create `ApePromptBuilder.java` with `build(GUITree, State, List<ModelAction>, MopData, String base64Image, List<ActionHistoryEntry> recentActions)` (ref: `specs/llm-prompt/spec.md`)
+- [ ] 3.2 Implement system message with **dynamic tool schema**: `click(x,y)`, `long_click(x,y)`, `back()` always; `type_text(x,y,text)` only when input widgets present. Include MOP explanation and type_text hints in RULES.
+- [ ] 3.3 Implement widget list: `[i] Class "text" @(normX,normY) [DM] (v:N)`. For input widgets with hint: `hint="..."` (truncated 30 chars). Coordinates in [0,1000) Qwen space.
+- [ ] 3.4 Implement MOP marker annotation using `MopData.getWidget()` and `activityHasMop()`
+- [ ] 3.5 Implement action history section (last 3-5 actions with results)
+- [ ] 3.6 Implement exploration context (visit count, new state, MOP ratio)
+- [ ] 3.7 Verify `mvn compile`
 
 ## 4. LLM Routing: LlmRouter
 
-- [ ] 4.1 Create `src/main/java/com/android/commands/monkey/ape/llm/LlmRouter.java` with constructor wiring all infrastructure components. Use `Config.llmModel` for model name, `Config.llmTopP` / `Config.llmTopK` for sampling parameters. Initialize `callCount = 0`. (ref: `specs/llm-routing/spec.md` — LlmRouter Lifecycle requirement)
-- [ ] 4.2 Implement 2 routing predicates with circuit breaker and budget checks (ref: `specs/llm-routing/spec.md`):
-  - `shouldRouteNewState(boolean isNewState)` — returns true if isNewState AND Config.llmOnNewState AND breaker allows AND callCount < Config.llmMaxCalls
-  - `shouldRouteStagnation(int graphStableCounter)` — returns true if graphStableCounter > graphStableRestartThreshold/2 AND Config.llmOnStagnation AND breaker allows AND callCount < Config.llmMaxCalls
-- [ ] 4.3 Implement `selectAction()` pipeline returning `LlmActionResult`: screenshot → image processing → prompt → chat → parse → normalize → mapToModelAction. If ModelAction found → `LlmActionResult(modelAction, ...)`. If no match (dynamic element) → `LlmActionResult(null, pixelX, pixelY, ...)` for raw click via MonkeyTouchEvent. Memory cleanup in finally block. Increment callCount. (ref: `specs/llm-routing/spec.md` — Action Selection Pipeline requirement)
-- [ ] 4.4 Implement `mapToModelAction(int, int, String, String, List<ModelAction>)` with improved mapping (ref: `specs/llm-routing/spec.md` — Coordinate-to-ModelAction Mapping requirement):
-  - **Bounds containment first**: if (pixelX, pixelY) falls within a widget's bounds, select it directly
-  - **Euclidean distance as fallback**: only if coords don't fall within any widget bounds
-  - **Proportional tolerance**: `max(50, min(nodeWidth, nodeHeight) / 2)` instead of fixed 50px
-  - **Boundary reject**: if pixelY < deviceHeight*0.05 or pixelY > deviceHeight*0.94, return null (system UI rejection)
-  - **back handling**: if actionType="back", return backAction directly
-  - **long_click handling**: if actionType="long_click", prefer MODEL_LONG_CLICK action for matched widget; fall back to MODEL_CLICK if unavailable
-  - **type_text handling**: if actionType="type_text", find nearest EditText/input action; call `resolvedNode.setInputText(text)` to inject LLM-provided text into APE's input event pipeline
-- [ ] 4.5 Implement LLM telemetry: (a) per-call structured log `[APE-RV] LLM iter=N mode=X tokens_in=N tokens_out=N time_ms=N result=X` — extract tokens from ChatResponse.usage (prompt_tokens, completion_tokens); (b) cumulative counters in LlmRouter (totalCalls, tokensIn, tokensOut, totalTimeMs, modelActions, rawClicks, nulls, breakerTrips, callsByMode); (c) summary printed at tearDown; (d) decision ratio LLM vs SATA. (ref: `specs/llm-routing/spec.md` — LLM Telemetry Logging requirement)
-- [ ] 4.6 Verify `mvn compile` succeeds with LlmRouter
+<!-- DISPATCH: subagent, sequential after Group 3 (uses all infra + prompt builder) -->
+
+- [ ] 4.1 Create `LlmRouter.java` wiring all infrastructure. `callCount = 0`. (ref: `specs/llm-routing/spec.md`)
+- [ ] 4.2 Implement 2 routing predicates:
+  - `shouldRouteNewState(boolean isNewState)` — isNewState AND llmOnNewState AND breaker AND budget
+  - `shouldRouteStagnation(int graphStableCounter)` — counter **==** threshold/2 (equality, single shot) AND llmOnStagnation AND breaker AND budget
+- [ ] 4.3 Implement `selectAction()` → `ModelAction|null`: callCount++ at start → screenshot → image → prompt → chat → parse → normalize → mapToModelAction. For type_text: `resolvedNode.setInputText(text)` before returning. No match → log coords, return null. Memory cleanup in finally.
+- [ ] 4.4 Implement `mapToModelAction()`: bounds containment → Euclidean fallback → boundary reject (top 5%, bottom 6%) → back/long_click/type_text handling
+- [ ] 4.5 Implement telemetry: per-call log, cumulative counters (matched, noMatch, nulls, breakerTrips), summary at tearDown, decision ratio
+- [ ] 4.6 Verify `mvn compile`
 
 ## 5. Agent Integration: Hook LlmRouter into StatefulAgent and SataAgent
 
-- [ ] 5.1 In `StatefulAgent`: add `_llmRouter` field (instantiate `LlmRouter` when `Config.llmUrl != null`, null otherwise). Add `_isNewState`, `_lastState`, `_stateBeforeLast` fields. In `updateStateInternal()`, shift state history (`_stateBeforeLast = _lastState`, `_lastState = currentState`), then capture `_isNewState = (newState.getVisitedCount() == 0)` BEFORE `getGraph().markVisited(newState, ts)`. Add `ActionHistoryEntry` data class and action history ring buffer (max 5). Result determination: `newState == _lastState` → "same"; `newState == _stateBeforeLast` → "previous screen"; else → "new screen". Add `_llmRouter.printSummary()` call in `tearDown()`. (ref: `specs/exploration/spec.md` — StatefulAgent LLM Router Integration, isNewState Capture, Action History Ring Buffer requirements)
-- [ ] 5.2 Hook new-state LLM mode at the top of `SataAgent.selectNewActionNonnull()`: check `_llmRouter != null && _llmRouter.shouldRouteNewState(_isNewState)`, call `selectAction()`, return if non-null. When `LlmActionResult.text != null` and action targets input widget, call `resolvedNode.setInputText(text)`. (ref: `specs/exploration/spec.md` — SataAgent LLM New-State Hook; `specs/llm-routing/spec.md` — New-State LLM Mode)
-- [ ] 5.3 Hook stagnation LLM mode in `SataAgent.selectNewActionNonnull()`, after the new-state check (5.2) and before the SATA chain: when `graphStableCounter > graphStableRestartThreshold / 2`, try LLM via `_llmRouter.shouldRouteStagnation(graphStableCounter)` + `selectAction()`. If LLM returns action, reset graphStableCounter to 0 and return the action. If null, fall through to SATA chain. Note: `graphStableCounter` is a `protected` field in `StatefulAgent`, accessible from `SataAgent`. `StatefulAgent.onGraphStable()` restart logic is NOT modified. (ref: `specs/exploration/spec.md` — SataAgent LLM Stagnation Hook; `specs/llm-routing/spec.md` — Stagnation LLM Mode)
-- [ ] 5.4 Verify `mvn compile` succeeds with all agent integration hooks
+<!-- DISPATCH: subagent, sequential after Group 4.
+     NOTE: MOP+LLM compose — adjustActionsByGUITree() runs BEFORE LLM hooks.
+     The LLM receives already-MOP-boosted priorities + [DM]/[M] in prompt. -->
 
-## 6. Unit Tests for New Code
+- [ ] 5.1 In `StatefulAgent`: add `_llmRouter` (null when `Config.llmUrl == null`), `_isNewState`, `_lastState`, `_stateBeforeLast`, `ActionHistoryEntry` data class, ring buffer (max 5). In `updateStateInternal()`: shift history, capture `_isNewState = (visitedCount == 0)` BEFORE `markVisited()`. In `tearDown()`: `_llmRouter.printSummary()`.
+- [ ] 5.2 Hook new-state at top of `SataAgent.selectNewActionNonnull()`, guarded by `actionBuffer.isEmpty() && actions.size() > 2 && _llmRouter != null && shouldRouteNewState(_isNewState)`. Return ModelAction if non-null.
+- [ ] 5.3 Hook stagnation after new-state, same guards + `graphStableCounter == threshold/2`. Reset counter to 0 on success. `onGraphStable()` restart NOT modified.
+- [ ] 5.4 Verify `mvn compile`
 
-- [ ] 6.1 Add JUnit dependency to `pom.xml` (test scope only) and create test directory `src/test/java/com/android/commands/monkey/ape/llm/`
-- [ ] 6.2 Write `ToolCallParserTest`: native format, XML tag format, inline JSON, Qwen3-VL malformed JSON fixes (missing y, array format, missing leading zero, truncated JSON), type_text extraction, long_click extraction, all-fail returns null
-- [ ] 6.3 Write `CoordinateNormalizerTest`: center of display, edge clamping (negative, >1000), zero coords, various device dimensions
-- [ ] 6.4 Write `LlmCircuitBreakerTest`: CLOSED→OPEN after 3 failures, OPEN→HALF_OPEN after timeout, HALF_OPEN→CLOSED on success, HALF_OPEN→OPEN on failure, success resets from any state
-- [ ] 6.5 Write `ApePromptBuilderTest`: widget list format with MOP markers, coordinate normalization, action history with results, text truncation, null MopData, empty history omitted, long_click in tool schema, **dynamic tool schema (type_text present when EditText in actions, absent when no input widgets)**, type_text hints in system message
-- [ ] 6.6 Write `LlmRouterTest`: boundary reject (status bar top 5%, nav bar bottom 6%), bounds containment matching, Euclidean distance fallback, smallest-area tiebreaker, back action shortcut, type_text with setInputText, long_click action type, no match returns raw click, budget exhausted returns null
-- [ ] 6.7 Write `ImageProcessorTest`: large image resize (longest edge ≤ 1000), small image no resize, null input returns null
-- [ ] 6.8 Write `SglangClientTest`: request JSON format, null response handling, timeout handling
-- [ ] 6.9 Verify `mvn test` passes with all unit tests
+## 6. Unit Tests
 
-## 7. Build, Documentation, and Verification
+<!-- DISPATCH: one subagent per test class (6.2-6.8 parallelizable after 6.1).
+     Test fixtures at: src/test/resources/fixtures/cryptoapp/
+     All tests use synthetic/mock data — no external dependencies. -->
 
-- [ ] 7.1 Run `mvn package` — verify `target/ape-rv.jar` is produced successfully (d8 converts all classes; no new Maven dependency)
-- [ ] 7.2 Update `CLAUDE.md`: add `ape/llm/` to package map, add LLM config keys to configuration table, update project overview to mention LLM integration, update architecture diagram
-- [ ] 7.3 Run `/sdd-qa-lint-fix` on new files in `ape/llm/` package
-- [ ] 7.4 Run `/sdd-verify`
-- [ ] 7.5 Invoke `/sdd-code-reviewer` via Skill tool
+- [ ] 6.1 Add JUnit dependency to `pom.xml` (test scope), create `src/test/java/com/android/commands/monkey/ape/llm/`
+- [ ] 6.2 `ToolCallParserTest` (~10 cases): native format, XML tag, inline JSON, Qwen3-VL fixes (missing y, array, leading zero, truncated), type_text, long_click, all-fail→null
+- [ ] 6.3 `CoordinateNormalizerTest` (~5 cases): center, edge clamping, zero, various dimensions
+- [ ] 6.4 `LlmCircuitBreakerTest` (~6 cases): CLOSED→OPEN, OPEN→HALF_OPEN, HALF_OPEN→CLOSED, HALF_OPEN→OPEN, success resets, concurrent access
+- [ ] 6.5 `ApePromptBuilderTest` (~10 cases): widget list format, MOP markers, hint for input widgets, coordinates, history, text truncation, null MopData, empty history, dynamic tool schema (type_text present/absent), exploration context
+- [ ] 6.6 `LlmRouterTest` (~12 cases): boundary reject (status bar, nav bar), bounds containment, Euclidean fallback, smallest-area tiebreaker, back shortcut, type_text+setInputText, long_click, no match→null, budget exhausted→null, callCount on all attempts, shouldRouteStagnation equality semantics
+- [ ] 6.7 `ImageProcessorTest` (~3 cases): large resize, small no-resize, null→null
+- [ ] 6.8 `SglangClientTest` (~4 cases): request JSON format, multimodal message, null response, timeout
+- [ ] 6.9 Verify `mvn test` — all unit tests pass
+
+**Unit test count: ~50 cases across 7 test classes.**
+
+## 7. Integration Tests with Real Data (cryptoapp tuples)
+
+<!-- DISPATCH: one subagent. Uses real cryptoapp screenshots + UIAutomator dumps.
+     Fixtures: src/test/resources/fixtures/cryptoapp/ (5 tuples + MOP JSON)
+     SGLang tests gated by env var SGLANG_URL (skipped when not set).
+
+     Tuples (selected for diversity):
+       001 — MainActivity, 3 nav buttons, no input
+       004 — MessageDigest, algorithm dropdown (13 items), popup
+       010 — MessageDigest, EditText focused, keyboard open, type_text
+       015 — CryptographyActivity, AES Encrypt, 2 EditTexts, tabs, radio
+       020 — CryptographyActivity, KeyPair dropdown (RSA/DSA/EC/DH)
+
+     MOP data: src/test/resources/fixtures/cryptoapp/cryptoapp.apk.json -->
+
+### 7.1 Offline Tests (no SGLang required — run in `mvn test`)
+
+- [ ] 7.1.1 `PromptIntegrationTest` — load each of the 5 tuples (PNG + UIAutomator XML + MOP JSON), construct prompt via ApePromptBuilder, validate:
+  - All interactive widgets from UIAutomator appear in widget list
+  - [DM]/[M] markers present for MOP widgets (buttonGenerateHash, executeButton, etc.)
+  - Hint included for EditTexts with hint text
+  - type_text in tool schema when EditText present (tuples 010, 015), absent when not (001, 004, 020)
+  - Coordinates in [0,1000) range and consistent with UIAutomator bounds
+  - Prompt token count ≤ 2000 tokens (system + user combined, estimated by chars/4)
+  - Activity name in `Screen "..."` header matches state JSON
+- [ ] 7.1.2 `CoordinateMapIntegrationTest` — for each tuple, simulate LLM responses targeting known widget centers, validate mapToModelAction returns the correct widget:
+  - Tuple 001: click center of "CIPHER" button → matches buttonCipher
+  - Tuple 004: click center of "MD5" list item → matches MD5 TextView
+  - Tuple 010: click center of "GENERATE HASH" → matches buttonGenerateHash
+  - Tuple 015: click center of "EXECUTE" → matches executeButton
+  - Tuple 015: type_text on inputEditText center → matches + setInputText called
+  - Tuple 020: click center of "DSA" → matches DSA CheckedTextView
+  - Boundary reject: click at (540, 30) on 1080x1920 → null (status bar)
+- [ ] 7.1.3 `ImageProcessorIntegrationTest` — load each tuple PNG, process via ImageProcessor, validate:
+  - Output is valid base64 string
+  - Decoded JPEG has longest edge ≤ 1000px
+  - Aspect ratio preserved
+
+### 7.2 Live SGLang Tests (gated by `SGLANG_URL` env var — skipped in CI)
+
+- [ ] 7.2.1 `SglangLiveTest` — for each of the 5 tuples, send real prompt to SGLang and measure:
+  - **Parseable response**: ToolCallParser extracts a valid ParsedAction (not null)
+  - **Valid action type**: actionType is one of click/long_click/type_text/back
+  - **Coordinates in range**: x ∈ [0,1000), y ∈ [0,1000)
+  - **type_text quality**: for tuples 010/015, if LLM chooses type_text, text is non-empty and looks semantically valid (not random chars)
+  - **Latency**: per-call ≤ 10s (p95)
+  - **Token counts**: prompt_tokens and completion_tokens extracted from response
+
+### 7.3 Acceptance Criteria
+
+| Metric | Threshold | Measured On |
+|--------|-----------|-------------|
+| Prompt construction | 5/5 tuples produce valid 2-message prompt | Offline (7.1.1) |
+| Widget coverage | 100% interactive widgets from UIAutomator in widget list | Offline (7.1.1) |
+| MOP annotation | [DM]/[M] present on all MOP widgets when MopData loaded | Offline (7.1.1) |
+| Prompt size | ≤ 2000 tokens (estimated) per prompt | Offline (7.1.1) |
+| Coordinate hit rate | ≥ 6/7 known-center clicks map to correct widget | Offline (7.1.2) |
+| Image processing | 5/5 tuples produce valid base64 JPEG ≤ 1000px | Offline (7.1.3) |
+| Parseable response | ≥ 4/5 tuples get valid ParsedAction from SGLang | Live (7.2.1) |
+| type_text quality | ≥ 1/2 type_text responses have semantic text | Live (7.2.1) |
+| Latency p95 | ≤ 10s per call | Live (7.2.1) |
+
+## 8. Build, Documentation, Smoke Test, and Verification
+
+<!-- DISPATCH: orchestrator runs directly (final gate). -->
+
+- [ ] 8.1 `mvn package` — verify `target/ape-rv.jar` produced (d8 converts all classes)
+- [ ] 8.2 Update `CLAUDE.md`: add `ape/llm/` to package map, LLM config keys, architecture diagram, integration test instructions
+- [ ] 8.3 `/sdd-qa-lint-fix` on `ape/llm/`
+- [ ] 8.4 **Standalone smoke test** (on emulator, no rv-platform):
+  - 8.4.1 Without LLM: `adb shell ... --ape sata` on cryptoapp for 1 min → no regression, zero `[APE-RV] LLM` log lines
+  - 8.4.2 With LLM: `adb shell ... --ape sata` + `ape.llmUrl=http://10.0.2.2:30000/v1` on cryptoapp for 5 min → `[APE-RV] LLM` entries in log, MOP boosts visible, LLM summary at tearDown
+  - 8.4.3 Without SGLang running: same config as 8.4.2 but no server → 3 failures, circuit breaker OPEN, pure SATA continues
+- [ ] 8.5 `/sdd-verify`
+- [ ] 8.6 `/sdd-code-reviewer`
