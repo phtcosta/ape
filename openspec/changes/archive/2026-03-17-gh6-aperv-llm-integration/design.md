@@ -164,7 +164,9 @@ StatefulAgent
 
 ### `LlmRouter()`
 
-No-arg constructor. Created in `StatefulAgent` constructor when `Config.llmUrl != null`. Internally creates and wires all infrastructure components: `SglangClient` (with `Config.llmUrl`, `Config.llmModel`, `Config.llmTemperature`, `Config.llmTopP`, `Config.llmTopK`, maxTokens 1024, `Config.llmTimeoutMs`), `LlmCircuitBreaker` (default thresholds), `ScreenshotCapture`, `ImageProcessor`, `ToolCallParser`, `ApePromptBuilder`. All fields stored as final. `callCount` initialized to 0.
+No-arg constructor. Created in `StatefulAgent` constructor when `Config.llmUrl != null`. Internally creates and wires all infrastructure components: `SglangClient` (with `Config.llmUrl`, `Config.llmModel`, `Config.llmTemperature`, `Config.llmTopP`, `Config.llmTopK`, maxTokens 1024, `Config.llmTimeoutMs`) + `setTools(buildToolsSchema())` with OpenAI function-calling schema for click/long_click/type_text/back, `LlmCircuitBreaker` (default thresholds), `ScreenshotCapture`, `ImageProcessor`, `ToolCallParser`, `ApePromptBuilder`. All fields stored as final. `callCount` initialized to 0.
+
+**Note**: The `tools` parameter in the request body is **required** for Qwen3-VL to generate structured tool calls with multimodal input. Without it, the model returns empty content even though text-only requests work. This was discovered during integration testing with cryptoapp fixtures.
 
 ### `LlmRouter.shouldRouteNewState(boolean isNewState) → boolean`
 

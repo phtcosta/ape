@@ -40,6 +40,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -48,6 +49,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+
+import com.android.commands.monkey.ape.llm.ApePromptBuilder;
+import com.android.commands.monkey.ape.llm.LlmRouter;
 
 import com.android.commands.monkey.MonkeySourceApe;
 import com.android.commands.monkey.ape.ActionFilter;
@@ -125,6 +129,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     private final MopData _mopData;
 
+    // LLM integration fields
+    protected LlmRouter _llmRouter;
+    protected boolean _isNewState;
+    protected State _lastState;
+    protected State _stateBeforeLast;
+    protected List<ApePromptBuilder.ActionHistoryEntry> _actionHistory = new ArrayList<>();
+
     protected ActionFilter validatedActionFilter = new BaseActionFilter() {
         @Override
         public boolean include(ModelAction action) {
@@ -141,6 +152,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this.model = new Model(graph);
         this.timestamp = graph.getTimestamp();
         this._mopData = MopData.load(Config.mopDataPath);
+        this._llmRouter = (Config.llmUrl != null) ? new LlmRouter() : null;
     }
 
     protected MopData getMopData() {
@@ -615,6 +627,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         recoverCurrentState();
         buildAndValidateNewState(topComp, info);
         preEvolveModel();
+        _stateBeforeLast = _lastState;
+        _lastState = currentState;
+        _isNewState = (newState.getVisitedCount() == 0);
         getGraph().markVisited(newState, getTimestamp());
         saveGUI();
         updateGraph();
@@ -626,6 +641,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         Action action = resolveNewAction();
         if (action.isModelAction()) {
             getGraph().markVisited((ModelAction) action, getTimestamp());
+            recordActionHistory((ModelAction) action);
             moveForward();
         } else {
             this.resetTrace();
@@ -1230,7 +1246,79 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     protected abstract Action selectNewActionNonnull();
 
+    /**
+     * Records the most recently executed action into the LLM action history ring buffer (max 5 entries).
+     * Called after resolveNewAction() when the action is a ModelAction.
+     */
+    protected void recordActionHistory(ModelAction action) {
+        if (_llmRouter == null) {
+            return;
+        }
+        try {
+            String actionType = "click";
+            if (action.getType() != null) {
+                switch (action.getType()) {
+                    case MODEL_LONG_CLICK:
+                        actionType = "long_click";
+                        break;
+                    case MODEL_BACK:
+                        actionType = "back";
+                        break;
+                    default:
+                        actionType = "click";
+                        break;
+                }
+            }
+            String widgetClass = null;
+            String widgetText = null;
+            int normX = 0;
+            int normY = 0;
+            String typedText = null;
+            com.android.commands.monkey.ape.tree.GUITreeNode node = action.getResolvedNode();
+            if (node != null) {
+                try { widgetClass = node.getClassName(); } catch (Exception ignored) {}
+                try { widgetText = node.getText(); } catch (Exception ignored) {}
+                try {
+                    android.graphics.Rect bounds = node.getBoundsInScreen();
+                    if (bounds != null) {
+                        int cx = (bounds.left + bounds.right) / 2;
+                        int cy = (bounds.top + bounds.bottom) / 2;
+                        // Normalize to [0, 1000)
+                        android.graphics.Rect display = com.android.commands.monkey.ape.AndroidDevice.getDisplayBounds();
+                        int w = display != null && display.right > 0 ? display.right : 1080;
+                        int h = display != null && display.bottom > 0 ? display.bottom : 1920;
+                        normX = (int)((cx * 1000.0) / w);
+                        normY = (int)((cy * 1000.0) / h);
+                    }
+                } catch (Exception ignored) {}
+                try {
+                    typedText = node.getInputText();
+                    if (typedText != null && !typedText.isEmpty()) {
+                        actionType = "type_text";
+                    }
+                } catch (Exception ignored) {}
+            }
+            String result;
+            if (newState != null && _lastState != null && newState.equals(_lastState)) {
+                result = "same";
+            } else if (newState != null && _stateBeforeLast != null && newState.equals(_stateBeforeLast)) {
+                result = "previous screen";
+            } else {
+                result = "new screen";
+            }
+            ApePromptBuilder.ActionHistoryEntry entry = new ApePromptBuilder.ActionHistoryEntry(
+                    actionType, widgetClass, widgetText, normX, normY, typedText, result);
+            _actionHistory.add(entry);
+            if (_actionHistory.size() > 5) {
+                _actionHistory.remove(0);
+            }
+        } catch (Exception e) {
+            Logger.println("[APE-RV] recordActionHistory error: " + e.getMessage());
+        }
+    }
+
     public void tearDown() {
+        if (_llmRouter != null) _llmRouter.printSummary();
         super.tearDown();
         saveGraph();
         saveActionHistory();

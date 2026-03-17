@@ -124,10 +124,22 @@ public class Config {
 
     // MOP scoring weights — configurable via ape.properties.
     // Controls how strongly MOP reachability boosts action priority relative to SATA base (~32-50).
-    // Defaults chosen so MOP is influential (2-3x base) but does not dominate exploration.
-    public static final int mopWeightDirect = Config.getInteger("ape.mopWeightDirect", 100);
-    public static final int mopWeightTransitive = Config.getInteger("ape.mopWeightTransitive", 60);
-    public static final int mopWeightActivity = Config.getInteger("ape.mopWeightActivity", 20);
+    // Defaults chosen so MOP strongly dominates exploration toward monitored operations.
+    public static final int mopWeightDirect = Config.getInteger("ape.mopWeightDirect", 500);
+    public static final int mopWeightTransitive = Config.getInteger("ape.mopWeightTransitive", 300);
+    public static final int mopWeightActivity = Config.getInteger("ape.mopWeightActivity", 100);
+
+    // LLM integration — configurable via ape.properties.
+    // llmUrl=null disables LLM calls entirely (safe default when no LLM server is present).
+    public static final String llmUrl = Config.get("ape.llmUrl");
+    public static final boolean llmOnNewState = Config.getBoolean("ape.llmOnNewState", true);
+    public static final boolean llmOnStagnation = Config.getBoolean("ape.llmOnStagnation", true);
+    public static final String llmModel = Config.get("ape.llmModel", "default");
+    public static final double llmTemperature = Config.getDouble("ape.llmTemperature", 0.3);
+    public static final double llmTopP = Config.getDouble("ape.llmTopP", 0.6);
+    public static final int llmTopK = Config.getInteger("ape.llmTopK", 50);
+    public static final int llmTimeoutMs = Config.getInteger("ape.llmTimeoutMs", 15000);
+    public static final int llmMaxCalls = Config.getInteger("ape.llmMaxCalls", 200);
 
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);

@@ -43,6 +43,30 @@
             <scope>system</scope>
             <systemPath>${project.basedir}/dalvik_stub/classes.jar</systemPath>
         </dependency>
+
+        <!--
+            JUnit 4 for unit tests.
+            Test scope only — must NOT appear in ape-rv.jar.
+        -->
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+            org.json for unit tests that exercise ToolCallParser / SglangClient.
+            The production code uses the org.json bundled inside the Android framework
+            JAR (system scope above). For tests running on the JVM, we pull in the
+            standalone jar so that tests compile and run without an Android device.
+        -->
+        <dependency>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+            <version>20180813</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -54,6 +78,28 @@
                 <version>3.11.0</version>
                 <configuration>
                     <release>11</release>
+                </configuration>
+            </plugin>
+
+            <!--
+                Surefire configuration for unit tests.
+                Problem: dalvik_stub/classes.jar (system scope) contains stub org.json classes
+                that throw RuntimeException("Stub!") — they appear before the real
+                org.json:json (test scope) on the classpath. This causes ToolCallParser
+                tests that rely on JSONObject to silently return null.
+                Fix: exclude both system-scope Android stubs from the test runtime classpath
+                (they are compile-only stubs; tests run on the JVM, not on Android).
+                The real org.json:json (test scope) fills the gap.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <classpathDependencyExcludes>
+                        <classpathDependencyExclude>com.android:dalvik-stub</classpathDependencyExclude>
+                        <classpathDependencyExclude>com.android:framework-full-debug</classpathDependencyExclude>
+                    </classpathDependencyExcludes>
                 </configuration>
             </plugin>
 

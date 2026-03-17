@@ -7,9 +7,9 @@ import com.android.commands.monkey.ape.model.State;
  * Maps MOP reachability flags to integer priority boosts for action scoring.
  *
  * Weights are read from Config (configurable via ape.properties):
- *   directMop              → Config.mopWeightDirect     (default 100)
- *   transitiveMop (only)   → Config.mopWeightTransitive (default  60)
- *   activityHasMop (no widget match) → Config.mopWeightActivity (default 20)
+ *   directMop              → Config.mopWeightDirect     (default 500)
+ *   transitiveMop (only)   → Config.mopWeightTransitive (default 300)
+ *   activityHasMop (no widget match) → Config.mopWeightActivity (default 100)
  *   no match               →    0
  */
 public class MopScorer {

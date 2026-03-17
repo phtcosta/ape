@@ -19,6 +19,7 @@ import static com.android.commands.monkey.ape.utils.Config.defaultEpsilon;
 import static com.android.commands.monkey.ape.utils.Config.doBackToTrivialActivity;
 import static com.android.commands.monkey.ape.utils.Config.fallbackToGraphTransition;
 import static com.android.commands.monkey.ape.utils.Config.fillTransitionsByHistory;
+import static com.android.commands.monkey.ape.utils.Config.graphStableRestartThreshold;
 import static com.android.commands.monkey.ape.utils.Config.trivialActivityRankThreshold;
 import static com.android.commands.monkey.ape.utils.Config.useActionDiffer;
 
@@ -299,6 +300,26 @@ public class SataAgent extends StatefulAgent {
                 if (getGraph().isNameGlobalAction(action)) {
                     Logger.iformat("- %s", action);
                 }
+            }
+        }
+        // LLM new-state hook
+        if (actionBufferSize() == 0 && newState.getActions().size() > 2
+                && _llmRouter != null && _llmRouter.shouldRouteNewState(_isNewState)) {
+            ModelAction result = _llmRouter.selectAction(newGUITree, newState,
+                    newState.getActions(), getMopData(), _actionHistory, "new-state");
+            if (result != null) {
+                return result;
+            }
+        }
+        // LLM stagnation hook (single-shot at midpoint)
+        if (actionBufferSize() == 0 && newState.getActions().size() > 2
+                && graphStableCounter == graphStableRestartThreshold / 2
+                && _llmRouter != null && _llmRouter.shouldRouteStagnation(graphStableCounter)) {
+            ModelAction result = _llmRouter.selectAction(newGUITree, newState,
+                    newState.getActions(), getMopData(), _actionHistory, "stagnation");
+            if (result != null) {
+                graphStableCounter = 0;
+                return result;
             }
         }
         Action resolved = null;

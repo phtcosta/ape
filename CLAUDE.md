@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 APE-RV is a fork of APE (Android Property Explorer), a model-based Android GUI testing tool from ETH Zurich's AST Lab (ICSE 2019). This fork is developed at the University of Brasília as part of the RVSEC research infrastructure. It extends the original APE with: a modernized build system (Phase 1), AndroidX UI coverage improvements and MODEL_MENU exploration (Phase 2), MOP-guided action scoring (Phase 3), and an aperv plugin for rv-android (Phase 4).
 
-**Current repository state**: Maven+d8+Java 11 build → `target/ape-rv.jar`. All phases complete: Phase 1 (build), Phase 2 (AndroidX/MODEL_MENU), Phase 3 (MOP-guided action scoring with configurable weights + navigation-level MOP density tiebreaker), Phase 4 (aperv-tool in rv-android).
+**Current repository state**: Maven+d8+Java 11 build → `target/ape-rv.jar`. All phases complete: Phase 1 (build), Phase 2 (AndroidX/MODEL_MENU), Phase 3 (MOP-guided action scoring with configurable weights + navigation-level MOP density tiebreaker), Phase 4 (aperv-tool in rv-android), Phase 5 (LLM integration via SGLang/Qwen3-VL for new-state and stagnation-breaking exploration).
 
 ## Build Commands
 
@@ -107,6 +107,7 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 | `ape.tree` | Current-screen representation: GUITree, GUITreeNode, GUITreeBuilder |
 | `ape.naming` | **Core innovation**: abstraction/refinement via Naming, Namer, NamingFactory |
 | `ape.events` | Event generation: ApeClickEvent, ApeDragEvent, ApeKeyEvent, etc. |
+| `ape.llm` | LLM integration: SglangClient, LlmRouter, ApePromptBuilder, ToolCallParser, ImageProcessor, ScreenshotCapture, CoordinateNormalizer, LlmCircuitBreaker |
 | `ape.utils` | Config (100+ flags), Logger, RandomHelper, Utils |
 | `reducer/` | Crash test-case minimization (delta debugging) |
 
@@ -119,11 +120,16 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `takeScreenshot` / `saveGUITreeToXmlEveryStep` — debug output
 - `defaultGUIThrottle` — delay between actions
 - `mopDataPath` — path to static analysis JSON on device (null = MOP scoring disabled)
-- `mopWeightDirect` / `mopWeightTransitive` / `mopWeightActivity` — MOP scoring weights (defaults: 100/60/20), configurable via `ape.properties`
+- `mopWeightDirect` / `mopWeightTransitive` / `mopWeightActivity` — MOP scoring weights (defaults: 500/300/100), configurable via `ape.properties`
+- `llmUrl` — SGLang base URL (null = LLM disabled); e.g., `http://10.0.2.2:30000/v1`
+- `llmOnNewState` / `llmOnStagnation` — toggle LLM modes (default: true)
+- `llmModel` / `llmTemperature` / `llmTopP` / `llmTopK` — LLM sampling params
+- `llmTimeoutMs` — HTTP timeout (default: 15000ms)
+- `llmMaxCalls` — max LLM calls per session (default: 200)
 
 ## Notes
 
-- No automated test suite — validation is done by running on real Android devices
+- Unit + integration test suite: `mvn test` (145 tests, 14 skipped for Android runtime). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest`
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
 - Known issue: `OutOfMemoryError` possible due to keeping all GUITrees in memory
 - Pre-compiled `ape.jar` is included in repo for convenience

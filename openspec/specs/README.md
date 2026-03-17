@@ -13,6 +13,9 @@ This directory contains the main specifications for APE-RV. Each subdirectory co
 | [ui-tree](ui-tree/spec.md) | UI Tree | 1–2 | **Current** | GUITree, GUITreeNode, scroll detection |
 | [mop-guidance](mop-guidance/spec.md) | MOP Guidance | 3 | **Current** | MopData loader, MopScorer, configurable weights (500/300/100) |
 | [aperv-tool](aperv-tool/spec.md) | aperv-tool Plugin | 4 | **Current** | Python ApeRVTool for rv-android, 5 variants, JAR resolution |
+| [llm-infrastructure](llm-infrastructure/spec.md) | LLM Infrastructure | 6 | **Current** | SglangClient, ScreenshotCapture, ImageProcessor, ToolCallParser, CoordinateNormalizer, LlmCircuitBreaker, LlmException |
+| [llm-prompt](llm-prompt/spec.md) | LLM Prompt Builder | 6 | **Current** | ApePromptBuilder: system message, widget list, MOP markers, action history, exploration context |
+| [llm-routing](llm-routing/spec.md) | LLM Routing | 6 | **Current** | LlmRouter lifecycle, new-state mode, stagnation mode, action selection pipeline, coordinate mapping, telemetry |
 
 ## Spec→PRD Traceability
 
@@ -25,6 +28,9 @@ This directory contains the main specifications for APE-RV. Each subdirectory co
 | ui-tree | FR08, FR09 |
 | mop-guidance | FR11, FR12, FR13 |
 | aperv-tool | FR14, FR15, FR16, FR17 |
+| llm-infrastructure | FR18, FR19, FR20 |
+| llm-prompt | FR21, FR22 |
+| llm-routing | FR23, FR24, FR25 |
 
 ## How Specs Are Used
 
