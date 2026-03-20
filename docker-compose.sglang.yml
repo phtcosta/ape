@@ -1,6 +1,6 @@
 services:
   sglang:
-    image: lmsysorg/sglang:${SGLANG_VERSION:-v0.5.9}
+    image: lmsysorg/sglang:${SGLANG_VERSION:-v0.5.6.post2}
     container_name: sglang-server
     ports:
       - "${SGLANG_PORT:-30000}:30000"
@@ -39,14 +39,13 @@ services:
 # Usage:
 #   MODEL_PATH=Qwen/Qwen3.5-4B TOOL_CALL_PARSER=qwen3_coder REASONING_PARSER=qwen3 ATTENTION_BACKEND=triton docker compose up -d
 #
-# IMPORTANT: Image version is pinned to v0.5.9 (default). Do NOT use :latest — SGLang v0.5.9
-#   broke multimodal for Qwen3-VL-4B-Instruct (images arrive corrupted). Qwen3.5-4B works.
+# IMPORTANT: Image pinned to v0.5.6.post2 — last version with working Qwen3-VL multimodal.
+#   SGLang v0.5.7-v0.5.9 broke Qwen3-VL vision encoder (issue #19513, fix PR #19333 on main
+#   but not in any release yet). Qwen3.5-4B works on v0.5.9 but has unacceptable latency
+#   (~4.7s/call vs ~1.7s) due to 2.7x more visual tokens in raw mode.
 #   See rvsec/rv-android/openspec/changes/gh43-aperv-llm-validation/exploration-sglang-qwen35.md
 #
-# Candidate models with tool-call-parser:
-#   MODEL_PATH=Qwen/Qwen3.5-4B            TOOL_CALL_PARSER=qwen3_coder  REASONING_PARSER=qwen3  ATTENTION_BACKEND=triton  (validated)
-#   MODEL_PATH=Qwen/Qwen3-VL-4B-Instruct  TOOL_CALL_PARSER=qwen  SGLANG_VERSION=v0.5.6.post2  (needs older SGLang)
-#   MODEL_PATH=microsoft/Fara-7B          TOOL_CALL_PARSER=<TBD>
+# Default model: Qwen/Qwen3-VL-4B-Instruct with --tool-call-parser qwen --attention-backend flashinfer
 #
 # Check logs:
 #   docker compose logs -f sglang
