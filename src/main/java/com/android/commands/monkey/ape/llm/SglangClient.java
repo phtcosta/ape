@@ -48,7 +48,7 @@ public class SglangClient {
     }
 
     /**
-     * Set the OpenAI tools schema. Required for Qwen3-VL to generate
+     * Set the OpenAI tools schema. Required for the VLM to generate
      * structured tool calls when processing multimodal input.
      */
     public void setTools(JSONArray tools) {
@@ -250,7 +250,7 @@ public class SglangClient {
     /**
      * Convert a JSONObject of primitive values into a Map<String, Object>.
      *
-     * Handles Qwen3-VL native tool-call format where coordinates may arrive as an array
+     * Handles VLM native tool-call format where coordinates may arrive as an array
      * in the "x" field (e.g. "x": [540, 399]) instead of separate "x"/"y" primitives.
      * This mirrors RVAgent's normalize_tool_args() array-expansion logic.
      */
@@ -258,7 +258,7 @@ public class SglangClient {
         Map<String, Object> result = new java.util.LinkedHashMap<>();
 
         // Expand "x": [x, y] array into separate "x" and "y" entries before normal parsing.
-        // Qwen3-VL occasionally emits coordinates as a two-element array under "x".
+        // VLM occasionally emits coordinates as a two-element array under "x".
         JSONArray xArr = obj.optJSONArray("x");
         if (xArr != null && xArr.length() >= 2) {
             result.put("x", xArr.optDouble(0));

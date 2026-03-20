@@ -9,8 +9,8 @@ import java.io.ByteArrayOutputStream;
 /**
  * Compresses and encodes screenshots for LLM consumption.
  *
- * Qwen3-VL performs well with JPEG quality 80 images whose longest edge is at most
- * 1000 pixels — further detail is not useful and only increases token count.
+ * Compresses and encodes screenshots for VLM consumption. Supports two modes:
+ * resize (max-edge 1000px) and raw (original device resolution).
  *
  * The static calculateResizedDimensions() method is extracted so it can be tested
  * in JUnit without requiring Android Bitmap APIs.

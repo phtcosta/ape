@@ -21,7 +21,7 @@ import java.util.Set;
  * <p>Produces exactly 2 messages: [system, user].
  * The user message has 2 content parts: [image, text] in that order.
  *
- * <p>Coordinate space: [0, 1000) normalized (matching Qwen3-VL conventions).
+ * <p>Coordinate space: [0, 1000) normalized (matching Qwen VLM conventions).
  * Conversion formula: normX = (int)((centerPixelX / deviceWidth) * 1000).
  */
 public class ApePromptBuilder {
