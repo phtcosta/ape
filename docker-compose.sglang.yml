@@ -1,0 +1,59 @@
+services:
+  sglang:
+    image: lmsysorg/sglang:${SGLANG_VERSION:-v0.5.9}
+    container_name: sglang-server
+    ports:
+      - "${SGLANG_PORT:-30000}:30000"
+    volumes:
+      - ${HF_CACHE:-/pedro/desenvolvimento/.cache/huggingface}:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    ipc: host
+    shm_size: "16g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      python3 -m sglang.launch_server
+      --model-path ${MODEL_PATH:-Qwen/Qwen3-VL-4B-Instruct}
+      --host 0.0.0.0
+      --port 30000
+      --trust-remote-code
+      --attention-backend ${ATTENTION_BACKEND:-flashinfer}
+      --tool-call-parser ${TOOL_CALL_PARSER:-qwen}
+      --enable-multimodal
+      --context-length ${CONTEXT_LENGTH:-8192}
+      ${REASONING_PARSER:+--reasoning-parser ${REASONING_PARSER}}
+      ${EXTRA_ARGS:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:30000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+# Usage:
+#   MODEL_PATH=Qwen/Qwen3.5-4B TOOL_CALL_PARSER=qwen3_coder REASONING_PARSER=qwen3 ATTENTION_BACKEND=triton docker compose up -d
+#
+# IMPORTANT: Image version is pinned to v0.5.9 (default). Do NOT use :latest — SGLang v0.5.9
+#   broke multimodal for Qwen3-VL-4B-Instruct (images arrive corrupted). Qwen3.5-4B works.
+#   See rvsec/rv-android/openspec/changes/gh43-aperv-llm-validation/exploration-sglang-qwen35.md
+#
+# Candidate models with tool-call-parser:
+#   MODEL_PATH=Qwen/Qwen3.5-4B            TOOL_CALL_PARSER=qwen3_coder  REASONING_PARSER=qwen3  ATTENTION_BACKEND=triton  (validated)
+#   MODEL_PATH=Qwen/Qwen3-VL-4B-Instruct  TOOL_CALL_PARSER=qwen  SGLANG_VERSION=v0.5.6.post2  (needs older SGLang)
+#   MODEL_PATH=microsoft/Fara-7B          TOOL_CALL_PARSER=<TBD>
+#
+# Check logs:
+#   docker compose logs -f sglang
+#
+# Stop:
+#   docker compose down
+#
+# Note: RTX 5070 Ti (SM120) requires --attention-backend flashinfer for Qwen3-VL,
+#       but --attention-backend triton for Qwen3.5 (GDN architecture).
+#       See docs/20251223_plano.md for SM120 compatibility details
