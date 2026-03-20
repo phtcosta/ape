@@ -29,6 +29,10 @@ import static org.junit.Assert.*;
 public class SglangClientTest {
 
     private static SglangClient makeClient() {
+        return makeClient(false);
+    }
+
+    private static SglangClient makeClient(boolean enableThinking) {
         return new SglangClient(
                 "http://localhost:9999/v1",  // not reachable — only used by sendRequest()
                 "test-model",
@@ -36,7 +40,8 @@ public class SglangClientTest {
                 0.9,   // top_p
                 40,    // top_k
                 512,   // max_tokens
-                5000   // timeout_ms
+                5000,  // timeout_ms
+                enableThinking
         );
     }
 
@@ -235,5 +240,80 @@ public class SglangClientTest {
     public void parseResponse_malformedJson_throwsLlmException() {
         SglangClient client = makeClient();
         client.parseResponse("not-json-at-all");
+    }
+
+    // -------------------------------------------------------------------------
+    // enableThinking — chat_template_kwargs in request body
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void buildRequestBody_thinkingDisabled_containsChatTemplateKwargs() {
+        SglangClient client = makeClient(false);
+        List<SglangClient.Message> messages = Collections.singletonList(
+                new SglangClient.Message("user", "hello"));
+
+        String body = client.buildRequestBody(messages);
+
+        assertTrue("body must contain chat_template_kwargs when thinking disabled",
+                body.contains("\"chat_template_kwargs\""));
+        assertTrue("body must contain enable_thinking:false",
+                body.contains("\"enable_thinking\""));
+    }
+
+    @Test
+    public void buildRequestBody_thinkingEnabled_noChatTemplateKwargs() {
+        SglangClient client = makeClient(true);
+        List<SglangClient.Message> messages = Collections.singletonList(
+                new SglangClient.Message("user", "hello"));
+
+        String body = client.buildRequestBody(messages);
+
+        assertFalse("body must NOT contain chat_template_kwargs when thinking enabled",
+                body.contains("\"chat_template_kwargs\""));
+    }
+
+    // -------------------------------------------------------------------------
+    // putPrimitive — comma-separated string coordinate format
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void parseResponse_commaSeparatedStringCoords_parsedCorrectly() {
+        SglangClient client = makeClient();
+        // Simulate Qwen3.5-4B with qwen3_coder returning "x": "498, 549"
+        String json = "{"
+                + "\"choices\":[{\"message\":{\"role\":\"assistant\","
+                + "\"content\":null,"
+                + "\"tool_calls\":[{\"function\":{\"name\":\"click\","
+                + "\"arguments\":{\"x\":\"498, 549\"}}}]}}],"
+                + "\"usage\":{\"prompt_tokens\":80,\"completion_tokens\":15}"
+                + "}";
+
+        SglangClient.ChatResponse resp = client.parseResponse(json);
+
+        assertNotNull(resp);
+        assertFalse(resp.getToolCalls().isEmpty());
+        SglangClient.ToolCall tc = resp.getToolCalls().get(0);
+        assertEquals("click", tc.getName());
+        assertEquals(498.0, tc.getArguments().get("x"));
+        assertEquals(549.0, tc.getArguments().get("y"));
+    }
+
+    @Test
+    public void parseResponse_commaSeparatedStringCoordsWithSpaces_parsedCorrectly() {
+        SglangClient client = makeClient();
+        String json = "{"
+                + "\"choices\":[{\"message\":{\"role\":\"assistant\","
+                + "\"content\":null,"
+                + "\"tool_calls\":[{\"function\":{\"name\":\"click\","
+                + "\"arguments\":{\"x\":\" 498 , 549 \"}}}]}}],"
+                + "\"usage\":{\"prompt_tokens\":80,\"completion_tokens\":15}"
+                + "}";
+
+        SglangClient.ChatResponse resp = client.parseResponse(json);
+
+        assertNotNull(resp);
+        SglangClient.ToolCall tc = resp.getToolCalls().get(0);
+        assertEquals(498.0, tc.getArguments().get("x"));
+        assertEquals(549.0, tc.getArguments().get("y"));
     }
 }

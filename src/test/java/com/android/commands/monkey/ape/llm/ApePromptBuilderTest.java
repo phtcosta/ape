@@ -205,4 +205,20 @@ public class ApePromptBuilderTest {
         assertTrue("user text should contain 'Recent:' section",
                 userText.contains("Recent:"));
     }
+
+    // -------------------------------------------------------------------------
+    // Screen dimensions in system message
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void systemMessage_containsScreenDimensions() {
+        // build() with null tree → defaults to 1080x1920
+        ApePromptBuilder builder = new ApePromptBuilder();
+        List<SglangClient.Message> messages =
+                builder.build(null, null, null, null, null, null);
+
+        String systemText = messages.get(0).getTextContent();
+        assertTrue("system message must contain screen dimensions",
+                systemText.contains("Screen: 1080x1920 pixels."));
+    }
 }

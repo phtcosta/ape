@@ -83,7 +83,8 @@ public class LlmRouter {
                 Config.llmTopP,
                 Config.llmTopK,
                 1024,
-                Config.llmTimeoutMs);
+                Config.llmTimeoutMs,
+                Config.llmEnableThinking);
         this.client.setTools(buildToolsSchema());
         this.breaker       = new LlmCircuitBreaker();
         this.screenshot    = new ScreenshotCapture();
@@ -236,7 +237,7 @@ public class LlmRouter {
             }
 
             // Step 2: Process image (resize + base64-encode)
-            base64 = imageProcessor.processScreenshot(pngBytes);
+            base64 = imageProcessor.processScreenshot(pngBytes, Config.llmImageResize);
             if (base64 == null) {
                 Logger.println("[APE-RV] LLM image processing failed, skipping LLM step");
                 nullCount++;

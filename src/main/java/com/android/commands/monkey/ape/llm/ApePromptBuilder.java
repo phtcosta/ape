@@ -117,7 +117,7 @@ public class ApePromptBuilder {
         boolean includeTypeText = hasInputField(actions);
 
         // --- System message ---
-        String systemText = buildSystemMessage(includeTypeText);
+        String systemText = buildSystemMessage(includeTypeText, deviceWidth, deviceHeight);
 
         // --- User text part ---
         String userText = buildUserText(
@@ -144,9 +144,10 @@ public class ApePromptBuilder {
     // System message
     // -------------------------------------------------------------------------
 
-    private String buildSystemMessage(boolean includeTypeText) {
+    private String buildSystemMessage(boolean includeTypeText, int deviceWidth, int deviceHeight) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are an Android UI testing agent exploring an app.\n");
+        sb.append("Screen: ").append(deviceWidth).append('x').append(deviceHeight).append(" pixels.\n");
         sb.append("DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).\n");
         sb.append("PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.\n");
         sb.append("AVOID: status bar (top), navigation bar (bottom).\n");

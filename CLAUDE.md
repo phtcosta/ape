@@ -126,6 +126,8 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `llmModel` / `llmTemperature` / `llmTopP` / `llmTopK` — LLM sampling params
 - `llmTimeoutMs` — HTTP timeout (default: 15000ms)
 - `llmMaxCalls` — max LLM calls per session (default: 200)
+- `llmEnableThinking` — enable VLM thinking mode; Qwen3.5-4B default ON, disable for lower latency (default: false)
+- `llmImageResize` — resize screenshots to max-edge 1000px before LLM; false = raw mode at device resolution (default: false)
 
 ## Notes
 

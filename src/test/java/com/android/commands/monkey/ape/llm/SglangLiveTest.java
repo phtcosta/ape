@@ -60,7 +60,7 @@ public class SglangLiveTest {
         String model = System.getenv("SGLANG_MODEL") != null
                 ? System.getenv("SGLANG_MODEL") : DEFAULT_MODEL;
         SglangClient client = new SglangClient(sglangUrl, model,
-                TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS);
+                TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS, false);
         client.setTools(buildToolsSchema());
         return client;
     }
@@ -386,7 +386,7 @@ public class SglangLiveTest {
     public void buildRequestBody_withTools_isValidJson() throws Exception {
         SglangClient client = new SglangClient(
                 "http://localhost:9999/v1", DEFAULT_MODEL,
-                TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS);
+                TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS, false);
         client.setTools(buildToolsSchema());
 
         byte[] pngBytes = loadFixture("001.png");
@@ -417,7 +417,7 @@ public class SglangLiveTest {
     public void parseResponse_mockToolCall_extractsAction() {
         SglangClient client = new SglangClient(
                 "http://localhost:9999/v1", DEFAULT_MODEL,
-                TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS);
+                TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS, false);
 
         String mock = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null," +
                 "\"tool_calls\":[{\"function\":{\"name\":\"click\",\"arguments\":{\"x\":540,\"y\":399}}}]}}]," +
@@ -435,7 +435,7 @@ public class SglangLiveTest {
     public void parseResponse_xmlTagFormat_extractsAction() {
         SglangClient client = new SglangClient(
                 "http://localhost:9999/v1", DEFAULT_MODEL,
-                TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS);
+                TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS, false);
 
         String xmlContent = "<tool_call>\n{\"name\": \"click\", \"arguments\": {\"x\": 500, \"y\": 208}}\n</tool_call>";
         String mock = "{\"choices\":[{\"message\":{\"role\":\"assistant\"," +

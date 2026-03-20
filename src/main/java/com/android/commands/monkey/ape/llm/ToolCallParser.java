@@ -41,6 +41,9 @@ public class ToolCallParser {
     // Pattern 3: ": .91  →  ": 0.91  (missing leading zero)
     private static final Pattern FIX_LEADING_ZERO =
             Pattern.compile(":\\s*\\.(\\d+)");
+    // Pattern 4: "x": "498, 549"  →  "x": 498, "y": 549  (Qwen3.5-4B with qwen3_coder)
+    private static final Pattern FIX_STRING_COORDS =
+            Pattern.compile("\"x\":\\s*\"\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\"");
 
     // Matches a JSON object that has both "name" and "arguments" keys
     private static final Pattern JSON_INLINE_PATTERN = Pattern.compile(
@@ -127,8 +130,11 @@ public class ToolCallParser {
      * Returns the fixed string, or the original if no fix was needed.
      */
     static String fixMalformedJson(String json) {
+        // Fix comma-separated string coords: "x": "498, 549" → "x": 498, "y": 549
+        // Must run before numeric fixes since the value is quoted as a string.
+        String s = FIX_STRING_COORDS.matcher(json).replaceAll("\"x\": $1, \"y\": $2");
         // Fix missing leading zero: ": .91 → ": 0.91
-        String s = FIX_LEADING_ZERO.matcher(json).replaceAll(": 0.$1");
+        s = FIX_LEADING_ZERO.matcher(s).replaceAll(": 0.$1");
         // Fix array coords: "x": [352, 782] → "x": 352, "y": 782
         s = FIX_ARRAY_COORDS.matcher(s).replaceAll("\"x\": $1, \"y\": $2");
         // Fix missing "y" key: "x": 352, 782 → "x": 352, "y": 782

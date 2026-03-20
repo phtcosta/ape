@@ -129,7 +129,7 @@ public class ImageProcessorTest {
         assertTrue("fixture PNG must not be empty", pngBytes.length > 0);
 
         ImageProcessor processor = new ImageProcessor();
-        String base64 = processor.processScreenshot(pngBytes);
+        String base64 = processor.processScreenshot(pngBytes, true);
 
         assertNotNull("processScreenshot must return non-null for a valid PNG", base64);
         assertFalse("base64 result must not be empty", base64.isEmpty());
@@ -146,7 +146,7 @@ public class ImageProcessorTest {
         byte[] pngBytes = Files.readAllBytes(fixturePath);
 
         ImageProcessor processor = new ImageProcessor();
-        String base64 = processor.processScreenshot(pngBytes);
+        String base64 = processor.processScreenshot(pngBytes, true);
 
         assertNotNull(base64);
         // Decode and check dimensions
@@ -164,7 +164,7 @@ public class ImageProcessorTest {
     public void processScreenshot_withNullInput_returnsNull() {
         ImageProcessor processor = new ImageProcessor();
         assertNull("null input must produce null output",
-                processor.processScreenshot(null));
+                processor.processScreenshot(null, true));
     }
 
     @Test
@@ -172,6 +172,6 @@ public class ImageProcessorTest {
     public void processScreenshot_withEmptyInput_returnsNull() {
         ImageProcessor processor = new ImageProcessor();
         assertNull("empty byte array must produce null output",
-                processor.processScreenshot(new byte[0]));
+                processor.processScreenshot(new byte[0], true));
     }
 }

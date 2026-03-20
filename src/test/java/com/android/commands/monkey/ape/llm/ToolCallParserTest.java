@@ -235,4 +235,53 @@ public class ToolCallParserTest {
         ToolCallParser.ParsedAction action = parser.parse(null);
         assertNull(action);
     }
+
+    // ---------------------------------------------------------------------------
+    // Comma-separated string coordinate fix (Qwen3.5-4B with qwen3_coder)
+    // ---------------------------------------------------------------------------
+
+    @Test
+    public void testFixMalformedJson_commaSeparatedString() {
+        String input = "{\"name\": \"click\", \"arguments\": {\"x\": \"498, 549\"}}";
+        String fixed = ToolCallParser.fixMalformedJson(input);
+        assertTrue("x must be numeric after fix", fixed.contains("\"x\": 498"));
+        assertTrue("y must be present after fix", fixed.contains("\"y\": 549"));
+        assertFalse("quoted string value must be removed", fixed.contains("\"498, 549\""));
+    }
+
+    @Test
+    public void testFixMalformedJson_commaSeparatedStringWithSpaces() {
+        String input = "{\"name\": \"click\", \"arguments\": {\"x\": \" 498 , 549 \"}}";
+        String fixed = ToolCallParser.fixMalformedJson(input);
+        assertTrue("x must be numeric after fix", fixed.contains("\"x\": 498"));
+        assertTrue("y must be present after fix", fixed.contains("\"y\": 549"));
+    }
+
+    @Test
+    public void testFixMalformedJson_commaSeparatedStringPreservesOtherFixes() {
+        // Existing fixes still work: missing y key
+        String input1 = "{\"name\": \"click\", \"arguments\": {\"x\": 540, 399}}";
+        String fixed1 = ToolCallParser.fixMalformedJson(input1);
+        assertTrue(fixed1.contains("\"y\": 399"));
+
+        // Existing fixes still work: array format
+        String input2 = "{\"name\": \"click\", \"arguments\": {\"x\": [352, 782]}}";
+        String fixed2 = ToolCallParser.fixMalformedJson(input2);
+        assertTrue(fixed2.contains("\"y\": 782"));
+    }
+
+    @Test
+    public void testParse_inlineJsonWithCommaSeparatedStringCoords() {
+        // End-to-end: inline JSON with string coords → parsed correctly
+        String content = "{\"name\": \"click\", \"arguments\": {\"x\": \"300, 700\"}}";
+        SglangClient.ChatResponse response = new SglangClient.ChatResponse(
+                content, Collections.<SglangClient.ToolCall>emptyList(), 0, 0);
+
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(300, action.getX());
+        assertEquals(700, action.getY());
+    }
 }

@@ -21,13 +21,13 @@ public class ImageProcessor {
     private static final int JPEG_QUALITY = 80;
 
     /**
-     * Compress a PNG screenshot to JPEG, resize to MAX_EDGE_PX longest edge, and
-     * return the result as a base64 string (no data URI prefix).
+     * Compress a PNG screenshot to JPEG, optionally resize, and return as base64.
      *
      * @param pngBytes raw PNG bytes from the screenshot capture
+     * @param resize   if true, resize to MAX_EDGE_PX longest edge; if false, keep original resolution
      * @return base64-encoded JPEG string, or null if processing fails
      */
-    public String processScreenshot(byte[] pngBytes) {
+    public String processScreenshot(byte[] pngBytes, boolean resize) {
         if (pngBytes == null || pngBytes.length == 0) return null;
 
         try {
@@ -35,22 +35,26 @@ public class ImageProcessor {
             Bitmap original = BitmapFactory.decodeByteArray(pngBytes, 0, pngBytes.length);
             if (original == null) return null;
 
-            // Calculate target dimensions maintaining aspect ratio
-            int[] dims = calculateResizedDimensions(original.getWidth(), original.getHeight(), MAX_EDGE_PX);
-            int targetW = dims[0];
-            int targetH = dims[1];
+            Bitmap toCompress;
+            if (resize) {
+                // Calculate target dimensions maintaining aspect ratio
+                int[] dims = calculateResizedDimensions(original.getWidth(), original.getHeight(), MAX_EDGE_PX);
+                int targetW = dims[0];
+                int targetH = dims[1];
 
-            // Resize if needed
-            Bitmap resized;
-            if (targetW == original.getWidth() && targetH == original.getHeight()) {
-                resized = original;
+                if (targetW == original.getWidth() && targetH == original.getHeight()) {
+                    toCompress = original;
+                } else {
+                    toCompress = Bitmap.createScaledBitmap(original, targetW, targetH, true);
+                }
             } else {
-                resized = Bitmap.createScaledBitmap(original, targetW, targetH, true);
+                // Raw mode: no resize, send at original device resolution
+                toCompress = original;
             }
 
             // Compress to JPEG
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            resized.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out);
+            toCompress.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out);
             byte[] jpegBytes = out.toByteArray();
 
             return Base64.encodeToString(jpegBytes, Base64.NO_WRAP);
