@@ -50,10 +50,13 @@ The prompt uses Qwen3-VL's normalized coordinate space [0, 1000) for both input 
 
 ### Requirement: System Message
 
-`ApePromptBuilder` SHALL generate a system message with role `"system"`. The system message SHALL be compact (~120 tokens), modeled on rvsmart V13 which proved effective in experiments. Verbose reasoning steps (V17-style, ~300 tokens) did not show significant improvement and waste tokens/latency.
+`ApePromptBuilder` SHALL generate a system message with role `"system"`. The system message SHALL be compact (~130 tokens). The system message SHALL include the device screen dimensions (e.g., `"Screen: 1080x1920 pixels."`) as contextual information for the VLM's spatial reasoning.
+
+The `build()` method SHALL accept `deviceWidth` and `deviceHeight` parameters (already computed from GUITree root node bounds) and include them in the system message header line. The coordinate space for tools remains [0, 1000) normalized regardless of the image mode.
 
 ```
 You are an Android UI testing agent exploring an app.
+Screen: <deviceWidth>x<deviceHeight> pixels.
 DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
 PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
 AVOID: status bar (top), navigation bar (bottom).
@@ -66,16 +69,27 @@ Tools (coordinates in [0,1000) normalized space):
 Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
 ```
 
-**Dynamic tool schema**: The `type_text` tool SHALL be included in the system message only when the current widget list contains at least one input-capable widget (EditText, SearchView, AutoCompleteTextView). When no input widgets are present, `type_text` is omitted from the tool list. This reduces LLM confusion and prevents wasted calls on inapplicable tools. The check is performed by `ApePromptBuilder.build()` when generating the system message.
+**Dynamic tool schema**: The `type_text` tool SHALL be included in the system message only when the current widget list contains at least one input-capable widget (EditText, SearchView, AutoCompleteTextView). When no input widgets are present, `type_text` is omitted from the tool list.
 
 Key design choices:
-- **Compact format**: ~120 tokens saves ~300 tokens/call vs verbose V17. At 85 calls/session this saves ~25K tokens and ~0.5-1s latency per call.
-- **[DM]/[M] notation**: Compact markers matching rvsmart V17 (DM = direct monitored, M = transitive monitored)
-- **Coordinate convention**: Explicit [0, 1000) normalized space matching Qwen3-VL's native output format
+- **Compact format**: ~130 tokens saves ~300 tokens/call vs verbose V17.
+- **Screen dimensions**: Provides spatial context for the VLM's coordinate predictions.
+- **[DM]/[M] notation**: Compact markers (DM = direct monitored, M = transitive monitored)
+- **Coordinate convention**: Explicit [0, 1000) normalized space matching Qwen VLM native output format
 - **JSON response format**: `{"name": "<action>", "arguments": {<args>}}` — compatible with ToolCallParser's 3-level fallback
-- **Dialog handling**: Single line, covers permission and error dialogs
-- **type_text**: Included when input fields are available; hints for semantically valid text (email, password, domain, etc.)
 - **Dynamic tool schema**: type_text omitted when no input widgets on screen, reducing token waste
+
+#### Scenario: System message includes screen dimensions
+
+- **WHEN** `build()` is called with a GUITree whose root node has bounds (0, 0, 1080, 1920)
+- **THEN** the system message SHALL contain the line `"Screen: 1080x1920 pixels."`
+- **AND** the system message SHALL state `"coordinates in [0,1000) normalized space"` for tool descriptions
+
+#### Scenario: System message with non-standard resolution
+
+- **WHEN** `build()` is called with a GUITree whose root node has bounds (0, 0, 1440, 2560)
+- **THEN** the system message SHALL contain `"Screen: 1440x2560 pixels."`
+- **AND** tool coordinates SHALL remain [0, 1000) normalized
 
 #### Scenario: System message content
 
@@ -84,7 +98,6 @@ Key design choices:
 - **AND** it SHALL contain the DIALOG HANDLING, PRIORITY, and RULES sections
 - **AND** it SHALL declare the `click`, `long_click`, and `back` tool schemas
 - **AND** it SHALL specify that coordinates use [0, 1000) normalized space
-- **AND** it SHALL explain the meaning of [DM] and [M] markers
 
 #### Scenario: Dynamic tool schema — type_text included
 
