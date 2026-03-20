@@ -140,8 +140,6 @@ public class Config {
     public static final int llmTopK = Config.getInteger("ape.llmTopK", 50);
     public static final int llmTimeoutMs = Config.getInteger("ape.llmTimeoutMs", 15000);
     public static final int llmMaxCalls = Config.getInteger("ape.llmMaxCalls", 200);
-    public static final boolean llmEnableThinking = Config.getBoolean("ape.llmEnableThinking", false);
-    public static final boolean llmImageResize = Config.getBoolean("ape.llmImageResize", false);
 
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);

@@ -167,7 +167,7 @@ public class ImageProcessorIntegrationTest {
         assertTrue("001.png must be non-empty", pngBytes.length > 0);
 
         ImageProcessor processor = new ImageProcessor();
-        String base64 = processor.processScreenshot(pngBytes, true);
+        String base64 = processor.processScreenshot(pngBytes);
 
         assertNotNull("processScreenshot must return non-null for 001.png", base64);
         assertFalse("base64 result must not be empty", base64.isEmpty());
@@ -184,7 +184,7 @@ public class ImageProcessorIntegrationTest {
             assertNotNull(is);
             byte[] pngBytes = readAllBytes(is);
 
-            String base64 = processor.processScreenshot(pngBytes, true);
+            String base64 = processor.processScreenshot(pngBytes);
             assertNotNull("processScreenshot must return non-null for " + filename, base64);
             assertFalse("base64 must not be empty for " + filename, base64.isEmpty());
         }
@@ -199,7 +199,7 @@ public class ImageProcessorIntegrationTest {
         byte[] pngBytes = readAllBytes(is);
 
         ImageProcessor processor = new ImageProcessor();
-        String base64 = processor.processScreenshot(pngBytes, true);
+        String base64 = processor.processScreenshot(pngBytes);
         assertNotNull(base64);
 
         // Decode and check dimensions (requires Android API)
@@ -217,7 +217,7 @@ public class ImageProcessorIntegrationTest {
     @Ignore("Requires Android runtime - BitmapFactory needs native libskia libraries")
     public void processScreenshot_nullInput_returnsNull() {
         ImageProcessor processor = new ImageProcessor();
-        assertNull("null input must return null", processor.processScreenshot(null, true));
+        assertNull("null input must return null", processor.processScreenshot(null));
     }
 
     @Test
@@ -225,7 +225,7 @@ public class ImageProcessorIntegrationTest {
     public void processScreenshot_emptyInput_returnsNull() {
         ImageProcessor processor = new ImageProcessor();
         assertNull("empty byte array must return null",
-                processor.processScreenshot(new byte[0], true));
+                processor.processScreenshot(new byte[0]));
     }
 
     // -------------------------------------------------------------------------

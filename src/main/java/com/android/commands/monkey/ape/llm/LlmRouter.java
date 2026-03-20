@@ -83,8 +83,7 @@ public class LlmRouter {
                 Config.llmTopP,
                 Config.llmTopK,
                 1024,
-                Config.llmTimeoutMs,
-                Config.llmEnableThinking);
+                Config.llmTimeoutMs);
         this.client.setTools(buildToolsSchema());
         this.breaker       = new LlmCircuitBreaker();
         this.screenshot    = new ScreenshotCapture();
@@ -94,7 +93,7 @@ public class LlmRouter {
     }
 
     /**
-     * Build the OpenAI tools schema for the VLM. Required for the model
+     * Build the OpenAI tools schema for Qwen3-VL. Required for the model
      * to generate structured tool calls with multimodal input.
      */
     private static JSONArray buildToolsSchema() {
@@ -237,7 +236,7 @@ public class LlmRouter {
             }
 
             // Step 2: Process image (resize + base64-encode)
-            base64 = imageProcessor.processScreenshot(pngBytes, Config.llmImageResize);
+            base64 = imageProcessor.processScreenshot(pngBytes);
             if (base64 == null) {
                 Logger.println("[APE-RV] LLM image processing failed, skipping LLM step");
                 nullCount++;

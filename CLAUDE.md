@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 APE-RV is a fork of APE (Android Property Explorer), a model-based Android GUI testing tool from ETH Zurich's AST Lab (ICSE 2019). This fork is developed at the University of Brasília as part of the RVSEC research infrastructure. It extends the original APE with: a modernized build system (Phase 1), AndroidX UI coverage improvements and MODEL_MENU exploration (Phase 2), MOP-guided action scoring (Phase 3), and an aperv plugin for rv-android (Phase 4).
 
-**Current repository state**: Maven+d8+Java 11 build → `target/ape-rv.jar`. All phases complete: Phase 1 (build), Phase 2 (AndroidX/MODEL_MENU), Phase 3 (MOP-guided action scoring with configurable weights + navigation-level MOP density tiebreaker), Phase 4 (aperv-tool in rv-android), Phase 5 (LLM integration via SGLang/Qwen3.5-4B for new-state and stagnation-breaking exploration).
+**Current repository state**: Maven+d8+Java 11 build → `target/ape-rv.jar`. All phases complete: Phase 1 (build), Phase 2 (AndroidX/MODEL_MENU), Phase 3 (MOP-guided action scoring with configurable weights + navigation-level MOP density tiebreaker), Phase 4 (aperv-tool in rv-android), Phase 5 (LLM integration via SGLang/Qwen3-VL for new-state and stagnation-breaking exploration).
 
 ## Build Commands
 
@@ -126,8 +126,6 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `llmModel` / `llmTemperature` / `llmTopP` / `llmTopK` — LLM sampling params
 - `llmTimeoutMs` — HTTP timeout (default: 15000ms)
 - `llmMaxCalls` — max LLM calls per session (default: 200)
-- `llmEnableThinking` — enable VLM thinking mode; Qwen3.5-4B default ON, disable for lower latency (default: false)
-- `llmImageResize` — resize screenshots to max-edge 1000px before LLM; false = raw mode at device resolution (default: false)
 
 ## Notes
 

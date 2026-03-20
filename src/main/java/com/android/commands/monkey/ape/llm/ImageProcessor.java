@@ -9,8 +9,8 @@ import java.io.ByteArrayOutputStream;
 /**
  * Compresses and encodes screenshots for LLM consumption.
  *
- * Compresses and encodes screenshots for VLM consumption. Supports two modes:
- * resize (max-edge 1000px) and raw (original device resolution).
+ * Qwen3-VL performs well with JPEG quality 80 images whose longest edge is at most
+ * 1000 pixels — further detail is not useful and only increases token count.
  *
  * The static calculateResizedDimensions() method is extracted so it can be tested
  * in JUnit without requiring Android Bitmap APIs.
@@ -21,13 +21,13 @@ public class ImageProcessor {
     private static final int JPEG_QUALITY = 80;
 
     /**
-     * Compress a PNG screenshot to JPEG, optionally resize, and return as base64.
+     * Compress a PNG screenshot to JPEG, resize to MAX_EDGE_PX longest edge, and
+     * return the result as a base64 string (no data URI prefix).
      *
      * @param pngBytes raw PNG bytes from the screenshot capture
-     * @param resize   if true, resize to MAX_EDGE_PX longest edge; if false, keep original resolution
      * @return base64-encoded JPEG string, or null if processing fails
      */
-    public String processScreenshot(byte[] pngBytes, boolean resize) {
+    public String processScreenshot(byte[] pngBytes) {
         if (pngBytes == null || pngBytes.length == 0) return null;
 
         try {
@@ -35,26 +35,22 @@ public class ImageProcessor {
             Bitmap original = BitmapFactory.decodeByteArray(pngBytes, 0, pngBytes.length);
             if (original == null) return null;
 
-            Bitmap toCompress;
-            if (resize) {
-                // Calculate target dimensions maintaining aspect ratio
-                int[] dims = calculateResizedDimensions(original.getWidth(), original.getHeight(), MAX_EDGE_PX);
-                int targetW = dims[0];
-                int targetH = dims[1];
+            // Calculate target dimensions maintaining aspect ratio
+            int[] dims = calculateResizedDimensions(original.getWidth(), original.getHeight(), MAX_EDGE_PX);
+            int targetW = dims[0];
+            int targetH = dims[1];
 
-                if (targetW == original.getWidth() && targetH == original.getHeight()) {
-                    toCompress = original;
-                } else {
-                    toCompress = Bitmap.createScaledBitmap(original, targetW, targetH, true);
-                }
+            // Resize if needed
+            Bitmap resized;
+            if (targetW == original.getWidth() && targetH == original.getHeight()) {
+                resized = original;
             } else {
-                // Raw mode: no resize, send at original device resolution
-                toCompress = original;
+                resized = Bitmap.createScaledBitmap(original, targetW, targetH, true);
             }
 
             // Compress to JPEG
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            toCompress.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out);
+            resized.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out);
             byte[] jpegBytes = out.toByteArray();
 
             return Base64.encodeToString(jpegBytes, Base64.NO_WRAP);

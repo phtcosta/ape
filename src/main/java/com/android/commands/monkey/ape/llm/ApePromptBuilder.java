@@ -21,7 +21,7 @@ import java.util.Set;
  * <p>Produces exactly 2 messages: [system, user].
  * The user message has 2 content parts: [image, text] in that order.
  *
- * <p>Coordinate space: [0, 1000) normalized (matching Qwen VLM conventions).
+ * <p>Coordinate space: [0, 1000) normalized (matching Qwen3-VL conventions).
  * Conversion formula: normX = (int)((centerPixelX / deviceWidth) * 1000).
  */
 public class ApePromptBuilder {
@@ -117,7 +117,7 @@ public class ApePromptBuilder {
         boolean includeTypeText = hasInputField(actions);
 
         // --- System message ---
-        String systemText = buildSystemMessage(includeTypeText, deviceWidth, deviceHeight);
+        String systemText = buildSystemMessage(includeTypeText);
 
         // --- User text part ---
         String userText = buildUserText(
@@ -144,10 +144,9 @@ public class ApePromptBuilder {
     // System message
     // -------------------------------------------------------------------------
 
-    private String buildSystemMessage(boolean includeTypeText, int deviceWidth, int deviceHeight) {
+    private String buildSystemMessage(boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are an Android UI testing agent exploring an app.\n");
-        sb.append("Screen: ").append(deviceWidth).append('x').append(deviceHeight).append(" pixels.\n");
         sb.append("DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).\n");
         sb.append("PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.\n");
         sb.append("AVOID: status bar (top), navigation bar (bottom).\n");

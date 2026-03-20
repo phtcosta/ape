@@ -1,12 +1,13 @@
 package com.android.commands.monkey.ape.llm;
 
 /**
- * Converts VLM normalized coordinates to device pixel coordinates.
+ * Converts Qwen3-VL normalized coordinates to device pixel coordinates.
  *
- * Qwen VLMs (Qwen3-VL, Qwen3.5) return coordinates in the [0, 1000) range
- * for both x and y axes, independent of the actual device resolution. This
- * class converts that space to pixel coordinates and clamps the result to
- * the device boundaries.
+ * Qwen3-VL returns coordinates in the [0, 1000) range for both x and y axes,
+ * independent of the actual device resolution. This class converts that space
+ * to pixel coordinates and clamps the result to the device boundaries.
+ *
+ * Reference: https://github.com/QwenLM/Qwen3-VL/issues/1486
  */
 public final class CoordinateNormalizer {
 
@@ -14,7 +15,7 @@ public final class CoordinateNormalizer {
     private CoordinateNormalizer() {}
 
     /**
-     * Convert VLM normalized coordinates to device pixels.
+     * Convert Qwen3-VL normalized coordinates to device pixels.
      *
      * Formula:
      *   pixelX = (int)((qwenX / 1000.0) * deviceWidth)

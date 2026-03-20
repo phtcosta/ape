@@ -9,17 +9,16 @@ import java.util.regex.Pattern;
 /**
  * Parses tool calls from LLM responses using a 3-level fallback strategy.
  *
- * The VLM (Qwen3.5-4B / Qwen3-VL) with SGLang does not always use the native OpenAI
- * tool_calls format. This parser handles all three formats the model may produce:
+ * Qwen3-VL with SGLang does not always use the native OpenAI tool_calls format (~50% rate).
+ * This parser handles all three formats the model may produce:
  *   1. Native  — ChatResponse.toolCalls list is populated by SglangClient
  *   2. XML     — model wraps the call in <tool_call>...</tool_call> tags in its text
  *   3. JSON    — model embeds {"name": "...", "arguments": {...}} in its text
  *
- * The VLM commonly generates malformed JSON coordinates. A pre-parse fix step repairs
- * these before org.json sees the string:
+ * Qwen3-VL commonly generates malformed JSON coordinates. A pre-parse fix step (ported
+ * from RVAgent's _fix_malformed_json) repairs these before org.json sees the string:
  *   - {"x": 540, 399}      → {"x": 540, "y": 399}   (missing "y" key)
  *   - {"x": [540, 399]}    → {"x": 540, "y": 399}   (array format)
- *   - {"x": "498, 549"}    → {"x": 498, "y": 549}   (comma-separated string, qwen3_coder)
  *   - {"x": .91}           → {"x": 0.91}            (leading-zero float)
  *
  * Action types produced ("click", "long_click", "scroll", "type_text", "back") map
@@ -33,7 +32,7 @@ public class ToolCallParser {
             Pattern.DOTALL);
 
     // Malformed JSON fixes (ported from RVAgent tool_call_parser.py _fix_malformed_json)
-    // Pattern 1: "x": 352, 782  →  "x": 352, "y": 782  (missing "y" key — most common)
+    // Pattern 1: "x": 352, 782  →  "x": 352, "y": 782  (Qwen3-VL missing "y" key — most common)
     private static final Pattern FIX_MISSING_Y_KEY =
             Pattern.compile("\"x\":\\s*(\\d+),\\s*(\\d+)");
     // Pattern 2: "x": [352, 782]  →  "x": 352, "y": 782  (coordinate array format)
@@ -42,9 +41,6 @@ public class ToolCallParser {
     // Pattern 3: ": .91  →  ": 0.91  (missing leading zero)
     private static final Pattern FIX_LEADING_ZERO =
             Pattern.compile(":\\s*\\.(\\d+)");
-    // Pattern 4: "x": "498, 549"  →  "x": 498, "y": 549  (Qwen3.5-4B with qwen3_coder)
-    private static final Pattern FIX_STRING_COORDS =
-            Pattern.compile("\"x\":\\s*\"\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\"");
 
     // Matches a JSON object that has both "name" and "arguments" keys
     private static final Pattern JSON_INLINE_PATTERN = Pattern.compile(
@@ -125,17 +121,14 @@ public class ToolCallParser {
     }
 
     /**
-     * Fix common VLM JSON malformations before passing to org.json.
+     * Fix common Qwen3-VL JSON malformations before passing to org.json.
      * Ported from RVAgent tool_call_parser.py _fix_malformed_json().
      *
      * Returns the fixed string, or the original if no fix was needed.
      */
     static String fixMalformedJson(String json) {
-        // Fix comma-separated string coords: "x": "498, 549" → "x": 498, "y": 549
-        // Must run before numeric fixes since the value is quoted as a string.
-        String s = FIX_STRING_COORDS.matcher(json).replaceAll("\"x\": $1, \"y\": $2");
         // Fix missing leading zero: ": .91 → ": 0.91
-        s = FIX_LEADING_ZERO.matcher(s).replaceAll(": 0.$1");
+        String s = FIX_LEADING_ZERO.matcher(json).replaceAll(": 0.$1");
         // Fix array coords: "x": [352, 782] → "x": 352, "y": 782
         s = FIX_ARRAY_COORDS.matcher(s).replaceAll("\"x\": $1, \"y\": $2");
         // Fix missing "y" key: "x": 352, 782 → "x": 352, "y": 782
@@ -156,11 +149,11 @@ public class ToolCallParser {
 
     /**
      * Parse a JSON string into a ParsedAction if it contains "name" and "arguments".
-     * Applies malformed-JSON fixes before parsing (handles VLM coordinate malformations).
+     * Applies malformed-JSON fixes before parsing (handles Qwen3-VL coordinate malformations).
      */
     private ParsedAction parseJsonString(String json) {
         try {
-            // Apply fixes for common VLM output malformations before org.json sees the string
+            // Apply fixes for common Qwen3-VL output malformations before org.json sees the string
             String fixed = fixMalformedJson(json);
             JSONObject obj = new JSONObject(fixed);
             if (!obj.has("name")) return null;
@@ -206,7 +199,7 @@ public class ToolCallParser {
      *
      * The action name maps to the canonical set used by Action.Type:
      *   click, long_click, scroll, type_text, back, etc.
-     * Coordinates are in [0, 1000) normalized space;
+     * Coordinates from Qwen3-VL are in [0, 1000) normalized space;
      * the caller must convert to pixels via CoordinateNormalizer.
      */
     private ParsedAction buildParsedAction(String name, Map<String, Object> args) {
@@ -240,7 +233,7 @@ public class ToolCallParser {
     /**
      * The result of parsing a tool call from the LLM response.
      *
-     * Coordinates (x, y) are in [0, 1000) normalized space.
+     * Coordinates (x, y) are in Qwen3-VL normalized [0, 1000) space.
      * Use CoordinateNormalizer to convert to device pixels before execution.
      */
     public static class ParsedAction {

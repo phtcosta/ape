@@ -31,12 +31,10 @@ public class SglangClient {
     private final int topK;
     private final int maxTokens;
     private final int timeoutMs;
-    private final boolean enableThinking;
     private JSONArray tools;
 
     public SglangClient(String baseUrl, String model, double temperature,
-                        double topP, int topK, int maxTokens, int timeoutMs,
-                        boolean enableThinking) {
+                        double topP, int topK, int maxTokens, int timeoutMs) {
         this.baseUrl = baseUrl;
         this.model = model;
         this.temperature = temperature;
@@ -44,11 +42,10 @@ public class SglangClient {
         this.topK = topK;
         this.maxTokens = maxTokens;
         this.timeoutMs = timeoutMs;
-        this.enableThinking = enableThinking;
     }
 
     /**
-     * Set the OpenAI tools schema. Required for the VLM to generate
+     * Set the OpenAI tools schema. Required for Qwen3-VL to generate
      * structured tool calls when processing multimodal input.
      */
     public void setTools(JSONArray tools) {
@@ -113,18 +110,10 @@ public class SglangClient {
             }
             body.put("messages", messagesArray);
 
-            // OpenAI tools parameter — required for the VLM to generate
+            // OpenAI tools parameter — required for Qwen3-VL to generate
             // structured tool calls when processing multimodal input
             if (tools != null && tools.length() > 0) {
                 body.put("tools", tools);
-            }
-
-            // Qwen3.5-4B has thinking mode ON by default; disable it for
-            // lower latency (~2s vs 5-13s) and better coordinate accuracy.
-            if (!enableThinking) {
-                JSONObject chatTemplateKwargs = new JSONObject();
-                chatTemplateKwargs.put("enable_thinking", false);
-                body.put("chat_template_kwargs", chatTemplateKwargs);
             }
 
             return body.toString();
@@ -250,7 +239,7 @@ public class SglangClient {
     /**
      * Convert a JSONObject of primitive values into a Map<String, Object>.
      *
-     * Handles VLM native tool-call format where coordinates may arrive as an array
+     * Handles Qwen3-VL native tool-call format where coordinates may arrive as an array
      * in the "x" field (e.g. "x": [540, 399]) instead of separate "x"/"y" primitives.
      * This mirrors RVAgent's normalize_tool_args() array-expansion logic.
      */
@@ -258,7 +247,7 @@ public class SglangClient {
         Map<String, Object> result = new java.util.LinkedHashMap<>();
 
         // Expand "x": [x, y] array into separate "x" and "y" entries before normal parsing.
-        // VLM occasionally emits coordinates as a two-element array under "x".
+        // Qwen3-VL occasionally emits coordinates as a two-element array under "x".
         JSONArray xArr = obj.optJSONArray("x");
         if (xArr != null && xArr.length() >= 2) {
             result.put("x", xArr.optDouble(0));
@@ -292,22 +281,6 @@ public class SglangClient {
         } else if (val instanceof Boolean) {
             result.put(key, val);
         } else if (val instanceof String) {
-            // Qwen3.5-4B with qwen3_coder tool-call-parser sometimes returns
-            // coordinates as "x": "498, 549" (both values comma-separated in x).
-            // Split and store as separate x/y doubles.
-            String s = ((String) val).trim();
-            if ("x".equals(key) && s.contains(",")) {
-                String[] parts = s.split(",");
-                try {
-                    result.put("x", Double.parseDouble(parts[0].trim()));
-                    if (!result.containsKey("y") && parts.length >= 2) {
-                        result.put("y", Double.parseDouble(parts[1].trim()));
-                    }
-                    return;
-                } catch (NumberFormatException e) {
-                    // Fall through to store as string
-                }
-            }
             result.put(key, val);
         } else {
             result.put(key, val.toString());
