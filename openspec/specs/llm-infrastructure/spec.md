@@ -283,6 +283,9 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 | `ape.llmTopK` | int | `50` | Top-k sampling |
 | `ape.llmTimeoutMs` | int | `15000` | HTTP timeout in milliseconds |
 | `ape.llmMaxCalls` | int | `200` | Maximum LLM calls per session |
+| `ape.llmPercentage` | double | `0.02` | Probability of routing to LLM on each step (0.0 = disabled, 0.7 = 70%, 0.99 = nearly every step) |
+
+When `Config.llmPercentage` is `0.0`, no random LLM calls SHALL occur — only new-state and stagnation modes apply. When `Config.llmPercentage` is `0.02` (default), approximately 2% of non-event steps SHALL attempt LLM calls.
 
 When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-related objects SHALL be instantiated.
 
@@ -316,3 +319,21 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 - **THEN** `Config.llmTopP` SHALL equal `0.9`
 - **AND** `Config.llmTopK` SHALL equal `100`
 - **AND** `SglangClient` SHALL use these values in the request body
+
+#### Scenario: Default 2% random routing
+
+- **WHEN** `ape.properties` does not contain `ape.llmPercentage`
+- **THEN** `Config.llmPercentage` SHALL be `0.02`
+- **AND** approximately 2% of non-event steps SHALL attempt LLM calls
+
+#### Scenario: Random routing disabled
+
+- **WHEN** `ape.properties` contains `ape.llmPercentage=0.0`
+- **THEN** `Config.llmPercentage` SHALL be `0.0`
+- **AND** `LlmRouter.shouldRouteRandom()` SHALL always return `false`
+
+#### Scenario: High percentage for experiments
+
+- **WHEN** `ape.properties` contains `ape.llmPercentage=0.7`
+- **THEN** `Config.llmPercentage` SHALL be `0.7`
+- **AND** the user SHOULD also increase `ape.llmMaxCalls` to avoid early budget exhaustion
