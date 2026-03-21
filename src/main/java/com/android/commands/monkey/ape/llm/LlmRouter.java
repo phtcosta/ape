@@ -93,20 +93,22 @@ public class LlmRouter {
     }
 
     /**
-     * Build the OpenAI tools schema for Qwen3-VL. Required for the model
-     * to generate structured tool calls with multimodal input.
+     * Build the OpenAI tools schema for the VLM.
+     * For ape_reasoning variant, adds optional "reasoning" param to click/long_click/type_text.
      */
     private static JSONArray buildToolsSchema() {
+        boolean addReasoning = ApePromptBuilder.VARIANT_APE_REASONING
+                .equals(ApePromptBuilder.getPromptVariant());
         try {
             JSONArray tools = new JSONArray();
             tools.put(buildTool("click", "Tap on an element",
-                    new String[]{"x", "y"}, new String[]{"integer", "integer"}));
+                    new String[]{"x", "y"}, new String[]{"integer", "integer"}, addReasoning));
             tools.put(buildTool("long_click", "Long press on an element",
-                    new String[]{"x", "y"}, new String[]{"integer", "integer"}));
+                    new String[]{"x", "y"}, new String[]{"integer", "integer"}, addReasoning));
             tools.put(buildTool("type_text", "Type text into an input field",
-                    new String[]{"x", "y", "text"}, new String[]{"integer", "integer", "string"}));
+                    new String[]{"x", "y", "text"}, new String[]{"integer", "integer", "string"}, addReasoning));
             tools.put(buildTool("back", "Press the back button",
-                    new String[]{}, new String[]{}));
+                    new String[]{}, new String[]{}, false));
             return tools;
         } catch (Exception e) {
             return new JSONArray();
@@ -114,7 +116,8 @@ public class LlmRouter {
     }
 
     private static JSONObject buildTool(String name, String description,
-                                         String[] paramNames, String[] paramTypes) throws Exception {
+                                         String[] paramNames, String[] paramTypes,
+                                         boolean addReasoning) throws Exception {
         JSONObject props = new JSONObject();
         JSONArray required = new JSONArray();
         for (int i = 0; i < paramNames.length; i++) {
@@ -122,6 +125,12 @@ public class LlmRouter {
             prop.put("type", paramTypes[i]);
             props.put(paramNames[i], prop);
             required.put(paramNames[i]);
+        }
+        if (addReasoning) {
+            JSONObject reasoningProp = new JSONObject();
+            reasoningProp.put("type", "string");
+            reasoningProp.put("description", "Brief reason for this action");
+            props.put("reasoning", reasoningProp);
         }
         JSONObject params = new JSONObject();
         params.put("type", "object");
@@ -275,7 +284,31 @@ public class LlmRouter {
                     pixels[0], pixels[1], parsed.getActionType(), parsed.getText(),
                     actions, state, deviceWidth, deviceHeight);
 
-            // Step 8: Record outcome
+            // Step 8: Compute nearest widget for telemetry
+            String nearestClass = "none";
+            double nearestDist = -1;
+            int widgetCount = 0;
+            if (actions != null) {
+                for (ModelAction a : actions) {
+                    try {
+                        if (a == null || !a.requireTarget() || !a.isValid()) continue;
+                        GUITreeNode n = a.getResolvedNode();
+                        if (n == null) continue;
+                        widgetCount++;
+                        Rect b = n.getBoundsInScreen();
+                        int cx = (b.left + b.right) / 2;
+                        int cy = (b.top + b.bottom) / 2;
+                        double d = Math.hypot(cx - pixels[0], cy - pixels[1]);
+                        if (nearestDist < 0 || d < nearestDist) {
+                            nearestDist = d;
+                            String cn = n.getClassName();
+                            nearestClass = cn != null ? cn.substring(cn.lastIndexOf('.') + 1) : "View";
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            // Step 9: Record outcome
             breaker.recordSuccess();
             long elapsedMs = System.currentTimeMillis() - startMs;
             totalTimeMs   += elapsedMs;
@@ -283,9 +316,17 @@ public class LlmRouter {
             totalTokensOut += response.getCompletionTokens();
 
             String resultTag;
+            String matchedClass = "none";
             if (match != null) {
                 matchedCount++;
                 resultTag = "matched";
+                try {
+                    GUITreeNode mn = match.getResolvedNode();
+                    if (mn != null) {
+                        String cn = mn.getClassName();
+                        matchedClass = cn != null ? cn.substring(cn.lastIndexOf('.') + 1) : "View";
+                    }
+                } catch (Exception ignored) {}
 
                 // Apply text for type_text actions
                 if ("type_text".equals(parsed.getActionType()) && parsed.getText() != null) {
@@ -301,25 +342,36 @@ public class LlmRouter {
             } else {
                 noMatchCount++;
                 resultTag = "no_match";
-                Logger.println("[APE-RV] LLM no_match at pixel=(" + pixels[0] + "," + pixels[1] + ")"
-                        + " action=" + parsed.getActionType());
             }
 
-            // Telemetry line
-            StringBuilder telemetry = new StringBuilder();
-            telemetry.append("[APE-RV] LLM call=").append(callCount)
+            // Enhanced telemetry line for experiment analysis
+            String variant = ApePromptBuilder.getPromptVariant();
+            String activityName = "unknown";
+            try {
+                if (state != null) activityName = state.getActivity();
+            } catch (Exception ignored) {}
+
+            StringBuilder tel = new StringBuilder();
+            tel.append("[APE-LLM-TEL]")
+                    .append(" variant=").append(variant)
+                    .append(" call=").append(callCount)
                     .append(" mode=").append(mode)
                     .append(" action=").append(parsed.getActionType())
                     .append(" qwen=(").append(parsed.getX()).append(",").append(parsed.getY()).append(")")
                     .append(" pixel=(").append(pixels[0]).append(",").append(pixels[1]).append(")")
+                    .append(" result=").append(resultTag)
+                    .append(" matched_class=").append(matchedClass)
+                    .append(" nearest_class=").append(nearestClass)
+                    .append(" nearest_dist=").append(String.format("%.1f", nearestDist))
+                    .append(" widgets=").append(widgetCount)
+                    .append(" activity=").append(activityName)
                     .append(" tokens_in=").append(response.getPromptTokens())
                     .append(" tokens_out=").append(response.getCompletionTokens())
-                    .append(" time_ms=").append(elapsedMs)
-                    .append(" result=").append(resultTag);
+                    .append(" time_ms=").append(elapsedMs);
             if (parsed.getText() != null && !parsed.getText().isEmpty()) {
-                telemetry.append(" text=\"").append(parsed.getText()).append("\"");
+                tel.append(" text=\"").append(parsed.getText()).append("\"");
             }
-            Logger.println(telemetry.toString());
+            Logger.println(tel.toString());
 
             return match;
 

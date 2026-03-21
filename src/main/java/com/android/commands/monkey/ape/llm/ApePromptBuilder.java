@@ -40,6 +40,21 @@ public class ApePromptBuilder {
     private static final int MAX_HISTORY   = 5;
 
     // -------------------------------------------------------------------------
+    // Prompt variant names — selected via system property ape.llm.prompt_variant
+    // -------------------------------------------------------------------------
+
+    static final String VARIANT_APE_CURRENT = "ape_current";
+    static final String VARIANT_APE_REASONING = "ape_reasoning";
+    static final String VARIANT_COMPACT_V1 = "compact_v1";
+    static final String VARIANT_RVSMART_V13 = "rvsmart_v13";
+    static final String VARIANT_RVSMART_V17 = "rvsmart_v17";
+    static final String VARIANT_VISUAL_ONLY = "visual_only";
+
+    static String getPromptVariant() {
+        return System.getProperty("ape.llm.prompt_variant", VARIANT_APE_CURRENT);
+    }
+
+    // -------------------------------------------------------------------------
     // ActionHistoryEntry — immutable record of a past action
     // -------------------------------------------------------------------------
 
@@ -116,13 +131,31 @@ public class ApePromptBuilder {
         // Decide whether to include type_text in the tool schema
         boolean includeTypeText = hasInputField(actions);
 
-        // --- System message ---
-        String systemText = buildSystemMessage(includeTypeText);
-
-        // --- User text part ---
-        String userText = buildUserText(
-                tree, state, actions, mopData, recentActions,
-                activity, activitySimple, deviceWidth, deviceHeight);
+        // --- Dispatch by variant ---
+        String variant = getPromptVariant();
+        String systemText = buildSystemMessageForVariant(variant, includeTypeText);
+        String userText;
+        switch (variant) {
+            case VARIANT_RVSMART_V13:
+                userText = buildRvsmartV13UserText(
+                        actions, mopData, recentActions, activity, activitySimple,
+                        deviceWidth, deviceHeight);
+                break;
+            case VARIANT_RVSMART_V17:
+                userText = buildRvsmartV17UserText(
+                        state, actions, mopData, recentActions, activity, activitySimple,
+                        deviceWidth, deviceHeight);
+                break;
+            case VARIANT_VISUAL_ONLY:
+                userText = buildVisualOnlyUserText(
+                        state, actions, mopData, recentActions, activity, activitySimple);
+                break;
+            default:
+                userText = buildUserText(
+                        tree, state, actions, mopData, recentActions,
+                        activity, activitySimple, deviceWidth, deviceHeight);
+                break;
+        }
 
         // --- Assemble messages ---
         List<SglangClient.ContentPart> userParts = new ArrayList<>();
@@ -141,10 +174,22 @@ public class ApePromptBuilder {
     }
 
     // -------------------------------------------------------------------------
-    // System message
+    // System message — dispatched by variant
     // -------------------------------------------------------------------------
 
-    private String buildSystemMessage(boolean includeTypeText) {
+    private static String buildSystemMessageForVariant(String variant, boolean includeTypeText) {
+        switch (variant) {
+            case VARIANT_COMPACT_V1:    return buildCompactV1System(includeTypeText);
+            case VARIANT_RVSMART_V13:   return buildRvsmartV13System(includeTypeText);
+            case VARIANT_RVSMART_V17:   return buildRvsmartV17System(includeTypeText);
+            case VARIANT_VISUAL_ONLY:   return buildVisualOnlySystem(includeTypeText);
+            case VARIANT_APE_REASONING:
+            case VARIANT_APE_CURRENT:
+            default:                    return buildApeCurrentSystem(includeTypeText);
+        }
+    }
+
+    private static String buildApeCurrentSystem(boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are an Android UI testing agent exploring an app.\n");
         sb.append("DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).\n");
@@ -156,6 +201,101 @@ public class ApePromptBuilder {
         sb.append("Tools (coordinates in [0,1000) normalized space):\n");
         sb.append("  click(x, y) — tap element\n");
         sb.append("  long_click(x, y) — long press element\n");
+        if (includeTypeText) {
+            sb.append("  type_text(x, y, text) — type into field\n");
+        }
+        sb.append("  back() — press back\n");
+        sb.append("Respond with one JSON: {\"name\": \"<action>\", \"arguments\": {<args>}}");
+        return sb.toString();
+    }
+
+    private static String buildCompactV1System(boolean includeTypeText) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are an Android UI testing agent.\n");
+        sb.append("CRITICAL RULES:\n");
+        sb.append("1. You MUST call a tool — NEVER respond with text only.\n");
+        sb.append("2. Dismiss dialogs first (click Allow/OK).\n");
+        sb.append("3. Prioritize [DM]/[M] > unvisited (v:0) > visited.\n");
+        sb.append("Tools (coordinates in [0,1000) normalized space):\n");
+        sb.append("  click(x, y)\n");
+        sb.append("  long_click(x, y)\n");
+        if (includeTypeText) {
+            sb.append("  type_text(x, y, text)\n");
+        }
+        sb.append("  back()\n");
+        sb.append("Respond with one JSON: {\"name\": \"<action>\", \"arguments\": {<args>}}");
+        return sb.toString();
+    }
+
+    private static String buildRvsmartV13System(boolean includeTypeText) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.\n");
+        sb.append("DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.\n");
+        sb.append("  If you see an error or modal dialog, dismiss it before any other action.\n");
+        sb.append("PRIORITY: [DM]/[M] elements > navigation to new screens > unvisited elements > visited elements.\n");
+        sb.append("Available actions:\n");
+        sb.append("  click(x, y) — tap an element at normalized coordinates [0,1000)\n");
+        sb.append("  long_click(x, y) — long press at normalized coordinates\n");
+        if (includeTypeText) {
+            sb.append("  type_text(x, y, text) — type text into an input field\n");
+        }
+        sb.append("  back() — press the system back button\n");
+        sb.append("RULE: Do not click the same position twice in a row.\n");
+        sb.append("Respond with exactly one action as JSON: {\"name\": \"<action>\", \"arguments\": {<args>}}");
+        return sb.toString();
+    }
+
+    private static final String SYSTEM_RVSMART_V17_HEADER =
+            "You are an Android UI automation assistant.\n" +
+            "\n" +
+            "REASONING STEPS:\n" +
+            "1. SCREEN: Identify screen type (dialog, form, list, menu).\n" +
+            "2. DIALOG: If blocking dialog present, handle it first.\n" +
+            "3. MOP CHECK: If [DM] or [M] elements are shown, prioritize them.\n" +
+            "4. NAVIGATION: Check for actions leading to unvisited screens.\n" +
+            "5. ELEMENTS: Select unvisited element if no navigation or MOP target available.\n" +
+            "6. ACTION: Call the action with normalized coordinates [0,1000).\n" +
+            "\n" +
+            "DIALOG HANDLING:\n" +
+            "- Permission dialogs: Click \"Allow\", \"Accept\", \"OK\"\n" +
+            "- Error dialogs: Dismiss before other actions\n" +
+            "- Use back() if no dismiss button visible\n" +
+            "\n" +
+            "PRIORITY:\n" +
+            "- Elements reaching monitored operations ([DM] direct / [M] transitive) > other actions\n" +
+            "- Actions leading to NEW screens > same-screen actions\n" +
+            "- Unvisited (v:0) > visited\n" +
+            "\n" +
+            "RULES:\n" +
+            "- Do not click the same position consecutively\n" +
+            "- If last action had no effect, try a different element\n" +
+            "- Explore new screens before testing same screen deeply\n" +
+            "\n" +
+            "AVOID: navigation bar (bottom), status bar (top)\n" +
+            "\n" +
+            "Available actions:\n";
+
+    private static String buildRvsmartV17System(boolean includeTypeText) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(SYSTEM_RVSMART_V17_HEADER);
+        sb.append("  click(x, y) — tap at normalized coordinates [0,1000)\n");
+        sb.append("  long_click(x, y) — long press\n");
+        if (includeTypeText) {
+            sb.append("  type_text(x, y, text) — type into input field\n");
+        }
+        sb.append("  back() — press system back\n");
+        sb.append("\nRespond with exactly one action as JSON: {\"name\": \"<action>\", \"arguments\": {<args>}}");
+        return sb.toString();
+    }
+
+    private static String buildVisualOnlySystem(boolean includeTypeText) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You are an Android UI testing agent.\n");
+        sb.append("Analyze the screenshot and choose the best action to explore the app.\n");
+        sb.append("Dismiss dialogs first. Avoid status bar and navigation bar.\n");
+        sb.append("Tools (coordinates in [0,1000) normalized space):\n");
+        sb.append("  click(x, y) — tap element\n");
+        sb.append("  long_click(x, y) — long press\n");
         if (includeTypeText) {
             sb.append("  type_text(x, y, text) — type into field\n");
         }
@@ -392,6 +532,171 @@ public class ApePromptBuilder {
         }
 
         return sb.toString();
+    }
+
+    // -------------------------------------------------------------------------
+    // RVSmart V13 user text — simple numbered element list
+    // -------------------------------------------------------------------------
+
+    private String buildRvsmartV13UserText(List<ModelAction> actions, MopData mopData,
+                                            List<ActionHistoryEntry> recentActions,
+                                            String activity, String activitySimple,
+                                            int deviceWidth, int deviceHeight) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Current activity: ").append(activitySimple).append("\n\n");
+        sb.append("UI elements:\n");
+
+        int index = 1;
+        if (actions != null) {
+            for (ModelAction action : actions) {
+                if (action == null || !action.getType().requireTarget()) continue;
+                GUITreeNode node = safeGetResolvedNode(action);
+                String className = safeGetSimpleClassName(node);
+                String displayText = safeGetDisplayText(node);
+                String mopMarker = buildMopMarker(node, mopData, activity);
+                int normX = 0, normY = 0;
+                if (node != null) {
+                    try {
+                        Rect bounds = node.getBoundsInScreen();
+                        normX = Math.max(0, Math.min((int)((((bounds.left + bounds.right) / 2) / (double) deviceWidth) * 1000), 999));
+                        normY = Math.max(0, Math.min((int)((((bounds.top + bounds.bottom) / 2) / (double) deviceHeight) * 1000), 999));
+                    } catch (Exception ignored) {}
+                }
+                sb.append("  ").append(index++).append(". ").append(className);
+                if (!displayText.isEmpty()) {
+                    sb.append(" \"").append(truncate(displayText, 40)).append("\"");
+                }
+                sb.append(" @(").append(normX).append(",").append(normY).append(")");
+                if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
+                sb.append("\n");
+            }
+        }
+        if (index == 1) sb.append("  (no elements)\n");
+
+        // Action history
+        if (recentActions != null && !recentActions.isEmpty()) {
+            sb.append("\nRecent:\n");
+            int start = Math.max(0, recentActions.size() - MAX_HISTORY);
+            for (int i = start; i < recentActions.size(); i++) {
+                sb.append("- ").append(formatHistoryEntry(recentActions.get(i))).append('\n');
+            }
+        }
+
+        sb.append("\nChoose ONE action to explore new UI states or trigger monitored operations.");
+        return sb.toString().trim();
+    }
+
+    // -------------------------------------------------------------------------
+    // RVSmart V17 user text — status tags, MOP navigation, screen info
+    // -------------------------------------------------------------------------
+
+    private String buildRvsmartV17UserText(State state, List<ModelAction> actions,
+                                            MopData mopData,
+                                            List<ActionHistoryEntry> recentActions,
+                                            String activity, String activitySimple,
+                                            int deviceWidth, int deviceHeight) {
+        StringBuilder sb = new StringBuilder();
+
+        // Recent actions
+        if (recentActions != null && !recentActions.isEmpty()) {
+            sb.append("Recent: ");
+            int start = Math.max(0, recentActions.size() - MAX_HISTORY);
+            boolean first = true;
+            for (int i = start; i < recentActions.size(); i++) {
+                if (!first) sb.append(", ");
+                ActionHistoryEntry e = recentActions.get(i);
+                sb.append(e.actionType).append("@(").append(e.normX).append(",").append(e.normY).append(")");
+                first = false;
+            }
+            sb.append("\n");
+        }
+
+        sb.append("\nELEMENTS:\n");
+        int index = 1;
+        int testedCount = 0;
+        int totalTargets = 0;
+        if (actions != null) {
+            for (ModelAction action : actions) {
+                if (action == null || !action.getType().requireTarget()) continue;
+                totalTargets++;
+                GUITreeNode node = safeGetResolvedNode(action);
+                String className = safeGetSimpleClassName(node);
+                String displayText = safeGetDisplayText(node);
+                String mopMarker = buildMopMarker(node, mopData, activity);
+                int visitCount = action.getVisitedCount();
+                if (visitCount > 0) testedCount++;
+
+                // Status tag
+                String statusTag;
+                if (visitCount == 0) statusTag = "[UNTESTED]";
+                else if (visitCount < 5) statusTag = "[TESTED-" + visitCount + "x]";
+                else statusTag = "[WELL-TESTED]";
+
+                int normX = 0, normY = 0;
+                if (node != null) {
+                    try {
+                        Rect bounds = node.getBoundsInScreen();
+                        normX = Math.max(0, Math.min((int)((((bounds.left + bounds.right) / 2) / (double) deviceWidth) * 1000), 999));
+                        normY = Math.max(0, Math.min((int)((((bounds.top + bounds.bottom) / 2) / (double) deviceHeight) * 1000), 999));
+                    } catch (Exception ignored) {}
+                }
+
+                sb.append("  ").append(index++).append(". ").append(className);
+                if (!displayText.isEmpty()) {
+                    sb.append(" \"").append(truncate(displayText, 40)).append("\"");
+                }
+                sb.append(" @(").append(normX).append(",").append(normY).append(")");
+                sb.append(" ").append(statusTag);
+                if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
+                sb.append("\n");
+            }
+        }
+        if (index == 1) sb.append("  (no elements)\n");
+
+        // Screen info line
+        int stateVisits = (state != null) ? state.getVisitedCount() : 0;
+        sb.append("\nSCREEN: ").append(activitySimple)
+                .append(" | ").append(testedCount).append("/").append(totalTargets)
+                .append(" actions tested | visits: ").append(stateVisits).append("\n");
+
+        // MOP navigation context
+        String explorationCtx = buildExplorationContext(state, actions, mopData, activity);
+        if (!explorationCtx.isEmpty()) {
+            sb.append("\nMOP NAVIGATION:\n").append(explorationCtx).append("\n");
+        }
+
+        sb.append("\nSelect action. Prioritize elements reaching monitored operations, then navigation to new screens.");
+        return sb.toString().trim();
+    }
+
+    // -------------------------------------------------------------------------
+    // Visual-only user text — no widget list
+    // -------------------------------------------------------------------------
+
+    private String buildVisualOnlyUserText(State state,
+                                            List<ModelAction> actions,
+                                            MopData mopData,
+                                            List<ActionHistoryEntry> recentActions,
+                                            String activity,
+                                            String activitySimple) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Screen \"").append(activitySimple).append("\".\n");
+
+        if (recentActions != null && !recentActions.isEmpty()) {
+            sb.append("Recent:\n");
+            int start = Math.max(0, recentActions.size() - MAX_HISTORY);
+            for (int i = start; i < recentActions.size(); i++) {
+                sb.append("- ").append(formatHistoryEntry(recentActions.get(i))).append('\n');
+            }
+        }
+
+        String explorationContext = buildExplorationContext(state, actions, mopData, activity);
+        if (!explorationContext.isEmpty()) {
+            sb.append(explorationContext).append('\n');
+        }
+
+        sb.append("Choose the best element to interact with based on the screenshot.");
+        return sb.toString().trim();
     }
 
     // -------------------------------------------------------------------------
