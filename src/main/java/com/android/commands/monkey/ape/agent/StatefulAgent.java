@@ -152,7 +152,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this.model = new Model(graph);
         this.timestamp = graph.getTimestamp();
         this._mopData = MopData.load(Config.mopDataPath);
-        this._llmRouter = (Config.llmUrl != null) ? new LlmRouter() : null;
+        this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
     }
 
     protected MopData getMopData() {

@@ -126,6 +126,7 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `llmModel` / `llmTemperature` / `llmTopP` / `llmTopK` — LLM sampling params
 - `llmTimeoutMs` — HTTP timeout (default: 15000ms)
 - `llmMaxCalls` — max LLM calls per session (default: 200)
+- `llmPercentage` — probability of random LLM routing per step (default: 0.02 = 2%; 0.0 disables; 0.7 = rv-agent-like 70%)
 
 ## Notes
 

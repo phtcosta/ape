@@ -54,6 +54,7 @@ public class LlmRouter {
     private final ImageProcessor     imageProcessor;
     private final ToolCallParser     parser;
     private final ApePromptBuilder   promptBuilder;
+    private final java.util.Random   random;
 
     // Call budget counter (counts attempts, per INV-RTR-07)
     private int callCount = 0;
@@ -74,8 +75,11 @@ public class LlmRouter {
 
     /**
      * Create and wire all infrastructure using Config fields.
+     *
+     * @param random Monkey-seeded Random for reproducible probabilistic routing
      */
-    public LlmRouter() {
+    public LlmRouter(java.util.Random random) {
+        this.random = random;
         this.client = new SglangClient(
                 Config.llmUrl,
                 Config.llmModel,
@@ -164,6 +168,17 @@ public class LlmRouter {
     public boolean shouldRouteStagnation(int graphStableCounter) {
         return graphStableCounter == Config.graphStableRestartThreshold / 2
                 && Config.llmOnStagnation
+                && breaker.shouldAttempt()
+                && callCount < Config.llmMaxCalls;
+    }
+
+    /**
+     * Returns true when a probabilistic (random) LLM call should be attempted.
+     * Fires with probability Config.llmPercentage on each step.
+     */
+    public boolean shouldRouteRandom() {
+        return Config.llmPercentage > 0.0
+                && random.nextDouble() < Config.llmPercentage
                 && breaker.shouldAttempt()
                 && callCount < Config.llmMaxCalls;
     }

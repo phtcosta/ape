@@ -322,6 +322,15 @@ public class SataAgent extends StatefulAgent {
                 return result;
             }
         }
+        // LLM random hook (probabilistic, fires with Config.llmPercentage probability)
+        if (actionBufferSize() == 0 && newState.getActions().size() > 2
+                && _llmRouter != null && _llmRouter.shouldRouteRandom()) {
+            ModelAction result = _llmRouter.selectAction(newGUITree, newState,
+                    newState.getActions(), getMopData(), _actionHistory, "random");
+            if (result != null) {
+                return result;
+            }
+        }
         Action resolved = null;
         resolved = selectNewActionFromBuffer();
         if (resolved != null) {
