@@ -270,6 +270,20 @@ public class LlmRouter {
             // Step 3: Build prompt
             messages = promptBuilder.build(tree, state, actions, mopData, base64, recentActions);
 
+            // Log prompt (without base64 image — reconstructible from screenshot)
+            if (messages != null && messages.size() >= 2) {
+                Logger.println("[APE-LLM-PROMPT] system=" +
+                        messages.get(0).getTextContent());
+                SglangClient.Message userMsg = messages.get(1);
+                if (userMsg.getContentParts() != null) {
+                    for (SglangClient.ContentPart part : userMsg.getContentParts()) {
+                        if ("text".equals(part.getType())) {
+                            Logger.println("[APE-LLM-PROMPT] user_text=" + part.getText());
+                        }
+                    }
+                }
+            }
+
             // Step 4: Call LLM (chat() returns null on failure per INV-LLM-01)
             SglangClient.ChatResponse response = client.chat(messages);
             if (response == null) {
@@ -279,6 +293,11 @@ public class LlmRouter {
                 nullCount++;
                 return null;
             }
+
+            // Log response raw
+            Logger.println("[APE-LLM-RESPONSE] content=" +
+                    (response.getContent() != null ? response.getContent() : "null") +
+                    " tool_calls=" + response.getToolCalls().size());
 
             // Step 5: Parse tool call
             ToolCallParser.ParsedAction parsed = parser.parse(response);

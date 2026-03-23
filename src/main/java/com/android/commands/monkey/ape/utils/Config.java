@@ -141,6 +141,7 @@ public class Config {
     public static final int llmTimeoutMs = Config.getInteger("ape.llmTimeoutMs", 15000);
     public static final int llmMaxCalls = Config.getInteger("ape.llmMaxCalls", 200);
     public static final double llmPercentage = Config.getDouble("ape.llmPercentage", 0.02);
+    public static final String llmPromptVariant = Config.get("ape.llmPromptVariant", "ape_current");
 
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);

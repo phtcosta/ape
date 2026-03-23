@@ -7,6 +7,7 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
+import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
 
 import java.util.ArrayList;
@@ -51,7 +52,7 @@ public class ApePromptBuilder {
     static final String VARIANT_VISUAL_ONLY = "visual_only";
 
     static String getPromptVariant() {
-        return System.getProperty("ape.llm.prompt_variant", VARIANT_APE_CURRENT);
+        return Config.llmPromptVariant;
     }
 
     // -------------------------------------------------------------------------
