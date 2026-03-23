@@ -43,11 +43,12 @@
 
 ## 6. Agent Integration
 
-- [ ] 6.1 Add `_coverageTracker` and `_budgetTracker` fields to `src/main/java/com/android/commands/monkey/ape/agent/StatefulAgent.java`, instantiate in constructor
-- [ ] 6.2 Register widgets in `updateStateInternal()` after GUITree is built: `_coverageTracker.registerScreenElements(newState, newState.getActions())`; register activity with widget count (filtered by `requireTarget()`)
+- [ ] 6.1 Add `protected` fields `_coverageTracker` (UICoverageTracker) and `_budgetTracker` (ActivityBudgetTracker) to `src/main/java/com/android/commands/monkey/ape/agent/StatefulAgent.java`, instantiate in constructor. Must be `protected` (not private) so SataAgent can access them for dynamic epsilon and budget checks.
+- [ ] 6.2 Register widgets in `updateStateInternal()` AFTER `preEvolveModel()` completes (i.e., after any Naming refinement) and BEFORE `resolveNewAction()`. This ensures the registered State is the final post-refinement one. Call: `_coverageTracker.registerScreenElements(newState, newState.getActions())`; register activity with widget count (filtered by `requireTarget()`)
 - [ ] 6.3 Record interaction in `moveForward()` after action execution: `_coverageTracker.recordInteraction(newState, action)`; record iteration for budget
-- [ ] 6.4 Add WTG scoring pass to `adjustActionsByGUITree()` after existing MOP pass
-- [ ] 6.5 Add per-action coverage boost pass to `adjustActionsByGUITree()` after WTG pass: for each action, boost = `Config.coverageBoostWeight` if `getInteractionCount(state, widgetId) == 0`, else 0
+- [ ] 6.4 Add WTG scoring pass to `adjustActionsByGUITree()` immediately after the MOP logging statement (after the closing brace of the `if (_mopData != null)` block). Pass order: base priority -> unvisited/transition bonuses -> MOP boost -> WTG boost -> coverage boost.
+- [ ] 6.5 Add per-action coverage boost pass to `adjustActionsByGUITree()` after WTG pass (last pass in the method): for each action, boost = `Config.coverageBoostWeight` if `getInteractionCount(state, widgetId) == 0`, else 0
+- [ ] 6.5.1 Add `Logger.iformat()` telemetry in each new pass: log state, boosted action count, max boost, and coverage gap. Follow the same pattern as the existing MOP boost log.
 - [ ] 6.6 Modify `State.greedyPickLeastVisited(ActionFilter)` in `src/main/java/com/android/commands/monkey/ape/model/State.java`: when multiple actions share the minimum `visitedCount`, select the one with the highest `priority`. Must remain single-pass O(n). (See action-selection/spec.md)
 - [ ] 6.7 Add budget exhaustion check at top of `SataAgent.selectNewActionNonnull()` before LLM hooks. When budget exhausted: (1) try `selectNewActionForTrivialActivity()`; (2) if null, select `EVENT_RESTART` as fallback; (3) if restart also unavailable, fall through to normal SATA chain.
 - [ ] 6.8 Modify `ApeAgent.checkInput()` to use `InputValueGenerator.generateForNode()` when `Config.heuristicInput` is true
@@ -56,7 +57,8 @@
 
 ## 7. Final Verification
 
-- [ ] 7.1 Run /sdd-qa-lint-fix
-- [ ] 7.2 Run /sdd-verify
-- [ ] 7.3 `mvn clean package` -- verify ape-rv.jar builds successfully
-- [ ] 7.4 Run /sdd-code-reviewer
+- [ ] 7.1 Validate WTG matching: compare `widgetName` from static analysis JSON with `MopData.extractShortId(getResourceID())` from runtime for at least 3 apps (cryptoapp + 2 from rv-android results). If match rate < 50%, add normalization logic (strip common prefixes like "btn_", "action_").
+- [ ] 7.2 Run /sdd-qa-lint-fix
+- [ ] 7.3 Run /sdd-verify
+- [ ] 7.4 `mvn clean package` -- verify ape-rv.jar builds successfully
+- [ ] 7.5 Run /sdd-code-reviewer

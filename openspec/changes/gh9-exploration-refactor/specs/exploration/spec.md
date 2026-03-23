@@ -2,6 +2,8 @@
 
 This delta spec adds dynamic epsilon decay to the SATA exploration strategy. The existing fixed epsilon (`ape.defaultEpsilon = 0.05`) provides a constant 5% random exploration rate throughout the run. Dynamic epsilon adapts the exploration rate based on the UI coverage gap of the current state: when many widgets remain untested (high gap), epsilon is high (more diversity); as widgets get tested (low gap), epsilon drops (deeper exploitation). This creates a natural feedback loop — the agent explores broadly in new territory and exploits deeply in familiar territory — without requiring knowledge of the total run duration.
 
+**Scope note**: `egreedy()` is called from `selectNewActionEpsilonGreedyRandomly()`, which is itself one of the last steps in the SATA selection chain. Before reaching epsilon-greedy, `selectNewActionNonnull()` tries: LLM hooks, action buffer, back-to-activity, early-stage forward greedy, trivial activity, and early-stage backward. Many decisions never reach epsilon-greedy. Dynamic epsilon therefore has an **incremental** impact — it improves the quality of the epsilon-greedy decisions that DO occur, but does not affect decisions resolved earlier in the chain. The primary impact amplifier is the greedy priority tiebreaker (action-selection/spec.md), which makes all priority boosts effective in the dominant greedy path.
+
 ## ADDED Requirements
 
 ### Requirement: Dynamic Epsilon Decay
@@ -12,7 +14,7 @@ This delta spec adds dynamic epsilon decay to the SATA exploration strategy. The
 epsilon = minEpsilon + (maxEpsilon - minEpsilon) × coverageGap
 ```
 
-Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(currentState)` where `currentState` is the `State` object from `StatefulAgent.newState`. The SataAgent accesses the tracker via the `_coverageTracker` field added to `StatefulAgent`.
+Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(currentState)` where `currentState` is the `State` object from `StatefulAgent.newState`. The SataAgent accesses the tracker via the `protected _coverageTracker` field inherited from `StatefulAgent`.
 
 This approach is superior to time-based decay because:
 - It adapts to app complexity: simple apps converge quickly, complex apps maintain diversity longer

@@ -8,6 +8,19 @@ The tracker keys coverage data by `State` object identity. Each `State` in APE-R
 
 No `getStructuralHash()` method exists or is needed — the `State` object IS the key.
 
+### Naming Refinement Behavior
+
+When NamingFactory refines a State (splits it into finer-grained States), the UICoverageTracker naturally loses coverage data for the old State because the new State has a different StateKey (different Naming + different widgets[]). This is **by design**, not a bug:
+
+- Refinement means the old abstraction was too coarse (e.g., 10 aliased nodes collapsed into 1 action)
+- The new State has more distinct actions to test
+- Coverage gap resets to 1.0 for the new State, forcing re-exploration
+- This is correct in the CEGAR paradigm — discovery of finer structure requires re-exploration
+
+### Infinite Scroll Handling
+
+For infinite scroll screens (RecyclerView loading items on demand), each scroll may reveal new items with new Names, creating new States. Coverage gap never converges to 0 because new widgets keep appearing. This is handled by the `ActivityBudgetTracker`: after N interactions in the activity, budget exhausts and forces navigation elsewhere. The `activityStableRestartThreshold=200` provides a secondary safety net.
+
 ### Widget Identification
 
 Widgets are identified by `Name.toXPath()` — the same abstraction the rest of APE-RV uses to identify widgets. This is superior to a coordinate-based scheme (`coords:centerX,centerY`) because:

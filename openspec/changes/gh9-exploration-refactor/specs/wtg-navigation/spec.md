@@ -6,6 +6,22 @@ The rv-agent project uses BFS on this WTG to find navigation paths from the curr
 
 The WTG data in the JSON has the structure: `transitions[].sourceId` and `targetId` reference `windows[].id`, and `transitions[].events[]` describe which widgets trigger each transition (type, widgetName, widgetClass). Only `click` type events are considered — implicit events (home, rotate, power, back) are excluded because they are not controllable exploration actions. MenuItem clicks ARE included: empirical data shows they represent 24-83% of click transitions in real apps (cryptoapp: 4/17, ApkTrack: 5/6). MenuItem `widgetName` values (e.g., `menu_item_cipher`) match the `shortId` extracted from `GUITreeNode.getResourceID()` at runtime.
 
+## Data Structures
+
+### WtgTransition
+
+A simple data class representing one click event that navigates from one activity to another:
+
+```java
+public class WtgTransition {
+    public final String widgetName;      // resource name (e.g., "menu_item_cipher", "buttonCipher")
+    public final String widgetClass;     // widget class (e.g., "android.view.MenuItem", "android.widget.Button")
+    public final String targetActivity;  // resolved activity name (e.g., "com.example.CipherActivity")
+}
+```
+
+Stored in `MopData` as: `Map<String, List<WtgTransition>>` keyed by source activity name. Populated during Pass 3.
+
 ## Data Contracts
 
 ### Input

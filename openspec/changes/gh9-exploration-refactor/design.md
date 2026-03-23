@@ -9,8 +9,8 @@ ApeAgent.checkInput()
   +-- InputValueGenerator.generateForNode(node)          [NEW]
 
 StatefulAgent
-  |-- _coverageTracker: UICoverageTracker                 [NEW field]
-  |-- _budgetTracker: ActivityBudgetTracker               [NEW field]
+  |-- _coverageTracker: UICoverageTracker                 [NEW protected field]
+  |-- _budgetTracker: ActivityBudgetTracker               [NEW protected field]
   |-- updateStateInternal()
   |     |-- register widgets -> _coverageTracker
   |     +-- register activity -> _budgetTracker
@@ -117,7 +117,13 @@ Recalculating on every visit would penalize activities that discover new states 
 
 The budget does NOT reset after restart. Re-exploration of budget-exhausted activities is handled by existing mechanisms: stability counters trigger restarts when the agent stagnates, and dynamic epsilon gives high exploration rate when revisiting states after restart. Additionally, `activityStableRestartThreshold` is activated (changed from MAX_VALUE to 200) to force restart when stuck in one activity — complementing the budget without introducing reset cycles.
 
-**D4.1: Activate activityStableRestartThreshold (was disabled)**
+**D4.1: Naming refinement resets coverage data — by design**
+When NamingFactory refines a State (splits coarse abstraction into finer States), UICoverageTracker loses data for the old State because the new State has a different StateKey. This is correct: refinement means new widgets to discover, so coverage gap resets to 1.0, forcing re-exploration. This aligns with the CEGAR paradigm — discovery of finer structure requires re-exploration.
+
+**D4.2: Infinite scroll handled by activity budget, not coverage tracker**
+In infinite scroll screens, each scroll reveals new items with new Names, creating new States. Coverage gap never converges because new widgets keep appearing. The ActivityBudgetTracker limits time spent in such activities, and activityStableRestartThreshold=200 provides a secondary safety net. The coverage tracker does not need special handling for this case.
+
+**D4.3: Activate activityStableRestartThreshold (was disabled)**
 The existing `activityStableCounter` in StatefulAgent already counts consecutive same-activity transitions and triggers restart when the threshold is exceeded. The threshold was `Integer.MAX_VALUE` (effectively disabled). Changing it to 200 activates this mechanism, providing a safety net when budget exhaustion + trivial activity heuristic + restart fallback still leave the agent stuck. This uses existing infrastructure rather than inventing new reset logic.
 
 **D5: WTG scoring is in MopScorer, not a separate scorer class**
@@ -203,6 +209,8 @@ No dependency on Android runtime -- category detection uses strings from GUITree
 - **[Epsilon decay interaction with LLM]** Dynamic epsilon changes exploration rate, which affects when LLM stagnation hook fires. -> Both are independently configurable; LLM is a separate concern.
 - **[Budget too aggressive]** Low baseBudget + budgetPerWidget may force premature activity switching. -> Defaults (50 + 5/widget) are conservative; tunable via Config. Restart fallback ensures budget exhaustion always has an effect.
 - **[Greedy tiebreaker changes behavior]** When multiple unvisited actions exist, the tiebreaker favors MOP/WTG/coverage-boosted actions instead of array order. -> This is strictly better than arbitrary order. INV-SEL-01 guarantees visitedCount remains the primary criterion.
+- **[Naming refinement resets coverage]** When NamingFactory refines a State, coverage data is lost for the old State. -> By design: refinement means new widgets to discover; re-exploration is correct (see D4.1).
+- **[Infinite scroll never converges]** Coverage gap never reaches 0 for infinite scroll screens. -> Handled by activity budget limiting time per activity (see D4.2).
 
 ## Testing Strategy
 
