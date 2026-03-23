@@ -9,8 +9,8 @@ ApeAgent.checkInput()
   +-- InputValueGenerator.generateForNode(node)          [NEW]
 
 StatefulAgent
-  |-- _coverageTracker: UICoverageTracker                 [NEW protected field]
-  |-- _budgetTracker: ActivityBudgetTracker               [NEW protected field]
+  |-- _coverageTracker: UICoverageTracker                 [NEW field, protected accessor]
+  |-- _budgetTracker: ActivityBudgetTracker               [NEW field, protected accessor]
   |-- updateStateInternal()
   |     |-- register widgets -> _coverageTracker
   |     +-- register activity -> _budgetTracker
@@ -99,7 +99,8 @@ MopScorer
 - CEGAR refinement changes (naming subsystem untouched)
 - aperv-tool Python changes (separate PR in rv-android)
 - Fine-tuning or prompt engineering
-- Cross-state navigation scheduler (future improvement)
+- Cross-state navigation scheduler
+- BroadcastReceiver/Service triggering from APE-RV (ActionTypes for `am broadcast`/`am startservice`)
 
 ## Decisions
 
@@ -224,6 +225,30 @@ No dependency on Android runtime -- category detection uses strings from GUITree
 | Unit | Dynamic epsilon computation | JUnit | ~4 tests |
 | Unit | State.greedyPickLeastVisited tiebreaker | JUnit with mock State | ~5 tests |
 | Integration | Full run with cryptoapp.apk | `adb shell app_process` 1 min | Manual |
+
+## Known Limitations
+
+### GUI-only exploration cannot reach BroadcastReceivers and Services
+
+APE-RV operates exclusively via GUI interactions (AccessibilityService + Monkey events). Methods reachable only through non-GUI paths are invisible to the explorer:
+
+- **BroadcastReceivers**: code triggered by `ACTION_BOOT_COMPLETED`, `CONNECTIVITY_CHANGE`, SMS, etc.
+- **Services**: code in `onStartCommand()`, `onBind()`, `onHandleIntent()` for background work
+- **ContentProviders**: internal queries/inserts
+
+The `RvsecAnalysisClient` in rvsec-gator (`getEntryPoints()`, line 252-266) currently iterates only over `output.getActivities()`, ignoring Services and Receivers as entry points. This means methods reachable only via these components do not appear in the `reachableSet` and are excluded from MOP reachability analysis.
+
+**Current state in GATOR**: The `DefaultXMLParser` already parses `<service>` and `<receiver>` tags from AndroidManifest.xml (lines 415-436) including their IntentFilters. Services are stored in `services` (ArrayList) with `getServices()` accessor. Receivers are stored in `receivers` (ArrayList) but have **no public getter** (`getReceivers()` is missing from the XMLParser interface).
+
+**Required changes (separate change in rv-android, PREREQUISITE for gh9)**:
+
+1. **XMLParser**: add `getReceivers()` accessor (field already exists)
+2. **RvsecAnalysisClient.getEntryPoints()**: iterate over Services (`xml.getServices()`) and Receivers (`xml.getReceivers()`), adding their lifecycle methods as entry points (`onStartCommand`, `onBind`, `onReceive`, etc.)
+3. **JSON output**: include Services/Receivers in a new `components[]` section or extend `windows[]`
+
+This must be done BEFORE gh9 implementation so the static analysis JSON consumed by APE-RV already includes the enriched entry points and reachability data. Without this, MOP reachability for methods behind Services/Receivers is incomplete, limiting the effectiveness of WTG navigation and MOP-guided scoring.
+
+Adding ActionTypes in APE-RV for `am broadcast` and `am startservice` to exercise non-GUI components directly is a non-goal for gh9 but could be a separate change.
 
 ## Resolved Questions
 

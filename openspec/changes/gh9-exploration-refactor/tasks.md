@@ -11,7 +11,7 @@
 ## 2. UICoverageTracker
 
 - [ ] 2.1 Create `src/main/java/com/android/commands/monkey/ape/utils/UICoverageTracker.java` with:
-  - `registerScreenElements(State state, ModelAction[] actions)` — widget IDs via `action.getTarget().toXPath()` for targeted actions, `action.getType().name()` for non-targeted
+  - `registerScreenElements(State state, List<ModelAction> actions)` — widget IDs via `action.getTarget().toXPath()` for targeted actions, `action.getType().name()` for non-targeted
   - `recordInteraction(State state, ModelAction action)` — increment count for the action's widget ID
   - `getCoverageGap(State state) -> float` — fraction of uninteracted widgets
   - `getInteractionCount(State state, String widgetId) -> int` — per-widget interaction count
@@ -43,7 +43,7 @@
 
 ## 6. Agent Integration
 
-- [ ] 6.1 Add `protected` fields `_coverageTracker` (UICoverageTracker) and `_budgetTracker` (ActivityBudgetTracker) to `src/main/java/com/android/commands/monkey/ape/agent/StatefulAgent.java`, instantiate in constructor. Must be `protected` (not private) so SataAgent can access them for dynamic epsilon and budget checks.
+- [ ] 6.1 Add `private final` fields `_coverageTracker` (UICoverageTracker) and `_budgetTracker` (ActivityBudgetTracker) to `src/main/java/com/android/commands/monkey/ape/agent/StatefulAgent.java`, instantiate in constructor. Add `protected` accessor methods (`getCoverageTracker()`, `getBudgetTracker()`) following the same pattern as `_mopData`/`getMopData()`. SataAgent accesses them via the accessors for dynamic epsilon and budget checks.
 - [ ] 6.2 Register widgets in `updateStateInternal()` AFTER `preEvolveModel()` completes (i.e., after any Naming refinement) and BEFORE `resolveNewAction()`. This ensures the registered State is the final post-refinement one. Call: `_coverageTracker.registerScreenElements(newState, newState.getActions())`; register activity with widget count (filtered by `requireTarget()`)
 - [ ] 6.3 Record interaction in `moveForward()` after action execution: `_coverageTracker.recordInteraction(newState, action)`; record iteration for budget
 - [ ] 6.4 Add WTG scoring pass to `adjustActionsByGUITree()` immediately after the MOP logging statement (after the closing brace of the `if (_mopData != null)` block). Pass order: base priority -> unvisited/transition bonuses -> MOP boost -> WTG boost -> coverage boost.

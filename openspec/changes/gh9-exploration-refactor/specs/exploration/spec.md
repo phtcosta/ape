@@ -14,7 +14,7 @@ This delta spec adds dynamic epsilon decay to the SATA exploration strategy. The
 epsilon = minEpsilon + (maxEpsilon - minEpsilon) × coverageGap
 ```
 
-Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(currentState)` where `currentState` is the `State` object from `StatefulAgent.newState`. The SataAgent accesses the tracker via the `protected _coverageTracker` field inherited from `StatefulAgent`.
+Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(currentState)` where `currentState` is the `State` object from `StatefulAgent.newState`. The SataAgent accesses the tracker via the `getCoverageTracker()` accessor inherited from `StatefulAgent`.
 
 This approach is superior to time-based decay because:
 - It adapts to app complexity: simple apps converge quickly, complex apps maintain diversity longer

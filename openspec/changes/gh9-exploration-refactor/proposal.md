@@ -28,6 +28,10 @@ Refs: [GH#9](https://github.com/phtcosta/ape/issues/9), `docs/20260323_refatorac
 - `mop-guidance`: WTG-based scoring pass added after existing MOP priority boost in adjustActionsByGUITree()
 - `action-selection`: Priority tiebreaker in State.greedyPickLeastVisited() makes all priority boosts effective in the greedy path
 
+## Prerequisites
+
+- **rv-android: Enrich static analysis with Services/Receivers** — A change in rvsec-gator's `RvsecAnalysisClient` must add Services and BroadcastReceivers as entry points in `getEntryPoints()`, and expose receivers via `XMLParser.getReceivers()`. This enriches the static analysis JSON with reachability data for methods behind non-GUI components, which gh9's WTG navigation and MOP scoring depend on. Must be completed and the new JSON format deployed BEFORE gh9 implementation.
+
 ## Impact
 
 - **Agent subsystem** (`ape/agent/`): StatefulAgent gains coverage tracker and budget tracker fields; SataAgent gains budget check (with restart fallback) and dynamic epsilon; ApeAgent.checkInput() uses heuristic input
