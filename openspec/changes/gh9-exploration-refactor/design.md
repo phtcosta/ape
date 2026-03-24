@@ -110,11 +110,11 @@ The `State` object's `equals()`/`hashCode()` delegates to `StateKey` (activity +
 **D2: Widget IDs use Name.toXPath(), not coordinates**
 Coordinates (`getBoundsInScreen()`) change after scrolling — the same widget gets different bounds, creating spurious "new" widgets in the tracker. `Name.toXPath()` is scroll-stable, consistent with the model, and 1:1 with `ModelAction.getTarget()`. This is the only identification scheme that satisfies INV-COV-02 (monotonic gap decrease) across scroll events.
 
-**D3: Coverage boost is per-action, not uniform**
-A uniform boost (same value added to all actions in a state) does not change the relative priority distribution — it only compresses it slightly toward uniform. A per-action boost (full weight for untested widgets, zero for tested widgets) creates a differential that steers selection toward unexplored interactions. This is the mechanism that actually influences `randomlyPickAction()` AND `greedyPickLeastVisited()` (via the priority tiebreaker from D6).
+**D3: Coverage boost is per-action with state-visit decay**
+A per-action boost (weight for untested widgets, zero for tested) creates a differential that steers toward unexplored interactions. The boost decays with state visits: `boost = weight / (1 + stateVisits / 5)`. Without decay, E2E testing showed the boost trapping the agent in complex states (simplenotes SettingsActivity: 27 widgets, -12.56pp regression). The decay provides full boost on first visit (~100) and diminishes after repeated visits (~16 at 25 visits), balancing depth (test all widgets) with breadth (visit all activities).
 
 **D4: ActivityBudgetTracker budget is computed once, not recalculated, and never resets**
-Recalculating on every visit would penalize activities that discover new states (and thus new widgets). One-time allocation is simpler and predictable. Budget exhaustion falls back to EVENT_RESTART when no trivial activity is available, ensuring the mechanism works even in apps with 2-3 activities.
+Recalculating on every visit would penalize activities that discover new states (and thus new widgets). One-time allocation is simpler and predictable. Budget exhaustion falls through to normal SATA chain when no trivial activity is available. Both hard fallbacks (EVENT_RESTART and MODEL_BACK) were tested and found harmful — restart causes restart loops, BACK causes stuck loops. Fallthrough lets the SATA chain with priority boosts handle exploration naturally.
 
 The budget does NOT reset after restart. Re-exploration of budget-exhausted activities is handled by existing mechanisms: stability counters trigger restarts when the agent stagnates, and dynamic epsilon gives high exploration rate when revisiting states after restart. Additionally, `activityStableRestartThreshold` is activated (changed from MAX_VALUE to 200) to force restart when stuck in one activity — complementing the budget without introducing reset cycles.
 
@@ -200,7 +200,7 @@ No dependency on Android runtime -- category detection uses strings from GUITree
 | MopData JSON missing `transitions` key | MopData.load() Pass 3 | Skip pass, log info | WTG scoring returns 0 |
 | Unknown state in coverage tracker | getCoverageGap() | Return 1.0 | Treated as fully unexplored |
 | Unknown activity in budget tracker | isBudgetExhausted() | Return false | No budget constraint |
-| Budget exhausted, no trivial activity | selectNewActionNonnull() | Select EVENT_RESTART | Fresh start from launcher |
+| Budget exhausted, no trivial activity | selectNewActionNonnull() | Fall through to SATA chain | Normal exploration continues |
 | Null GUITreeNode in InputValueGenerator | generateForNode() | Fall back to StringCache | Existing random behavior |
 
 ## Risks / Trade-offs
@@ -208,7 +208,9 @@ No dependency on Android runtime -- category detection uses strings from GUITree
 - **[Memory growth]** UICoverageTracker and ActivityBudgetTracker grow with discovered states/activities. For a 10-minute run this is negligible (~1000 entries max). -> No mitigation needed.
 - **[WTG accuracy]** Static WTG may not reflect runtime navigation (dynamic content, conditional flows). -> WTG boost is additive (200), not dominant -- wrong predictions just don't help, they don't hurt.
 - **[Epsilon decay interaction with LLM]** Dynamic epsilon changes exploration rate, which affects when LLM stagnation hook fires. -> Both are independently configurable; LLM is a separate concern.
-- **[Budget too aggressive]** Low baseBudget + budgetPerWidget may force premature activity switching. -> Defaults (50 + 5/widget) are conservative; tunable via Config. Restart fallback ensures budget exhaustion always has an effect.
+- **[Budget too aggressive]** Low baseBudget + budgetPerWidget may force premature activity switching. -> Defaults (50 + 5/widget) are conservative; tunable via Config. MODEL_BACK fallback provides soft navigation pressure without destructive restarts.
+- **[Budget exhaustion fallback]** RESOLVED after 3 iterations: (1) EVENT_RESTART caused restart loops (40+/run, -3.39pp). (2) MODEL_BACK caused stuck loops (78 useless BACKs/run burning 67% of time, -1.10pp on 20 APKs overnight). (3) Fallthrough to SATA chain is correct: budget is advisory, exploration continues normally. Validated: +3.67pp method, +6.01pp MOP on cryptoapp 3 reps.
+- **[Logging overhead reduces throughput]** E2E testing showed aperv executed ~14% fewer steps than ape (229 vs 267 per 5 min run). Three Logger.iformat() calls per step (MOP+WTG+Coverage) contribute to this. Fix: only log when at least one action was boosted (skip silent passes).
 - **[Greedy tiebreaker changes behavior]** When multiple unvisited actions exist, the tiebreaker favors MOP/WTG/coverage-boosted actions instead of array order. -> This is strictly better than arbitrary order. INV-SEL-01 guarantees visitedCount remains the primary criterion.
 - **[Naming refinement resets coverage]** When NamingFactory refines a State, coverage data is lost for the old State. -> By design: refinement means new widgets to discover; re-exploration is correct (see D4.1).
 - **[Infinite scroll never converges]** Coverage gap never reaches 0 for infinite scroll screens. -> Handled by activity budget limiting time per activity (see D4.2).
@@ -254,3 +256,5 @@ Adding ActionTypes in APE-RV for `am broadcast` and `am startservice` to exercis
 
 - **Budget resetable after RESTART?** NO. Budget is one-shot. Re-exploration is handled by existing mechanisms: stability counters, periodic restart, and dynamic epsilon. Activating `activityStableRestartThreshold=200` (was MAX_VALUE) provides the safety net.
 - **WTG includes MenuItem clicks?** YES. Empirical data from cryptoapp (4/17 = 24%) and ApkTrack (5/6 = 83%) confirms MenuItem clicks are a significant portion of WTG transitions. MenuItem `widgetName` values reliably match `shortId` from runtime `getResourceID()`.
+- **Budget exhaustion fallback?** NONE — fallthrough to SATA chain. Tested 3 approaches: EVENT_RESTART (restart loop, -3.39pp), MODEL_BACK (stuck loop, -1.10pp on 20 APKs), fallthrough (correct, +3.67pp on cryptoapp). Budget is advisory — when exhausted without trivial activity, normal exploration with priority boosts is the best strategy.
+- **Logging overhead acceptable?** Conditional logging needed. 3 Logger.iformat() per step reduced throughput ~14% (229 vs 267 steps in 5 min). Fix: only log when boostedCount > 0.

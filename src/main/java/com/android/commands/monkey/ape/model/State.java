@@ -124,12 +124,15 @@ public class State extends GraphElement {
     public ModelAction greedyPickLeastVisited(ActionFilter filter) {
         ModelAction minAction = null;
         int minValue = Integer.MAX_VALUE;
+        int maxPriority = Integer.MIN_VALUE;
         for (ModelAction action : actions) {
             if (!filter.include(action)) {
                 continue;
             }
-            if (action.getVisitedCount() < minValue) {
-                minValue = action.getVisitedCount();
+            int vc = action.getVisitedCount();
+            if (vc < minValue || (vc == minValue && action.getPriority() > maxPriority)) {
+                minValue = vc;
+                maxPriority = action.getPriority();
                 minAction = action;
             }
         }

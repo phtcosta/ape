@@ -131,8 +131,9 @@ Registration is idempotent — re-registering the same state replaces the widget
 ```
 widgetId = action.getTarget().toXPath()
 interactionCount = _coverageTracker.getInteractionCount(currentState, widgetId)
+stateVisits = currentState.getVisitedCount()
 if (interactionCount == 0) {
-    boost = Config.coverageBoostWeight
+    boost = Config.coverageBoostWeight / (1 + stateVisits / 5)
 } else {
     boost = 0
 }
@@ -141,19 +142,23 @@ action.setPriority(action.getPriority() + boost)
 
 This ensures untested widgets receive the full boost while already-tested widgets receive zero, creating a differential that steers the agent toward unexplored interactions.
 
-#### Scenario: Untested widget receives full boost
-- **WHEN** widget "//Button[@text=\"Settings\"]" has interactionCount=0 and `Config.coverageBoostWeight` is 100
-- **THEN** the action targeting that widget SHALL receive a priority boost of 100
+#### Scenario: Untested widget in new state receives full boost
+- **WHEN** widget has interactionCount=0, state visitedCount=0, `Config.coverageBoostWeight`=100
+- **THEN** boost = 100 / (1 + 0/5) = 100
 
-#### Scenario: Tested widget receives no boost
-- **WHEN** widget "//Button[@text=\"OK\"]" has interactionCount=3
-- **THEN** the action targeting that widget SHALL receive a priority boost of 0
+#### Scenario: Untested widget in visited state receives decayed boost
+- **WHEN** widget has interactionCount=0, state visitedCount=10, `Config.coverageBoostWeight`=100
+- **THEN** boost = 100 / (1 + 10/5) = 100 / 3 = 33
 
-#### Scenario: Mixed state — differential steering
-- **WHEN** state has 3 actions: widgetA (interactionCount=0), widgetB (interactionCount=5), widgetC (interactionCount=0)
-- **AND** `Config.coverageBoostWeight` is 100
-- **THEN** widgetA and widgetC receive +100 boost; widgetB receives +0
-- **AND** the priority distribution now favors untested widgets
+#### Scenario: Untested widget in heavily visited state receives minimal boost
+- **WHEN** widget has interactionCount=0, state visitedCount=25, `Config.coverageBoostWeight`=100
+- **THEN** boost = 100 / (1 + 25/5) = 100 / 6 = 16
+
+#### Scenario: Tested widget receives no boost regardless of state visits
+- **WHEN** widget has interactionCount=3
+- **THEN** boost = 0 (regardless of stateVisits)
+
+**Rationale**: Without decay, the coverage boost traps the agent in complex states with many widgets (e.g., SettingsActivity with 27 widgets). E2E testing on 20 APKs showed simplenotes regressing -12.56pp because the agent spent all time in SettingsActivity exploring color pickers instead of visiting other activities. The decay formula `weight / (1 + stateVisits / 5)` provides full boost on first visit and diminishes to ~16% after 25 visits, allowing the agent to explore elsewhere.
 
 #### Scenario: Coverage boost disabled
 - **WHEN** `Config.coverageBoostWeight` is 0

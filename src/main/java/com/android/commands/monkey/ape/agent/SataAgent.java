@@ -50,9 +50,12 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateTransition;
+import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.RandomHelper;
+import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import android.content.ComponentName;
 
@@ -302,6 +305,20 @@ public class SataAgent extends StatefulAgent {
                 }
             }
         }
+        // gh9: budget exhaustion check — before LLM hooks
+        // Soft constraint: when exhausted, try trivial activity navigation.
+        // If unavailable, fall through to normal SATA chain (no BACK, no RESTART).
+        // EVENT_RESTART caused restart loops; MODEL_BACK caused stuck loops.
+        // Fallthrough is the correct behavior — lets SATA chain handle exploration.
+        if (getBudgetTracker().isBudgetExhausted(newState.getActivity())) {
+            ModelAction trivial = selectNewActionForTrivialActivity();
+            if (trivial != null) {
+                Logger.iformat("[APE-RV] Budget exhausted for %s, navigating to trivial activity", newState.getActivity());
+                return trivial;
+            }
+            // Fall through to normal SATA chain — budget is advisory, not blocking
+        }
+
         // LLM new-state hook
         if (actionBufferSize() == 0 && newState.getActions().size() > 2
                 && _llmRouter != null && _llmRouter.shouldRouteNewState(_isNewState)) {
@@ -670,12 +687,25 @@ public class SataAgent extends StatefulAgent {
     }
 
     protected boolean egreedy() {
+        double effectiveEpsilon = computeDynamicEpsilon();
         double v = ape.getRandom().nextDouble();
-        Logger.iformat("EGreedy value=%f, epsilon=%f.", v, epsilon);
-        if (v < epsilon) {
+        Logger.iformat("EGreedy value=%f, epsilon=%f.", v, effectiveEpsilon);
+        if (v < effectiveEpsilon) {
             return false;
         }
         return true;
+    }
+
+    protected double computeDynamicEpsilon() {
+        if (!Config.dynamicEpsilon) {
+            return epsilon;
+        }
+        UICoverageTracker tracker = getCoverageTracker();
+        if (tracker == null) {
+            return epsilon;
+        }
+        float coverageGap = tracker.getCoverageGap(newState);
+        return Config.minEpsilon + (Config.maxEpsilon - Config.minEpsilon) * coverageGap;
     }
 
     protected ModelAction selectNewActionEarlyStageForward() {

@@ -63,20 +63,26 @@ The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`.
 
 ### Requirement: Budget Check in SATA Action Selection
 
-`SataAgent.selectNewActionNonnull()` SHALL check `ActivityBudgetTracker.isBudgetExhausted()` for the current activity BEFORE the normal SATA priority chain. When the budget is exhausted, the agent SHALL delegate to `selectNewActionForTrivialActivity()` to navigate to another activity. If no trivial activity path is available, the agent SHALL fall through to the normal SATA chain.
+`SataAgent.selectNewActionNonnull()` SHALL check `ActivityBudgetTracker.isBudgetExhausted()` for the current activity BEFORE the normal SATA priority chain. The budget is a **soft constraint** — it influences navigation but does not block exploration:
 
-#### Scenario: Budget exhausted forces navigation
-- **WHEN** the current activity's budget is exhausted and a path to another activity exists
-- **THEN** the agent SHALL navigate to the target activity instead of selecting an action in the current state
+1. Try `selectNewActionForTrivialActivity()` — navigate to a different activity
+2. If null: fall through to normal SATA chain
 
-#### Scenario: Budget exhausted but no trivial activity available — restart fallback
-- **WHEN** the current activity's budget is exhausted and `selectNewActionForTrivialActivity()` returns null (no trivial activity path available)
-- **THEN** the agent SHALL select `EVENT_RESTART` to force a fresh start from the launcher activity
-- **AND** this ensures budget exhaustion always produces a navigation effect, even in apps with 2-3 activities where the trivial activity heuristic returns empty
+**Rationale**: Both hard fallbacks were tested and found harmful:
+- EVENT_RESTART caused destructive restart loops (40+ restarts/run, -3.39pp method coverage)
+- MODEL_BACK caused stuck loops (78 useless BACKs/run burning 67% of time, -1.10pp on 20 APKs)
+- Fallthrough (no special action) was validated as correct: +3.67pp method, +6.01pp MOP on cryptoapp
 
-#### Scenario: Budget exhausted but no alternative (restart also unavailable)
-- **WHEN** the restart fallback cannot be constructed
+The budget's value is in the trivial activity navigation — when available, it forces diversification. When not available, the normal SATA chain (with coverage boost, WTG boost, and greedy tiebreaker) handles exploration efficiently without forced navigation.
+
+#### Scenario: Budget exhausted forces navigation via trivial activity
+- **WHEN** the current activity's budget is exhausted and a path to a trivial activity exists
+- **THEN** the agent SHALL navigate to the target activity
+
+#### Scenario: Budget exhausted, no trivial activity — fallthrough
+- **WHEN** the current activity's budget is exhausted and `selectNewActionForTrivialActivity()` returns null
 - **THEN** the agent SHALL fall through to the normal SATA priority chain
+- **AND** exploration continues normally with all priority boosts active
 
 ### Requirement: Budget is Non-Resettable
 

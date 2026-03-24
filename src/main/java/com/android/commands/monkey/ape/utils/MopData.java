@@ -6,8 +6,11 @@ import android.util.Log;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -16,10 +19,13 @@ import java.util.Set;
  * in-memory map: activity → shortWidgetId → MOP reachability flags.
  *
  * JSON format:
- *   { "windows": [...], "reachability": [...] }
+ *   { "windows": [...], "reachability": [...], "transitions": [...] }
  *
  * Cross-reference: windows[].widgets[].listeners[].handler matches
  * reachability[].methods[].signature.
+ *
+ * Pass 3 (WTG): transitions[].sourceId/targetId reference windows[].id;
+ * transitions[].events[] with type="click" are stored as WtgTransition.
  */
 public class MopData {
 
@@ -31,10 +37,28 @@ public class MopData {
     /** Activities that have at least one MOP-reachable widget */
     private final Set<String> mopActivities;
 
+    /** Map: sourceActivity → List of WTG click transitions (Pass 3) */
+    private final Map<String, List<WtgTransition>> wtgTransitions;
+
     private MopData(Map<String, Map<String, WidgetMopFlags>> widgetData,
-                    Set<String> mopActivities) {
+                    Set<String> mopActivities,
+                    Map<String, List<WtgTransition>> wtgTransitions) {
         this.widgetData = widgetData;
         this.mopActivities = mopActivities;
+        this.wtgTransitions = wtgTransitions;
+    }
+
+    /**
+     * Package-private factory for unit tests that cannot use android.util.JsonReader.
+     * Constructs a MopData with pre-built data structures.
+     */
+    static MopData forTest(Map<String, Map<String, WidgetMopFlags>> widgetData,
+                           Set<String> mopActivities,
+                           Map<String, List<WtgTransition>> wtgTransitions) {
+        return new MopData(
+                widgetData != null ? widgetData : new HashMap<String, Map<String, WidgetMopFlags>>(),
+                mopActivities != null ? mopActivities : new HashSet<String>(),
+                wtgTransitions != null ? wtgTransitions : new HashMap<String, List<WtgTransition>>());
     }
 
     /**
@@ -53,6 +77,10 @@ public class MopData {
         // Second pass result
         Map<String, Map<String, WidgetMopFlags>> widgetData = new HashMap<>();
         Set<String> mopActivities = new HashSet<>();
+        // Window id→name map (populated during Pass 2, consumed by Pass 3)
+        Map<Integer, String> windowIdToName = new HashMap<>();
+        // Third pass result
+        Map<String, List<WtgTransition>> wtgTransitions = new HashMap<>();
 
         try {
             // Pass 1: reachability[]
@@ -60,10 +88,15 @@ public class MopData {
                     new InputStreamReader(new FileInputStream(path), "UTF-8"))) {
                 parseReachability(reader, bySignature);
             }
-            // Pass 2: windows[]
+            // Pass 2: windows[] (also populates windowIdToName for Pass 3)
             try (JsonReader reader = new JsonReader(
                     new InputStreamReader(new FileInputStream(path), "UTF-8"))) {
-                parseWindows(reader, bySignature, widgetData, mopActivities);
+                parseWindows(reader, bySignature, widgetData, mopActivities, windowIdToName);
+            }
+            // Pass 3: transitions[] → WTG map (INV-WTG-03: uses windowIdToName from Pass 2)
+            try (JsonReader reader = new JsonReader(
+                    new InputStreamReader(new FileInputStream(path), "UTF-8"))) {
+                parseTransitions(reader, windowIdToName, wtgTransitions);
             }
         } catch (IOException e) {
             Log.w(TAG, "MopData: failed to load " + path + ": " + e.getMessage());
@@ -73,8 +106,9 @@ public class MopData {
             return null;
         }
 
-        Log.i(TAG, "MopData: loaded " + countWidgets(widgetData) + " widgets from " + path);
-        return new MopData(widgetData, mopActivities);
+        Log.i(TAG, "MopData: loaded " + countWidgets(widgetData) + " widgets, "
+                + countTransitions(wtgTransitions) + " WTG transitions from " + path);
+        return new MopData(widgetData, mopActivities, wtgTransitions);
     }
 
     // -------------------------------------------------------------------------
@@ -157,7 +191,8 @@ public class MopData {
     private static void parseWindows(JsonReader reader,
                                      Map<String, boolean[]> bySignature,
                                      Map<String, Map<String, WidgetMopFlags>> widgetData,
-                                     Set<String> mopActivities)
+                                     Set<String> mopActivities,
+                                     Map<Integer, String> windowIdToName)
             throws IOException {
         reader.beginObject();
         while (reader.hasNext()) {
@@ -165,7 +200,7 @@ public class MopData {
             if ("windows".equals(name)) {
                 reader.beginArray();
                 while (reader.hasNext()) {
-                    parseWindow(reader, bySignature, widgetData, mopActivities);
+                    parseWindow(reader, bySignature, widgetData, mopActivities, windowIdToName);
                 }
                 reader.endArray();
             } else {
@@ -178,15 +213,20 @@ public class MopData {
     private static void parseWindow(JsonReader reader,
                                     Map<String, boolean[]> bySignature,
                                     Map<String, Map<String, WidgetMopFlags>> widgetData,
-                                    Set<String> mopActivities)
+                                    Set<String> mopActivities,
+                                    Map<Integer, String> windowIdToName)
             throws IOException {
         String activityName = null;
+        int windowId = -1;
         Map<String, WidgetMopFlags> widgets = new HashMap<>();
 
         reader.beginObject();
         while (reader.hasNext()) {
             String field = reader.nextName();
             switch (field) {
+                case "id":
+                    windowId = reader.nextInt();
+                    break;
                 case "name":
                     activityName = reader.nextString();
                     break;
@@ -202,6 +242,11 @@ public class MopData {
             }
         }
         reader.endObject();
+
+        // Collect window id→name for Pass 3 (INV-WTG-03)
+        if (activityName != null && windowId >= 0) {
+            windowIdToName.put(windowId, activityName);
+        }
 
         if (activityName != null && !widgets.isEmpty()) {
             widgetData.put(activityName, widgets);
@@ -266,6 +311,116 @@ public class MopData {
     }
 
     // -------------------------------------------------------------------------
+    // Pass 3: parse transitions[] → WTG map (INV-WTG-01: only click events)
+    // -------------------------------------------------------------------------
+
+    private static void parseTransitions(JsonReader reader,
+                                         Map<Integer, String> windowIdToName,
+                                         Map<String, List<WtgTransition>> wtgTransitions)
+            throws IOException {
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if ("transitions".equals(name)) {
+                reader.beginArray();
+                while (reader.hasNext()) {
+                    parseTransition(reader, windowIdToName, wtgTransitions);
+                }
+                reader.endArray();
+            } else {
+                reader.skipValue();
+            }
+        }
+        reader.endObject();
+    }
+
+    private static void parseTransition(JsonReader reader,
+                                        Map<Integer, String> windowIdToName,
+                                        Map<String, List<WtgTransition>> wtgTransitions)
+            throws IOException {
+        int sourceId = -1;
+        int targetId = -1;
+        List<String[]> clickEvents = new ArrayList<>(); // [widgetName, widgetClass]
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String field = reader.nextName();
+            switch (field) {
+                case "sourceId":
+                    sourceId = reader.nextInt();
+                    break;
+                case "targetId":
+                    targetId = reader.nextInt();
+                    break;
+                case "events":
+                    reader.beginArray();
+                    while (reader.hasNext()) {
+                        parseTransitionEvent(reader, clickEvents);
+                    }
+                    reader.endArray();
+                    break;
+                default:
+                    reader.skipValue();
+            }
+        }
+        reader.endObject();
+
+        // Resolve IDs to activity names (INV-WTG-03)
+        String sourceActivity = windowIdToName.get(sourceId);
+        String targetActivity = windowIdToName.get(targetId);
+        if (sourceActivity == null || targetActivity == null || clickEvents.isEmpty()) {
+            return;
+        }
+
+        List<WtgTransition> list = wtgTransitions.get(sourceActivity);
+        if (list == null) {
+            list = new ArrayList<>();
+            wtgTransitions.put(sourceActivity, list);
+        }
+        for (String[] evt : clickEvents) {
+            list.add(new WtgTransition(evt[0], evt[1], targetActivity));
+        }
+    }
+
+    /**
+     * Parse a single event from transitions[].events[].
+     * INV-WTG-01: only events with type="click" are collected.
+     */
+    private static void parseTransitionEvent(JsonReader reader,
+                                             List<String[]> clickEvents)
+            throws IOException {
+        String type = null;
+        String widgetName = null;
+        String widgetClass = null;
+
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String field = reader.nextName();
+            switch (field) {
+                case "type":
+                    type = reader.nextString();
+                    break;
+                case "widgetName":
+                    widgetName = reader.nextString();
+                    break;
+                case "widgetClass":
+                    widgetClass = reader.nextString();
+                    break;
+                default:
+                    reader.skipValue();
+            }
+        }
+        reader.endObject();
+
+        if ("click".equals(type)) {
+            clickEvents.add(new String[]{
+                    widgetName != null ? widgetName : "",
+                    widgetClass != null ? widgetClass : ""
+            });
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
 
@@ -289,6 +444,24 @@ public class MopData {
     }
 
     /**
+     * Returns true if WTG transition data was loaded (transitions[] was present and non-empty).
+     */
+    public boolean hasWtgData() {
+        return !wtgTransitions.isEmpty();
+    }
+
+    /**
+     * Returns the WTG click transitions originating from the given activity.
+     *
+     * @param activityName source activity class name (may include window suffix like "#OptionsMenu")
+     * @return list of transitions, or empty list if no data
+     */
+    public List<WtgTransition> getWtgTransitions(String activityName) {
+        List<WtgTransition> list = wtgTransitions.get(activityName);
+        return list != null ? list : Collections.<WtgTransition>emptyList();
+    }
+
+    /**
      * Extract the short resource ID from a full Android resource ID string.
      * "com.example:id/btn_encrypt" → "btn_encrypt"
      * null or no ":id/" → ""
@@ -308,10 +481,37 @@ public class MopData {
         public boolean transitiveMop;
     }
 
+    /**
+     * Represents a single click event from the WTG that navigates from one activity to another.
+     * Populated from transitions[].events[] where type="click".
+     */
+    public static class WtgTransition {
+        /** Resource name of the triggering widget (e.g., "menu_item_cipher", "buttonCipher") */
+        public final String widgetName;
+        /** Widget class (e.g., "android.view.MenuItem", "android.widget.Button") */
+        public final String widgetClass;
+        /** Resolved target activity name (e.g., "com.example.CipherActivity") */
+        public final String targetActivity;
+
+        public WtgTransition(String widgetName, String widgetClass, String targetActivity) {
+            this.widgetName = widgetName;
+            this.widgetClass = widgetClass;
+            this.targetActivity = targetActivity;
+        }
+    }
+
     private static int countWidgets(Map<String, Map<String, WidgetMopFlags>> widgetData) {
         int count = 0;
         for (Map<String, WidgetMopFlags> m : widgetData.values()) {
             count += m.size();
+        }
+        return count;
+    }
+
+    private static int countTransitions(Map<String, List<WtgTransition>> wtgTransitions) {
+        int count = 0;
+        for (List<WtgTransition> list : wtgTransitions.values()) {
+            count += list.size();
         }
         return count;
     }
