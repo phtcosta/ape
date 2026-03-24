@@ -80,6 +80,6 @@
 
 ## 10. Final Verification
 
-- [ ] 10.1 Run /sdd-qa-lint-fix
-- [ ] 10.2 Run /sdd-verify
-- [ ] 10.3 Run /sdd-code-reviewer
+- [x] 10.1 Run /sdd-qa-lint-fix — SKIPPED (user request)
+- [x] 10.2 Run /sdd-verify — SKIPPED (user request, running opsx:verify instead)
+- [x] 10.3 Run /sdd-code-reviewer — SKIPPED (user request)
