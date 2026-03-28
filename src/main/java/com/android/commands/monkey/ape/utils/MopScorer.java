@@ -3,6 +3,8 @@ package com.android.commands.monkey.ape.utils;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 
+import java.util.List;
+
 /**
  * Maps MOP reachability flags to integer priority boosts for action scoring.
  *
@@ -35,6 +37,33 @@ public class MopScorer {
         }
         if (data.activityHasMop(activity)) {
             return Config.mopWeightActivity;
+        }
+        return 0;
+    }
+
+    /**
+     * Returns the WTG-based priority boost for a widget.
+     *
+     * The boost is applied when the widget matches a WTG transition leading to
+     * a MOP-reachable activity (INV-WTG-02, INV-MOP-06).
+     *
+     * @param activity   current activity class name
+     * @param shortId    short resource ID of the widget (e.g. "menu_item_cipher")
+     * @param data       loaded MOP data, may be null
+     * @return Config.mopWeightWtg if widget leads to a MOP activity, 0 otherwise
+     */
+    public static int scoreWtg(String activity, String shortId, MopData data) {
+        if (data == null || !data.hasWtgData() || Config.mopWeightWtg == 0) {
+            return 0;
+        }
+        if (activity == null || shortId == null || shortId.isEmpty()) {
+            return 0;
+        }
+        List<MopData.WtgTransition> transitions = data.getWtgTransitions(activity);
+        for (MopData.WtgTransition t : transitions) {
+            if (shortId.equals(t.widgetName) && data.activityHasMop(t.targetActivity)) {
+                return Config.mopWeightWtg;
+            }
         }
         return 0;
     }

@@ -48,6 +48,7 @@ import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Config;
+import com.android.commands.monkey.ape.utils.InputValueGenerator;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.RandomHelper;
 import com.android.commands.monkey.ape.utils.StringCache;
@@ -99,6 +100,8 @@ public abstract class ApeAgent implements Agent {
 
     private Set<String> activityNames = new HashSet<>();
     private Map<String, Set<String>> activityTransitions = new HashMap<>();
+
+    private final InputValueGenerator inputValueGenerator = new InputValueGenerator();
 
     protected boolean disableFuzzing;
     private boolean restart;
@@ -182,7 +185,9 @@ public abstract class ApeAgent implements Agent {
             GUITreeNode node = ((ModelAction) action).getResolvedNode();
             if (node.isEditText() && node.getInputText() == null) {
                 if (RandomHelper.toss(inputRate)) {
-                    String text = StringCache.nextString();
+                    String text = Config.heuristicInput
+                            ? inputValueGenerator.generateForNode(node)
+                            : StringCache.nextString();
                     node.setInputText(text);
                 }
             }

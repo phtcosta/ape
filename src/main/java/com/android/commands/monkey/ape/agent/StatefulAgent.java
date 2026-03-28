@@ -78,10 +78,12 @@ import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.tree.GUITreeWidgetDiffer;
+import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopScorer;
+import com.android.commands.monkey.ape.utils.UICoverageTracker;
 import com.android.commands.monkey.ape.utils.Utils;
 
 import android.content.ComponentName;
@@ -128,6 +130,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     protected GUITreeWidgetDiffer widgetDiffer = new GUITreeWidgetDiffer();
 
     private final MopData _mopData;
+    private final UICoverageTracker _coverageTracker;
+    private final ActivityBudgetTracker _budgetTracker;
 
     // LLM integration fields
     protected LlmRouter _llmRouter;
@@ -152,11 +156,21 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this.model = new Model(graph);
         this.timestamp = graph.getTimestamp();
         this._mopData = MopData.load(Config.mopDataPath);
+        this._coverageTracker = new UICoverageTracker();
+        this._budgetTracker = new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget);
         this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
     }
 
     protected MopData getMopData() {
         return _mopData;
+    }
+
+    protected UICoverageTracker getCoverageTracker() {
+        return _coverageTracker;
+    }
+
+    protected ActivityBudgetTracker getBudgetTracker() {
+        return _budgetTracker;
     }
 
     public void updateModel(Model newModel) {
@@ -638,6 +652,15 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         if (newState.isUnvisited()) {
             getGraph().markVisited(newState, getTimestamp());
         }
+        // gh9: register widgets and activity for coverage/budget tracking
+        _coverageTracker.registerScreenElements(newState, newState.getActions());
+        String activity = newState.getActivity();
+        int widgetCount = 0;
+        for (ModelAction a : newState.getActions()) {
+            if (a.requireTarget()) widgetCount++;
+        }
+        _budgetTracker.registerActivity(activity, widgetCount);
+
         Action action = resolveNewAction();
         if (action.isModelAction()) {
             getGraph().markVisited((ModelAction) action, getTimestamp());
@@ -984,6 +1007,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     protected void moveForward() {
+        // gh9: record interaction and budget iteration before shifting state pointers
+        if (newAction != null && newState != null) {
+            _coverageTracker.recordInteraction(newState, newAction);
+            _budgetTracker.recordIteration(newState.getActivity());
+        }
         doMoveForward();
     }
 
@@ -1160,6 +1188,54 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             }
             Logger.iformat("[APE-RV] MOP boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
                     activity, newState.getStateKey(), boostedCount, totalTarget, maxBoost);
+        }
+        // WTG scoring pass — boost widgets leading to MOP-reachable activities
+        if (_mopData != null && _mopData.hasWtgData()) {
+            String activity = newState.getActivity();
+            int wtgBoostedCount = 0;
+            int wtgTotalTarget = 0;
+            int wtgMaxBoost = 0;
+            for (ModelAction action : newState.getActions()) {
+                if (!action.requireTarget() || !action.isValid()) continue;
+                if (!action.isResolvedAt(timestamp)) continue;
+                wtgTotalTarget++;
+                GUITreeNode node = action.getResolvedNode();
+                if (node == null) continue;
+                String shortId = MopData.extractShortId(node.getResourceID());
+                int boost = MopScorer.scoreWtg(activity, shortId, _mopData);
+                if (boost > 0) {
+                    action.setPriority(action.getPriority() + boost);
+                    wtgBoostedCount++;
+                    if (boost > wtgMaxBoost) wtgMaxBoost = boost;
+                }
+            }
+            if (wtgBoostedCount > 0) {
+                Logger.iformat("[APE-RV] WTG boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
+                        activity, newState.getStateKey(), wtgBoostedCount, wtgTotalTarget, wtgMaxBoost);
+            }
+        }
+        // Coverage boost pass — per-action boost for untested widgets, decays with state visits
+        if (Config.coverageBoostWeight > 0) {
+            int covBoostedCount = 0;
+            int covTotalTarget = 0;
+            float coverageGap = _coverageTracker.getCoverageGap(newState);
+            int stateVisits = newState.getVisitedCount();
+            int decayedWeight = Config.coverageBoostWeight / (1 + stateVisits / 5);
+            for (ModelAction action : newState.getActions()) {
+                if (!action.requireTarget() || !action.isValid()) continue;
+                if (!action.isResolvedAt(timestamp)) continue;
+                covTotalTarget++;
+                String widgetId = UICoverageTracker.widgetId(action);
+                int count = _coverageTracker.getInteractionCount(newState, widgetId);
+                if (count == 0 && decayedWeight > 0) {
+                    action.setPriority(action.getPriority() + decayedWeight);
+                    covBoostedCount++;
+                }
+            }
+            if (covBoostedCount > 0) {
+                Logger.iformat("[APE-RV] Coverage boost: state=%s#%s, boosted=%d/%d, gap=%.2f",
+                        newState.getActivity(), newState.getStateKey(), covBoostedCount, covTotalTarget, coverageGap);
+            }
         }
     }
 

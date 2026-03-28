@@ -45,7 +45,7 @@ public class Config {
     public static final int baseThrottle = Config.getInteger("ape.baseThrottle", 0);
     public static final int maxThrottle = Config.getInteger("ape.maxThrottle", 5000);
     public static final int graphStableRestartThreshold = Config.getInteger("ape.graphStableRestartThreshold", 100);
-    public static final int activityStableRestartThreshold = Config.getInteger("ape.activityStableRestartThreshold", Integer.MAX_VALUE);
+    public static final int activityStableRestartThreshold = Config.getInteger("ape.activityStableRestartThreshold", 200);
     public static final int stateStableRestartThreshold = Config.getInteger("ape.stateStableRestartThreshold", 50);
     public static final int maxExtraPriorityAliasedActions = Config.getInteger("ape.maxExtraPriorityAliasedActions", 5);
 
@@ -142,6 +142,16 @@ public class Config {
     public static final int llmMaxCalls = Config.getInteger("ape.llmMaxCalls", 200);
     public static final double llmPercentage = Config.getDouble("ape.llmPercentage", 0.02);
     public static final String llmPromptVariant = Config.get("ape.llmPromptVariant", "ape_current");
+
+    // gh9-exploration-refactor: UI coverage, activity budget, WTG, dynamic epsilon, heuristic input.
+    public static final int coverageBoostWeight = Config.getInteger("ape.coverageBoostWeight", 100);
+    public static final int activityBaseBudget = Config.getInteger("ape.activityBaseBudget", 50);
+    public static final int activityBudgetPerWidget = Config.getInteger("ape.activityBudgetPerWidget", 5);
+    public static final int mopWeightWtg = Config.getInteger("ape.mopWeightWtg", 200);
+    public static final boolean dynamicEpsilon = Config.getBoolean("ape.dynamicEpsilon", true);
+    public static final double maxEpsilon = Config.getDouble("ape.maxEpsilon", 0.15);
+    public static final double minEpsilon = Config.getDouble("ape.minEpsilon", 0.02);
+    public static final boolean heuristicInput = Config.getBoolean("ape.heuristicInput", true);
 
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);

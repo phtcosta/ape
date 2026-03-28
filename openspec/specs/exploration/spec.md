@@ -705,3 +705,43 @@ if (actionBuffer.isEmpty()
 - **WHEN** `StatefulAgent.tearDown()` is called after `StopTestingException`
 - **AND** `_llmRouter` is non-null
 - **THEN** the LLM summary log SHALL be emitted before the method returns
+
+### Requirement: Dynamic Epsilon Decay
+
+`SataAgent.egreedy()` SHALL compute a coverage-adaptive epsilon when `Config.dynamicEpsilon` is `true`. The epsilon value SHALL be interpolated between `Config.minEpsilon` and `Config.maxEpsilon` based on the current state's UI coverage gap:
+
+```
+epsilon = minEpsilon + (maxEpsilon - minEpsilon) * coverageGap
+```
+
+Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(currentState)`. The SataAgent accesses the tracker via the `getCoverageTracker()` accessor inherited from `StatefulAgent`.
+
+**Scope note**: `egreedy()` is called from `selectNewActionEpsilonGreedyRandomly()`, which is one of the last steps in the SATA selection chain. Dynamic epsilon has incremental impact — it improves decisions that reach epsilon-greedy, but does not affect decisions resolved earlier (LLM hooks, buffer, early-stage, trivial activity).
+
+When `Config.dynamicEpsilon` is `false`, the existing behavior SHALL be preserved: epsilon is the fixed value `Config.defaultEpsilon`.
+
+#### Scenario: New state (high gap)
+- **WHEN** `egreedy()` is called in a state with coverageGap=1.0 and maxEpsilon=0.15, minEpsilon=0.02
+- **THEN** the effective epsilon SHALL be 0.15
+
+#### Scenario: Fully explored state
+- **WHEN** `egreedy()` is called in a state with coverageGap=0.0
+- **THEN** the effective epsilon SHALL be 0.02 (minEpsilon)
+
+#### Scenario: Dynamic epsilon disabled
+- **WHEN** `Config.dynamicEpsilon` is `false`
+- **THEN** `egreedy()` SHALL use the fixed `Config.defaultEpsilon` value
+
+### Requirement: Config Flags for Dynamic Epsilon
+
+| Flag | Property Key | Type | Default | Description |
+|------|-------------|------|---------|-------------|
+| `dynamicEpsilon` | `ape.dynamicEpsilon` | boolean | `true` | Enable coverage-adaptive epsilon |
+| `maxEpsilon` | `ape.maxEpsilon` | double | `0.15` | Epsilon when coverage gap is 1.0 |
+| `minEpsilon` | `ape.minEpsilon` | double | `0.02` | Epsilon when coverage gap is 0.0 |
+
+## Invariants (Dynamic Epsilon)
+
+- **INV-EPS-01**: The effective epsilon SHALL always be in [`Config.minEpsilon`, `Config.maxEpsilon`].
+- **INV-EPS-02**: When `Config.dynamicEpsilon` is `false`, behavior SHALL be identical to pre-change.
+- **INV-EPS-03**: When `UICoverageTracker` is null, `egreedy()` SHALL fall back to `Config.defaultEpsilon`.

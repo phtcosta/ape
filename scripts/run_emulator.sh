@@ -6,7 +6,7 @@ echo "[+] Starting emulator"
 
 #nohup emulator @${EMULATOR_NAME_x86} -writable-system -wipe-data -no-boot-anim -no-audio -netdelay none &
 #emulator @${EMULATOR_NAME_x86} -writable-system -wipe-data -no-boot-anim -no-audio -netdelay none
-emulator @${EMULATOR_NAME_x86} -writable-system -wipe-data -no-boot-anim -noaudio -no-snapshot-save -delay-adb
+emulator @${EMULATOR_NAME_x86} -writable-system -wipe-data -no-boot-anim -noaudio -no-snapshot-save -delay-adb -no-window
 
 #adb wait-for-device
 
