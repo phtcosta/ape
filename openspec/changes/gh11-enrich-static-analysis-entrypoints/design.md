@@ -2,124 +2,123 @@
 
 APE-RV's MOP-guided scoring relies on static analysis JSON produced by rvsec-gator (`RvsecAnalysisClient`). The JSON contains `reachability[]`, `windows[]`, and `transitions[]` sections. Currently, only Activity classes serve as entry points for the call graph traversal (`getEntryPoints()` at L252-266 of `RvsecAnalysisClient.java`). Services and BroadcastReceivers declared in AndroidManifest.xml are ignored, causing methods reachable only through these components to be absent from the reachability analysis.
 
-This was documented as a Known Limitation in the gh9 design (L233-253) and marked as a prerequisite that was never executed. Refs proposal.md and #11.
+Beyond the static analysis gap, APE-RV has no mechanism to exercise non-GUI components at runtime. Services and BroadcastReceivers frequently execute security-relevant code (crypto, TLS) invisible to UI-only exploration.
+
+This was documented as a Known Limitation in the gh9 design (L233-253) and analyzed in detail in `rv-android/docs/analise_broadcast_service_integration.md` (2026-03-18). Refs proposal.md and #11.
 
 ### Current state in GATOR
 
 - `XMLParser` interface defines `getServices()` (L154) returning `Iterator<String>`. No `getReceivers()` method exists.
-- `AbstractXMLParser` (inner class of `XMLParser`) has fields: `services` (ArrayList\<String\>) and `receivers` (ArrayList\<String\>), both populated by `DefaultXMLParser`.
-- `DefaultXMLParser.getServices()` (L169) returns `services.iterator()`. No equivalent for receivers.
-- `GUIAnalysisOutput.getActivities()` returns `Set<SootClass>` from the flowgraph — a different type than `XMLParser.getActivities()` which returns `Iterator<String>`.
-- `RvsecAnalysisClient.getEntryPoints()` uses `output.getActivities()` (SootClass) and `output.getLifecycleHandlers(activity)`.
-- For Services/Receivers, there is no `output.getServices()` returning SootClass. We must resolve class names from `XMLParser` to `SootClass` via `Scene.v().getSootClassUnsafe()`.
-- `RvsecAnalysisClient.complementWithCallbacks()` (L351-393) adds lifecycle handlers and event handlers as reachable methods with MOP flag propagation — but only for Activities (L362-373). Must also include Service/Receiver lifecycle methods so they receive MOP flags via the call graph.
+- `AbstractXMLParser` has fields `services` and `receivers` (ArrayList\<String\>), both populated by `DefaultXMLParser`.
+- `DefaultXMLParser` parses `<service>` (L415-426) and `<receiver>` (L428-436) including IntentFilters via `readIntentFilters()` (L252-337), stored in `IntentFilterManager`.
+- `RvsecAnalysisClient.getEntryPoints()` uses `output.getActivities()` only.
+- `RvsecAnalysisClient.complementWithCallbacks()` (L351-393) propagates MOP flags only for Activity lifecycle handlers.
+- For Services/Receivers, resolve class names via `Scene.v().getSootClassUnsafe()`.
+
+### Current state in APE-RV
+
+- `AndroidDevice.broadcastIntent(Intent)` (L434-442) exists — used for IME. Reusable for broadcast triggering.
+- No `startService()` in `AndroidDevice`.
+- `SataAgent` has stagnation detection via `graphStableCounter` with restart as only escape.
+- `MopData` parses 3 passes (reachability, windows, transitions). No components parsing.
 
 ### Current JSON structure
 
 ```json
 {
-  "package": "com.example.app",
-  "mainActivity": "com.example.app.MainActivity",
-  "reachability": [
-    {
-      "className": "com.example.SomeClass",
-      "isActivity": true|false,
-      "isMainActivity": true|false,
-      "methods": [
-        {"name": "m", "signature": "<...>", "reachable": bool, "reachesMop": bool, "directlyReachesMop": bool}
-      ]
-    }
-  ],
-  "windows": [
-    {"id": N, "name": "activity.class.name", "type": "ACTIVITY"|"DIALOG", "isMain": bool, "widgets": [...]}
-  ],
+  "package": "...", "mainActivity": "...",
+  "reachability": [{"className": "...", "isActivity": bool, "isMainActivity": bool, "methods": [...]}],
+  "windows": [{"id": N, "name": "...", "type": "ACTIVITY"|"DIALOG", "widgets": [...]}],
   "transitions": [...]
 }
 ```
 
 ## Architecture
 
-The change spans two repositories (rvsec-gator and ape) but touches minimal files in each.
+4 layers across two repos (rvsec-gator and ape).
 
 ### Key Components
 
-| Component | Responsibility | Input | Output |
-|-----------|---------------|-------|--------|
-| `XMLParser.getReceivers()` | Expose parsed receiver class names | AndroidManifest.xml | `Iterator<String>` |
-| `RvsecAnalysisClient.getEntryPoints()` | Add Service/Receiver lifecycle methods as entry points | `XMLParser` services/receivers | `Set<SootMethod>` |
-| `RvsecAnalysisClient.writeJson()` | Write `components[]` section to JSON | Services/Receivers sets | JSON file |
-| `MopData.load()` (APE-RV) | Parse `components[]` from JSON | JSON file | Component MOP data |
+| Component | Responsibility | Repo |
+|-----------|---------------|------|
+| `XMLParser.getReceivers()` | Expose parsed receiver class names | rvsec-gator |
+| `RvsecAnalysisClient.getEntryPoints()` | Add Service/Receiver lifecycle as entry points | rvsec-gator |
+| `RvsecAnalysisClient.writeComponents()` | Write rich `components{}` JSON with intent-filters | rvsec-gator |
+| `MopData` Pass 4 | Parse `components{}` → ReceiverInfo/ServiceInfo | ape |
+| `SystemBroadcastCatalog` | Lookup typed extras for system broadcast actions | ape |
+| `AndroidDevice.startService()` | Start service via IActivityManager reflection | ape |
+| `SataAgent` stagnation escape | Trigger broadcasts/services before restart | ape |
+| `Config` flags | `testBroadcasts`, `testServices` (default false) | ape |
 
 ## Mapping: Spec -> Implementation -> Test
 
 | Requirement | Implementation | Test |
 |-------------|---------------|------|
-| INV-EP-01: Service lifecycle entry points | `RvsecAnalysisClient.getEntryPoints()` | Integration: JSON output for APK with Service |
-| INV-EP-02: Receiver onReceive entry point | `RvsecAnalysisClient.getEntryPoints()` | Integration: JSON output for APK with Receiver |
-| INV-EP-03: components[] in JSON | `RvsecAnalysisClient.writeComponents()` | Integration: verify JSON structure |
-| INV-EP-04: Existing data unchanged | No code change needed | Integration: diff JSON before/after |
-| MOP flag propagation for callbacks | `RvsecAnalysisClient.complementWithCallbacks()` | Integration: verify reachesMop for Service lifecycle |
-| Reachability isService/isReceiver flags | `RvsecAnalysisClient.writeReachability()` | Integration: verify JSON fields |
-| MopData components parsing | `MopData.parseComponents()` | Unit: `MopDataTest` |
+| INV-EP-01..02: Entry points | `getEntryPoints()` | Integration: JSON with Service/Receiver methods |
+| INV-EP-03: components{} | `writeComponents()` | Integration: verify JSON structure |
+| INV-EP-04: Unchanged data | No change | Integration: diff before/after |
+| INV-EP-05: Intent-filters | `writeComponents()` reads IntentFilterManager | Integration: verify intentFilters |
+| MOP propagation | `complementWithCallbacks()` | Integration: verify reachesMop |
+| isService/isReceiver | `writeReachability()` | Integration: verify fields |
+| MopData components | `MopData` Pass 4 | Unit: MopDataTest |
+| INV-CT-01: Opt-in | `Config.testBroadcasts/testServices` | Unit: default false |
+| INV-CT-02: Stagnation | `SataAgent.selectNewActionNonnull()` | Integration |
+| EVENT_BROADCAST | `MonkeySourceApe` + `AndroidDevice` | Integration |
+| EVENT_START_SERVICE | `MonkeySourceApe` + `AndroidDevice.startService()` | Integration |
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Service and BroadcastReceiver lifecycle methods included as entry points in the call graph traversal
-- New `components[]` section in the static analysis JSON listing non-Activity components
-- `MopData` in APE-RV parses the new section for component-level MOP awareness
-- Backward compatible: old JSON files (without `components[]`) work unchanged
+- Service/BroadcastReceiver lifecycle methods as entry points in call graph
+- Rich `components{}` JSON with intent-filters, exported, reachesMop, mopMethods
+- MopData parses components, provides ReceiverInfo/ServiceInfo
+- EVENT_BROADCAST and EVENT_START_SERVICE action types
+- Stagnation escape: trigger MOP components before restart
+- Backward compatible: old JSON works, testBroadcasts=false default
 
 **Non-Goals:**
-- Adding ActionTypes in APE-RV for `am broadcast`/`am startservice` (direct component triggering during exploration)
-- ContentProvider entry points (no lifecycle method equivalent)
-- Modifying `windows[]` structure (Services/Receivers have no GUI windows)
-- Changing MopScorer priority values for component-level MOP
+- ContentProvider entry points
+- Modifying `windows[]`
+- MopScorer priority changes for components (feeds stagnation escape, not scorer)
+- Complex intent extras (only action + ComponentName)
+- Dynamically registered receivers (manifest-declared only)
 
 ## Decisions
 
-**D1: Resolve class names via Scene.v().getSootClassUnsafe(), not GUIAnalysisOutput**
+**D1: Resolve via Scene.v().getSootClassUnsafe()** — no GUIAnalysisOutput equivalent for Services/Receivers. Pattern from ServiceTestingClient (L54).
 
-`GUIAnalysisOutput.getActivities()` returns `Set<SootClass>` from the flowgraph's `allNActivityNodes`, but there is no equivalent for Services/Receivers (they are not GUI nodes). `XMLParser.getServices()/getReceivers()` return `Iterator<String>` (class names). We resolve to `SootClass` using `Scene.v().getSootClassUnsafe(className)`, which returns `null` for unresolvable classes instead of throwing. This follows GATOR's existing pattern in `ServiceTestingClient` (L54).
+**D2: Lifecycle methods hardcoded** — `onCreate`, `onStartCommand`, `onBind`, `onUnbind`, `onDestroy`, `onHandleIntent` (Services), `onReceive` (Receivers). P1 simplicity.
 
-**D2: Lifecycle methods hardcoded, not discovered via class hierarchy**
+**D3: Structured components{} with receivers[]/services[]** — type-specific handling, intent-filters per component for runtime use. From `analise_broadcast_service_integration.md`.
 
-Instead of walking the class hierarchy to find all overridden lifecycle methods, we check for specific method names: `onStartCommand`, `onBind`, `onUnbind`, `onCreate`, `onDestroy`, `onHandleIntent` (Services), `onReceive` (Receivers). This is simpler (P1) and covers all practical cases. If a method doesn't exist in the class, `SootClass.getMethodByNameUnsafe()` returns null — skip it.
+**D4: components{} optional in MopData** — absent = empty lists. No migration.
 
-**D3: components[] is a new top-level JSON section, not part of windows[]**
+**D5: Stagnation escape, not continuous** — trigger only when `graphStableCounter` exceeds threshold. Round-robin across MOP components.
 
-Services and Receivers have no GUI representation. Adding them to `windows[]` (which contains widgets, listeners, layout info) would be semantically wrong and break APE-RV's `MopData` parser which expects window entries to have widgets. A separate `components[]` section is cleaner and backward compatible.
+**D6: Reuse AndroidDevice.broadcastIntent()** — add symmetric `startService()` via `IActivityManager.startService()`.
 
-**D4: MopData parses components[] as optional section**
+**D7: Intent construction with optional system broadcast extras**
 
-If `components[]` is absent (old JSON files), `MopData` ignores it and behaves identically to the current version. No migration or re-analysis needed for existing experiment data.
+Intents use action + ComponentName for explicit delivery. For system broadcast actions (e.g., `BOOT_COMPLETED`, `CONNECTIVITY_CHANGE`), a `SystemBroadcastCatalog` provides typed extras from the VLM-Fuzz catalog (187 entries, 120 with extras). The catalog is embedded as a JSON resource and provides lookup by action string. If the receiver's intent-filter action matches a catalog entry, extras are added to the Intent. If no match, the Intent is sent with action + ComponentName only. This covers the common case without app-specific extra construction.
 
 ## API Design
 
-### `XMLParser.getReceivers() -> Iterator<String>`
-- **Pre**: Manifest has been parsed
-- **Post**: Returns iterator over fully qualified receiver class names
-- **Error**: Never throws; returns empty iterator if no receivers
+### rvsec-gator
 
-### `RvsecAnalysisClient.getEntryPoints(GUIAnalysisOutput output) -> Set<SootMethod>`
-- **Pre**: output non-null, Soot Scene initialized
-- **Post**: Set contains lifecycle methods + public/protected methods of Activities, Services, and Receivers
-- **Error**: Unresolvable classes logged as WARNING and skipped
+`XMLParser.getReceivers() -> Iterator<String>` — receiver class names from manifest.
 
-### `RvsecAnalysisClient.writeComponents(JsonWriter w, XMLParser xml) -> void`
-- **Pre**: JsonWriter in object context
-- **Post**: Writes `"components": [...]` array
-- **Error**: IOException propagated to caller (same as other write methods)
+`RvsecAnalysisClient.writeComponents(JsonWriter w)` — writes `"components": {"receivers": [...], "services": [...]}` with intentFilters, exported, reachesMop, mopMethods per entry.
 
-### `MopData.hasComponentMop(String className) -> boolean`
-- **Pre**: MopData loaded
-- **Post**: Returns true if the component class has lifecycle methods with MOP reachability
-- **Error**: Returns false for unknown class names
+### APE-RV
 
-### `MopData.getComponentCount() -> int`
-- **Pre**: MopData loaded
-- **Post**: Returns number of components parsed from `components[]`
-- **Error**: Returns 0 if section absent
+`MopData.getMopReceivers() -> List<ReceiverInfo>` — receivers with reachesMop=true + actions.
+`MopData.getMopServices() -> List<ServiceInfo>` — services with reachesMop=true + actions.
+`MopData.hasComponents() -> boolean` — true if any MOP receivers or services.
+`AndroidDevice.startService(Intent) -> boolean` — start service via IActivityManager reflection.
+`ReceiverInfo(String className, List<String> actions)` — domain object.
+`ServiceInfo(String className, List<String> actions)` — domain object.
+`SystemBroadcastCatalog.lookup(String action) -> List<IntentExtra>` — typed extras for system broadcasts (187 entries from VLM-Fuzz catalog). Returns empty list if no match.
+`IntentExtra(String key, String type, String value)` — types: `string` (`--es`), `int` (`--ei`), `boolean` (`--ez`), `long` (`--el`), `float` (`--ef`).
 
 ## Data Flow
 
@@ -128,50 +127,60 @@ AndroidManifest.xml
     │
     ▼
 DefaultXMLParser.parse()
-    │
-    ├── activities[] ─── (existing) ──→ GUIAnalysisOutput.getActivities()
-    ├── services[]   ─── getServices() ──→ RvsecAnalysisClient.getEntryPoints()
-    └── receivers[]  ─── getReceivers() ──→ RvsecAnalysisClient.getEntryPoints()
-                                                │
-                                                ▼
-                                     Call graph traversal (Soot)
-                                                │
-                                                ▼
-                                     reachability[] + components[] in JSON
-                                                │
-                                                ▼
-                                     MopData.load() in APE-RV
-                                                │
-                                     ┌──────────┴──────────┐
-                                     ▼                      ▼
-                              Widget MOP data         Component MOP data
-                              (existing)              (new: hasComponentMop)
+    ├── activities[]  → GUIAnalysisOutput.getActivities() (existing)
+    ├── services[]    → getServices() → getEntryPoints()
+    ├── receivers[]   → getReceivers() → getEntryPoints()
+    └── intentFilters → IntentFilterManager → writeComponents()
+                                               │
+                        Call graph traversal ◄──┘
+                                │
+                                ▼
+                    Static Analysis JSON
+                    ├── reachability[] (expanded: isService, isReceiver)
+                    ├── windows[], transitions[] (unchanged)
+                    └── components{} (NEW: receivers[], services[] with intentFilters)
+                                │
+                                ▼
+                    MopData.load() — Pass 4: components
+                    ├── ReceiverInfo[] (className, actions)
+                    └── ServiceInfo[] (className, actions)
+                                │
+                    ┌───────────┴───────────┐
+                    ▼                       ▼
+             Widget MOP scoring      Stagnation escape hatch
+             (existing, improved)    (NEW: broadcast/service trigger)
 ```
 
 ## Error Handling
 
 | Error | Source | Strategy | Recovery |
 |-------|--------|----------|----------|
-| Class not found in Soot Scene | Manifest declares class not in APK | Log WARNING, skip class | Continue with remaining classes |
-| Method not found in SootClass | Lifecycle method not overridden | Skip silently (expected) | No recovery needed |
-| components[] absent from JSON | Old JSON format | MopData ignores, returns 0/false | Graceful degradation |
+| Class not in Soot | Manifest missing class | Log WARNING, skip | Continue |
+| Lifecycle not overridden | Method not in SootClass | Skip silently | Expected |
+| components{} absent | Old JSON | Empty lists | Graceful |
+| Broadcast fails | RemoteException | Log WARNING | Continue |
+| Service start fails | RemoteException | Log WARNING | Continue |
 
 ## Risks / Trade-offs
 
-- **[Risk: Soot resolution failures]** Some manifest entries reference classes that Soot cannot resolve (e.g., library classes not in the analysis scope). Mitigation: `getSootClassUnsafe()` returns null, logged and skipped.
-- **[Risk: Increased analysis time]** More entry points mean larger call graphs. Mitigation: Services and Receivers are typically few (1-5 per app) compared to activities (5-20). Marginal impact expected.
-- **[Trade-off: No MopScorer changes]** Component MOP data is parsed but not used for priority scoring in this change. Services/Receivers have no widgets to boost. The data is available for future use (e.g., `am broadcast` action type).
+- **[Risk: Broadcast side effects]** May crash app or open unexpected Activities. Mitigation: opt-in, stagnation only.
+- **[Trade-off: Simple intents]** No extras. Some receivers may not process. Future: VLM-Fuzz extras catalog.
+- **[Trade-off: No MopScorer changes]** Components feed escape hatch, not scorer. Services/Receivers have no widgets to boost.
 
 ## Testing Strategy
 
-| Layer | What to test | How | Count |
-|-------|-------------|-----|-------|
-| Unit | MopData.parseComponents() | JUnit with test JSON containing components[] | ~3 tests |
-| Unit | MopData backward compat (no components[]) | JUnit with existing test JSON | ~1 test |
-| Integration | getReceivers() returns parsed receivers | RvsecAnalysisClientIT with test APK | ~1 test |
-| Integration | JSON output contains components[] | RvsecAnalysisClientIT, verify JSON structure | ~1 test |
-| Integration | Full pipeline: APK with Service → JSON → MopData | End-to-end with cryptoapp or similar | Manual |
+| Layer | What | How | Count |
+|-------|------|-----|-------|
+| Unit | MopData.parseComponents() rich JSON | JUnit | ~4 |
+| Unit | MopData backward compat | JUnit | ~1 |
+| Unit | ReceiverInfo/ServiceInfo | JUnit | ~2 |
+| Unit | Config defaults | JUnit | ~1 |
+| Integration | getReceivers(), writeComponents() | RvsecAnalysisClientIT | ~2 |
+| Integration | Full pipeline: APK → JSON → MopData → trigger | adb shell | Manual |
 
 ## Resolved Questions
 
-- **Should `reachability[]` include `isService`/`isReceiver`?** YES. Low cost, avoids cross-referencing `components[]`. Added as task 2.4.
+- **isService/isReceiver in reachability[]?** YES.
+- **Flat vs structured components?** Structured — `{receivers[], services[]}`.
+- **When to trigger?** Stagnation escape only.
+- **How to construct intents?** Action + ComponentName, no extras.
