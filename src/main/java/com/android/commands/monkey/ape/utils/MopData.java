@@ -40,12 +40,26 @@ public class MopData {
     /** Map: sourceActivity → List of WTG click transitions (Pass 3) */
     private final Map<String, List<WtgTransition>> wtgTransitions;
 
+    /** Components with MOP reachability (Pass 4) */
+    private final List<ComponentInfo.ReceiverInfo> mopReceivers;
+    private final List<ComponentInfo.ServiceInfo> mopServices;
+    private final List<ComponentInfo.ActivityInfo> mopActivitiesComponents;
+    private final List<ComponentInfo.ProviderInfo> mopProviders;
+
     private MopData(Map<String, Map<String, WidgetMopFlags>> widgetData,
                     Set<String> mopActivities,
-                    Map<String, List<WtgTransition>> wtgTransitions) {
+                    Map<String, List<WtgTransition>> wtgTransitions,
+                    List<ComponentInfo.ReceiverInfo> mopReceivers,
+                    List<ComponentInfo.ServiceInfo> mopServices,
+                    List<ComponentInfo.ActivityInfo> mopActivitiesComponents,
+                    List<ComponentInfo.ProviderInfo> mopProviders) {
         this.widgetData = widgetData;
         this.mopActivities = mopActivities;
         this.wtgTransitions = wtgTransitions;
+        this.mopReceivers = mopReceivers;
+        this.mopServices = mopServices;
+        this.mopActivitiesComponents = mopActivitiesComponents;
+        this.mopProviders = mopProviders;
     }
 
     /**
@@ -55,10 +69,24 @@ public class MopData {
     static MopData forTest(Map<String, Map<String, WidgetMopFlags>> widgetData,
                            Set<String> mopActivities,
                            Map<String, List<WtgTransition>> wtgTransitions) {
+        return forTest(widgetData, mopActivities, wtgTransitions, null, null, null, null);
+    }
+
+    static MopData forTest(Map<String, Map<String, WidgetMopFlags>> widgetData,
+                           Set<String> mopActivities,
+                           Map<String, List<WtgTransition>> wtgTransitions,
+                           List<ComponentInfo.ReceiverInfo> mopReceivers,
+                           List<ComponentInfo.ServiceInfo> mopServices,
+                           List<ComponentInfo.ActivityInfo> mopActivitiesComponents,
+                           List<ComponentInfo.ProviderInfo> mopProviders) {
         return new MopData(
                 widgetData != null ? widgetData : new HashMap<String, Map<String, WidgetMopFlags>>(),
                 mopActivities != null ? mopActivities : new HashSet<String>(),
-                wtgTransitions != null ? wtgTransitions : new HashMap<String, List<WtgTransition>>());
+                wtgTransitions != null ? wtgTransitions : new HashMap<String, List<WtgTransition>>(),
+                mopReceivers != null ? mopReceivers : new ArrayList<ComponentInfo.ReceiverInfo>(),
+                mopServices != null ? mopServices : new ArrayList<ComponentInfo.ServiceInfo>(),
+                mopActivitiesComponents != null ? mopActivitiesComponents : new ArrayList<ComponentInfo.ActivityInfo>(),
+                mopProviders != null ? mopProviders : new ArrayList<ComponentInfo.ProviderInfo>());
     }
 
     /**
@@ -81,6 +109,11 @@ public class MopData {
         Map<Integer, String> windowIdToName = new HashMap<>();
         // Third pass result
         Map<String, List<WtgTransition>> wtgTransitions = new HashMap<>();
+        // Fourth pass results
+        List<ComponentInfo.ReceiverInfo> mopReceivers = new ArrayList<>();
+        List<ComponentInfo.ServiceInfo> mopServices = new ArrayList<>();
+        List<ComponentInfo.ActivityInfo> mopActivitiesComp = new ArrayList<>();
+        List<ComponentInfo.ProviderInfo> mopProviders = new ArrayList<>();
 
         try {
             // Pass 1: reachability[]
@@ -98,6 +131,11 @@ public class MopData {
                     new InputStreamReader(new FileInputStream(path), "UTF-8"))) {
                 parseTransitions(reader, windowIdToName, wtgTransitions);
             }
+            // Pass 4: components{} → MOP component lists (optional section)
+            try (JsonReader reader = new JsonReader(
+                    new InputStreamReader(new FileInputStream(path), "UTF-8"))) {
+                parseComponents(reader, mopReceivers, mopServices, mopActivitiesComp, mopProviders);
+            }
         } catch (IOException e) {
             Log.w(TAG, "MopData: failed to load " + path + ": " + e.getMessage());
             return null;
@@ -106,9 +144,13 @@ public class MopData {
             return null;
         }
 
+        int componentCount = mopReceivers.size() + mopServices.size()
+                + mopActivitiesComp.size() + mopProviders.size();
         Log.i(TAG, "MopData: loaded " + countWidgets(widgetData) + " widgets, "
-                + countTransitions(wtgTransitions) + " WTG transitions from " + path);
-        return new MopData(widgetData, mopActivities, wtgTransitions);
+                + countTransitions(wtgTransitions) + " WTG transitions, "
+                + componentCount + " MOP components from " + path);
+        return new MopData(widgetData, mopActivities, wtgTransitions,
+                mopReceivers, mopServices, mopActivitiesComp, mopProviders);
     }
 
     // -------------------------------------------------------------------------
@@ -421,6 +463,120 @@ public class MopData {
     }
 
     // -------------------------------------------------------------------------
+    // Pass 4: parse components{} → MOP component lists (optional section)
+    // -------------------------------------------------------------------------
+
+    private static void parseComponents(JsonReader reader,
+                                        List<ComponentInfo.ReceiverInfo> receivers,
+                                        List<ComponentInfo.ServiceInfo> services,
+                                        List<ComponentInfo.ActivityInfo> activities,
+                                        List<ComponentInfo.ProviderInfo> providers)
+            throws IOException {
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String name = reader.nextName();
+            if ("components".equals(name)) {
+                reader.beginObject();
+                while (reader.hasNext()) {
+                    String section = reader.nextName();
+                    switch (section) {
+                        case "receivers":
+                            parseComponentArray(reader, "receiver", receivers, null, null, null);
+                            break;
+                        case "services":
+                            parseComponentArray(reader, "service", null, services, null, null);
+                            break;
+                        case "activities":
+                            parseComponentArray(reader, "activity", null, null, activities, null);
+                            break;
+                        case "providers":
+                            parseComponentArray(reader, "provider", null, null, null, providers);
+                            break;
+                        default:
+                            reader.skipValue();
+                    }
+                }
+                reader.endObject();
+            } else {
+                reader.skipValue();
+            }
+        }
+        reader.endObject();
+    }
+
+    private static void parseComponentArray(JsonReader reader, String type,
+                                            List<ComponentInfo.ReceiverInfo> receivers,
+                                            List<ComponentInfo.ServiceInfo> services,
+                                            List<ComponentInfo.ActivityInfo> activities,
+                                            List<ComponentInfo.ProviderInfo> providers)
+            throws IOException {
+        reader.beginArray();
+        while (reader.hasNext()) {
+            String className = null;
+            boolean reachesMop = false;
+            List<String> actions = new ArrayList<>();
+            String authorities = null;
+
+            reader.beginObject();
+            while (reader.hasNext()) {
+                String field = reader.nextName();
+                switch (field) {
+                    case "className":
+                        className = reader.nextString();
+                        break;
+                    case "reachesMop":
+                        reachesMop = reader.nextBoolean();
+                        break;
+                    case "authorities":
+                        authorities = reader.nextString();
+                        break;
+                    case "intentFilters":
+                        reader.beginArray();
+                        while (reader.hasNext()) {
+                            reader.beginObject();
+                            while (reader.hasNext()) {
+                                String ff = reader.nextName();
+                                if ("actions".equals(ff)) {
+                                    reader.beginArray();
+                                    while (reader.hasNext()) {
+                                        actions.add(reader.nextString());
+                                    }
+                                    reader.endArray();
+                                } else {
+                                    reader.skipValue();
+                                }
+                            }
+                            reader.endObject();
+                        }
+                        reader.endArray();
+                        break;
+                    default:
+                        reader.skipValue();
+                }
+            }
+            reader.endObject();
+
+            if (className != null && reachesMop) {
+                switch (type) {
+                    case "receiver":
+                        receivers.add(new ComponentInfo.ReceiverInfo(className, actions));
+                        break;
+                    case "service":
+                        services.add(new ComponentInfo.ServiceInfo(className, actions));
+                        break;
+                    case "activity":
+                        activities.add(new ComponentInfo.ActivityInfo(className, actions));
+                        break;
+                    case "provider":
+                        providers.add(new ComponentInfo.ProviderInfo(className, authorities));
+                        break;
+                }
+            }
+        }
+        reader.endArray();
+    }
+
+    // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
 
@@ -459,6 +615,32 @@ public class MopData {
     public List<WtgTransition> getWtgTransitions(String activityName) {
         List<WtgTransition> list = wtgTransitions.get(activityName);
         return list != null ? list : Collections.<WtgTransition>emptyList();
+    }
+
+    /** Returns MOP-reachable receivers with their intent-filter actions. */
+    public List<ComponentInfo.ReceiverInfo> getMopReceivers() {
+        return mopReceivers;
+    }
+
+    /** Returns MOP-reachable services with their intent-filter actions. */
+    public List<ComponentInfo.ServiceInfo> getMopServices() {
+        return mopServices;
+    }
+
+    /** Returns MOP-reachable activities with their intent-filter actions. */
+    public List<ComponentInfo.ActivityInfo> getMopActivities() {
+        return mopActivitiesComponents;
+    }
+
+    /** Returns MOP-reachable content providers with their authorities. */
+    public List<ComponentInfo.ProviderInfo> getMopProviders() {
+        return mopProviders;
+    }
+
+    /** Returns true if any MOP-reachable components were parsed from components{}. */
+    public boolean hasComponents() {
+        return !mopReceivers.isEmpty() || !mopServices.isEmpty()
+                || !mopActivitiesComponents.isEmpty() || !mopProviders.isEmpty();
     }
 
     /**

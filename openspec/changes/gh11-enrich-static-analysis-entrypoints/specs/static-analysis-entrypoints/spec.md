@@ -35,9 +35,9 @@ This specification defines how Services and BroadcastReceivers SHALL be incorpor
 
 - **INV-EP-01**: Every Service class returned by `xml.getServices()` SHALL have its lifecycle methods (`onCreate`, `onStartCommand`, `onBind`, `onUnbind`, `onDestroy`, `onHandleIntent`) added as entry points if they exist in the `SootClass`.
 - **INV-EP-02**: Every BroadcastReceiver class returned by `xml.getReceivers()` SHALL have its `onReceive` method added as an entry point if it exists in the `SootClass`.
-- **INV-EP-03**: The `components{}` JSON section SHALL contain one entry per Service and one per BroadcastReceiver declared in the manifest, regardless of whether their lifecycle methods reach MOP specs.
-- **INV-EP-04**: Existing `reachability[]` and `windows[]` data for Activities SHALL remain unchanged. The change is strictly additive.
-- **INV-EP-05**: Each component entry SHALL include its intent-filters (actions + categories) as parsed from the manifest, enabling runtime intent construction.
+- **INV-EP-03**: The `components{}` JSON section SHALL contain one entry per Activity, Service, BroadcastReceiver, and ContentProvider declared in the manifest, regardless of whether their lifecycle methods reach MOP specs.
+- **INV-EP-04**: Existing `windows[]` and `transitions[]` data SHALL remain unchanged. `reachability[]` entries use `componentType`/`isMain` instead of `isActivity`/`isMainActivity` (breaking change from rvsec#45).
+- **INV-EP-05**: Each component entry SHALL include its intent-filters (actions + categories) or authorities (for providers) as parsed from the manifest, enabling runtime intent construction.
 
 ---
 
@@ -94,38 +94,57 @@ Service and BroadcastReceiver lifecycle methods SHALL receive MOP flag propagati
 
 ---
 
-### Requirement: Reachability entries — component type flags
+### Requirement: Reachability entries — component type classification
 
-Each entry in `reachability[]` SHALL include `isService` (boolean) and `isReceiver` (boolean) fields alongside the existing `isActivity` flag.
+Each entry in `reachability[]` SHALL include a `componentType` field (String, nullable) and an `isMain` field (boolean), replacing the former `isActivity`/`isMainActivity` booleans.
+
+Valid `componentType` values: `"activity"`, `"service"`, `"receiver"`, `"provider"`, or `null` (for non-component classes).
 
 #### Scenario: Service class in reachability
 - **WHEN** a Service class appears in `reachability[]`
-- **THEN** its entry SHALL have `isService=true`, `isActivity=false`, `isReceiver=false`
+- **THEN** its entry SHALL have `"componentType": "service"`, `"isMain": false`
+
+#### Scenario: Main Activity in reachability
+- **WHEN** the main launcher Activity appears in `reachability[]`
+- **THEN** its entry SHALL have `"componentType": "activity"`, `"isMain": true`
 
 #### Scenario: Non-component class in reachability
-- **WHEN** a class that is not an Activity, Service, or Receiver appears in `reachability[]`
-- **THEN** its entry SHALL have `isActivity=false`, `isService=false`, `isReceiver=false`
+- **WHEN** a class that is not an Activity, Service, Receiver, or Provider appears in `reachability[]`
+- **THEN** its entry SHALL have `"componentType": null`, `"isMain": false`
 
 ---
 
 ### Requirement: JSON output — components section
 
-The static analysis JSON SHALL include a new top-level `components{}` object with two arrays: `receivers[]` and `services[]`.
+The static analysis JSON SHALL include a new top-level `components{}` object with four arrays: `activities[]`, `receivers[]`, `services[]`, and `providers[]`.
 
-Each entry SHALL contain:
+Each activity/receiver/service entry SHALL contain:
 - `className` (String): fully qualified class name
+- `isMain` (boolean): true only for the main launcher activity
 - `intentFilters` (Array): list of `{actions: [...], categories: [...]}` objects from the manifest
 - `exported` (boolean): value of `android:exported` attribute
 - `reachesMop` (boolean): true if any lifecycle method reaches a MOP specification
 - `mopMethods` (Array of String): Soot signatures of lifecycle methods that reach MOP
 
-#### Scenario: App with Service and Receiver with intent-filters
-- **WHEN** an APK declares Receiver `com.example.app.BootReceiver` with intent-filter action `android.intent.action.BOOT_COMPLETED` and Service `com.example.app.CryptoService` with action `com.example.START_CRYPTO`
+Each provider entry SHALL contain the same fields except `intentFilters` is replaced by:
+- `authorities` (String): value of `android:authorities` attribute
+
+#### Scenario: App with all component types
+- **WHEN** an APK declares an Activity, Receiver, Service, and ContentProvider
 - **THEN** the JSON SHALL contain:
   ```json
   "components": {
+    "activities": [{
+      "className": "com.example.app.MainActivity",
+      "isMain": true,
+      "intentFilters": [{"actions": ["android.intent.action.MAIN"], "categories": ["android.intent.category.LAUNCHER"]}],
+      "exported": true,
+      "reachesMop": false,
+      "mopMethods": []
+    }],
     "receivers": [{
       "className": "com.example.app.BootReceiver",
+      "isMain": false,
       "intentFilters": [{"actions": ["android.intent.action.BOOT_COMPLETED"], "categories": []}],
       "exported": true,
       "reachesMop": true,
@@ -133,19 +152,27 @@ Each entry SHALL contain:
     }],
     "services": [{
       "className": "com.example.app.CryptoService",
+      "isMain": false,
       "intentFilters": [{"actions": ["com.example.START_CRYPTO"], "categories": []}],
       "exported": false,
       "reachesMop": true,
       "mopMethods": ["<com.example.app.CryptoService: int onStartCommand(android.content.Intent,int,int)>"]
+    }],
+    "providers": [{
+      "className": "com.example.app.DataProvider",
+      "isMain": false,
+      "authorities": "com.example.app.data",
+      "exported": false,
+      "reachesMop": false,
+      "mopMethods": []
     }]
   }
   ```
 
-#### Scenario: App with no Services or Receivers
-- **WHEN** an APK declares no Services or BroadcastReceivers
-- **THEN** the JSON SHALL contain `"components": {"receivers": [], "services": []}`
+#### Scenario: App with no non-Activity components
+- **WHEN** an APK has only Activities
+- **THEN** the JSON SHALL contain `"components": {"activities": [...], "receivers": [], "services": [], "providers": []}`
 
 #### Scenario: Component without intent-filters
 - **WHEN** a Service is declared without any `<intent-filter>` in the manifest
 - **THEN** its entry SHALL have `"intentFilters": []`
-- **AND** it SHALL still appear in the `services[]` array

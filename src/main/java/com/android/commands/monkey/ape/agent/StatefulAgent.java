@@ -79,10 +79,13 @@ import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.tree.GUITreeWidgetDiffer;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
+import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopScorer;
+import com.android.commands.monkey.ape.utils.SystemBroadcastCatalog;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 import com.android.commands.monkey.ape.utils.Utils;
 
@@ -135,6 +138,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     // LLM integration fields
     protected LlmRouter _llmRouter;
+    private final SystemBroadcastCatalog _broadcastCatalog;
     protected boolean _isNewState;
     protected State _lastState;
     protected State _stateBeforeLast;
@@ -159,6 +163,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this._coverageTracker = new UICoverageTracker();
         this._budgetTracker = new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget);
         this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
+        this._broadcastCatalog = Config.testComponents ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
     }
 
     protected MopData getMopData() {
@@ -945,9 +950,68 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     @Override
     public boolean onGraphStable(int counter) {
         if (counter > graphStableRestartThreshold) {
+            // gh11: try component triggering before restart
+            if (Config.testComponents && _mopData != null && _mopData.hasComponents()) {
+                if (triggerMopComponent()) {
+                    Logger.format("[APE-RV] Graph stable %d — triggered MOP component instead of restart", counter);
+                    return true; // counter reset, give component time to produce state change
+                }
+            }
             Logger.format("Graph is stable for %d", counter);
             requestRestart();
             return true;
+        }
+        return false;
+    }
+
+    /** Round-robin counter for component triggering. */
+    private int componentTriggerIndex = 0;
+
+    /**
+     * gh11: Trigger a MOP-reachable component (broadcast, service, activity, or content provider).
+     * Round-robins across all MOP components. Returns true if a trigger was sent.
+     */
+    private boolean triggerMopComponent() {
+        java.util.List<ComponentInfo> allComponents = new java.util.ArrayList<>();
+        for (ComponentInfo.ReceiverInfo r : _mopData.getMopReceivers()) {
+            if (!r.actions.isEmpty()) allComponents.add(r);
+        }
+        for (ComponentInfo.ServiceInfo s : _mopData.getMopServices()) {
+            allComponents.add(s);
+        }
+        for (ComponentInfo.ActivityInfo a : _mopData.getMopActivities()) {
+            if (!a.actions.isEmpty()) allComponents.add(a);
+        }
+        // Providers skipped for now — need content:// URI construction
+        if (allComponents.isEmpty()) return false;
+
+        ComponentInfo component = allComponents.get(componentTriggerIndex % allComponents.size());
+        componentTriggerIndex++;
+
+        // Extract package from fully qualified className (e.g. "com.example.app.MyReceiver" → "com.example.app")
+        int lastDot = component.className.lastIndexOf('.');
+        String packageName = lastDot > 0 ? component.className.substring(0, lastDot) : component.className;
+        Intent intent = new Intent();
+        intent.setComponent(new ComponentName(packageName, component.className));
+        if (!component.actions.isEmpty()) {
+            intent.setAction(component.actions.get(0));
+        }
+
+        if (component instanceof ComponentInfo.ReceiverInfo) {
+            // Add system broadcast extras from catalog if available
+            if (_broadcastCatalog != null && !component.actions.isEmpty()) {
+                for (SystemBroadcastCatalog.IntentExtra extra : _broadcastCatalog.lookup(component.actions.get(0))) {
+                    extra.applyTo(intent);
+                }
+            }
+            Logger.iformat("[APE-RV] Triggering broadcast: %s action=%s", component.className, intent.getAction());
+            return AndroidDevice.sendBroadcast(intent);
+        } else if (component instanceof ComponentInfo.ServiceInfo) {
+            Logger.iformat("[APE-RV] Triggering service: %s", component.className);
+            return AndroidDevice.startService(intent);
+        } else if (component instanceof ComponentInfo.ActivityInfo) {
+            Logger.iformat("[APE-RV] Triggering activity: %s action=%s", component.className, intent.getAction());
+            return AndroidDevice.startActivity(intent);
         }
         return false;
     }

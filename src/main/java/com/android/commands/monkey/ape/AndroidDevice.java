@@ -441,6 +441,43 @@ public class AndroidDevice {
         }
     }
 
+    /**
+     * Send a targeted broadcast to a specific component (gh11: component triggering).
+     * Public wrapper around broadcastIntent for use by MonkeySourceApe.
+     */
+    public static boolean sendBroadcast(Intent intent) {
+        return broadcastIntent(intent);
+    }
+
+    /**
+     * Start a service via IActivityManager (gh11: component triggering).
+     * Symmetric to broadcastIntent — uses reflection on IActivityManager.startService().
+     */
+    public static boolean startService(Intent intent) {
+        try {
+            iActivityManager.startService(null, intent, intent.getType(), null, 0);
+            return true;
+        } catch (Exception e) {
+            Logger.wformat("Start Service error: %s", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Start an activity via IActivityManager (gh11: component triggering).
+     * Used to launch MOP-reachable activities directly via intent, bypassing GUI navigation.
+     */
+    public static boolean startActivity(Intent intent) {
+        try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            iActivityManager.startActivity(null, null, intent, null, null, null, 0, 0, null, null);
+            return true;
+        } catch (Exception e) {
+            Logger.wformat("Start Activity error: %s", e.getMessage());
+            return false;
+        }
+    }
+
     public static boolean sendText(String text) {
         Intent intent = new Intent();
         intent.setAction(IME_MESSAGE);

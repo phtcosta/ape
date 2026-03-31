@@ -1,50 +1,50 @@
 <!-- This change spans two repositories: rvsec (rvsec-gator) and ape (APE-RV).
-     Groups 1-2 are in rvsec-gator (rv-android session).
+     Groups 1-2 completed in rvsec#45 (gh45-enrich-gator-entrypoints) with EXPANDED scope.
      Groups 3-5 are in ape (this session).
-     Groups 1 and 2 are independent and can run in parallel.
-     Group 3 depends on Group 2 (JSON format must be defined before MopData parser).
+     Group 3 depends on Group 2 (JSON format defined by GATOR).
      Group 4 depends on Group 3 (needs MopData to provide component data).
      Group 5 depends on all previous groups.
-     Critical path: 1/2 (parallel) → 3 → 4 → 5 -->
+     Critical path: 1/2 (done) → 3 → 4 → 5 -->
 
-## 1. XMLParser — getReceivers() accessor (rvsec-gator)
+## 1. XMLParser — getReceivers()/getProviders() accessors (rvsec-gator) — COMPLETED in rvsec#45
 
-- [ ] 1.1 Add `getReceivers()` method to `XMLParser` interface (`presto/android/xml/XMLParser.java` L154, alongside `getServices()`). Return type: `Iterator<String>`.
-- [ ] 1.2 Add `getReceivers()` implementation in `DefaultXMLParser` (next to `getServices()` at L169): return `receivers.iterator()`.
-- [ ] 1.3 Add `getReceivers()` implementation in `AbstractXMLParser` inner class (alongside `getActivities()`): return `receivers.iterator()`.
+- [x] 1.1 Add `getReceivers()` to XMLParser interface and implementations.
+- [x] 1.2 Add `getProviders()` and `getProviderAuthorities()` (scope expansion: ContentProviders included).
+- [x] 1.3 Move `getServices()` from DefaultXMLParser to AbstractXMLParser (consistency fix).
+- [x] 1.4 Parse `android:exported` for all component types. Add `isComponentExported()` to XMLParser.
 
-## 2. RvsecAnalysisClient — entry points + JSON (rvsec-gator)
+## 2. RvsecAnalysisClient — entry points + JSON (rvsec-gator) — COMPLETED in rvsec#45
 
-- [ ] 2.1 Modify `getEntryPoints()` (L252-266) to iterate over Services from `XMLParser.Factory.getXMLParser().getServices()` and Receivers from `getReceivers()`. Resolve class names to `SootClass` via `Scene.v().getSootClassUnsafe()`. Add lifecycle methods (`onCreate`, `onStartCommand`, `onBind`, `onUnbind`, `onDestroy`, `onHandleIntent` for Services; `onReceive` for Receivers) + public/protected methods. Skip unresolvable classes with WARNING log.
-- [ ] 2.1.1 Modify `complementWithCallbacks()` (L351-393) to add Service/Receiver lifecycle methods to the callbacks set for MOP flag propagation.
-- [ ] 2.2 Add `writeComponents()` method — writes `"components": {"receivers": [...], "services": [...]}`. Each entry: `className`, `intentFilters` (from IntentFilterManager), `exported` (from manifest), `reachesMop`, `mopMethods` (signatures of lifecycle methods with MOP reachability).
-- [ ] 2.3 Call `writeComponents()` from `writeJson()` (L749-782) as Section 4 after transitions, with `w.flush()`.
-- [ ] 2.4 Add `isService` and `isReceiver` boolean fields to `reachability[]` entries in `writeReachability()` (L784-821).
-- [ ] 2.5 Build rvsec-gator and run existing integration tests (`RvsecAnalysisClientIT`).
+- [x] 2.1 Modify `getEntryPoints()` to add Services, Receivers, and ContentProviders (scope expansion) as entry points with lifecycle methods.
+- [x] 2.1.1 Modify `complementWithCallbacks()` for Service/Receiver/Provider lifecycle MOP propagation.
+- [x] 2.2 Add `writeComponents()` — writes `components{}` with `activities[]`, `receivers[]`, `services[]`, `providers[]` (scope expansion: all 4 types). Each entry: className, isMain, intentFilters (or authorities for providers), exported, reachesMop, mopMethods.
+- [x] 2.3 Call `writeComponents()` from `writeJson()` as Section 4 after transitions.
+- [x] 2.4 Replace `isActivity`/`isMainActivity` booleans with `componentType` string (`"activity"|"service"|"receiver"|"provider"|null`) + `isMain` boolean in `reachability[]` entries.
+- [x] 2.5 Build rvsec-gator, all tests pass.
 
 ## 3. MopData — parse components{} (ape)
 
-- [ ] 3.1 Create `ReceiverInfo` and `ServiceInfo` domain classes in `ape/utils/` — each holds `className` (String) and `actions` (List\<String\>).
-- [ ] 3.2 Add Pass 4 to `MopData.java`: parse `components{}` section. Parse `receivers[]` and `services[]`, retaining only entries with `reachesMop=true`. Extract intent-filter actions.
-- [ ] 3.3 Add methods `getMopReceivers()`, `getMopServices()`, `hasComponents()` to `MopData`.
-- [ ] 3.4 Update the summary log line to include component count.
-- [ ] 3.5 Add unit tests to `MopDataTest.java`: JSON with components{}, JSON without components{} (backward compat), receiver/service with MOP reachability and intent-filter actions.
-- [ ] 3.6 `mvn clean package` — verify BUILD SUCCESS and all tests pass.
+- [x] 3.1 Create domain classes in `ape/utils/`: `ComponentInfo` (base with className, actions, reachesMop), `ReceiverInfo`, `ServiceInfo`, `ActivityInfo`, `ProviderInfo` (with authorities String instead of actions).
+- [x] 3.2 Add Pass 4 to `MopData.java`: parse `components{}` section. Parse all 4 arrays (`activities[]`, `receivers[]`, `services[]`, `providers[]`), retaining only entries with `reachesMop=true`. Extract intent-filter actions for activities/receivers/services, authorities for providers.
+- [x] 3.3 Add methods to `MopData`: `getMopReceivers()`, `getMopServices()`, `getMopActivities()`, `getMopProviders()`, `hasComponents()`.
+- [x] 3.4 Add `forTest()` parameter for component data (extend existing factory).
+- [x] 3.5 Update the summary log line to include component counts.
+- [x] 3.6 Add unit tests to `MopDataTest.java`: components{} with all 4 types, backward compat (no components key), receiver with MOP + intent-filter actions, provider with authorities.
+- [x] 3.7 `mvn clean package` — 275 tests, 0 failures, BUILD SUCCESS.
 
 ## 4. Component triggering in APE-RV (ape)
 
-- [ ] 4.1 Add Config flags: `testBroadcasts` (boolean, default false), `testServices` (boolean, default false) in `Config.java`.
-- [ ] 4.2 Add `AndroidDevice.startService(Intent)` method — symmetric to `broadcastIntent()`, using `IActivityManager.startService()` via reflection.
-- [ ] 4.3 Embed VLM-Fuzz system broadcast catalog (`/tmp/VLM-Fuzz/system-broadcast.json`, 187 entries, 120 with typed extras) as a resource in APE-RV. Create `SystemBroadcastCatalog` class in `ape/utils/` that loads the JSON and provides lookup by action string → list of extras (key, type, value). Parse `--es` (String), `--ei` (int), `--ez` (boolean), `--el` (long), `--ef` (float) flags from the `adb` field.
-- [ ] 4.4 Add `EVENT_BROADCAST` and `EVENT_START_SERVICE` to action type handling in `MonkeySourceApe`. For EVENT_BROADCAST: construct Intent with action from ReceiverInfo + ComponentName; if `SystemBroadcastCatalog` has a match for the action, add the typed extras to the Intent. Call `AndroidDevice.broadcastIntent()`. For EVENT_START_SERVICE: construct Intent with ComponentName (+ action if available), call `AndroidDevice.startService()`.
-- [ ] 4.5 Add stagnation escape hatch in `SataAgent.selectNewActionNonnull()`: when `graphStableCounter > threshold` AND `Config.testBroadcasts/testServices` AND `_mopData.hasComponents()`, select broadcast/service action (round-robin across MOP components) BEFORE falling through to restart. Reset `graphStableCounter` after trigger.
-- [ ] 4.6 Add unit tests: Config defaults (testBroadcasts=false, testServices=false), SystemBroadcastCatalog lookup (match with extras, no match returns empty).
-- [ ] 4.7 `mvn clean package` — verify BUILD SUCCESS and all tests pass.
+- [x] 4.1 Add Config flag: `testComponents` (boolean, default false) in `Config.java`. Single flag controls all component triggering (broadcasts, services, activities, providers).
+- [x] 4.2 Add `AndroidDevice.startService(Intent)` — using `IActivityManager.startService()`. Add `AndroidDevice.startActivity(Intent)` — using `IActivityManager.startActivity()`. Add `AndroidDevice.sendBroadcast(Intent)` — public wrapper around existing `broadcastIntent()`. ContentProvider query deferred — providers skipped in triggerMopComponent() for now.
+- [x] 4.3 Create `SystemBroadcastCatalog` class in `ape/utils/` — loads `system-broadcast.json` from device (`/data/local/tmp/`), provides lookup by action string → list of typed extras. Parses `--es`/`--ei`/`--ez`/`--el`/`--ef` flags from `adb` field. VLM-Fuzz catalog copied to `data/system-broadcast.json` for push alongside JAR.
+- [x] 4.4 Component triggering implemented directly in `StatefulAgent.onGraphStable()` via `triggerMopComponent()` — round-robins across MOP receivers (with broadcast + catalog extras), services (startService), and activities (startActivity). Not via separate MonkeySourceApe event types — the trigger is synchronous within the stagnation handler.
+- [x] 4.5 Stagnation escape hatch in `StatefulAgent.onGraphStable()`: when `graphStableCounter > threshold` AND `Config.testComponents` AND `_mopData.hasComponents()`, calls `triggerMopComponent()` BEFORE `requestRestart()`. Resets counter on success.
+- [ ] 4.6 Add unit tests: SystemBroadcastCatalog parsing runs on-device (android.util.JsonReader) — defer to smoke test.
+- [x] 4.7 `mvn clean package` — 275 tests, 0 failures, BUILD SUCCESS.
 
 ## 5. Final Verification
 
-- [ ] 5.1 Generate a new static analysis JSON for an APK with known Services/Receivers. Verify `components{}` section has intentFilters, exported, reachesMop, mopMethods.
-- [ ] 5.2 Load new JSON in MopData, verify `hasComponents()=true`, `getMopReceivers()`/`getMopServices()` return correct data.
-- [ ] 5.3 Verify backward compatibility: old JSON (without components{}) works unchanged.
-- [ ] 5.4 Smoke test: run APE-RV with `testBroadcasts=true` on an APK with MOP receivers. Verify broadcasts are sent during stagnation.
-- [ ] 5.5 `mvn clean package` in both repos — BUILD SUCCESS.
+- [x] 5.1 Verify backward compat: unit test `testComponents_backwardCompat` passes — MopData with no components{} returns empty lists, hasComponents()=false.
+- [ ] 5.2 Verify new JSON: load a JSON with components{} from rvsec#45 — hasComponents()=true, getMopReceivers()/etc return correct data. PENDING — needs JSON from rvsec#45.
+- [x] 5.3 `mvn clean package` — 275 tests, 0 failures, BUILD SUCCESS.
+- [ ] 5.4 Smoke test on-device: run APE-RV with `testComponents=true` on APK with MOP receivers. Verify broadcasts sent during stagnation.

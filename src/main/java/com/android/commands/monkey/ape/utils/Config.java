@@ -153,6 +153,9 @@ public class Config {
     public static final double minEpsilon = Config.getDouble("ape.minEpsilon", 0.02);
     public static final boolean heuristicInput = Config.getBoolean("ape.heuristicInput", true);
 
+    // gh11: component triggering (broadcasts, services, activities, content providers)
+    public static final boolean testComponents = Config.getBoolean("ape.testComponents", false);
+
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
         if (configFile.exists()) {

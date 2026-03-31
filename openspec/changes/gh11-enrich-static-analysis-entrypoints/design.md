@@ -22,16 +22,24 @@ This was documented as a Known Limitation in the gh9 design (L233-253) and analy
 - `SataAgent` has stagnation detection via `graphStableCounter` with restart as only escape.
 - `MopData` parses 3 passes (reachability, windows, transitions). No components parsing.
 
-### Current JSON structure
+### JSON structure (after rvsec#45)
 
 ```json
 {
   "package": "...", "mainActivity": "...",
-  "reachability": [{"className": "...", "isActivity": bool, "isMainActivity": bool, "methods": [...]}],
+  "reachability": [{"className": "...", "componentType": "activity"|"service"|"receiver"|"provider"|null, "isMain": bool, "methods": [...]}],
   "windows": [{"id": N, "name": "...", "type": "ACTIVITY"|"DIALOG", "widgets": [...]}],
-  "transitions": [...]
+  "transitions": [...],
+  "components": {
+    "activities": [{"className": "...", "isMain": bool, "intentFilters": [...], "exported": bool, "reachesMop": bool, "mopMethods": [...]}],
+    "receivers": [same fields],
+    "services": [same fields],
+    "providers": [{"className": "...", "isMain": false, "authorities": "...", "exported": bool, "reachesMop": bool, "mopMethods": [...]}]
+  }
 }
 ```
+
+**Breaking change from rvsec#45**: `isActivity`/`isMainActivity` replaced by `componentType`/`isMain`. MopData Pass 1 must handle this.
 
 ## Architecture
 

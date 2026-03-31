@@ -202,4 +202,100 @@ public class MopDataTest {
         assertEquals("android.widget.Button", t.widgetClass);
         assertEquals("com.example.EncryptActivity", t.targetActivity);
     }
+
+    // -------------------------------------------------------------------------
+    // Pass 4: Component parsing tests (gh11)
+    // -------------------------------------------------------------------------
+
+    /**
+     * MopData with component data: hasComponents() returns true,
+     * getMopReceivers/Services/Activities/Providers return correct data.
+     */
+    @Test
+    public void testComponents_allTypes() {
+        List<ComponentInfo.ReceiverInfo> receivers = new ArrayList<>();
+        receivers.add(new ComponentInfo.ReceiverInfo(
+                "com.example.BootReceiver",
+                java.util.Arrays.asList("android.intent.action.BOOT_COMPLETED")));
+
+        List<ComponentInfo.ServiceInfo> services = new ArrayList<>();
+        services.add(new ComponentInfo.ServiceInfo(
+                "com.example.CryptoService",
+                java.util.Arrays.asList("com.example.START_CRYPTO")));
+
+        List<ComponentInfo.ActivityInfo> activities = new ArrayList<>();
+        activities.add(new ComponentInfo.ActivityInfo(
+                "com.example.HiddenActivity",
+                java.util.Arrays.asList("com.example.HIDDEN")));
+
+        List<ComponentInfo.ProviderInfo> providers = new ArrayList<>();
+        providers.add(new ComponentInfo.ProviderInfo(
+                "com.example.DataProvider", "com.example.data"));
+
+        MopData data = MopData.forTest(null, null, null,
+                receivers, services, activities, providers);
+
+        assertTrue("hasComponents should be true", data.hasComponents());
+        assertEquals(1, data.getMopReceivers().size());
+        assertEquals(1, data.getMopServices().size());
+        assertEquals(1, data.getMopActivities().size());
+        assertEquals(1, data.getMopProviders().size());
+
+        assertEquals("com.example.BootReceiver", data.getMopReceivers().get(0).className);
+        assertEquals("android.intent.action.BOOT_COMPLETED",
+                data.getMopReceivers().get(0).actions.get(0));
+
+        assertEquals("com.example.CryptoService", data.getMopServices().get(0).className);
+        assertEquals("com.example.START_CRYPTO",
+                data.getMopServices().get(0).actions.get(0));
+
+        assertEquals("com.example.DataProvider", data.getMopProviders().get(0).className);
+        assertEquals("com.example.data", data.getMopProviders().get(0).authorities);
+    }
+
+    /**
+     * Backward compatibility: no components data → hasComponents() false, empty lists.
+     */
+    @Test
+    public void testComponents_backwardCompat() {
+        MopData data = MopData.forTest(null, null, null);
+
+        assertFalse("hasComponents should be false without component data",
+                data.hasComponents());
+        assertTrue(data.getMopReceivers().isEmpty());
+        assertTrue(data.getMopServices().isEmpty());
+        assertTrue(data.getMopActivities().isEmpty());
+        assertTrue(data.getMopProviders().isEmpty());
+    }
+
+    /**
+     * ComponentInfo domain objects: ReceiverInfo actions are immutable.
+     */
+    @Test
+    public void testComponentInfo_receiverActions() {
+        List<String> actions = new ArrayList<>();
+        actions.add("android.intent.action.BOOT_COMPLETED");
+        actions.add("android.intent.action.LOCKED_BOOT_COMPLETED");
+
+        ComponentInfo.ReceiverInfo receiver = new ComponentInfo.ReceiverInfo(
+                "com.example.BootReceiver", actions);
+
+        assertEquals("com.example.BootReceiver", receiver.className);
+        assertEquals(2, receiver.actions.size());
+        assertTrue(receiver.reachesMop);
+    }
+
+    /**
+     * ProviderInfo has authorities instead of actions.
+     */
+    @Test
+    public void testComponentInfo_providerAuthorities() {
+        ComponentInfo.ProviderInfo provider = new ComponentInfo.ProviderInfo(
+                "com.example.DataProvider", "com.example.app.data");
+
+        assertEquals("com.example.DataProvider", provider.className);
+        assertEquals("com.example.app.data", provider.authorities);
+        assertTrue(provider.actions.isEmpty());
+        assertTrue(provider.reachesMop);
+    }
 }
