@@ -348,6 +348,12 @@ public class SataAgent extends StatefulAgent {
                 return result;
             }
         }
+        // gh11: component triggering (probabilistic, fires with Config.componentPercentage)
+        if (Config.componentPercentage > 0 && getMopData() != null && getMopData().hasComponents()
+                && getRandom().nextDouble() < Config.componentPercentage) {
+            triggerMopComponent();
+            // No return — trigger is a side-effect, continue with normal SATA selection
+        }
         Action resolved = null;
         resolved = selectNewActionFromBuffer();
         if (resolved != null) {

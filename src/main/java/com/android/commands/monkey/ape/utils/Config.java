@@ -154,7 +154,8 @@ public class Config {
     public static final boolean heuristicInput = Config.getBoolean("ape.heuristicInput", true);
 
     // gh11: component triggering (broadcasts, services, activities, content providers)
-    public static final boolean testComponents = Config.getBoolean("ape.testComponents", false);
+    // Probability per step of triggering a component (0.0 = disabled, 0.05 = 5%)
+    public static final double componentPercentage = Config.getDouble("ape.componentPercentage", 0.0);
 
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);

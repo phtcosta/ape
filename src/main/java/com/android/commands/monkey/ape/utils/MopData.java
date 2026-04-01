@@ -556,7 +556,7 @@ public class MopData {
             }
             reader.endObject();
 
-            if (className != null && reachesMop) {
+            if (className != null) {
                 switch (type) {
                     case "receiver":
                         receivers.add(new ComponentInfo.ReceiverInfo(className, actions));
@@ -617,27 +617,27 @@ public class MopData {
         return list != null ? list : Collections.<WtgTransition>emptyList();
     }
 
-    /** Returns MOP-reachable receivers with their intent-filter actions. */
-    public List<ComponentInfo.ReceiverInfo> getMopReceivers() {
+    /** Returns all receivers from components{} with their intent-filter actions. */
+    public List<ComponentInfo.ReceiverInfo> getReceivers() {
         return mopReceivers;
     }
 
-    /** Returns MOP-reachable services with their intent-filter actions. */
-    public List<ComponentInfo.ServiceInfo> getMopServices() {
+    /** Returns all services from components{} with their intent-filter actions. */
+    public List<ComponentInfo.ServiceInfo> getServices() {
         return mopServices;
     }
 
-    /** Returns MOP-reachable activities with their intent-filter actions. */
-    public List<ComponentInfo.ActivityInfo> getMopActivities() {
+    /** Returns all activities from components{} with their intent-filter actions. */
+    public List<ComponentInfo.ActivityInfo> getActivities() {
         return mopActivitiesComponents;
     }
 
-    /** Returns MOP-reachable content providers with their authorities. */
-    public List<ComponentInfo.ProviderInfo> getMopProviders() {
+    /** Returns all content providers from components{} with their authorities. */
+    public List<ComponentInfo.ProviderInfo> getProviders() {
         return mopProviders;
     }
 
-    /** Returns true if any MOP-reachable components were parsed from components{}. */
+    /** Returns true if any components were parsed from components{}. */
     public boolean hasComponents() {
         return !mopReceivers.isEmpty() || !mopServices.isEmpty()
                 || !mopActivitiesComponents.isEmpty() || !mopProviders.isEmpty();

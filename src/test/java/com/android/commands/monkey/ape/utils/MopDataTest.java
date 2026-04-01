@@ -209,7 +209,7 @@ public class MopDataTest {
 
     /**
      * MopData with component data: hasComponents() returns true,
-     * getMopReceivers/Services/Activities/Providers return correct data.
+     * getReceivers/Services/Activities/Providers return correct data.
      */
     @Test
     public void testComponents_allTypes() {
@@ -236,21 +236,21 @@ public class MopDataTest {
                 receivers, services, activities, providers);
 
         assertTrue("hasComponents should be true", data.hasComponents());
-        assertEquals(1, data.getMopReceivers().size());
-        assertEquals(1, data.getMopServices().size());
-        assertEquals(1, data.getMopActivities().size());
-        assertEquals(1, data.getMopProviders().size());
+        assertEquals(1, data.getReceivers().size());
+        assertEquals(1, data.getServices().size());
+        assertEquals(1, data.getActivities().size());
+        assertEquals(1, data.getProviders().size());
 
-        assertEquals("com.example.BootReceiver", data.getMopReceivers().get(0).className);
+        assertEquals("com.example.BootReceiver", data.getReceivers().get(0).className);
         assertEquals("android.intent.action.BOOT_COMPLETED",
-                data.getMopReceivers().get(0).actions.get(0));
+                data.getReceivers().get(0).actions.get(0));
 
-        assertEquals("com.example.CryptoService", data.getMopServices().get(0).className);
+        assertEquals("com.example.CryptoService", data.getServices().get(0).className);
         assertEquals("com.example.START_CRYPTO",
-                data.getMopServices().get(0).actions.get(0));
+                data.getServices().get(0).actions.get(0));
 
-        assertEquals("com.example.DataProvider", data.getMopProviders().get(0).className);
-        assertEquals("com.example.data", data.getMopProviders().get(0).authorities);
+        assertEquals("com.example.DataProvider", data.getProviders().get(0).className);
+        assertEquals("com.example.data", data.getProviders().get(0).authorities);
     }
 
     /**
@@ -262,10 +262,10 @@ public class MopDataTest {
 
         assertFalse("hasComponents should be false without component data",
                 data.hasComponents());
-        assertTrue(data.getMopReceivers().isEmpty());
-        assertTrue(data.getMopServices().isEmpty());
-        assertTrue(data.getMopActivities().isEmpty());
-        assertTrue(data.getMopProviders().isEmpty());
+        assertTrue(data.getReceivers().isEmpty());
+        assertTrue(data.getServices().isEmpty());
+        assertTrue(data.getActivities().isEmpty());
+        assertTrue(data.getProviders().isEmpty());
     }
 
     /**

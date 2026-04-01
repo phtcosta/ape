@@ -163,7 +163,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this._coverageTracker = new UICoverageTracker();
         this._budgetTracker = new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget);
         this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
-        this._broadcastCatalog = Config.testComponents ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
+        this._broadcastCatalog = Config.componentPercentage > 0 ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
     }
 
     protected MopData getMopData() {
@@ -950,13 +950,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     @Override
     public boolean onGraphStable(int counter) {
         if (counter > graphStableRestartThreshold) {
-            // gh11: try component triggering before restart
-            if (Config.testComponents && _mopData != null && _mopData.hasComponents()) {
-                if (triggerMopComponent()) {
-                    Logger.format("[APE-RV] Graph stable %d — triggered MOP component instead of restart", counter);
-                    return true; // counter reset, give component time to produce state change
-                }
-            }
             Logger.format("Graph is stable for %d", counter);
             requestRestart();
             return true;
@@ -964,23 +957,23 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         return false;
     }
 
-    /** Round-robin counter for component triggering. */
+    /** Round-robin counter for component triggering (gh11). */
     private int componentTriggerIndex = 0;
 
     /**
      * gh11: Trigger a MOP-reachable component (broadcast, service, activity, or content provider).
      * Round-robins across all MOP components. Returns true if a trigger was sent.
      */
-    private boolean triggerMopComponent() {
+    protected boolean triggerMopComponent() {
         java.util.List<ComponentInfo> allComponents = new java.util.ArrayList<>();
-        for (ComponentInfo.ReceiverInfo r : _mopData.getMopReceivers()) {
-            if (!r.actions.isEmpty()) allComponents.add(r);
+        for (ComponentInfo.ReceiverInfo r : _mopData.getReceivers()) {
+            if (!r.actions.isEmpty()) allComponents.add(r); // Receivers need action for broadcast
         }
-        for (ComponentInfo.ServiceInfo s : _mopData.getMopServices()) {
-            allComponents.add(s);
+        for (ComponentInfo.ServiceInfo s : _mopData.getServices()) {
+            allComponents.add(s); // Services can be started by ComponentName alone
         }
-        for (ComponentInfo.ActivityInfo a : _mopData.getMopActivities()) {
-            if (!a.actions.isEmpty()) allComponents.add(a);
+        for (ComponentInfo.ActivityInfo a : _mopData.getActivities()) {
+            allComponents.add(a); // Activities can be started by ComponentName alone
         }
         // Providers skipped for now — need content:// URI construction
         if (allComponents.isEmpty()) return false;

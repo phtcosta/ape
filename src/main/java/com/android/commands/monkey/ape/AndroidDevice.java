@@ -435,8 +435,8 @@ public class AndroidDevice {
         try {
             iActivityManager.broadcastIntent(null, intent, null, null, 0, null, null, null, 0, null, false, false, 0);
             return true;
-        } catch (RemoteException e) {
-            Logger.wformat("Broadcast Intent error", intent);
+        } catch (Exception e) {
+            Logger.wformat("Broadcast Intent error: %s", e.getMessage());
             return false;
         }
     }
@@ -451,12 +451,51 @@ public class AndroidDevice {
 
     /**
      * Start a service via IActivityManager (gh11: component triggering).
-     * Symmetric to broadcastIntent — uses reflection on IActivityManager.startService().
+     * Uses reflection to handle different API signatures across Android versions.
      */
     public static boolean startService(Intent intent) {
         try {
-            iActivityManager.startService(null, intent, intent.getType(), null, 0);
-            return true;
+            // Try different startService signatures via reflection
+            java.lang.reflect.Method method = null;
+            Class<?> clazz = iActivityManager.getClass();
+
+            // Android Q+: startService(IApplicationThread, Intent, String, boolean, String, String, int)
+            method = findMethodSafe(clazz, "startService",
+                    android.app.IApplicationThread.class, Intent.class, String.class,
+                    boolean.class, String.class, String.class, int.class);
+            if (method != null) {
+                method.invoke(iActivityManager, null, intent, intent.getType(), false, null, null, 0);
+                return true;
+            }
+
+            // Android O-P: startService(IApplicationThread, Intent, String, boolean, String, int)
+            method = findMethodSafe(clazz, "startService",
+                    android.app.IApplicationThread.class, Intent.class, String.class,
+                    boolean.class, String.class, int.class);
+            if (method != null) {
+                method.invoke(iActivityManager, null, intent, intent.getType(), false, null, 0);
+                return true;
+            }
+
+            // Android M-N: startService(IApplicationThread, Intent, String, String, int)
+            method = findMethodSafe(clazz, "startService",
+                    android.app.IApplicationThread.class, Intent.class, String.class,
+                    String.class, int.class);
+            if (method != null) {
+                method.invoke(iActivityManager, null, intent, intent.getType(), null, 0);
+                return true;
+            }
+
+            // Fallback: startService(IApplicationThread, Intent, String, int)
+            method = findMethodSafe(clazz, "startService",
+                    android.app.IApplicationThread.class, Intent.class, String.class, int.class);
+            if (method != null) {
+                method.invoke(iActivityManager, null, intent, intent.getType(), 0);
+                return true;
+            }
+
+            Logger.wformat("Start Service: no compatible startService method found");
+            return false;
         } catch (Exception e) {
             Logger.wformat("Start Service error: %s", e.getMessage());
             return false;
@@ -465,16 +504,39 @@ public class AndroidDevice {
 
     /**
      * Start an activity via IActivityManager (gh11: component triggering).
-     * Used to launch MOP-reachable activities directly via intent, bypassing GUI navigation.
+     * Uses reflection to handle different API signatures across Android versions.
      */
     public static boolean startActivity(Intent intent) {
         try {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            iActivityManager.startActivity(null, null, intent, null, null, null, 0, 0, null, null);
-            return true;
+            java.lang.reflect.Method method = null;
+            Class<?> clazz = iActivityManager.getClass();
+
+            // Android Q+: startActivity(IApplicationThread, String, Intent, String, IBinder, String, int, int, ProfilerInfo, Bundle)
+            method = findMethodSafe(clazz, "startActivity",
+                    android.app.IApplicationThread.class, String.class, Intent.class,
+                    String.class, android.os.IBinder.class, String.class,
+                    int.class, int.class, android.app.ProfilerInfo.class, android.os.Bundle.class);
+            if (method != null) {
+                method.invoke(iActivityManager, null, null, intent, null, null, null, 0, 0, null, null);
+                return true;
+            }
+
+            Logger.wformat("Start Activity: no compatible startActivity method found");
+            return false;
         } catch (Exception e) {
             Logger.wformat("Start Activity error: %s", e.getMessage());
             return false;
+        }
+    }
+
+    private static java.lang.reflect.Method findMethodSafe(Class<?> clazz, String name, Class<?>... types) {
+        try {
+            java.lang.reflect.Method m = clazz.getMethod(name, types);
+            m.setAccessible(true);
+            return m;
+        } catch (NoSuchMethodException e) {
+            return null;
         }
     }
 
