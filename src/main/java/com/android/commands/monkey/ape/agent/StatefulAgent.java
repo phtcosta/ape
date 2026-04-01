@@ -972,16 +972,15 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         for (ComponentInfo.ServiceInfo s : _mopData.getServices()) {
             allComponents.add(s); // Services can be started by ComponentName alone
         }
-        for (ComponentInfo.ActivityInfo a : _mopData.getActivities()) {
-            allComponents.add(a); // Activities can be started by ComponentName alone
-        }
-        // Providers skipped for now — need content:// URI construction
+        // Activities excluded: already reachable via GUI exploration.
+        // Triggering via startActivity() disrupts SATA flow (evidence: sandwichroulette -45pp).
+        // Providers excluded: need content:// URI construction.
         if (allComponents.isEmpty()) return false;
 
         ComponentInfo component = allComponents.get(componentTriggerIndex % allComponents.size());
         componentTriggerIndex++;
 
-        // Extract package from fully qualified className (e.g. "com.example.app.MyReceiver" → "com.example.app")
+        // Extract package from fully qualified className
         int lastDot = component.className.lastIndexOf('.');
         String packageName = lastDot > 0 ? component.className.substring(0, lastDot) : component.className;
         Intent intent = new Intent();
@@ -991,7 +990,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
 
         if (component instanceof ComponentInfo.ReceiverInfo) {
-            // Add system broadcast extras from catalog if available
             if (_broadcastCatalog != null && !component.actions.isEmpty()) {
                 for (SystemBroadcastCatalog.IntentExtra extra : _broadcastCatalog.lookup(component.actions.get(0))) {
                     extra.applyTo(intent);
@@ -1002,9 +1000,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         } else if (component instanceof ComponentInfo.ServiceInfo) {
             Logger.iformat("[APE-RV] Triggering service: %s", component.className);
             return AndroidDevice.startService(intent);
-        } else if (component instanceof ComponentInfo.ActivityInfo) {
-            Logger.iformat("[APE-RV] Triggering activity: %s action=%s", component.className, intent.getAction());
-            return AndroidDevice.startActivity(intent);
         }
         return false;
     }
