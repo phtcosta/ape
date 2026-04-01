@@ -163,7 +163,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this._coverageTracker = new UICoverageTracker();
         this._budgetTracker = new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget);
         this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
-        this._broadcastCatalog = Config.componentPercentage > 0 ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
+        this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
     }
 
     protected MopData getMopData() {

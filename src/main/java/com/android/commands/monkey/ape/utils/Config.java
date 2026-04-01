@@ -155,7 +155,9 @@ public class Config {
 
     // gh11: component triggering (broadcasts, services, activities, content providers)
     // Probability per step of triggering a component (0.0 = disabled, 0.05 = 5%)
-    public static final double componentPercentage = Config.getDouble("ape.componentPercentage", 0.0);
+    // Defaults to 0.05 when mopDataPath is set (components{} available), 0.0 otherwise.
+    public static final double componentPercentage = Config.getDouble("ape.componentPercentage",
+            mopDataPath != null ? 0.05 : 0.0);
 
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
