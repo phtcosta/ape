@@ -282,7 +282,6 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 | `ape.llmTopP` | double | `0.6` | Nucleus sampling threshold |
 | `ape.llmTopK` | int | `50` | Top-k sampling |
 | `ape.llmTimeoutMs` | int | `15000` | HTTP timeout in milliseconds |
-| `ape.llmMaxCalls` | int | `200` | Maximum LLM calls per session |
 | `ape.llmPercentage` | double | `0.02` | Probability of routing to LLM on each step (0.0 = disabled, 0.7 = 70%, 0.99 = nearly every step) |
 
 When `Config.llmPercentage` is `0.0`, no random LLM calls SHALL occur — only new-state and stagnation modes apply. When `Config.llmPercentage` is `0.02` (default), approximately 2% of non-event steps SHALL attempt LLM calls.
@@ -307,12 +306,6 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 - **THEN** the new-state LLM mode SHALL be disabled
 - **AND** the stagnation mode SHALL remain enabled (per its default)
 
-#### Scenario: Call budget exhausted
-
-- **WHEN** `LlmRouter` has made 200 calls (equal to `Config.llmMaxCalls`)
-- **THEN** all subsequent `shouldRouteNewState()` and `shouldRouteStagnation()` SHALL return `false`
-- **AND** pure SATA+MOP behavior SHALL continue for the remainder of the session
-
 #### Scenario: Custom sampling parameters
 
 - **WHEN** `ape.properties` contains `ape.llmTopP=0.9` and `ape.llmTopK=100`
@@ -336,4 +329,3 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 
 - **WHEN** `ape.properties` contains `ape.llmPercentage=0.7`
 - **THEN** `Config.llmPercentage` SHALL be `0.7`
-- **AND** the user SHOULD also increase `ape.llmMaxCalls` to avoid early budget exhaustion

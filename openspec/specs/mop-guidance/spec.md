@@ -4,7 +4,7 @@
 
 MOP guidance integrates the static analysis JSON produced by the rv-android pipeline into APE's action priority system. When `ape.mopDataPath` points to a valid JSON file on the device, `MopData` parses the file and `MopScorer` assigns priority boosts to widget actions that reach monitored operations (MOP specs). The boost is applied in `StatefulAgent.adjustActionsByGUITree()` — the designated extension point — after the base SATA priority is assigned and before the agent's selection step. When `ape.mopDataPath` is absent or the file is missing, the system operates identically to plain `sata` with no change to priority values.
 
-The JSON format is the same as used by rvsmart (`windows[]` + `reachability[]` sections). Cross-referencing widget listeners with MOP-reachable methods identifies which widgets, when interacted with, trigger spec-monitored operations. This allows `aperv:sata_mop` to steer exploration toward security-relevant code paths without rewriting the SATA heuristic or introducing a separate exploration mode.
+The JSON contains `windows[]`, `reachability[]`, `transitions[]`, and `components{}` sections. Cross-referencing widget listeners with MOP-reachable methods identifies which widgets, when interacted with, trigger spec-monitored operations. The `components{}` section provides data on all Android components (Activities, Services, BroadcastReceivers, ContentProviders) with their intent-filters, exported status, and MOP reachability, enabling component triggering during exploration. This allows `aperv:sata_mop` to steer exploration toward security-relevant code paths and exercise non-GUI components.
 
 ---
 
@@ -12,7 +12,13 @@ The JSON format is the same as used by rvsmart (`windows[]` + `reachability[]` s
 
 ### Requirement: MopData — Static Analysis JSON Loader
 
-`MopData.load(String path)` SHALL parse the static analysis JSON file at `path` and build an in-memory map from activity class name to short widget resource ID to MOP reachability flags (`directMop`, `transitiveMop`). Cross-referencing is performed by matching `windows[i].widgets[j].listeners[k].handler` against `reachability[m].methods[n].signature`.
+`MopData.load(String path)` SHALL parse the static analysis JSON file at `path` and build:
+1. An in-memory map from activity class name to short widget resource ID to MOP reachability flags (`directMop`, `transitiveMop`).
+2. Lists of `ReceiverInfo`, `ServiceInfo`, `ActivityInfo`, `ProviderInfo` objects parsed from the `components{}` section.
+
+Cross-referencing for widgets is performed by matching `windows[i].widgets[j].listeners[k].handler` against `reachability[m].methods[n].signature`.
+
+For components, `MopData` SHALL parse all four arrays in `components{}` (`activities[]`, `receivers[]`, `services[]`, `providers[]`), retaining ALL entries (not filtered by `reachesMop`). Intent-filter actions SHALL be extracted for receivers/services/activities; authorities for providers. The `components{}` section is optional for backward compatibility — if absent, all component lists SHALL be empty.
 
 Widget IDs SHALL be stored in short form: `"com.example.app:id/btn_encrypt"` → `"btn_encrypt"`. The transform is: if `resourceId` contains `":id/"`, take the substring after `":id/"`. If `resourceId` is null or does not contain `":id/"`, use an empty string as key (activity-level fallback applies).
 
@@ -37,6 +43,16 @@ Widget IDs SHALL be stored in short form: `"com.example.app:id/btn_encrypt"` →
 - **WHEN** `getWidget("com.example.MainActivity", "unknown_id")` is called and no widget match exists
 - **THEN** `getWidget()` SHALL return `null`
 - **AND** `activityHasMop("com.example.MainActivity")` SHALL return `true` if any widget in that activity has a MOP-reachable listener
+
+#### Scenario: JSON with components section
+- **WHEN** `MopData.load()` is called and the JSON contains `components.receivers` with entries
+- **THEN** `getReceivers()` SHALL return a list of `ReceiverInfo` objects with className and intent-filter actions
+- **AND** `hasComponents()` SHALL return `true`
+
+#### Scenario: JSON without components section (backward compatibility)
+- **WHEN** `MopData.load()` is called and the JSON does not contain a `components` key
+- **THEN** `getReceivers()`, `getServices()`, `getActivities()`, `getProviders()` SHALL return empty lists
+- **AND** `hasComponents()` SHALL return `false`
 
 ---
 

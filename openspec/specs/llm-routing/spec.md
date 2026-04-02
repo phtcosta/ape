@@ -1,6 +1,6 @@
 ## Purpose
 
-LLM routing integrates the LLM infrastructure into APE-RV's exploration loop at two specific decision points where SATA's deterministic behavior limits exploration diversity. Rather than replacing SATA or competing with MOP priority scoring, the LLM router operates as a punctual override: when triggered, it captures a screenshot, sends it to the LLM with the current widget list and action history, and directly selects a `ModelAction` to execute. When the LLM is unavailable, times out, returns an unparseable response, or the call budget is exhausted, the router returns null and SATA takes over transparently.
+LLM routing integrates the LLM infrastructure into APE-RV's exploration loop at two specific decision points where SATA's deterministic behavior limits exploration diversity. Rather than replacing SATA or competing with MOP priority scoring, the LLM router operates as a punctual override: when triggered, it captures a screenshot, sends it to the LLM with the current widget list and action history, and directly selects a `ModelAction` to execute. When the LLM is unavailable, times out, or returns an unparseable response, the router returns null and SATA takes over transparently.
 
 The two modes target different exploration bottlenecks:
 
@@ -8,7 +8,7 @@ The two modes target different exploration bottlenecks:
 
 2. **Stagnation mode** (`Config.llmOnStagnation`): checked in `SataAgent.selectNewActionNonnull()` when `graphStableCounter` **equals** half the restart threshold (`graphStableRestartThreshold / 2`), providing exactly one LLM attempt per stagnation phase. The equality check (not greater-than) ensures the hook fires once when the counter hits the midpoint, then never again during that phase — no flags or extra state needed. The `graphStableCounter` is a `protected` field in `StatefulAgent`, increments by 1 each step via `checkStable()`, and resets to 0 on new state discovery. Cost: ~5-15 calls per 10-minute run (one per stagnation phase). Note: `StatefulAgent.onGraphStable()` still handles the restart logic at `counter > threshold` — the LLM hook does NOT modify the restart mechanism.
 
-`LlmRouter` owns the lifecycle of all infrastructure components (`SglangClient`, `LlmCircuitBreaker`, `ScreenshotCapture`, `ImageProcessor`, `ToolCallParser`, `CoordinateNormalizer`, `ApePromptBuilder`). It is instantiated once in `StatefulAgent`'s constructor when `Config.llmUrl` is non-null, and the same instance is used for the entire exploration session. It maintains a call counter to enforce the `Config.llmMaxCalls` budget.
+`LlmRouter` owns the lifecycle of all infrastructure components (`SglangClient`, `LlmCircuitBreaker`, `ScreenshotCapture`, `ImageProcessor`, `ToolCallParser`, `CoordinateNormalizer`, `ApePromptBuilder`). It is instantiated once in `StatefulAgent`'s constructor when `Config.llmUrl` is non-null, and the same instance is used for the entire exploration session. There is no call budget limit — only timeout controls execution duration.
 
 ---
 
@@ -27,13 +27,13 @@ The two modes target different exploration bottlenecks:
 ### Output
 
 - `ModelAction` — matched action from the input actions list, ready to execute (for type_text actions, `resolvedNode.setInputText(text)` is already called before returning)
-- `null` — LLM pipeline failed, no matching action found, blocked by circuit breaker, or budget exhausted; caller falls back to SATA
+- `null` — LLM pipeline failed, no matching action found, or blocked by circuit breaker; caller falls back to SATA
 
 ### Side-Effects
 
 - **Logging**: `[APE-RV] LLM` prefixed log entries for routing decisions, action selections, and fallbacks
 - **Circuit breaker state**: success/failure recorded after each LLM attempt, affecting future routing decisions
-- **Call counter**: incremented at the start of each `selectAction()` invocation (per INV-RTR-07), checked against `Config.llmMaxCalls` budget
+- **Call counter**: `totalCalls` incremented at each `selectAction()` invocation for telemetry (no budget limit)
 - **Network**: HTTP request to SGLang server (via `SglangClient`)
 - **Device framebuffer**: screenshot capture (via `ScreenshotCapture`)
 
@@ -53,7 +53,7 @@ The two modes target different exploration bottlenecks:
 - **INV-RTR-04**: LLM routing SHALL NOT modify `ModelAction.priority` values. LLM selects an action directly; it does not boost priorities. The MOP scoring pass runs independently before LLM routing.
 - **INV-RTR-05**: The 2 LLM modes are independent: disabling one mode SHALL NOT affect the other. Each mode is gated by its own Config flag.
 - **INV-RTR-06**: `LlmRouter.selectAction()` SHALL explicitly null out large intermediate objects (`pngBytes`, `base64Image`, `messages`) in a `finally` block to prevent memory pressure from accumulated screenshots.
-- **INV-RTR-07**: `callCount` SHALL be incremented at the start of each `selectAction()` invocation (after budget check), counting all attempts regardless of success or failure. The budget limits total attempts; the circuit breaker independently limits consecutive failures.
+- **INV-RTR-07**: `totalCalls` SHALL be incremented at the start of each `selectAction()` invocation, counting all attempts regardless of success or failure. The circuit breaker independently limits consecutive failures. There is no call budget limit.
 
 ---
 
@@ -70,7 +70,7 @@ The two modes target different exploration bottlenecks:
 - `CoordinateNormalizer` (static utility, no instantiation)
 - `ApePromptBuilder` (no-arg constructor)
 
-All fields SHALL be final. The router instance SHALL be reused for the entire exploration session. A `callCount` field SHALL be initialized to 0 and incremented at the start of each `selectAction()` invocation (after budget check, before pipeline — per INV-RTR-07).
+All fields SHALL be final. The router instance SHALL be reused for the entire exploration session. A `totalCalls` field SHALL be initialized to 0 and incremented at the start of each `selectAction()` invocation (per INV-RTR-07).
 
 #### Scenario: LLM URL configured
 
@@ -111,12 +111,6 @@ The check SHALL occur after `adjustActionsByGUITree()` has assigned priorities (
 - **THEN** `shouldRouteNewState(true)` SHALL return `false`
 - **AND** the SATA strategy chain SHALL execute normally
 
-#### Scenario: First visit but budget exhausted
-
-- **WHEN** `_isNewState` is `true`
-- **AND** `callCount >= Config.llmMaxCalls`
-- **THEN** `shouldRouteNewState(true)` SHALL return `false`
-
 #### Scenario: Revisit of known state
 
 - **WHEN** `_isNewState` is `false`
@@ -140,7 +134,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 - **WHEN** `graphStableCounter` equals `graphStableRestartThreshold / 2`
 - **AND** `Config.llmOnStagnation` is `true`
-- **AND** `_llmRouter` is non-null and circuit breaker allows and budget not exhausted
+- **AND** `_llmRouter` is non-null and circuit breaker allows
 - **THEN** `_llmRouter.selectAction(...)` SHALL be called
 - **AND** if the result is non-null, the action SHALL be used
 - **AND** `graphStableCounter` SHALL be reset to 0 (exploration unblocked)
@@ -165,9 +159,8 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 `LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` returns `ModelAction` or `null`. Pipeline:
 
-1. Check `callCount < Config.llmMaxCalls`. If not → log budget exhausted, return null.
-2. `callCount++` — counts this attempt regardless of outcome (per INV-RTR-07).
-3. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → return null.
+1. `totalCalls++` — counts this attempt regardless of outcome (per INV-RTR-07).
+2. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → return null.
 4. `ImageProcessor.processScreenshot(pngBytes)` → base64 JPEG. If null → return null.
 5. `ApePromptBuilder.build(tree, state, actions, mopData, base64Image, recentActions)` → messages.
 6. `SglangClient.chat(messages)` → `ChatResponse`. If IOException → `breaker.recordFailure()`, return null.
@@ -212,19 +205,13 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 - **THEN** `breaker.recordFailure()` SHALL be called
 - **AND** `selectAction()` SHALL return null
 
-#### Scenario: Budget exhausted
-
-- **WHEN** `callCount` equals `Config.llmMaxCalls`
-- **THEN** `selectAction()` SHALL return null immediately without capturing screenshot
-- **AND** a log SHALL be emitted: `[APE-RV] LLM budget exhausted (N/N calls)`
-
 ---
 
 ### Requirement: Coordinate-to-ModelAction Mapping
 
 `LlmRouter.mapToModelAction(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions)` SHALL map LLM output coordinates to the nearest valid `ModelAction` in the current state.
 
-**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * 0.05` (status bar) or `pixelY > deviceHeight * 0.94` (navigation bar), `mapToModelAction` SHALL return null and log `[APE-RV] LLM click in system UI, rejecting`. This prevents the LLM from wasting budget on system UI elements.
+**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * 0.05` (status bar) or `pixelY > deviceHeight * 0.94` (navigation bar), `mapToModelAction` SHALL return null and log `[APE-RV] LLM click in system UI, rejecting`. This prevents the LLM from clicking on system UI elements.
 
 **Special action types**:
 - If `actionType` equals `"back"`, the state's `backAction` SHALL be returned directly without coordinate matching.
@@ -307,7 +294,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 | Field | Values |
 |-------|--------|
 | `mode` | `new-state`, `stagnation` |
-| `result` | `model_action`, `no_match`, `null`, `timeout`, `breaker_open`, `budget_exhausted`, `parse_failed` |
+| `result` | `model_action`, `no_match`, `null`, `timeout`, `breaker_open`, `parse_failed` |
 | `tokens_in/out` | From `ChatResponse.usage.prompt_tokens` / `completion_tokens` (0 if unavailable) |
 | `time_ms` | Wall clock milliseconds for the full pipeline (screenshot → response) |
 
@@ -316,12 +303,11 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 | Event | Log Format |
 |-------|-----------|
 | Circuit breaker blocked | `[APE-RV] LLM circuit breaker OPEN, skipping (trips=<N>)` |
-| Budget exhausted | `[APE-RV] LLM budget exhausted (<callCount>/<maxCalls> calls)` |
 | Pipeline step failed | `[APE-RV] LLM <step> failed: <reason>` |
 
 **Aggregate summary** (printed at `StatefulAgent.tearDown()`):
 ```
-[APE-RV] LLM Summary: calls=<N>/<budget> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> matched=<N> no_match=<N> null=<N> breaker_trips=<N>
+[APE-RV] LLM Summary: calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> matched=<N> no_match=<N> null=<N> breaker_trips=<N>
 [APE-RV] Decision ratio: LLM=<N>/<total> (<pct>%), SATA=<N>/<total> (<pct>%)
 ```
 
@@ -344,7 +330,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 ### Requirement: Probabilistic LLM Routing
 
-`LlmRouter.shouldRouteRandom()` SHALL return `true` when `random.nextDouble() < Config.llmPercentage`, where `random` is the Monkey-seeded `java.util.Random` instance injected via the LlmRouter constructor. This ensures reproducible coin flips when the `--seed` CLI flag is set. The method is also subject to the same guards as existing routing predicates: circuit breaker must allow attempts AND call budget must not be exhausted.
+`LlmRouter.shouldRouteRandom()` SHALL return `true` when `random.nextDouble() < Config.llmPercentage`, where `random` is the Monkey-seeded `java.util.Random` instance injected via the LlmRouter constructor. This ensures reproducible coin flips when the `--seed` CLI flag is set. The method is also subject to the same guard as existing routing predicates: circuit breaker must allow attempts.
 
 When `Config.llmPercentage` is `0.0`, the method SHALL always return `false` (short-circuit, no random call).
 
@@ -358,7 +344,7 @@ When the random hook fires and LLM returns a non-null action, the telemetry mode
 - **AND** neither new-state nor stagnation triggered on this step
 - **AND** `random.nextDouble()` returns a value < 0.02
 - **AND** the circuit breaker allows attempts
-- **AND** `callCount < Config.llmMaxCalls`
+- **AND** circuit breaker allows
 - **THEN** `shouldRouteRandom()` SHALL return `true`
 - **AND** the LLM call SHALL use mode `"random"` for telemetry
 
@@ -372,12 +358,6 @@ When the random hook fires and LLM returns a non-null action, the telemetry mode
 - **WHEN** `Config.llmPercentage` is `0.7`
 - **AND** neither new-state nor stagnation triggered
 - **THEN** `shouldRouteRandom()` SHALL return `true` approximately 70% of the time
-
-#### Scenario: Budget exhaustion
-
-- **WHEN** `Config.llmPercentage` is `0.7`
-- **AND** `callCount >= Config.llmMaxCalls`
-- **THEN** `shouldRouteRandom()` SHALL return `false`
 
 #### Scenario: Priority order preserved
 
