@@ -56,9 +56,6 @@ public class LlmRouter {
     private final ApePromptBuilder   promptBuilder;
     private final java.util.Random   random;
 
-    // Call budget counter (counts attempts, per INV-RTR-07)
-    private int callCount = 0;
-
     // Telemetry counters
     private int totalCalls      = 0;
     private int totalTokensIn   = 0;
@@ -165,7 +162,7 @@ public class LlmRouter {
         return isNewState
                 && Config.llmOnNewState
                 && breaker.shouldAttempt()
-                && callCount < Config.llmMaxCalls;
+;
     }
 
     /**
@@ -178,7 +175,7 @@ public class LlmRouter {
         return graphStableCounter == Config.graphStableRestartThreshold / 2
                 && Config.llmOnStagnation
                 && breaker.shouldAttempt()
-                && callCount < Config.llmMaxCalls;
+;
     }
 
     /**
@@ -189,7 +186,7 @@ public class LlmRouter {
         return Config.llmPercentage > 0.0
                 && random.nextDouble() < Config.llmPercentage
                 && breaker.shouldAttempt()
-                && callCount < Config.llmMaxCalls;
+;
     }
 
     // -------------------------------------------------------------------------
@@ -217,13 +214,6 @@ public class LlmRouter {
                                     MopData mopData,
                                     List<ApePromptBuilder.ActionHistoryEntry> recentActions,
                                     String mode) {
-        // --- Budget check ---
-        if (callCount >= Config.llmMaxCalls) {
-            Logger.println("[APE-RV] LLM budget exhausted (callCount=" + callCount + ")");
-            return null;
-        }
-
-        callCount++;  // count the attempt
         totalCalls++;
         long startMs = System.currentTimeMillis();
 
@@ -388,7 +378,7 @@ public class LlmRouter {
             StringBuilder tel = new StringBuilder();
             tel.append("[APE-LLM-TEL]")
                     .append(" variant=").append(variant)
-                    .append(" call=").append(callCount)
+                    .append(" call=").append(totalCalls)
                     .append(" mode=").append(mode)
                     .append(" action=").append(parsed.getActionType())
                     .append(" qwen=(").append(parsed.getX()).append(",").append(parsed.getY()).append(")")
@@ -598,7 +588,7 @@ public class LlmRouter {
     // -------------------------------------------------------------------------
 
     /** Current call count (includes both attempted and completed calls). */
-    public int getCallCount() { return callCount; }
+    public int getCallCount() { return totalCalls; }
 
     /** Number of successful action matches. */
     public int getMatchedCount() { return matchedCount; }

@@ -47,8 +47,8 @@ public class ApePromptBuilder {
     static final String VARIANT_APE_CURRENT = "ape_current";
     static final String VARIANT_APE_REASONING = "ape_reasoning";
     static final String VARIANT_COMPACT_V1 = "compact_v1";
-    static final String VARIANT_RVSMART_V13 = "rvsmart_v13";
-    static final String VARIANT_RVSMART_V17 = "rvsmart_v17";
+    static final String VARIANT_V13 = "v13";
+    static final String VARIANT_V17 = "v17";
     static final String VARIANT_VISUAL_ONLY = "visual_only";
 
     static String getPromptVariant() {
@@ -137,12 +137,12 @@ public class ApePromptBuilder {
         String systemText = buildSystemMessageForVariant(variant, includeTypeText);
         String userText;
         switch (variant) {
-            case VARIANT_RVSMART_V13:
+            case VARIANT_V13:
                 userText = buildRvsmartV13UserText(
                         actions, mopData, recentActions, activity, activitySimple,
                         deviceWidth, deviceHeight);
                 break;
-            case VARIANT_RVSMART_V17:
+            case VARIANT_V17:
                 userText = buildRvsmartV17UserText(
                         state, actions, mopData, recentActions, activity, activitySimple,
                         deviceWidth, deviceHeight);
@@ -181,8 +181,8 @@ public class ApePromptBuilder {
     private static String buildSystemMessageForVariant(String variant, boolean includeTypeText) {
         switch (variant) {
             case VARIANT_COMPACT_V1:    return buildCompactV1System(includeTypeText);
-            case VARIANT_RVSMART_V13:   return buildRvsmartV13System(includeTypeText);
-            case VARIANT_RVSMART_V17:   return buildRvsmartV17System(includeTypeText);
+            case VARIANT_V13:   return buildV13System(includeTypeText);
+            case VARIANT_V17:   return buildV17System(includeTypeText);
             case VARIANT_VISUAL_ONLY:   return buildVisualOnlySystem(includeTypeText);
             case VARIANT_APE_REASONING:
             case VARIANT_APE_CURRENT:
@@ -228,7 +228,7 @@ public class ApePromptBuilder {
         return sb.toString();
     }
 
-    private static String buildRvsmartV13System(boolean includeTypeText) {
+    private static String buildV13System(boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.\n");
         sb.append("DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.\n");
@@ -246,7 +246,7 @@ public class ApePromptBuilder {
         return sb.toString();
     }
 
-    private static final String SYSTEM_RVSMART_V17_HEADER =
+    private static final String SYSTEM_V17_HEADER =
             "You are an Android UI automation assistant.\n" +
             "\n" +
             "REASONING STEPS:\n" +
@@ -276,9 +276,9 @@ public class ApePromptBuilder {
             "\n" +
             "Available actions:\n";
 
-    private static String buildRvsmartV17System(boolean includeTypeText) {
+    private static String buildV17System(boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
-        sb.append(SYSTEM_RVSMART_V17_HEADER);
+        sb.append(SYSTEM_V17_HEADER);
         sb.append("  click(x, y) — tap at normalized coordinates [0,1000)\n");
         sb.append("  long_click(x, y) — long press\n");
         if (includeTypeText) {

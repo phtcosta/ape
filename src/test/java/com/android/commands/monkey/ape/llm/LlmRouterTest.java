@@ -217,21 +217,6 @@ public class LlmRouterTest {
     }
 
     @Test
-    public void shouldRouteRandom_budgetExhausted_returnsFalse() throws Exception {
-        LlmRouter router = new LlmRouter(new java.util.Random(42));
-        // Exhaust budget via reflection on callCount
-        java.lang.reflect.Field callCountField = LlmRouter.class.getDeclaredField("callCount");
-        callCountField.setAccessible(true);
-        callCountField.setInt(router, com.android.commands.monkey.ape.utils.Config.llmMaxCalls);
-
-        // Even with default 2% probability, budget exhaustion should force false
-        for (int i = 0; i < 100; i++) {
-            assertFalse("shouldRouteRandom must return false when budget exhausted",
-                    router.shouldRouteRandom());
-        }
-    }
-
-    @Test
     public void shouldRouteRandom_circuitBreakerOpen_returnsFalse() {
         LlmRouter router = new LlmRouter(new java.util.Random(42));
         // Trip the circuit breaker (3 consecutive failures)
