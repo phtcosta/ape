@@ -7,54 +7,47 @@ MOP guidance integrates the static analysis JSON produced by the rv-android pipe
 The JSON contains `windows[]`, `reachability[]`, `transitions[]`, and `components{}` sections. Cross-referencing widget listeners with MOP-reachable methods identifies which widgets, when interacted with, trigger spec-monitored operations. The `components{}` section provides data on all Android components (Activities, Services, BroadcastReceivers, ContentProviders) with their intent-filters, exported status, and MOP reachability, enabling component triggering during exploration. This allows `aperv:sata_mop` to steer exploration toward security-relevant code paths and exercise non-GUI components.
 
 ---
-
 ## Requirements
-
 ### Requirement: MopData — Static Analysis JSON Loader
 
 `MopData.load(String path)` SHALL parse the static analysis JSON file at `path` and build:
-1. An in-memory map from activity class name to short widget resource ID to MOP reachability flags (`directMop`, `transitiveMop`).
-2. Lists of `ReceiverInfo`, `ServiceInfo`, `ActivityInfo`, `ProviderInfo` objects parsed from the `components{}` section.
+1. An in-memory map from activity class name to short widget resource ID to MOP reachability flags (`directMop`, `transitiveMop`) — existing, unchanged.
+2. Lists of `ReceiverInfo`, `ServiceInfo`, `ActivityInfo`, `ProviderInfo` objects parsed from `components{}` — new.
 
-Cross-referencing for widgets is performed by matching `windows[i].widgets[j].listeners[k].handler` against `reachability[m].methods[n].signature`.
+Cross-referencing for widgets is performed by matching `windows[i].widgets[j].listeners[k].handler` against `reachability[m].methods[n].signature` — unchanged.
 
-For components, `MopData` SHALL parse all four arrays in `components{}` (`activities[]`, `receivers[]`, `services[]`, `providers[]`), retaining ALL entries (not filtered by `reachesMop`). Intent-filter actions SHALL be extracted for receivers/services/activities; authorities for providers. The `components{}` section is optional for backward compatibility — if absent, all component lists SHALL be empty.
+For components, `MopData` SHALL parse all four arrays in `components{}` (`activities[]`, `receivers[]`, `services[]`, `providers[]`), retaining ALL entries (not filtered by `reachesMop`). Intent-filter actions SHALL be extracted for receivers/services/activities; authorities for providers.
 
-Widget IDs SHALL be stored in short form: `"com.example.app:id/btn_encrypt"` → `"btn_encrypt"`. The transform is: if `resourceId` contains `":id/"`, take the substring after `":id/"`. If `resourceId` is null or does not contain `":id/"`, use an empty string as key (activity-level fallback applies).
+Widget IDs SHALL be stored in short form: `"com.example.app:id/btn_encrypt"` → `"btn_encrypt"`.
 
-`MopData.load()` SHALL return `null` (not throw) if `path` is `null`, the file does not exist, or the JSON is malformed. In the last case it SHALL log a WARNING with the parse error details. This ensures graceful degradation to plain `sata` behaviour when MOP data is unavailable.
+`MopData.load()` SHALL return `null` (not throw) if `path` is `null`, the file does not exist, or the JSON is malformed.
+
+The `components{}` section is optional for backward compatibility. If absent, `MopData` SHALL behave identically to the previous version (empty receiver/service lists, no error).
 
 #### Scenario: Valid JSON loaded
 - **WHEN** `MopData.load("/data/local/tmp/static_analysis.json")` is called and the file contains valid `windows[]` and `reachability[]` sections
 - **THEN** the returned `MopData` SHALL be non-null
 - **AND** `getWidget("com.example.MainActivity", "btn_encrypt")` SHALL return a `WidgetMopFlags` with `directMop=true` if the widget's handler appears in `reachability[]` with `directlyReachesMop=true`
 
-#### Scenario: File missing — graceful null return
-- **WHEN** `MopData.load("/data/local/tmp/static_analysis.json")` is called and the file does not exist
-- **THEN** `null` SHALL be returned
-- **AND** a WARNING SHALL be logged
-- **AND** no exception SHALL propagate to the caller
-
-#### Scenario: path is null
-- **WHEN** `MopData.load(null)` is called
-- **THEN** `null` SHALL be returned immediately without attempting file I/O
-
-#### Scenario: Activity-level fallback
-- **WHEN** `getWidget("com.example.MainActivity", "unknown_id")` is called and no widget match exists
-- **THEN** `getWidget()` SHALL return `null`
-- **AND** `activityHasMop("com.example.MainActivity")` SHALL return `true` if any widget in that activity has a MOP-reachable listener
-
 #### Scenario: JSON with components section
-- **WHEN** `MopData.load()` is called and the JSON contains `components.receivers` with entries
-- **THEN** `getReceivers()` SHALL return a list of `ReceiverInfo` objects with className and intent-filter actions
+- **WHEN** `MopData.load()` is called and the JSON contains `components.receivers` with entry `{"className": "com.example.BootReceiver", "reachesMop": true, "intentFilters": [{"actions": ["android.intent.action.BOOT_COMPLETED"]}]}`
+- **THEN** `getReceivers()` SHALL return a list containing a `ReceiverInfo` for `com.example.BootReceiver`
+- **AND** `ReceiverInfo.getActions()` SHALL contain `"android.intent.action.BOOT_COMPLETED"`
 - **AND** `hasComponents()` SHALL return `true`
 
 #### Scenario: JSON without components section (backward compatibility)
 - **WHEN** `MopData.load()` is called and the JSON does not contain a `components` key
-- **THEN** `getReceivers()`, `getServices()`, `getActivities()`, `getProviders()` SHALL return empty lists
+- **THEN** `getReceivers()` SHALL return an empty list
+- **AND** `getServices()` SHALL return an empty list
 - **AND** `hasComponents()` SHALL return `false`
 
----
+#### Scenario: File missing — graceful null return
+- **WHEN** `MopData.load("/data/local/tmp/static_analysis.json")` is called and the file does not exist
+- **THEN** `null` SHALL be returned
+
+#### Scenario: path is null
+- **WHEN** `MopData.load(null)` is called
+- **THEN** `null` SHALL be returned immediately without attempting file I/O
 
 ### Requirement: MopScorer — Priority Boost
 

@@ -121,7 +121,7 @@ If the catalog file is absent, an empty catalog SHALL be used (no extras for any
 
 ### Requirement: Config — componentPercentage
 
-`Config.componentPercentage` (double) controls the probability of component triggering per step. Default: `0.05` when `Config.mopDataPath` is set, `0.0` otherwise.
+`Config.componentPercentage` (double) SHALL control the probability of component triggering per step. Default: `0.05` when `Config.mopDataPath` is set, `0.0` otherwise.
 
 #### Scenario: Default with mopDataPath
 - **WHEN** `ape.properties` sets `ape.mopDataPath` but not `ape.componentPercentage`
