@@ -1,7 +1,11 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.model.ActionType;
+
 import org.junit.Test;
 
+import java.io.File;
+import java.io.FileWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,10 +41,10 @@ public class MopScorerTest {
             wtg.put(sourceActivity, transitions);
         }
         // Build minimal widget data so activityHasMop() works
-        Map<String, Map<String, MopData.WidgetMopFlags>> widgetData = new HashMap<>();
+        Map<String, Map<String, MopData.Widget>> widgetData = new HashMap<>();
         for (String act : mopActivities) {
-            Map<String, MopData.WidgetMopFlags> widgets = new HashMap<>();
-            MopData.WidgetMopFlags flags = new MopData.WidgetMopFlags();
+            Map<String, MopData.Widget> widgets = new HashMap<>();
+            MopData.Widget flags = new MopData.Widget();
             flags.directMop = true;
             widgets.put("_dummy", flags);
             widgetData.put(act, widgets);
@@ -211,5 +215,95 @@ public class MopScorerTest {
         // Query from a different activity — no transitions registered there
         int score = MopScorer.scoreWtg("com.example.OtherActivity", "settings", data);
         assertEquals(0, score);
+    }
+
+    // =========================================================================
+    // gh13 §17 — scoreOpenMenu (T1.2), eventType-aware score (T1.6), eventTypeOf
+    // =========================================================================
+
+    private static String writeTempJson(String json) throws Exception {
+        File f = File.createTempFile("mopscorer", ".json");
+        f.deleteOnExit();
+        try (FileWriter w = new FileWriter(f)) { w.write(json); }
+        return f.getAbsolutePath();
+    }
+
+    /** Activity C with an OPTIONSMENU whose item's click handler directly reaches target. */
+    private static MopData loadMenuMopFixture() throws Exception {
+        String json = "{\"package\":\"p\",\"mainActivity\":\"p.C\",\"complete\":true," +
+                "\"reachability\":[{\"className\":\"C\",\"methods\":[" +
+                "{\"signature\":\"<C: void m()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true}]}]," +
+                "\"windows\":[{\"id\":1,\"type\":\"OPTIONSMENU\",\"name\":\"C#OptionsMenu\",\"widgets\":[" +
+                "{\"idName\":\"mi\",\"type\":\"android.view.MenuItem\",\"listeners\":[" +
+                "{\"eventType\":\"click\",\"handler\":\"<C: void m()>\"}]}]}]," +
+                "\"transitions\":[],\"components\":{}}";
+        return MopData.load(writeTempJson(json));
+    }
+
+    /** Widget b with click→MOP-direct and longClick→not (per-event-type maps). */
+    private static MopData loadEventTypeFixture() throws Exception {
+        String json = "{\"package\":\"p\",\"mainActivity\":\"p.C\",\"complete\":true," +
+                "\"reachability\":[{\"className\":\"C\",\"methods\":[" +
+                "{\"signature\":\"<C: void clk()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true}]}]," +
+                "\"windows\":[{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
+                "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
+                "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}," +
+                "{\"eventType\":\"longClick\",\"handler\":\"<C: void none()>\"}]}]}]," +
+                "\"transitions\":[],\"components\":{}}";
+        return MopData.load(writeTempJson(json));
+    }
+
+    @Test // 17.1
+    public void testScoreOpenMenuBoostsWhenOptionsMenuHasMopWidget() throws Exception {
+        MopData d = loadMenuMopFixture();
+        assertEquals(Config.mopWeightOpenMenu, MopScorer.scoreOpenMenu("C", d));
+    }
+
+    @Test // 17.2
+    public void testScoreOpenMenuZeroWhenActivityHasNoMopOptionsMenu() throws Exception {
+        MopData d = loadMenuMopFixture();
+        assertEquals(0, MopScorer.scoreOpenMenu("NoSuchActivity", d));
+    }
+
+    @Test // 17.3
+    public void testScoreEventTypeAwareMatchesClick() throws Exception {
+        MopData d = loadEventTypeFixture();
+        assertEquals(Config.mopWeightDirect, MopScorer.score("C", "b", d, "click"));
+        assertEquals(0, MopScorer.score("C", "b", d, "longClick"));
+    }
+
+    @Test // 17.4
+    public void testScoreEventTypeNullFallsBackToAggregate() throws Exception {
+        MopData d = loadEventTypeFixture();
+        assertEquals(Config.mopWeightDirect, MopScorer.score("C", "b", d, null));
+    }
+
+    @Test // 17.5
+    public void testEventTypeOfMapsActionTypes() {
+        assertEquals("click", MopScorer.eventTypeOf(ActionType.MODEL_CLICK, null));
+        assertEquals("longClick", MopScorer.eventTypeOf(ActionType.MODEL_LONG_CLICK, null));
+        assertEquals("scroll", MopScorer.eventTypeOf(ActionType.MODEL_SCROLL_TOP_DOWN, null));
+        assertNull(MopScorer.eventTypeOf(ActionType.MODEL_BACK, null));
+        assertNull(MopScorer.eventTypeOf((ActionType) null, null));
+    }
+
+    @Test // 17.6
+    public void testScoreReturnsZeroWhenMopDataNull() {
+        assertEquals(0, MopScorer.score("a", "b", null, "click"));
+        assertEquals(0, MopScorer.scoreOpenMenu("a", null));
+        assertEquals(0, MopScorer.scoreWtg("a", "b", null));
+        assertEquals(0, MopScorer.stateMopDensity(null, null));
+    }
+
+    @Test // 17.7
+    public void testEventTypeOfSpinnerDetection() {
+        assertEquals("itemSelected", MopScorer.eventTypeOf(ActionType.MODEL_CLICK, "android.widget.Spinner"));
+        assertEquals("click", MopScorer.eventTypeOf(ActionType.MODEL_CLICK, "android.widget.EditText"));
+    }
+
+    @Test // 17.8 — density null guard (JVM-testable; populated-State path is unchanged legacy code, covered by §22 integration)
+    public void testStateMopDensityNullSafe() {
+        // data==null short-circuits before touching the State (the regression-relevant guard I added).
+        assertEquals(0, MopScorer.stateMopDensity(null, null));
     }
 }

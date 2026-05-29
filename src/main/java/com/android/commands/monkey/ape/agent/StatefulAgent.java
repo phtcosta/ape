@@ -957,51 +957,182 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         return false;
     }
 
-    /** Round-robin counter for component triggering (gh11). */
+    /** Round-robin cursor over the combined (trigger + provider) tuple list (gh11 / gh13 T1.4+T1.5). */
     private int componentTriggerIndex = 0;
+    /** Lazily-built tuple lists, cached for the session. */
+    private java.util.List<TriggerTuple> _triggerTuples;
+    private java.util.List<ProviderTuple> _providerTuples;
+    private boolean _tuplesBuilt;
+
+    /** A (component × intentFilter × action) trigger candidate (gh13 T1.4). */
+    static final class TriggerTuple {
+        final ComponentInfo component;
+        final ComponentInfo.IntentFilter filter; // null ⇒ component-name-only intent
+        final String action;                     // null ⇒ no setAction
+        TriggerTuple(ComponentInfo component, ComponentInfo.IntentFilter filter, String action) {
+            this.component = component;
+            this.filter = filter;
+            this.action = action;
+        }
+    }
+
+    /** A (provider × operation) trigger candidate (gh13 T1.5). operation ∈ {query, insert, update}. */
+    static final class ProviderTuple {
+        final ComponentInfo.ProviderInfo provider;
+        final String operation;
+        ProviderTuple(ComponentInfo.ProviderInfo provider, String operation) {
+            this.provider = provider;
+            this.operation = operation;
+        }
+    }
+
+    private static final String[] PROVIDER_OPERATIONS = {"query", "insert", "update"};
 
     /**
-     * gh11: Trigger a MOP-reachable component (broadcast, service, activity, or content provider).
-     * Round-robins across all MOP components. Returns true if a trigger was sent.
+     * gh13 T1.4+T1.5: build the round-robin trigger candidates from MOP data. Package-visible
+     * and side-effect-free so it can be unit-tested without the Android runtime.
+     *
+     * Rules (INV-MOP-15): skip components with reachesTarget=false; skip activities unless
+     * Config.activityTriggerEnabled; skip non-exported activities. Each surviving component
+     * yields one tuple per (intentFilter × action); a component with no filters but non-empty
+     * targetMethods yields one component-name-only tuple (filter=null, action=null). Each
+     * reachable provider with non-null authorities yields three operation tuples.
+     */
+    static java.util.List<TriggerTuple> buildTriggerTuples(MopData data) {
+        java.util.List<TriggerTuple> tuples = new java.util.ArrayList<>();
+        if (data == null) return tuples;
+        java.util.List<ComponentInfo> candidates = new java.util.ArrayList<>();
+        candidates.addAll(data.getReceivers());
+        candidates.addAll(data.getServices());
+        if (Config.activityTriggerEnabled) {
+            candidates.addAll(data.getActivities());
+        }
+        for (ComponentInfo c : candidates) {
+            if (!c.reachesTarget) continue;
+            if ("activity".equals(c.componentType) && !c.exported) continue;
+            boolean emitted = false;
+            for (ComponentInfo.IntentFilter f : c.intentFilters) {
+                for (String action : f.actions) {
+                    tuples.add(new TriggerTuple(c, f, action));
+                    emitted = true;
+                }
+            }
+            if (!emitted && !c.targetMethods.isEmpty()) {
+                tuples.add(new TriggerTuple(c, null, null)); // component-name-only (D15)
+            }
+        }
+        return tuples;
+    }
+
+    static java.util.List<ProviderTuple> buildProviderTuples(MopData data) {
+        java.util.List<ProviderTuple> tuples = new java.util.ArrayList<>();
+        if (data == null) return tuples;
+        for (ComponentInfo.ProviderInfo p : data.getProviders()) {
+            if (!p.reachesTarget || p.authorities == null || p.authorities.isEmpty()) continue;
+            for (String op : PROVIDER_OPERATIONS) {
+                tuples.add(new ProviderTuple(p, op));
+            }
+        }
+        return tuples;
+    }
+
+    /**
+     * gh13 T1.4+T1.5: trigger one MOP-reachable component per call, round-robining across all
+     * (component × filter × action) and (provider × operation) tuples. Returns true if a trigger
+     * was dispatched. No-op (returns false, cursor unchanged) when no tuples exist.
      */
     protected boolean triggerMopComponent() {
-        java.util.List<ComponentInfo> allComponents = new java.util.ArrayList<>();
-        for (ComponentInfo.ReceiverInfo r : _mopData.getReceivers()) {
-            if (!r.actions.isEmpty()) allComponents.add(r); // Receivers need action for broadcast
+        if (!_tuplesBuilt) {
+            _triggerTuples = buildTriggerTuples(_mopData);
+            _providerTuples = buildProviderTuples(_mopData);
+            _tuplesBuilt = true;
         }
-        for (ComponentInfo.ServiceInfo s : _mopData.getServices()) {
-            allComponents.add(s); // Services can be started by ComponentName alone
-        }
-        // Activities excluded: already reachable via GUI exploration.
-        // Triggering via startActivity() disrupts SATA flow (evidence: sandwichroulette -45pp).
-        // Providers excluded: need content:// URI construction.
-        if (allComponents.isEmpty()) return false;
+        int total = _triggerTuples.size() + _providerTuples.size();
+        if (total == 0) return false;
 
-        ComponentInfo component = allComponents.get(componentTriggerIndex % allComponents.size());
+        int idx = componentTriggerIndex % total;
         componentTriggerIndex++;
 
-        // Extract package from fully qualified className
-        int lastDot = component.className.lastIndexOf('.');
-        String packageName = lastDot > 0 ? component.className.substring(0, lastDot) : component.className;
-        Intent intent = new Intent();
-        intent.setComponent(new ComponentName(packageName, component.className));
-        if (!component.actions.isEmpty()) {
-            intent.setAction(component.actions.get(0));
+        if (idx < _triggerTuples.size()) {
+            return dispatchTrigger(_triggerTuples.get(idx));
         }
+        return dispatchProvider(_providerTuples.get(idx - _triggerTuples.size()));
+    }
 
-        if (component instanceof ComponentInfo.ReceiverInfo) {
-            if (_broadcastCatalog != null && !component.actions.isEmpty()) {
-                for (SystemBroadcastCatalog.IntentExtra extra : _broadcastCatalog.lookup(component.actions.get(0))) {
+    /** Build the per-trigger log line (static for testability). */
+    static String triggerLogLine(TriggerTuple t) {
+        StringBuilder cats = new StringBuilder();
+        if (t.filter != null) {
+            for (String category : t.filter.categories) {
+                if (cats.length() > 0) cats.append(',');
+                cats.append(category);
+            }
+        }
+        // gh60 D15: surface the permission gate so a SecurityException trigger failure is diagnosable.
+        String perm = t.component.hasPermissionGate() ? t.component.permission : "none";
+        return String.format(
+                "[APE-RV] Triggering %s: %s action=%s categories=%s permission=%s reachesTarget=true",
+                t.component.componentType, t.component.className, t.action, cats.toString(), perm);
+    }
+
+    /** Build the `content` shell command for a provider operation (static for testability). */
+    static String[] buildContentCommand(ProviderTuple t) {
+        String uri = "content://" + t.provider.authorities;
+        if ("insert".equals(t.operation) || "update".equals(t.operation)) {
+            return new String[]{"content", t.operation, "--uri", uri, "--bind", "ape_probe:s:"};
+        }
+        return new String[]{"content", t.operation, "--uri", uri};
+    }
+
+    private boolean dispatchTrigger(TriggerTuple t) {
+        ComponentInfo c = t.component;
+        int lastDot = c.className.lastIndexOf('.');
+        String packageName = lastDot > 0 ? c.className.substring(0, lastDot) : c.className;
+        Intent intent = new Intent();
+        intent.setComponent(new ComponentName(packageName, c.className));
+        if (t.action != null) {
+            intent.setAction(t.action);
+        }
+        if (t.filter != null) {
+            for (String category : t.filter.categories) {
+                intent.addCategory(category);
+            }
+        }
+        Logger.iprintln(triggerLogLine(t));
+        if (c instanceof ComponentInfo.ReceiverInfo) {
+            if (_broadcastCatalog != null && t.action != null) {
+                for (SystemBroadcastCatalog.IntentExtra extra : _broadcastCatalog.lookup(t.action)) {
                     extra.applyTo(intent);
                 }
             }
-            Logger.iformat("[APE-RV] Triggering broadcast: %s action=%s", component.className, intent.getAction());
             return AndroidDevice.sendBroadcast(intent);
-        } else if (component instanceof ComponentInfo.ServiceInfo) {
-            Logger.iformat("[APE-RV] Triggering service: %s", component.className);
+        } else if (c instanceof ComponentInfo.ServiceInfo) {
             return AndroidDevice.startService(intent);
+        } else if (c instanceof ComponentInfo.ActivityInfo) {
+            return AndroidDevice.startActivity(intent);
         }
         return false;
+    }
+
+    private boolean dispatchProvider(ProviderTuple t) {
+        String[] cmd = buildContentCommand(t);
+        Logger.iformat("[APE-RV] Triggering provider: %s op=%s uri=content://%s reachesTarget=true",
+                t.provider.className, t.operation, t.provider.authorities);
+        int exit = runContentCommand(cmd);
+        if (exit != 0) {
+            Logger.wformat("[APE-RV] provider %s op=%s exit=%d", t.provider.className, t.operation, exit);
+        }
+        return exit == 0;
+    }
+
+    /** Overridable seam for content-provider shell invocation (testability). */
+    protected int runContentCommand(String[] cmd) {
+        try {
+            return AndroidDevice.executeCommandAndWaitFor(cmd);
+        } catch (Exception e) {
+            Logger.wformat("[APE-RV] content command failed: %s", e.getMessage());
+            return -1;
+        }
     }
 
     @Override
@@ -1231,7 +1362,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 GUITreeNode node = action.getResolvedNode();
                 if (node == null) continue;
                 String shortId = MopData.extractShortId(node.getResourceID());
-                int boost = MopScorer.score(activity, shortId, _mopData);
+                int boost = MopScorer.score(activity, shortId, _mopData, MopScorer.eventTypeOf(action));
                 if (boost > 0) {
                     action.setPriority(action.getPriority() + boost);
                     boostedCount++;
@@ -1240,6 +1371,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             }
             Logger.iformat("[APE-RV] MOP boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
                     activity, newState.getStateKey(), boostedCount, totalTarget, maxBoost);
+            // gh13 T1.2: OPTIONSMENU gateway boost — make the agent open the menu that leads to MOP.
+            int menuBoost = MopScorer.scoreOpenMenu(activity, _mopData);
+            if (menuBoost > 0) {
+                for (ModelAction action : newState.getActions()) {
+                    if (action.getType() == ActionType.MODEL_MENU) {
+                        action.setPriority(action.getPriority() + menuBoost);
+                        Logger.iformat("[APE-RV] menu boost: state=%s#%s, +%d on MODEL_MENU",
+                                activity, newState.getStateKey(), menuBoost);
+                    }
+                }
+            }
         }
         // WTG scoring pass — boost widgets leading to MOP-reachable activities
         if (_mopData != null && _mopData.hasWtgData()) {

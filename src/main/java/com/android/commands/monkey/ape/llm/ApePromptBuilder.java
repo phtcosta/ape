@@ -445,12 +445,74 @@ public class ApePromptBuilder {
             String resourceId = node.getResourceID();
             String shortId = MopData.extractShortId(resourceId);
             if (shortId.isEmpty()) return "";
-            MopData.WidgetMopFlags flags = mopData.getWidget(activity, shortId);
+            MopData.Widget flags = mopData.getWidget(activity, shortId);
             if (flags == null) return "";
             if (flags.directMop)    return "[DM]";
             if (flags.transitiveMop) return "[M]";
         } catch (Exception ignored) { /* never throw */ }
         return "";
+    }
+
+    // -------------------------------------------------------------------------
+    // gh13 T1.1: widget metadata in LLM context
+    // -------------------------------------------------------------------------
+
+    private static final int META_FIELD_CAP = 80;
+    private static final int META_ENTRY_CAP = 10;
+
+    /** Resolve the widget for a node and render its T1.1 metadata suffix, or "". */
+    private String buildWidgetMetadata(GUITreeNode node, MopData mopData, String activity) {
+        if (mopData == null || node == null) return "";
+        try {
+            String shortId = MopData.extractShortId(node.getResourceID());
+            if (shortId.isEmpty()) return "";
+            return widgetMetadata(mopData.getWidget(activity, shortId));
+        } catch (Exception ignored) { return ""; }
+    }
+
+    /**
+     * Render the T1.1 metadata suffix for a widget: prompt / spinnerMode /
+     * contentDescription / tooltipText / entries / inputType / hint, each emitted only when
+     * non-null/non-empty (INV-MOP-10). Per-value 80-char cap, newlines flattened, quotes escaped;
+     * entries capped to 10 with a trailing ", …".
+     */
+    static String widgetMetadata(MopData.Widget w) {
+        if (w == null) return "";
+        StringBuilder sb = new StringBuilder();
+        appendMetaField(sb, "prompt", w.prompt);
+        appendMetaField(sb, "spinnerMode", w.spinnerMode);
+        appendMetaField(sb, "contentDescription", w.contentDescription);
+        appendMetaField(sb, "tooltipText", w.tooltipText);
+        appendMetaEntries(sb, w.entries);
+        appendMetaField(sb, "inputType", w.inputType);
+        appendMetaField(sb, "hint", w.hint);
+        return sb.toString();
+    }
+
+    private static void appendMetaField(StringBuilder sb, String name, String value) {
+        if (value == null || value.isEmpty()) return;
+        sb.append(' ').append(name).append("=\"").append(capMeta(value)).append('"');
+    }
+
+    private static void appendMetaEntries(StringBuilder sb, List<String> entries) {
+        if (entries == null || entries.isEmpty()) return;
+        sb.append(" entries=[");
+        int n = Math.min(entries.size(), META_ENTRY_CAP);
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(capMeta(entries.get(i)));
+        }
+        if (entries.size() > META_ENTRY_CAP) sb.append(", …");
+        sb.append(']');
+    }
+
+    /** Flatten newlines, escape quotes, and cap at 80 chars with an ellipsis. */
+    private static String capMeta(String value) {
+        String flat = value.replace('\n', ' ').replace('\r', ' ').replace("\"", "\\\"");
+        if (flat.length() > META_FIELD_CAP) {
+            return flat.substring(0, META_FIELD_CAP) + "…";
+        }
+        return flat;
     }
 
     // -------------------------------------------------------------------------
@@ -509,7 +571,7 @@ public class ApePromptBuilder {
                         String resourceId = node.getResourceID();
                         String shortId = MopData.extractShortId(resourceId);
                         if (!shortId.isEmpty()) {
-                            MopData.WidgetMopFlags flags = mopData.getWidget(activity, shortId);
+                            MopData.Widget flags = mopData.getWidget(activity, shortId);
                             if (flags != null && (flags.directMop || flags.transitiveMop)) {
                                 mopCount++;
                             }
@@ -569,6 +631,7 @@ public class ApePromptBuilder {
                 }
                 sb.append(" @(").append(normX).append(",").append(normY).append(")");
                 if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
+                sb.append(buildWidgetMetadata(node, mopData, activity));
                 sb.append("\n");
             }
         }
@@ -649,6 +712,7 @@ public class ApePromptBuilder {
                 sb.append(" @(").append(normX).append(",").append(normY).append(")");
                 sb.append(" ").append(statusTag);
                 if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
+                sb.append(buildWidgetMetadata(node, mopData, activity));
                 sb.append("\n");
             }
         }

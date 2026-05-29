@@ -129,6 +129,17 @@ public class Config {
     public static final int mopWeightTransitive = Config.getInteger("ape.mopWeightTransitive", 300);
     public static final int mopWeightActivity = Config.getInteger("ape.mopWeightActivity", 100);
 
+    // gh13: OPTIONSMENU-aware menu-open boost (T1.2). Default 250 — between
+    // mopWeightWtg (200) and mopWeightTransitive (300).
+    // Non-final: the rollback knobs below are toggled by unit tests at runtime.
+    public static int mopWeightOpenMenu = Config.getInteger("ape.mopWeightOpenMenu", 250);
+    // gh13: type-aware input fuzzing (T1.3). false ⇒ legacy random-string generator (rollback knob).
+    public static boolean fuzzInputTyped = Config.getBoolean("ape.fuzzInputTyped", true);
+    // gh13: package/mainActivity sanity check (T1.7). true ⇒ mismatch rejects MopData.load (CI gate).
+    public static boolean mopStrictPackageMatch = Config.getBoolean("ape.mopStrictPackageMatch", false);
+    // gh13: activity component triggering (T1.4). Default OFF — gh11 sandwichroulette -45pp evidence.
+    public static boolean activityTriggerEnabled = Config.getBoolean("ape.activityTriggerEnabled", false);
+
     // LLM integration — configurable via ape.properties.
     // llmUrl=null disables LLM calls entirely (safe default when no LLM server is present).
     public static final String llmUrl = Config.get("ape.llmUrl");

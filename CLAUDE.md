@@ -121,6 +121,11 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `defaultGUIThrottle` — delay between actions
 - `mopDataPath` — path to static analysis JSON on device (null = MOP scoring disabled)
 - `mopWeightDirect` / `mopWeightTransitive` / `mopWeightActivity` — MOP scoring weights (defaults: 500/300/100), configurable via `ape.properties`
+- `mopWeightOpenMenu` — boost on the MODEL_MENU action when the activity's OPTIONSMENU is a MOP gateway (default 250; gh13 T1.2)
+- `fuzzInputTyped` — type-aware EditText fuzzing from static `inputType`/`hint` (default true; set false to restore the legacy random-string generator — gh13 T1.3 rollback knob)
+- `mopStrictPackageMatch` — reject `MopData.load` when the JSON package/mainActivity diverges from the runtime values (default false = warn-only; gh13 T1.7)
+- `activityTriggerEnabled` — include activities in component triggering (default false; gh11 sandwichroulette -45pp evidence keeps it off until calibrated — gh13 T1.4)
+- Naming: the static-analysis JSON wire format uses `Target` vocabulary (`reachesTarget`/`directlyReachesTarget`/`targetMethods`); aperv's Java model uses `MOP` (the only targets aperv consumes are JavaMOP operations). The boundary lives in the `MopData` class javadoc — `*Target` appears only where JSON is read (gh13 D7)
 - `llmUrl` — SGLang base URL (null = LLM disabled); e.g., `http://10.0.2.2:30000/v1`
 - `llmOnNewState` / `llmOnStagnation` — toggle LLM modes (default: true)
 - `llmModel` / `llmTemperature` / `llmTopP` / `llmTopK` — LLM sampling params

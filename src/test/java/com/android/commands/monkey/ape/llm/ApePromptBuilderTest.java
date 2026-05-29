@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.llm;
 
+import com.android.commands.monkey.ape.utils.MopData;
+
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -204,5 +206,87 @@ public class ApePromptBuilderTest {
         assertNotNull(userText);
         assertTrue("user text should contain 'Recent:' section",
                 userText.contains("Recent:"));
+    }
+
+    // =========================================================================
+    // gh13 §20 — widget metadata in LLM context (T1.1) via ApePromptBuilder.widgetMetadata
+    // =========================================================================
+
+    @Test // 20.1
+    public void testWidgetMetadataAppearsInPrompt() {
+        MopData.Widget w = new MopData.Widget();
+        w.contentDescription = "Encrypt button";
+        w.tooltipText = "Tap to encrypt";
+        String m = ApePromptBuilder.widgetMetadata(w);
+        assertTrue(m.contains("contentDescription=\"Encrypt button\""));
+        assertTrue(m.contains("tooltipText=\"Tap to encrypt\""));
+        assertFalse(m.contains("prompt="));
+        assertFalse(m.contains("spinnerMode="));
+        assertFalse(m.contains("entries="));
+        assertFalse(m.contains("inputType="));
+    }
+
+    @Test // 20.2
+    public void testNullWidgetMetadataOmittedFromPrompt() {
+        String m = ApePromptBuilder.widgetMetadata(new MopData.Widget());
+        assertEquals("", m);
+    }
+
+    @Test // 20.3
+    public void testWidgetMetadataTruncatedAt80Chars() {
+        MopData.Widget w = new MopData.Widget();
+        StringBuilder big = new StringBuilder();
+        for (int i = 0; i < 200; i++) big.append('x');
+        w.contentDescription = big.toString();
+        String m = ApePromptBuilder.widgetMetadata(w);
+        assertTrue("ellipsis on overflow", m.contains("…\""));
+        // value capped at 80 chars (between the opening quote and the ellipsis)
+        int start = m.indexOf("contentDescription=\"") + "contentDescription=\"".length();
+        int ell = m.indexOf("…", start);
+        assertEquals(80, ell - start);
+    }
+
+    @Test // 20.4
+    public void testSpinnerEntriesAppearInPromptCappedAt10() {
+        MopData.Widget w = new MopData.Widget();
+        w.entries.addAll(Arrays.asList("MD2", "MD5", "SHA-1", "SHA-256", "SHA-512"));
+        assertTrue(ApePromptBuilder.widgetMetadata(w)
+                .contains("entries=[MD2, MD5, SHA-1, SHA-256, SHA-512]"));
+
+        MopData.Widget w15 = new MopData.Widget();
+        for (int i = 0; i < 15; i++) w15.entries.add("e" + i);
+        String m = ApePromptBuilder.widgetMetadata(w15);
+        assertTrue("capped with trailing ellipsis", m.contains(", …]"));
+        assertTrue(m.contains("e9"));
+        assertFalse("11th entry not shown", m.contains("e10"));
+    }
+
+    @Test // 20.5
+    public void testMetadataNewlinesFlattened() {
+        MopData.Widget w = new MopData.Widget();
+        w.contentDescription = "line1\nline2";
+        assertTrue(ApePromptBuilder.widgetMetadata(w).contains("line1 line2"));
+    }
+
+    @Test // 20.6
+    public void testInputTypeAndHintAppearInPrompt() {
+        MopData.Widget w = new MopData.Widget();
+        w.type = "android.widget.EditText";
+        w.inputType = "textPassword";
+        w.hint = "Your password";
+        String m = ApePromptBuilder.widgetMetadata(w);
+        assertTrue(m.contains("inputType=\"textPassword\""));
+        assertTrue(m.contains("hint=\"Your password\""));
+    }
+
+    @Test // 20.7
+    public void testSpecialCharsInMetadataDoNotBreakPrompt() {
+        MopData.Widget w = new MopData.Widget();
+        w.contentDescription = "a\"b[c]d\\e";
+        String m = ApePromptBuilder.widgetMetadata(w);
+        assertTrue("embedded quote escaped", m.contains("\\\""));
+        // field stays well-formed: opens and closes with a quote
+        assertTrue(m.trim().startsWith("contentDescription=\""));
+        assertTrue(m.endsWith("\""));
     }
 }

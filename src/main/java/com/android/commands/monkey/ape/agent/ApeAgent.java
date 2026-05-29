@@ -48,6 +48,8 @@ import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Config;
+import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.TypedInputGenerator;
 import com.android.commands.monkey.ape.utils.InputValueGenerator;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.RandomHelper;
@@ -185,14 +187,40 @@ public abstract class ApeAgent implements Agent {
             GUITreeNode node = ((ModelAction) action).getResolvedNode();
             if (node.isEditText() && node.getInputText() == null) {
                 if (RandomHelper.toss(inputRate)) {
-                    String text = Config.heuristicInput
-                            ? inputValueGenerator.generateForNode(node)
-                            : StringCache.nextString();
-                    node.setInputText(text);
+                    node.setInputText(generateInputText(node));
                 }
             }
         }
         return action;
+    }
+
+    /**
+     * Generate input text for an EditText node. gh13 T1.3: when static-analysis MOP data is
+     * available and carries a non-empty inputType/hint for the widget, use the type-aware
+     * generator; otherwise fall back to the legacy heuristic / random generator (no regression
+     * on non-instrumented apps). Bypassed entirely when Config.fuzzInputTyped is false.
+     */
+    protected String generateInputText(GUITreeNode node) {
+        if (Config.fuzzInputTyped) {
+            MopData md = getMopData();
+            if (md != null) {
+                String activity = ape.getTopActivityClassName();
+                MopData.Widget w = md.getWidget(activity, MopData.extractShortId(node.getResourceID()));
+                if (w != null && (notEmpty(w.inputType) || notEmpty(w.hint))) {
+                    return TypedInputGenerator.generateForType(w.inputType, w.hint, RandomHelper.getRandom());
+                }
+            }
+        }
+        return Config.heuristicInput ? inputValueGenerator.generateForNode(node) : StringCache.nextString();
+    }
+
+    private static boolean notEmpty(String s) {
+        return s != null && !s.isEmpty();
+    }
+
+    /** Overridden by StatefulAgent to expose loaded MOP data; null disables T1.3. */
+    protected MopData getMopData() {
+        return null;
     }
 
     protected Action checkFuzzing(Action origin) {

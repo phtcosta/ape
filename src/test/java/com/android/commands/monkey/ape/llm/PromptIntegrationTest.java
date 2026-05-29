@@ -385,8 +385,10 @@ public class PromptIntegrationTest {
             for (int j = 0; j < methods.length(); j++) {
                 JSONObject method = methods.getJSONObject(j);
                 String sig = method.optString("signature", "");
-                boolean direct     = method.optBoolean("directlyReachesMop", false);
-                boolean transitive = method.optBoolean("reachesMop", false);
+                // gh60 (C1f) renamed the JSON wire keys MOP→Target; aperv keeps MOP vocabulary
+                // in its Java model (gh13 D7). These reads sit on the JSON boundary.
+                boolean direct     = method.optBoolean("directlyReachesTarget", false);
+                boolean transitive = method.optBoolean("reachesTarget", false);
                 if (!sig.isEmpty() && (direct || transitive)) {
                     bySignature.put(sig, new boolean[]{direct, transitive});
                 }
@@ -425,9 +427,9 @@ public class PromptIntegrationTest {
 
     @Test
     public void mopJson_mainActivity_buttonCipherIsMopReachable() throws Exception {
-        // buttonCipher handler: showScreenCipher — that method has reachesMop=false
-        // buttonMessageDigest handler: showScreenMessageDigest — reachesMop=false
-        // buttonGenerated handler: showGenerated — reachesMop=false
+        // buttonCipher handler: showScreenCipher — that method has reachesTarget=false
+        // buttonMessageDigest handler: showScreenMessageDigest — reachesTarget=false
+        // buttonGenerated handler: showGenerated — reachesTarget=false
         // So none of the main activity buttons are directly MOP-reachable
         java.util.Map<String, boolean[]> mopMap =
                 parseMopForActivity("br.unb.cic.cryptoapp.MainActivity");
@@ -448,7 +450,7 @@ public class PromptIntegrationTest {
         assertTrue("buttonGenerateHash must appear in MOP map",
                 mopMap.containsKey("buttonGenerateHash"));
         boolean[] flags = mopMap.get("buttonGenerateHash");
-        // generateHash method has reachesMop=true
+        // generateHash method has reachesTarget=true
         assertTrue("buttonGenerateHash must have transitive MOP flag", flags[1]);
     }
 
@@ -460,19 +462,25 @@ public class PromptIntegrationTest {
         assertTrue("btn_cipher_encrypt must appear in MOP map",
                 mopMap.containsKey("btn_cipher_encrypt"));
         boolean[] flags = mopMap.get("btn_cipher_encrypt");
-        // handler onClick in CipherActivity$1 has reachesMop=true
+        // handler onClick in CipherActivity$1 has reachesTarget=true
         assertTrue("btn_cipher_encrypt must have transitive MOP flag", flags[1]);
     }
 
     @Test
-    public void mopJson_cryptographyActivity_executeButtonIsMop() throws Exception {
+    public void mopJson_cryptographyActivity_executeButtonNotMopUnderSparkCG() throws Exception {
+        // gh60 reconciliation (D12): executeButton's handler is a desugared synthetic lambda
+        // (CryptographyActivity$$ExternalSyntheticLambda0.onClick). Under gh51-D5's spark call
+        // graph the lambda body is no longer linked to a target method, so reachesTarget=false —
+        // the intended cha→spark precision change (reachable 67→55, reachesTarget 61→32) that the
+        // pre-gh60 cha fixture masked. This is a known spark false-negative on invokedynamic, not
+        // an aperv bug. Kept as a tripwire: if a future analysis re-links the lambda, flags[1]
+        // flips true and this assertion fires for re-review.
         java.util.Map<String, boolean[]> mopMap =
                 parseMopForActivity("br.unb.cic.cryptoapp.generated.CryptographyActivity");
         assertFalse("CryptographyActivity mop map must not be empty", mopMap.isEmpty());
         assertTrue("executeButton must appear in MOP map", mopMap.containsKey("executeButton"));
         boolean[] flags = mopMap.get("executeButton");
-        // handler onClick has reachesMop=true
-        assertTrue("executeButton must have transitive MOP flag", flags[1]);
+        assertFalse("executeButton is NOT transitive MOP under spark CG (gh60 D12)", flags[1]);
     }
 
     @Test

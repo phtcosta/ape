@@ -14,17 +14,18 @@ Java-side top-level type names (`MopScorer`, `MopData`, `Config.mopDataPath`, `C
 
 ## Invariants
 
-- **INV-MOP-07**: `MopData.parseMethod` SHALL switch on the gh60 keys `directlyReachesTarget` and `reachesTarget`. The legacy gh57 keys `directlyReachesMop` / `reachesMop` SHALL NOT appear in the source switch (P3, no dual recognition). A regression test SHALL load a gh60 fixture and assert at least one widget reaches `directMop=true` via the derived cross-reference (proves the parser is not silently empty — the bug-fix contract).
-- **INV-MOP-08**: `MopData.parseComponentArray` SHALL read `reachesTarget` and `targetMethods` per component (renamed from `reachesMop` / `mopMethods`); `ComponentInfo.reachesTarget` SHALL reflect the JSON value (not a hardcoded boolean as in the pre-change subclass constructors).
+- **INV-MOP-07**: `MopData`'s reachability-method parsing SHALL read the gh60 keys `directlyReachesTarget` and `reachesTarget`. The legacy gh57 keys `directlyReachesMop` / `reachesMop` SHALL NOT be read (P3, no dual recognition). A regression test SHALL load a gh60 fixture and assert at least one widget reaches `directMop=true` via the derived cross-reference (proves the parser is not silently empty — the bug-fix contract).
+- **INV-MOP-08**: `MopData`'s component parsing SHALL read `reachesTarget` and `targetMethods` per component (the legacy `reachesMop` / `mopMethods` keys are gone); `ComponentInfo.reachesTarget` SHALL reflect the JSON value (not a hardcoded boolean as in the pre-change subclass constructors).
 - **INV-MOP-09**: `MopData.load` SHALL refuse non-null return unless JSON root contains `"complete": true`.
 - **INV-MOP-10**: `ApePromptBuilder` SHALL emit each widget metadata field and Spinner entries only when non-null/non-empty.
-- **INV-MOP-11**: Every documented gh60 JSON field SHALL be captured into a typed POJO field. `default: skipValue()` SHALL survive only as forward-compat fall-through.
+- **INV-MOP-11**: Every documented gh60 JSON field SHALL be captured into a typed POJO field. Unknown JSON keys SHALL be ignored (forward-compat) — with the `org.json` DOM parser (design D21) unread keys are skipped implicitly.
 - **INV-MOP-12**: When a `Listener` carries non-null `handlerReachesTarget` / `handlerDirectlyReachesTarget` (gh60-C3 forward compat), that producer value SHALL take precedence over the local `bySignature` cross-reference. Until C3 emits them the fields SHALL be `null` on every listener and the local cross-reference is the single source of truth.
-- **INV-MOP-13**: `MopScorer.scoreOpenMenu(activity, data)` SHALL be O(1) over a precomputed `Set<String> activitiesWithMopOptionsMenu` populated during `MopData.load` by scanning Windows of `type="OPTIONSMENU"` with `name="<activity>#OptionsMenu"` whose flat widget list contains at least one derived `directMop || transitiveMop` widget.
+- **INV-MOP-13**: `MopScorer.scoreOpenMenu(activity, data)` SHALL be O(1) over a precomputed `Set<String> activitiesWithMopOptionsMenu` populated during `MopData.load` by scanning Windows of `type="OPTIONSMENU"` with `name="<activity>#OptionsMenu"`. An activity SHALL qualify when the menu window contains at least one widget that **either** has a derived `directMop || transitiveMop` flag **or** has a WTG click-transition to a `hasMop` activity (the gateway case — in menu-driven apps the menu items navigate to MOP-bearing sub-activities rather than reaching target within their own handler; design D13).
 - **INV-MOP-14**: When a candidate event type is passed to `MopScorer.score`, only listeners whose `eventType` matches (or whose `eventType` is null/empty for match-any fallback) SHALL contribute to the widget's direct/transitive flags for that candidate.
 - **INV-MOP-15**: `StatefulAgent.triggerMopComponent` SHALL skip components with `reachesTarget=false` and SHALL skip activities with `exported=false`. Activity triggering SHALL be gated by `Config.activityTriggerEnabled` (default `false`).
 - **INV-MOP-16**: `ApeFuzzer.generateInputForType` SHALL produce domain-correct values for `textPassword`, `number`, `phone`, `textEmailAddress`, `textUri`, `date`/`time`/`datetime`. Unknown `inputType` SHALL fall back to the legacy random-string generator. `Config.fuzzInputTyped=false` SHALL bypass the entire typed path.
 - **INV-MOP-17**: `MopData.Widget.directMop` / `transitiveMop` / `directMopByEventType` / `transitiveMopByEventType` SHALL be **derived** during `parseWindow` (the current gh60 producer does not emit them). Derivation SHALL group `widget.listeners` by `eventType` and cross-reference each `handler` against the `bySignature` index built from `reachability[].methods[]`.
+- **INV-MOP-18** (gh60 D15 reconciliation): `MopData` component parsing SHALL read the gh60-D15 trigger-surface fields: per-component `permission`; per-`IntentFilter` a `data` block (`schemes`/`hosts`/`ports`/`paths`/`pathPrefixes`/`pathPatterns`/`mimeTypes`); per-provider `readPermission`/`writePermission`. All SHALL default to null/empty when absent (back-compat with pre-D15 JSON). `ComponentInfo` exposes `hasPermissionGate()`; `IntentFilter.data` is never null (empty `DataSpec` when absent) and exposes `hasData()`. These fields are **parsed and exposed only** — trigger *selection* (INV-MOP-15) SHALL NOT change; permission-gated pruning and deep-link/MIME Intent construction are out of scope (gh60 follow-up). `StatefulAgent.triggerLogLine` MAY surface `permission=` for SecurityException diagnostics.
 
 ---
 
@@ -40,14 +41,14 @@ Java-side top-level type names (`MopScorer`, `MopData`, `Config.mopDataPath`, `C
 4. **Widgets**: `getWidget(activity, shortId)` returns `Widget` carrying read-from-JSON `id`, `idName`, `type`, `text`, `hint`, `inputType`, `entries`, `prompt`, `spinnerMode`, `contentDescription`, `tooltipText`, `listeners`, plus **derived** `directMop`/`transitiveMop` and per-event-type maps `directMopByEventType`/`transitiveMopByEventType` (INV-MOP-17). No `items` field — gh60 does not emit nested widgets.
 5. **Listeners**: each carries `eventType`, `handler`, plus nullable forward-compat `handlerReachesTarget` / `handlerDirectlyReachesTarget` (null on every listener until gh60-C3 lands).
 6. **Transitions**: `getTransitions()` carries full per-event fields including `handler` and `widgetId`.
-7. **Components**: each `ComponentInfo` carries `className`, `componentType` (derived from JSON parent dict key — `activities`/`receivers`/`services`/`providers`), `isMain`, `exported`, `intentFilters` (structured with `actions` AND `categories`), `reachesTarget` (read from JSON, not hardcoded), `targetMethods`. `ProviderInfo` additionally carries `authorities`.
+7. **Components**: each `ComponentInfo` carries `className`, `componentType` (derived from JSON parent dict key — `activities`/`receivers`/`services`/`providers`), `isMain`, `exported`, `intentFilters` (structured with `actions` AND `categories` AND a gh60-D15 `data` block — `schemes`/`hosts`/`ports`/`paths`/`pathPrefixes`/`pathPatterns`/`mimeTypes`), `reachesTarget` (read from JSON, not hardcoded), `targetMethods`, and `permission` (gh60-D15, null when no gate). `ProviderInfo` additionally carries `authorities` plus `readPermission`/`writePermission` (gh60-D15). See INV-MOP-18.
 8. **Sentinel**: top-level `"complete": true` mandatory (INV-MOP-09).
-9. **Precomputed OPTIONSMENU set**: `activityHasMopOptionsMenu(activity)` returns true iff a `Window` with `type="OPTIONSMENU"` and `name="<activity>#OptionsMenu"` exists in `getWindows()` with at least one widget having derived `directMop || transitiveMop` (INV-MOP-13). OPTIONSMENU widgets are flat siblings of the Window's `widgets[]` — no nested items.
+9. **Precomputed OPTIONSMENU set**: `activityHasMopOptionsMenu(activity)` returns true iff a `Window` with `type="OPTIONSMENU"` and `name="<activity>#OptionsMenu"` exists in `getWindows()` containing at least one widget that **either** has derived `directMop || transitiveMop` **or** has a WTG click-transition to a `hasMop` activity (gateway case; INV-MOP-13). OPTIONSMENU widgets are flat siblings of the Window's `widgets[]` — no nested items.
 10. **Sanity check**: when `expectedPackage` / `expectedMainActivity` non-null and diverge from parsed values, emit WARN log. `Config.mopStrictPackageMatch=true` makes mismatch ⇒ `null` return.
 
 Cross-referencing for widgets matches `windows[i].widgets[j].listeners[k].handler` against `reachability[m].methods[n].signature`. Per-event-type maps are populated by grouping listeners by `eventType` during the cross-reference pass; aggregate `directMop`/`transitiveMop` are the OR across all event types (backward compat). When `Listener.handlerReachesTarget` is non-null, the producer value takes precedence over the cross-reference (INV-MOP-12).
 
-`default: skipValue()` survives only for unknown new fields (INV-MOP-11).
+Unknown JSON keys are ignored for forward compatibility (INV-MOP-11); the parser reads the file once into an `org.json` DOM (design D21).
 
 [The full set of MopData scenarios from the prior version of this spec is preserved; new scenarios appended below.]
 
@@ -61,17 +62,27 @@ Cross-referencing for widgets matches `windows[i].widgets[j].listeners[k].handle
 - **AND** `getTransitions().size()==35`; at least one `TransitionEvent` has non-empty `handler` and `widgetId>0`
 - **AND** `getActivities().size()==4`; `getProviders().size()==1` with `authorities=="br.unb.cic.cryptoapp.androidx-startup"`; `getReceivers().isEmpty()`; `getServices().isEmpty()`
 - **AND** every component SHALL have `reachesTarget==false` (cryptoapp's reachability is GUI-only, by design — the smoke test for non-zero component triggering needs a different fixture)
-- **AND** `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true`
+- **AND** the only widgets with derived MOP SHALL be `buttonGenerateHash` (in `MessageDigestActivity`) and `btn_cipher_encrypt` (in `CipherActivity`), both `transitiveMop==true` and `directMop==false`; **no** widget SHALL have `directMop==true`
+- **AND** `activityHasMop("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity")==true` AND `activityHasMop("br.unb.cic.cryptoapp.cipher.CipherActivity")==true`
+- **AND** `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true` (gateway: the `MainActivity#OptionsMenu` items `menu_item_message_digest` / `menu_item_cipher` carry WTG click-transitions to those MOP sub-activities, INV-MOP-13)
+- **AND** (gh60 D15) every component's `permission` SHALL be null (cryptoapp declares no `android:permission`); each `IntentFilter.data` SHALL be non-null (empty for cryptoapp's launcher filters); the provider's `readPermission`/`writePermission` SHALL be null
 
-#### Scenario: Bug-fix regression — widget directMop derived from gh60 Target keys
+#### Scenario: gh60 D15 component trigger-surface fields parsed
+- **WHEN** `MopData.load()` parses a component whose intent filter declares a `data` block with `schemes`/`mimeTypes` and whose element declares `permission` (and, for a provider, `readPermission`/`writePermission`)
+- **THEN** `IntentFilter.data.schemes` / `.mimeTypes` (and the other five lists) SHALL reflect the JSON values and `IntentFilter.hasData()` SHALL be true
+- **AND** `ComponentInfo.permission` SHALL reflect the JSON value and `hasPermissionGate()` SHALL be true; absent ⇒ null and false
+- **AND** `ProviderInfo.readPermission` / `writePermission` SHALL reflect the JSON values (null when absent)
+- **AND** when the `data` block is absent, `IntentFilter.data` SHALL be the empty `DataSpec` (never null) and `hasData()` SHALL be false (back-compat with pre-D15 JSON)
+- **AND** trigger *selection* (INV-MOP-15) SHALL be unchanged by these fields (parsed-and-exposed only)
+
+#### Scenario: Bug-fix regression — widget transitiveMop derived from gh60 Target keys
 - **WHEN** `MopData.load()` is called on `src/test/resources/cryptoapp.apk.gh60-fresh.json` (pinned 2026-05-29)
-- **THEN** the OPTIONSMENU `Widget` with `idName=="menu_item_message_digest"` SHALL have exactly one `Listener` with `eventType=="click"` and `handler=="<br.unb.cic.cryptoapp.MainActivity$1: boolean onMenuItemClick(android.view.MenuItem)>"`
-- **AND** that handler signature SHALL be present in `getReachability()` with `directlyReachesTarget==true`
-- **AND** the widget SHALL have `directMop==true` and `isDirectMop("click")==true` (derived during Pass 2 cross-reference)
-- **AND** `activityHasMop("br.unb.cic.cryptoapp.MainActivity")==true`
-- **AND** `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true`
-- **AND** `MopScorer.score("br.unb.cic.cryptoapp.MainActivity", "menu_item_message_digest", data, "click")` SHALL return `Config.mopWeightDirect`
-- **NOTE**: pre-fix (legacy `directlyReachesMop`/`reachesMop` switch cases) the same assertions ALL fail — `bySignature` is empty, `directMop=false` everywhere, score returns 0. This scenario IS the contract that "SATA-MOP is not silently bare APE."
+- **THEN** the `Widget` with `idName=="buttonGenerateHash"` in `MessageDigestActivity` SHALL have a `click` `Listener` whose `handler` signature is present in `getReachability()` with `reachesTarget==true` (and `directlyReachesTarget==false`)
+- **AND** the widget SHALL have `transitiveMop==true`, `directMop==false`, and `isTransitiveMop("click")==true` (derived during the widget cross-reference)
+- **AND** `activityHasMop("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity")==true`
+- **AND** `MopScorer.score("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity", "buttonGenerateHash", data, "click")` SHALL return `Config.mopWeightTransitive`
+- **AND** the gateway holds: `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true`
+- **NOTE**: pre-fix (legacy `directlyReachesMop`/`reachesMop` keys) the same assertions ALL fail — `bySignature` is empty, every widget flag is `false`, score returns 0, and the gateway set is empty. This scenario IS the contract that "SATA-MOP is not silently bare APE." cryptoapp's reachability is transitive (menu/button handlers call JCA helpers); no listener handler is itself a direct JCA caller, so `directMop` is demonstrated by the synthetic per-event-type scenarios, not this fixture.
 
 #### Scenario: Widget metadata extracted on post-task-11 fixture
 - **WHEN** `MopData.load()` is called on `src/test/resources/cryptoapp.apk.gh60-fresh.json`
@@ -94,8 +105,12 @@ Cross-referencing for widgets matches `windows[i].widgets[j].listeners[k].handle
 - **THEN** `activityHasMopOptionsMenu("com.x.A")` SHALL return `true`
 
 #### Scenario: OPTIONSMENU window without MOP widget does not trigger
-- **WHEN** an OPTIONSMENU window has `name="com.x.B#OptionsMenu"` and all its widgets have `directMop=false && transitiveMop=false`
+- **WHEN** an OPTIONSMENU window has `name="com.x.B#OptionsMenu"` and all its widgets have `directMop=false && transitiveMop=false` AND no widget has a WTG click-transition to a `hasMop` activity
 - **THEN** `activityHasMopOptionsMenu("com.x.B")` SHALL return `false`
+
+#### Scenario: OPTIONSMENU gateway — menu item navigates to a MOP activity
+- **WHEN** an OPTIONSMENU window `name="com.x.C#OptionsMenu"` has a widget `menu_go` with `directMop=false && transitiveMop=false` whose WTG click-transition targets `com.x.CryptoActivity`, and `activityHasMop("com.x.CryptoActivity")==true`
+- **THEN** `activityHasMopOptionsMenu("com.x.C")` SHALL return `true` (gateway case, INV-MOP-13)
 
 #### Scenario: Per-event-type reachability maps built
 - **WHEN** a widget has two listeners: `{eventType:"click", handler:"<sigA>"}` and `{eventType:"longClick", handler:"<sigB>"}`, and only `<sigA>` is in `reachability[]` with `directlyReachesTarget=true`
