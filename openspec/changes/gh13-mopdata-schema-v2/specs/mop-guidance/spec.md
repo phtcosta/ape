@@ -104,6 +104,19 @@ Cross-referencing for widgets matches `windows[i].widgets[j].listeners[k].handle
 - **AND** `widget.directMop` (aggregate) SHALL be `true`
 - **AND** `widget.isDirectMop(null)` SHALL be `true` (match-any fallback)
 
+#### Scenario: Multiple listeners to the same handler do not double-count
+- **WHEN** a widget has two `click` listeners both pointing to the same `handler==<sigA>`, and `<sigA>` is in `reachability[]` with `directlyReachesTarget=true`
+- **THEN** `widget.directMopByEventType.get("click")` SHALL be `true` (OR-idempotent — no boolean overflow, no double-boost)
+- **AND** `widget.listeners.size()` SHALL be `2` (listeners preserved as parsed, no dedup)
+- **AND** `MopScorer.score(act, id, data, "click")` SHALL return `Config.mopWeightDirect` exactly (not 2×)
+
+#### Scenario: Complete-but-empty JSON parses cleanly (gh51-D5 timeout bucket)
+- **WHEN** `MopData.load()` is called on a fixture with `complete:true` AND empty `reachability[]`, `windows[]`, `transitions[]`, `components.{activities,receivers,services,providers}=[]`
+- **THEN** the returned `MopData` SHALL be non-null
+- **AND** `isComplete()` SHALL be `true`
+- **AND** all accessor lists SHALL return empty (`getReachability().isEmpty()`, `getWindows().isEmpty()`, `getTransitions().isEmpty()`, `getReceivers().isEmpty()`, `getServices().isEmpty()`, `getActivities().isEmpty()`, `getProviders().isEmpty()`)
+- **AND** `MopScorer.score(any, any, data, any)` SHALL return `0` without `NullPointerException`
+
 [Other existing scenarios — post-gh60 target keys, sentinel paths, widget metadata captures, transition events, implicit events, component fields, file missing, null path, malformed JSON, unknown future fields — preserved from prior version. Scenarios about recursive `items[]` and depth cap are REMOVED — gh60 does not emit nested widgets.]
 
 ---
@@ -245,6 +258,12 @@ When `Config.fuzzInputTyped=false`, the typed path SHALL be bypassed entirely �
 - **THEN** the output SHALL be a non-empty string from the legacy generator
 - **AND** the output SHALL NOT match the password / number / phone / email shapes
 
+#### Scenario: fuzzInputTyped=false bypasses typed generation (rollback guard)
+- **WHEN** `Config.fuzzInputTyped=false` AND `ApeFuzzer.generateInputForType("textPassword", "Your password", rnd)` is called
+- **THEN** the output SHALL NOT match the password shape (no required letter+digit+symbol mix)
+- **AND** the output SHALL match the legacy random-string shape
+- **NOTE**: this is the operator-level rollback contract — if T1.3 corrupts a corpus run, `ape.fuzzInputTyped=false` in `ape.properties` MUST restore the pre-change behavior
+
 ---
 
 ### Requirement: StatefulAgent — Tuple-Based Component Triggering
@@ -285,6 +304,25 @@ For each invocation:
 #### Scenario: Log line contains expected fields
 - **WHEN** a receiver tuple is triggered
 - **THEN** the logged line SHALL contain `className=…`, `action=…`, `categories=…`, `reachesTarget=true`
+
+#### Scenario: activityTriggerEnabled=false excludes activities from the tuple list (rollback guard)
+- **WHEN** `Config.activityTriggerEnabled=false` (default) AND `MopData` carries one reachable+exported activity AND one reachable receiver
+- **THEN** the built tuple list SHALL contain ≥1 tuple from the receiver AND zero tuples from the activity
+- **WHEN** `Config.activityTriggerEnabled=true` AND the tuple list is rebuilt
+- **THEN** the tuple list SHALL contain ≥1 tuple from the activity
+- **NOTE**: gh11 sandwichroulette evidence (-45pp) — default `false` is load-bearing for experiment integrity
+
+#### Scenario: Empty trigger list returns false without side effects
+- **WHEN** `MopData` carries components but ALL have `reachesTarget=false` (cryptoapp-like)
+- **AND** `triggerMopComponent()` is invoked
+- **THEN** the call SHALL return `false`
+- **AND** no shell command / broadcast / service start SHALL be invoked
+- **AND** the round-robin counter SHALL NOT advance
+
+#### Scenario: Component with empty intentFilters but non-empty targetMethods emits component-name-only tuple
+- **WHEN** `MopData` carries a receiver with `reachesTarget=true`, `intentFilters=[]`, `targetMethods=["<some_sig>"]`
+- **THEN** the tuple list SHALL contain exactly one `TriggerTuple` for this receiver with `filter=null` and `action=null`
+- **AND** the built Intent SHALL have `setComponent(...)` called and SHALL NOT have any `setAction` / `addCategory` calls
 
 ---
 

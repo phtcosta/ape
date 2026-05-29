@@ -497,15 +497,15 @@ Consumer side:
 
 | Layer | What to test | Count |
 |-------|-------------|-------|
-| Unit — parser | Real cryptoapp fixture, second TBD fixture, bug-fix regression (`testWidgetDirectMopDerivedFromGh60Targets`), all field assertions, sentinel paths, package sanity, eventType maps, OPTIONSMENU set precomputation, transition events, ComponentInfo expanded shape | ~20 |
-| Unit — ComponentInfo | Field captures, intent filter structure, provider authorities, reachesTarget honored | 4 |
-| Unit — MopScorer | scoreOpenMenu boost paths, eventType-aware scoring, eventTypeOf mapper, match-any fallback | 5 |
-| Unit — ApeFuzzer | per-type generators, hint-based fallback, legacy fallback | 6 |
-| Unit — StatefulAgent triggering | skip-non-reachable, skip-non-exported, round-robin actions, provider round-robin operations, log content | 5 |
-| Unit — ApePromptBuilder | metadata in prompt, null omission, 80-char cap, 10-entry cap, newline flatten, inputType/hint appear | 6 |
+| Unit — parser | Real cryptoapp fixture, bug-fix regression, empty-array corner cases, multi-listener idempotence, all field assertions, sentinel paths (incl. non-last position), package sanity, eventType maps, OPTIONSMENU set precomputation, transition events, ComponentInfo expanded shape, Config flag wiring, null-path / unknown-id null safety | 26 |
+| Unit — ComponentInfo | Field captures, intent filter structure, provider authorities, reachesTarget honored, `getActions`/`getCategories` flatten across multi-filter, `componentType` derived from JSON dict key | 7 |
+| Unit — MopScorer | scoreOpenMenu boost paths, eventType-aware scoring, eventTypeOf mapper (incl. Spinner detection), match-any fallback, null-MopData safety, `stateMopDensity` regression | 8 |
+| Unit — ApeFuzzer | per-type generators (password/number/phone/email/uri/date/time/datetime), hint-based fallback, legacy fallback, `fuzzInputTyped=false` rollback path | 10 |
+| Unit — StatefulAgent triggering | skip-non-reachable, skip-non-exported, round-robin actions, provider round-robin operations, log content, `activityTriggerEnabled=false` rollback, empty-list returns false, filter-null tuple from non-empty targetMethods, provider non-zero exit WARN | 9 |
+| Unit — ApePromptBuilder | metadata in prompt, null omission, 80-char cap, 10-entry cap, newline flatten, inputType/hint appear, special-char safety | 7 |
 | Integration | gh57+gh60 archive, real fixtures, mvn install, aperv smoke, LLM prompt spot-check | Deferred (§22) |
 
-Total new unit tests: 46 (20 + 4 + 5 + 6 + 5 + 6). Expected post-change suite: ~191.
+Total new unit tests: **67** (26 + 7 + 8 + 10 + 9 + 7). Expected post-change suite: ~212. Test priority distribution: HIGH 6 (rollback knobs `fuzzInputTyped=false` / `activityTriggerEnabled=false`, empty-list returns false, empty-arrays-parse-cleanly, OR-idempotent multi-listener, filter-null tuple from non-empty targetMethods), MED 11, LOW 4 — see tag suffixes in `tasks.md`. Baseline 46 tests (the prior plan) preserved; the +21 are adversarial / rollback / corner-case extensions.
 
 ## Open Questions
 

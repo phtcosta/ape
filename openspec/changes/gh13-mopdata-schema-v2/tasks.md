@@ -154,7 +154,7 @@
 - [ ] 14.1 In the existing MOP-guidance pass (StatefulAgent.java around line 1221), AFTER the widget loop, scan the state's actions for the `MODEL_MENU` action. If `_mopData != null && _mopData.activityHasMopOptionsMenu(newState.getActivity())`, apply `MopScorer.scoreOpenMenu` boost to the action's priority. Logger.iformat one-line summary.
 - [ ] 14.2 In the same pass, pass `MopScorer.eventTypeOf(action)` to the new `MopScorer.score` 4-arg overload (T1.6 wiring). The existing call site changes from `score(activity, shortId, _mopData)` to `score(activity, shortId, _mopData, MopScorer.eventTypeOf(action))`.
 
-## 15. Tests — MopDataTest (parser, 20 tests)
+## 15. Tests — MopDataTest (parser, 26 tests)
 
 - [ ] 15.1 `testFullFixtureLoadsAllFields` — load `src/test/resources/cryptoapp.apk.gh60-fresh.json` (pinned 2026-05-29, post gh60 task 11 hint/text fix). Assert `package=="br.unb.cic.cryptoapp"`, `mainActivity=="br.unb.cic.cryptoapp.MainActivity"`, `isComplete()==true`, 16 reachability classes (55 reachable / 32 reachesTarget / 21 directlyReachesTarget across all methods), 5 windows (4 ACTIVITY + 1 OPTIONSMENU named `"…MainActivity#OptionsMenu"` with 3 flat MenuItem widgets), 51 widgets total, 35 transitions, components `{activities:4, receivers:0, services:0, providers:1}` with provider `authorities=="br.unb.cic.cryptoapp.androidx-startup"`. At least one Widget with `entries.size()==13` (the `spinnerMessageDigest`). One TransitionEvent with handler non-empty + widgetId > 0. Widget metadata extraction floor: ≥4 widgets with non-empty `hint`, ≥11 with non-empty `text`, ≥4 with non-empty `inputType` (empirical floor on the fresh fixture — `contentDescription`/`tooltipText`/`prompt`/`spinnerMode` are 0 because cryptoapp's source XML does not declare them, not a parser bug).
 - [ ] 15.2 `testWidgetDirectMopDerivedFromGh60Targets` — **bug-fix regression** (INV-MOP-07, D20). Load `cryptoapp.apk.gh60-fresh.json`; assert `getWidget("br.unb.cic.cryptoapp.MainActivity","menu_item_message_digest").directMop==true` AND its single listener has `eventType=="click"` AND handler `==="<br.unb.cic.cryptoapp.MainActivity$1: boolean onMenuItemClick(android.view.MenuItem)>"` AND that handler appears in the reachability index. Assert `activityHasMop("br.unb.cic.cryptoapp.MainActivity")==true` AND `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true`. Pre-fix (legacy `*Mop` keys in switch) ⇒ ALL assertions FAIL because `bySignature` is empty. Post-fix ⇒ all PASS. **This test is the contract that "SATA-MOP is not silently bare APE."**
@@ -176,23 +176,35 @@
 - [ ] 15.18 `testTransitionImplicitEventsPreservedInRawView` — `implicit_back_event` survives in `getTransitions()`; filtered from `getWtgTransitions`.
 - [ ] 15.19 `testActivitiesWithMopOptionsMenuPrecomputed` — synthetic fixture with two activities A and B; A has an OPTIONSMENU window named `"A#OptionsMenu"` whose widget's listener handler reaches target; B's OPTIONSMENU widgets don't. Assert `activityHasMopOptionsMenu("A")==true && ...("B")==false`. Also verifies the cryptoapp case: `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true`.
 - [ ] 15.20 `testWidgetEventTypeMapsBuilt` — widget with two listeners (`click` + `longClick`), only the click handler is in `bySignature` with `directlyReachesTarget=true`. Assert `widget.isDirectMop("click")==true && widget.isDirectMop("longClick")==false && widget.directMop==true (aggregate)`.
+- [ ] 15.21 `testEmptyArraysParseToEmptyCollections` (HIGH) — synthetic fixture with `reachability:[]`, `windows:[]`, `transitions:[]`, `components:{activities:[],receivers:[],services:[],providers:[]}`, sentinel `complete:true`. Assert non-null `MopData`, `isComplete()==true`, `getReachability().isEmpty()`, `getWindows().isEmpty()`, `getTransitions().isEmpty()`, `getReceivers().isEmpty()` etc. **Why**: gh60 task 0 classification showed 651/826 sweep JSONs have empty windows/transitions (timeout-during-WTG complete-but-empty bucket). Parser MUST handle these without `NullPointerException`.
+- [ ] 15.22 `testMultipleListenersSameHandlerNoDoubleCount` (HIGH) — widget with two `click` listeners pointing to the same handler signature; handler is in `bySignature` with `directlyReachesTarget=true`. Assert `widget.directMopByEventType.get("click")==true` (OR-idempotent — no boolean overflow / no quirk). Assert two listeners parsed (preserved as-is in `widget.listeners.size()==2`). Pin against silent double-boost regression.
+- [ ] 15.23 `testConfigFlagsLoadFromProperties` (MED) — write a synthetic `ape.properties` with `ape.mopWeightOpenMenu=999`, `ape.fuzzInputTyped=false`, `ape.mopStrictPackageMatch=true`, `ape.activityTriggerEnabled=true`; reload `Config` (via test-only `Config.reload(File)` if exists, or document the test as Android-runtime skip and exercise via system properties in JVM). Assert all 4 flags read the custom values. **Why**: defense-in-depth that operator overrides in `ape.properties` actually take effect (the rollback knobs are useless if the flags don't bind).
+- [ ] 15.24 `testCompleteSentinelInMiddleStillRecognized` (LOW) — synthetic fixture where `"complete": true` appears as the SECOND top-level key (not last). Assert `isComplete()==true`. Producer contract emits sentinel last, but the parser MUST NOT rely on positional order (the 5th-pass scan reads any key match).
+- [ ] 15.25 `testLoadNullPathReturnsNullCleanly` (LOW) — `MopData.load(null)` SHALL return `null` without throwing, without WARN-level log noise (INFO-or-quieter acceptable).
+- [ ] 15.26 `testGetWindowUnknownIdReturnsNull` (LOW) — load real fixture; assert `getWindow(0)==null`, `getWindow(-1)==null`, `getWindow(Integer.MAX_VALUE)==null`. Lookup is null-safe.
 
-## 16. Tests — ComponentInfoTest (4 tests)
+## 16. Tests — ComponentInfoTest (7 tests)
 
 - [ ] 16.1 `testComponentFieldsCaptured` — all base fields including `targetMethods`.
 - [ ] 16.2 `testIntentFilterPreservesCategoriesAndActions` — structure preserved; helpers flatten.
 - [ ] 16.3 `testProviderAuthoritiesCaptured`.
 - [ ] 16.4 `testComponentReachesTargetReadFromJson` — `reachesTarget=false` correctly read (proves not hardcoded).
+- [ ] 16.5 `testGetActionsFlattensAcrossMultipleFilters` (MED) — component with two `IntentFilter`s (filter A actions `[a1,a2]`, filter B actions `[a3]`); assert `getActions()` returns `[a1,a2,a3]` (union, order preserved, no dedup).
+- [ ] 16.6 `testGetCategoriesFlattensAcrossMultipleFilters` (MED) — symmetric to 16.5: filter A categories `[c1]`, filter B categories `[c2,c3]`; assert `getCategories()` returns `[c1,c2,c3]`.
+- [ ] 16.7 `testComponentTypeDerivedFromJsonDictKey` (MED, D19) — synthetic JSON with `components.activities[]` and `components.receivers[]`; assert the parsed `ActivityInfo.componentType=="activity"` and `ReceiverInfo.componentType=="receiver"` — proves the dispatcher reads the dict key (NOT a per-element JSON field).
 
-## 17. Tests — MopScorerTest extensions (5 tests)
+## 17. Tests — MopScorerTest extensions (8 tests)
 
 - [ ] 17.1 `testScoreOpenMenuBoostsWhenOptionsMenuHasMopWidget` — `activityHasMopOptionsMenu` true ⇒ returns `Config.mopWeightOpenMenu`.
 - [ ] 17.2 `testScoreOpenMenuZeroWhenActivityHasNoMopOptionsMenu`.
 - [ ] 17.3 `testScoreEventTypeAwareMatchesClick` — widget where only the click listener reaches MOP; `score(act, id, data, "click")` returns directMop boost; `score(act, id, data, "longClick")` returns 0.
 - [ ] 17.4 `testScoreEventTypeNullFallsBackToAggregate` — same widget; passing `eventType=null` returns directMop boost (match-any).
 - [ ] 17.5 `testEventTypeOfMapsActionTypes` — `MODEL_CLICK → "click"`, `MODEL_LONG_CLICK → "longClick"`, etc.
+- [ ] 17.6 `testScoreReturnsZeroWhenMopDataNull` (MED) — `MopScorer.score(act, id, null, "click")==0`; `scoreOpenMenu(act, null)==0`; `scoreWtg(act, id, null)==0`; `stateMopDensity(state, null)==0`. Null-safe contract across the whole API surface.
+- [ ] 17.7 `testEventTypeOfSpinnerDetection` (MED) — synthetic `ModelAction` of type `MODEL_INPUT` whose target widget class is `android.widget.Spinner` ⇒ `eventTypeOf` returns `"itemSelected"`. Same action on `android.widget.EditText` ⇒ returns `null` (input on non-Spinner is not an itemSelected event).
+- [ ] 17.8 `testStateMopDensityUnchanged` (MED) — pin the existing semantics: state with N target-requiring valid actions, activity is in `mopActivities` ⇒ returns N. Activity NOT in `mopActivities` ⇒ returns 0. Regression guard for the SATA tiebreaker path.
 
-## 18. Tests — ApeFuzzerInputTypeTest (6 tests)
+## 18. Tests — ApeFuzzerInputTypeTest (10 tests)
 
 - [ ] 18.1 `testPasswordInputTypeProducesMixedClass` — `inputType="textPassword"` ⇒ output contains letter + digit + symbol; length in [8,12].
 - [ ] 18.2 `testNumberInputTypeProducesDigits` — `inputType="number"` ⇒ output matches `^-?\d+$`.
@@ -200,16 +212,24 @@
 - [ ] 18.4 `testEmailInputTypeContainsAt` — output matches `^[a-z]+@example\.com$`.
 - [ ] 18.5 `testHintBasedFallbackDetectsEmail` — `inputType=""`, `hint="Your email"` ⇒ email output.
 - [ ] 18.6 `testUnknownInputTypeFallsBackToLegacy` — `inputType="weird"`, hint empty ⇒ output is a non-empty string from legacy generator.
+- [ ] 18.7 `testFuzzInputTypedFlagBypassesTypedPath` (HIGH, INV-MOP-16 rollback guard) — set `Config.fuzzInputTyped=false`; call `generateInputForType("textPassword", "Your password", rnd)`; assert output does NOT match the password shape (letter+digit+symbol) and instead matches the legacy `RandomHelper.randomString` shape. Proves the operator-level rollback knob is wired and effective. **Rollback contract**: if T1.3 corrupts a corpus run, flipping `Config.fuzzInputTyped=false` MUST restore legacy behavior — this test pins it.
+- [ ] 18.8 `testDateInputTypeProducesIso8601` (MED) — `inputType="date"` ⇒ output matches `^\d{4}-\d{2}-\d{2}$`; year ∈ [current-10, current]; month ∈ [01,12]; day ∈ [01,31] (calendar-valid not enforced for v1 — fuzzing tolerates Feb 30).
+- [ ] 18.9 `testTimeAndDatetimeInputTypesProduceIso8601` (MED) — `inputType="time"` ⇒ matches `^\d{2}:\d{2}(:\d{2})?$`; `inputType="datetime"` ⇒ matches `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$`.
+- [ ] 18.10 `testUriInputTypeMatchesShape` (MED) — `inputType="textUri"` ⇒ matches `^https://example\.com/[a-z]{8}$`.
 
-## 19. Tests — StatefulAgentTriggerTest (5 tests, mock-based)
+## 19. Tests — StatefulAgentTriggerTest (9 tests, mock-based)
 
 - [ ] 19.1 `testTriggerSkipsNonReachableComponents` — MopData with one receiver `reachesTarget=false` and one with `true`; assert the tuple list excludes the false one.
 - [ ] 19.2 `testTriggerSkipsNonExportedActivities` — activity `exported=false`; excluded from tuple list (regardless of `Config.activityTriggerEnabled`).
 - [ ] 19.3 `testTriggerRoundRobinsAllIntentFilterActions` — receiver with 2 actions in one filter; advance trigger index 4 times; assert actions visited alternately (each action picked twice).
 - [ ] 19.4 `testTriggerProviderRoundRobinsOperations` — provider with `reachesTarget=true`; advance trigger index; assert shell commands include all of `content query`, `content insert`, `content update`.
 - [ ] 19.5 `testTriggerLogsContainExpectedFields` — capture stdout; assert log line for one trigger contains `className`, `action`, `categories=`, `reachesTarget=true`.
+- [ ] 19.6 `testActivityTriggerDisabledExcludesActivitiesFromTupleList` (HIGH, INV-MOP-15 rollback guard) — `Config.activityTriggerEnabled=false` (default). MopData with one reachable+exported activity AND one reachable receiver. Assert the tuple list contains the receiver tuple AND zero activity tuples. Flip `Config.activityTriggerEnabled=true`, rebuild ⇒ activity now present. **Why**: gh11 sandwichroulette evidence (-45pp) — default OFF is load-bearing for experiment integrity. Pin against accidental enable.
+- [ ] 19.7 `testTriggerReturnsFalseOnEmptyComponentList` (HIGH) — cryptoapp-like MopData (all components `reachesTarget=false`); call `triggerMopComponent()`; assert returns `false` AND no shell / broadcast / service start invoked AND counter NOT advanced. The cryptoapp common case — the 380-APK corpus contains many similar APKs; no-op MUST be cheap and silent.
+- [ ] 19.8 `testTriggerEmitsComponentNameOnlyTupleWhenFiltersEmpty` (HIGH, D15) — receiver with `reachesTarget=true`, `intentFilters=[]`, `targetMethods=["<sig>"]`; assert exactly one `TriggerTuple` with `filter=null, action=null`; on invocation, intent has `setComponent` but no `setAction`/`addCategory` calls.
+- [ ] 19.9 `testProviderNonZeroExitLogsWarnWithStderr` (MED) — mock `AndroidDevice.runShell` to return non-zero exit and a stderr line; call provider trigger; assert WARN log contains the stderr tail AND counter advanced AND next call moves to the next operation in the sub-cycle (no retry-loop).
 
-## 20. Tests — ApePromptBuilderTest extensions (6 tests)
+## 20. Tests — ApePromptBuilderTest extensions (7 tests)
 
 - [ ] 20.1 `testWidgetMetadataAppearsInPrompt` — contentDescription + tooltipText populated; substrings present.
 - [ ] 20.2 `testNullWidgetMetadataOmittedFromPrompt` — all null; no field tokens.
@@ -217,10 +237,11 @@
 - [ ] 20.4 `testSpinnerEntriesAppearInPromptCappedAt10`.
 - [ ] 20.5 `testMetadataNewlinesFlattened`.
 - [ ] 20.6 `testInputTypeAndHintAppearInPrompt` — EditText widget with `inputType="textPassword"` + `hint="Your password"`; assert both substrings.
+- [ ] 20.7 `testSpecialCharsInMetadataDoNotBreakPrompt` (LOW) — widget with `contentDescription` containing `"`, `[`, `]`, `\` characters. Assert rendered substring still well-formed (no unescaped delimiter that would corrupt the LLM tool-call JSON downstream). Strategy: either escape inline (replace `"` with `\"`) or use a non-quote delimiter — either is acceptable as long as the prompt-parsing path remains intact.
 
 ## 21. Full suite + gates
 
-- [ ] 21.1 `mvn test` — all unit tests pass; the 14 Android-runtime tests stay skipped. Target ≥ 190 tests after this change (current 145 + 46 new).
+- [ ] 21.1 `mvn test` — all unit tests pass; the 14 Android-runtime tests stay skipped. Target ≥ 210 tests after this change (current 145 + 67 new).
 - [ ] 21.2 No `WidgetMopFlags` references remain: `grep -rn 'WidgetMopFlags' src/` ⇒ zero hits.
 - [ ] 21.3 No legacy `reachesMop` / `directlyReachesMop` / `mopMethods` / `handlerReachesMop` in `src/main/`: `grep -rn 'reachesMop\|directlyReachesMop\|mopMethods\|handlerReachesMop' src/main/` ⇒ zero hits.
 - [ ] 21.4 Manual review: every `default: skipValue()` survives only as forward-compat fall-through; no known gh60 field name is dropped.
