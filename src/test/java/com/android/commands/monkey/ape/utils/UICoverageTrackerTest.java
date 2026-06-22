@@ -267,7 +267,8 @@ public class UICoverageTrackerTest {
         String id = UICoverageTracker.widgetId(action);
         assertNotNull("widgetId must not be null for targeted action", id);
         assertFalse("widgetId must not be empty for targeted action", id.isEmpty());
-        assertEquals("//Button[@text=\"OK\"]", id);
+        // INV-COV-06: targeted-action key now incorporates the action type.
+        assertEquals("//Button[@text=\"OK\"]|MODEL_CLICK", id);
     }
 
     @Test
@@ -311,8 +312,8 @@ public class UICoverageTrackerTest {
         tracker.registerScreenElements(state, Arrays.asList(clickOk, clickEmail, back));
 
         // 3 registered elements, all with 0 interactions
-        assertEquals(0, tracker.getInteractionCount(state, "//Button[@text=\"OK\"]"));
-        assertEquals(0, tracker.getInteractionCount(state, "//EditText[@resource-id=\"email\"]"));
+        assertEquals(0, tracker.getInteractionCount(state, "//Button[@text=\"OK\"]|MODEL_CLICK"));
+        assertEquals(0, tracker.getInteractionCount(state, "//EditText[@resource-id=\"email\"]|MODEL_CLICK"));
         assertEquals(0, tracker.getInteractionCount(state, "MODEL_BACK"));
         assertEquals(1.0f, tracker.getCoverageGap(state), 0.001f);
         assertEquals(3, tracker.getTotalElements());
@@ -349,9 +350,9 @@ public class UICoverageTrackerTest {
         // w2 was in old set with 0 count, should be preserved
         // w3 is new
         assertEquals(2, tracker.getTotalElements());
-        assertEquals(0, tracker.getInteractionCount(state, "//Button[@text=\"A\"]"));
-        assertEquals(0, tracker.getInteractionCount(state, "//Button[@text=\"B\"]"));
-        assertEquals(0, tracker.getInteractionCount(state, "//Button[@text=\"C\"]"));
+        assertEquals(0, tracker.getInteractionCount(state, "//Button[@text=\"A\"]|MODEL_CLICK"));
+        assertEquals(0, tracker.getInteractionCount(state, "//Button[@text=\"B\"]|MODEL_CLICK"));
+        assertEquals(0, tracker.getInteractionCount(state, "//Button[@text=\"C\"]|MODEL_CLICK"));
     }
 
     // =======================================================================
@@ -367,7 +368,7 @@ public class UICoverageTrackerTest {
         tracker.registerScreenElements(state, Arrays.asList(clickOk));
         tracker.recordInteraction(state, clickOk);
 
-        assertEquals(1, tracker.getInteractionCount(state, "//Button[@text=\"OK\"]"));
+        assertEquals(1, tracker.getInteractionCount(state, "//Button[@text=\"OK\"]|MODEL_CLICK"));
     }
 
     // =======================================================================
@@ -386,7 +387,7 @@ public class UICoverageTrackerTest {
         tracker.recordInteraction(state, clickOk);
         tracker.recordInteraction(state, clickOk);
 
-        assertEquals(3, tracker.getInteractionCount(state, "//Button[@text=\"OK\"]"));
+        assertEquals(3, tracker.getInteractionCount(state, "//Button[@text=\"OK\"]|MODEL_CLICK"));
     }
 
     // =======================================================================
@@ -451,7 +452,7 @@ public class UICoverageTrackerTest {
             tracker.recordInteraction(state, clickOk);
         }
 
-        assertEquals(5, tracker.getInteractionCount(state, "//Button[@text=\"OK\"]"));
+        assertEquals(5, tracker.getInteractionCount(state, "//Button[@text=\"OK\"]|MODEL_CLICK"));
     }
 
     // =======================================================================
@@ -583,8 +584,86 @@ public class UICoverageTrackerTest {
 
         tracker.recordInteraction(state, action);
 
-        assertEquals(1, tracker.getInteractionCount(state, "//Button[@text=\"Z\"]"));
+        assertEquals(1, tracker.getInteractionCount(state, "//Button[@text=\"Z\"]|MODEL_CLICK"));
         // Only 1 widget registered implicitly
         assertEquals(0.0f, tracker.getCoverageGap(state), 0.001f);
+    }
+
+    // =======================================================================
+    // gh15 A-4: action-type in the key (INV-COV-06), per-Activity aggregation,
+    // and bounded stateData with rollup preservation (INV-COV-05).
+    // =======================================================================
+
+    /** INV-COV-06: same target, different action types → distinct coverage elements. */
+    @Test
+    public void testDistinctActionTypesOnSameTargetAreSeparate() throws Exception {
+        State state = createState("com.example.ScrollAct");
+        Name list = fakeName("//RecyclerView");
+        ModelAction down = createTargetedAction(state, list, ActionType.MODEL_SCROLL_TOP_DOWN);
+        ModelAction up = createTargetedAction(state, list, ActionType.MODEL_SCROLL_BOTTOM_UP);
+
+        tracker.registerScreenElements(state, Arrays.asList(down, up));
+
+        // Two distinct registered elements despite sharing the target.
+        assertEquals(2, tracker.getTotalElements());
+        assertEquals("//RecyclerView|MODEL_SCROLL_TOP_DOWN", UICoverageTracker.widgetId(down));
+        assertEquals("//RecyclerView|MODEL_SCROLL_BOTTOM_UP", UICoverageTracker.widgetId(up));
+
+        // Interacting with one leaves the other uncovered (gap 0.5, not 0.0).
+        tracker.recordInteraction(state, down);
+        assertEquals(0.5f, tracker.getCoverageGap(state), 0.001f);
+    }
+
+    /** Per-Activity reporting aggregates naming fragments of one Activity. */
+    @Test
+    public void testActivityCoverageAggregatesFragments() throws Exception {
+        // Two distinct StateKeys (naming fragments) of the same Activity.
+        Name w1 = fakeName("//Button[@text=\"A\"]");
+        Name w2 = fakeName("//Button[@text=\"B\"]");
+        State frag1 = createState("com.example.Frag", w1);
+        State frag2 = createState("com.example.Frag", w2);
+
+        ModelAction a1 = createTargetedAction(frag1, w1, ActionType.MODEL_CLICK);
+        ModelAction a2 = createTargetedAction(frag2, w2, ActionType.MODEL_CLICK);
+        tracker.registerScreenElements(frag1, Arrays.asList(a1));
+        tracker.registerScreenElements(frag2, Arrays.asList(a2));
+
+        // One widget covered out of two across the Activity's fragments → gap 0.5.
+        tracker.recordInteraction(frag1, a1);
+        assertEquals(0.5f, tracker.getActivityCoverageGap("com.example.Frag"), 0.001f);
+        assertEquals(1.0f, tracker.getActivityCoverageGap("com.example.Other"), 0.001f);
+    }
+
+    /**
+     * INV-COV-05: when stateData exceeds its bound the least-recently-used state is
+     * evicted, but its coverage is preserved in the per-Activity rollup so the reported
+     * per-Activity gap does not regress, even though the per-state entry is gone.
+     */
+    @Test
+    public void testBoundedStateDataPreservesRollupOnEviction() throws Exception {
+        // The "Kept" state, fully covered, then accessed last so it is NOT most-recent
+        // once the fillers arrive.
+        Name kept = fakeName("//Button[@text=\"keep\"]");
+        State keptState = createState("com.example.Kept", kept);
+        ModelAction keptAction = createTargetedAction(keptState, kept, ActionType.MODEL_CLICK);
+        tracker.registerScreenElements(keptState, Arrays.asList(keptAction));
+        tracker.recordInteraction(keptState, keptAction);
+        assertEquals(0.0f, tracker.getCoverageGap(keptState), 0.001f);
+
+        // Flood with > coverageMaxStates distinct states so the LRU evicts "Kept".
+        int fillers = Config.coverageMaxStates + 1;
+        for (int i = 0; i < fillers; i++) {
+            Name fw = fakeName("//Filler[@i=\"" + i + "\"]");
+            State fs = createState("com.example.Filler" + i, fw);
+            tracker.registerScreenElements(fs, Arrays.asList(
+                    createTargetedAction(fs, fw, ActionType.MODEL_CLICK)));
+        }
+
+        // The per-state entry for "Kept" was evicted (unknown → gap 1.0)...
+        assertEquals("evicted state has no live per-state entry",
+                1.0f, tracker.getCoverageGap(keptState), 0.001f);
+        // ...but its coverage survives in the per-Activity rollup (gap stays 0.0).
+        assertEquals("rollup preserves evicted coverage",
+                0.0f, tracker.getActivityCoverageGap("com.example.Kept"), 0.001f);
     }
 }

@@ -45,7 +45,8 @@ public class MopScorer {
             if (w.isTransitiveMop(candidateEventType)) {
                 return Config.mopWeightTransitive;
             }
-            return 0;
+            // resolved-but-unflagged widget: fall through to the activity-level
+            // fallback rather than short-circuiting to 0 (INV-MOP-07).
         }
         if (data.activityHasMop(activity)) {
             return Config.mopWeightActivity;

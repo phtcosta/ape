@@ -247,4 +247,15 @@ public class LlmRouterTest {
         }
         assertFalse("Different seeds should produce different routing decisions", allSame);
     }
+
+    // -------------------------------------------------------------------------
+    // The gh15 A-6 null-screenshot breaker behavior (LlmRouter.java:246-254) is
+    // NOT unit-tested here: it lives inside selectAction(), which loads
+    // AndroidDevice (getDisplayBounds) and therefore android.os.RemoteException,
+    // absent from the JVM test classpath (NoClassDefFoundError, an Error that the
+    // internal try/catch does not intercept). This matches this class's existing
+    // decision to exclude the selectAction full pipeline. Covered by the on-device
+    // gate (tasks.md 6.3c): a secure-window app opens the breaker and stops
+    // per-step retries.
+    // -------------------------------------------------------------------------
 }

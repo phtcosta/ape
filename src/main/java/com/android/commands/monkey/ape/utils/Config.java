@@ -150,11 +150,18 @@ public class Config {
     public static final double llmTopP = Config.getDouble("ape.llmTopP", 0.6);
     public static final int llmTopK = Config.getInteger("ape.llmTopK", 50);
     public static final int llmTimeoutMs = Config.getInteger("ape.llmTimeoutMs", 15000);
-    public static final double llmPercentage = Config.getDouble("ape.llmPercentage", 0.02);
+    // Clamped to [0,1]: a value > 1 would make shouldRouteRandom() always fire
+    // (random.nextDouble() < 1.5 is always true); a negative value is meaningless.
+    public static final double llmPercentage =
+            Math.max(0.0, Math.min(1.0, Config.getDouble("ape.llmPercentage", 0.02)));
     public static final String llmPromptVariant = Config.get("ape.llmPromptVariant", "ape_current");
 
     // gh9-exploration-refactor: UI coverage, activity budget, WTG, dynamic epsilon, heuristic input.
     public static final int coverageBoostWeight = Config.getInteger("ape.coverageBoostWeight", 100);
+    // gh15 A-4: max live per-state entries in UICoverageTracker before eviction.
+    // Evicted entries are folded into the per-Activity rollup, so coverage is not
+    // lost — this only bounds memory (INV-COV-05).
+    public static final int coverageMaxStates = Config.getInteger("ape.coverageMaxStates", 2000);
     public static final int activityBaseBudget = Config.getInteger("ape.activityBaseBudget", 50);
     public static final int activityBudgetPerWidget = Config.getInteger("ape.activityBudgetPerWidget", 5);
     public static final int mopWeightWtg = Config.getInteger("ape.mopWeightWtg", 200);
@@ -164,10 +171,11 @@ public class Config {
     public static final boolean heuristicInput = Config.getBoolean("ape.heuristicInput", true);
 
     // gh11: component triggering (broadcasts, services, activities, content providers)
-    // Probability per step of triggering a component (0.0 = disabled, 0.05 = 5%)
-    // Defaults to 0.05 when mopDataPath is set (components{} available), 0.0 otherwise.
-    public static final double componentPercentage = Config.getDouble("ape.componentPercentage",
-            mopDataPath != null ? 0.05 : 0.0);
+    // Probability per step of triggering a component (0.0 = disabled, 0.05 = 5%).
+    // Default 0.0 (disabled) regardless of mopDataPath: triggering is enabled only by an
+    // explicit ape.componentPercentage, keeping the MOP scorer and component triggering
+    // independent experiment variables (INV-CT-01).
+    public static final double componentPercentage = Config.getDouble("ape.componentPercentage", 0.0);
 
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);

@@ -27,8 +27,32 @@ This delta spec adds priority as a tiebreaker to `greedyPickLeastVisited()`. Whe
 - **WHEN** actions have visitedCounts [1, 1, 3] and priorities [52, 52, 32]
 - **THEN** either of the two tied actions MAY be selected (implementation picks the first encountered)
 
+### Requirement: Per-action decision-source telemetry
+
+`StatefulAgent.resolveNewAction()` SHALL emit one structured `[APE-STEP]` log line for the action returned by `selectNewActionNonnull()` (`StatefulAgent.java:1259`), after the action is finalized and before it is executed. The line SHALL attribute the action to a `decision_source` and include the per-mechanism boosts that applied.
+
+To attribute LLM and other early-return paths that bypass `logActionSelected` (`SataAgent.java:317,328,339,348`), `ModelAction` SHALL carry a `decisionSource` provenance field set at the point of selection. The field SHALL be populated on every return path: SATA strategies, the three LLM hooks (new-state, stagnation, random), the budget-exhausted trivial path, and the null path.
+
+The `decision_source` enum SHALL be: `SATA`, `MOP`, `Coverage`, `LLM`, `Fuzz`, `Menu`, `WTG`, `Component`, `Budget`.
+
+#### Scenario: SATA-selected action attributed
+- **WHEN** `resolveNewAction()` finalizes an action chosen by the SATA epsilon-greedy strategy
+- **THEN** a single `[APE-STEP]` line SHALL be emitted with `decision_source=SATA`
+- **AND** the line SHALL include `step#`, `state`, `action`, and per-mechanism boosts
+
+#### Scenario: LLM early-return attributed
+- **WHEN** the new-state LLM hook returns a non-null action at `SataAgent.java:328` (bypassing `logActionSelected`)
+- **THEN** that action's `decisionSource` SHALL be `LLM`
+- **AND** exactly one `[APE-STEP]` line SHALL be emitted for it with `decision_source=LLM`
+
+#### Scenario: Every step is attributable
+- **WHEN** a run completes
+- **THEN** every executed action SHALL have exactly one corresponding `[APE-STEP]` line
+- **AND** no selection path SHALL produce zero or more than one line for a single action
+
 ## Invariants
 
 - **INV-SEL-01**: `greedyPickLeastVisited()` SHALL always prefer the action with the lowest `visitedCount`, regardless of priority. Priority is ONLY a tiebreaker, never an override.
 - **INV-SEL-02**: When all actions have distinct `visitedCount` values, the behavior SHALL be identical to the pre-change implementation.
 - **INV-SEL-03**: The method SHALL remain O(n) — single pass over actions, no sorting.
+- **INV-SEL-04**: Exactly one `[APE-STEP]` line SHALL be emitted per finally-selected action, covering every selection path including the LLM early-returns and budget/trivial early-returns. The line SHALL carry a `decision_source` from a fixed enum, never a free-form string.

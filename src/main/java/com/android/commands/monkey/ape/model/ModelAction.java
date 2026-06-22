@@ -33,6 +33,16 @@ public class ModelAction extends Action {
     private static final long serialVersionUID = 6905861873801801029L;
     private static final int saturatedVisitedThreshold = 2;
 
+    /**
+     * The mechanism that selected this action, attributed at selection time for
+     * the per-action {@code [APE-STEP]} telemetry (A-5, INV-SEL-04). The SATA chain
+     * sets {@code SATA} via {@code logActionSelected}; the LLM hooks and the
+     * budget-exhausted early-return set their own source explicitly.
+     */
+    public enum DecisionSource {
+        SATA, MOP, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget
+    }
+
     // Resolution information
     private final State state;
     private final Name target;
@@ -42,6 +52,14 @@ public class ModelAction extends Action {
     private GUITreeAction resolvedGUITreeAction;
     private float resolvedSaturation;
     private GUITree resolvedTree;
+
+    // A-5 [APE-STEP] telemetry: decision source + per-mechanism boosts applied in
+    // the most recent adjustActionsByGUITree pass. Boosts are reset each pass.
+    private DecisionSource decisionSource = DecisionSource.SATA;
+    private int mopBoost;
+    private int wtgBoost;
+    private int coverageBoost;
+    private int menuBoost;
 
     public ModelAction(State state, ActionType type) {
         this(state, null, type);
@@ -172,6 +190,38 @@ public class ModelAction extends Action {
         }
         return;
     }
+
+    public DecisionSource getDecisionSource() {
+        return this.decisionSource;
+    }
+
+    public void setDecisionSource(DecisionSource decisionSource) {
+        this.decisionSource = decisionSource;
+    }
+
+    /** Reset the per-mechanism boost telemetry before a fresh scoring pass. */
+    public void resetBoosts() {
+        this.mopBoost = 0;
+        this.wtgBoost = 0;
+        this.coverageBoost = 0;
+        this.menuBoost = 0;
+    }
+
+    public int getMopBoost() { return this.mopBoost; }
+
+    public void setMopBoost(int mopBoost) { this.mopBoost = mopBoost; }
+
+    public int getWtgBoost() { return this.wtgBoost; }
+
+    public void setWtgBoost(int wtgBoost) { this.wtgBoost = wtgBoost; }
+
+    public int getCoverageBoost() { return this.coverageBoost; }
+
+    public void setCoverageBoost(int coverageBoost) { this.coverageBoost = coverageBoost; }
+
+    public int getMenuBoost() { return this.menuBoost; }
+
+    public void setMenuBoost(int menuBoost) { this.menuBoost = menuBoost; }
 
     public GUITreeNode getResolvedNode() {
         return this.resolvedNode;

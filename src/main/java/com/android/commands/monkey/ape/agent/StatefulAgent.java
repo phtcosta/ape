@@ -1262,8 +1262,21 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             newAction = (ModelAction) action;
             newGUITreeAction = newAction.getResolvedGUITreeAction();
             Utils.assertNotNull(newGUITreeAction);
+            // A-5: one decision-attribution line per finally-selected action (INV-SEL-04).
+            Logger.iformat(
+                    "[APE-STEP] step=%d activity=%s state=%s action=%s decision_source=%s "
+                    + "priority=%d mop=%d wtg=%d coverage=%d menu=%d",
+                    getTimestamp(), newState.getActivity(), newState.getStateKey(), newAction,
+                    newAction.getDecisionSource().name(), newAction.getPriority(),
+                    newAction.getMopBoost(), newAction.getWtgBoost(),
+                    newAction.getCoverageBoost(), newAction.getMenuBoost());
             return newAction;
         } else {
+            // Non-model actions (e.g. event-level) carry no per-mechanism boosts; still
+            // attributed to the SATA chain that produced them (INV-SEL-04).
+            Logger.iformat("[APE-STEP] step=%d activity=%s state=%s action=%s decision_source=%s",
+                    getTimestamp(), newState.getActivity(), newState.getStateKey(), action,
+                    ModelAction.DecisionSource.SATA.name());
             return action;
         }
     }
@@ -1296,6 +1309,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     protected void adjustActionsByGUITree() {
         // Rect displayBounds = ape.getDisplayBounds();
         for (ModelAction action : newState.getActions()) {
+            action.resetBoosts();
             int basePriority = getActionBasePriority(action.getType()) << 3;
             action.setPriority(basePriority);
             if (!action.requireTarget()) {
@@ -1355,28 +1369,35 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             int boostedCount = 0;
             int totalTarget = 0;
             int maxBoost = 0;
+            int containmentBoostedCount = 0;
             for (ModelAction action : newState.getActions()) {
                 if (!action.requireTarget() || !action.isValid()) continue;
                 if (!action.isResolvedAt(timestamp)) continue;
                 totalTarget++;
                 GUITreeNode node = action.getResolvedNode();
                 if (node == null) continue;
-                String shortId = MopData.extractShortId(node.getResourceID());
-                int boost = MopScorer.score(activity, shortId, _mopData, MopScorer.eventTypeOf(action));
+                boolean[] containmentHit = new boolean[]{false};
+                int boost = mopBoostWithContainment(
+                        activity, node, MopScorer.eventTypeOf(action), containmentHit);
                 if (boost > 0) {
                     action.setPriority(action.getPriority() + boost);
+                    action.setMopBoost(boost);
                     boostedCount++;
+                    if (containmentHit[0]) containmentBoostedCount++;
                     if (boost > maxBoost) maxBoost = boost;
                 }
             }
-            Logger.iformat("[APE-RV] MOP boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
-                    activity, newState.getStateKey(), boostedCount, totalTarget, maxBoost);
+            Logger.iformat(
+                    "[APE-RV] MOP boost: state=%s#%s, boosted=%d/%d, maxBoost=%d, containment=%d",
+                    activity, newState.getStateKey(), boostedCount, totalTarget, maxBoost,
+                    containmentBoostedCount);
             // gh13 T1.2: OPTIONSMENU gateway boost — make the agent open the menu that leads to MOP.
             int menuBoost = MopScorer.scoreOpenMenu(activity, _mopData);
             if (menuBoost > 0) {
                 for (ModelAction action : newState.getActions()) {
                     if (action.getType() == ActionType.MODEL_MENU) {
                         action.setPriority(action.getPriority() + menuBoost);
+                        action.setMenuBoost(menuBoost);
                         Logger.iformat("[APE-RV] menu boost: state=%s#%s, +%d on MODEL_MENU",
                                 activity, newState.getStateKey(), menuBoost);
                     }
@@ -1399,6 +1420,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 int boost = MopScorer.scoreWtg(activity, shortId, _mopData);
                 if (boost > 0) {
                     action.setPriority(action.getPriority() + boost);
+                    action.setWtgBoost(boost);
                     wtgBoostedCount++;
                     if (boost > wtgMaxBoost) wtgMaxBoost = boost;
                 }
@@ -1423,6 +1445,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 int count = _coverageTracker.getInteractionCount(newState, widgetId);
                 if (count == 0 && decayedWeight > 0) {
                     action.setPriority(action.getPriority() + decayedWeight);
+                    action.setCoverageBoost(decayedWeight);
                     covBoostedCount++;
                 }
             }
@@ -1431,6 +1454,55 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                         newState.getActivity(), newState.getStateKey(), covBoostedCount, covTotalTarget, coverageGap);
             }
         }
+    }
+
+    /**
+     * MOP boost for an action's node, reconciling parent/child widget granularity
+     * (B3, INV-MOP): static analysis may flag a container resource id while the
+     * runtime resolves a child id, or vice versa. Scores the node's own short id
+     * plus the ids of its ancestors (≤ 2 levels up) and descendants (≤ 2 levels
+     * down) via the existing {@link MopScorer#score}, returning the maximum boost.
+     * The depth bound guards against a single MOP child over-boosting a large
+     * container. {@code containmentHit[0]} is set true when the winning boost came
+     * from an ancestor/descendant rather than the exact id (hit-rate telemetry).
+     */
+    private int mopBoostWithContainment(String activity, GUITreeNode node,
+                                        String eventType, boolean[] containmentHit) {
+        int best = MopScorer.score(
+                activity, MopData.extractShortId(node.getResourceID()), _mopData, eventType);
+        // Ancestors, up to 2 levels up.
+        GUITreeNode ancestor = node.getParent();
+        for (int depth = 1; depth <= 2 && ancestor != null; depth++) {
+            int b = MopScorer.score(
+                    activity, MopData.extractShortId(ancestor.getResourceID()), _mopData, eventType);
+            if (b > best) {
+                best = b;
+                containmentHit[0] = true;
+            }
+            ancestor = ancestor.getParent();
+        }
+        // Descendants, up to 2 levels down (children and grandchildren).
+        java.util.Iterator<GUITreeNode> children = node.getChildren();
+        while (children.hasNext()) {
+            GUITreeNode child = children.next();
+            int cb = MopScorer.score(
+                    activity, MopData.extractShortId(child.getResourceID()), _mopData, eventType);
+            if (cb > best) {
+                best = cb;
+                containmentHit[0] = true;
+            }
+            java.util.Iterator<GUITreeNode> grandchildren = child.getChildren();
+            while (grandchildren.hasNext()) {
+                GUITreeNode grandchild = grandchildren.next();
+                int gb = MopScorer.score(
+                        activity, MopData.extractShortId(grandchild.getResourceID()), _mopData, eventType);
+                if (gb > best) {
+                    best = gb;
+                    containmentHit[0] = true;
+                }
+            }
+        }
+        return best;
     }
 
     boolean isTopLeftClick(ModelAction action, Rect displayBounds) {

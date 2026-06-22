@@ -51,33 +51,67 @@ The `components{}` section is optional for backward compatibility. If absent, `M
 
 ### Requirement: MopScorer — Priority Boost
 
-`MopScorer.score(String activity, String shortId, MopData data)` SHALL return an integer priority boost according to the following scale:
+`MopScorer.score(String activity, String shortId, MopData data)` SHALL return an integer priority boost according to the following scale. The boost is additive: it is added to the existing `ModelAction.priority`, never replacing it.
 
 | Condition | Boost |
 |-----------|-------|
-| `data.getWidget(activity, shortId).directMop == true` | +500 |
-| `data.getWidget(activity, shortId).transitiveMop == true` (and not direct) | +300 |
-| `data.getWidget(activity, shortId) == null` AND `data.activityHasMop(activity) == true` | +100 |
-| No match at any level | 0 |
+| `data.getWidget(activity, shortId).directMop == true` | `+mopWeightDirect` (500) |
+| `data.getWidget(activity, shortId).transitiveMop == true` (and not direct) | `+mopWeightTransitive` (300) |
+| widget is `null` OR resolves with all MOP flags false, AND `data.activityHasMop(activity) == true` | `+mopWeightActivity` (100) |
+| no widget MOP flag AND `data.activityHasMop(activity) == false` | `0` |
 
-The boost is additive: it is added to the existing `ModelAction.priority` value, not used as a replacement.
+The activity-level fallback SHALL be evaluated **after** the widget flags and SHALL be reachable for a resolved-but-unflagged widget (B4 fix at `MopScorer.java:48` vs `:50-51`). The early `return 0` for a resolved-but-unflagged widget is removed.
 
 #### Scenario: Direct MOP-reachable widget
-- **WHEN** `MopScorer.score("com.example.MainActivity", "btn_encrypt", data)` is called
-- **AND** `data.getWidget(...)` returns `WidgetMopFlags{directMop=true, transitiveMop=true}`
-- **THEN** the returned boost SHALL be `500`
+- **WHEN** `data.getWidget(...)` returns flags `{directMop=true, transitiveMop=true}`
+- **THEN** the returned boost SHALL be `mopWeightDirect` (500)
 
 #### Scenario: Transitive only
-- **WHEN** `data.getWidget(...)` returns `WidgetMopFlags{directMop=false, transitiveMop=true}`
-- **THEN** the returned boost SHALL be `300`
+- **WHEN** `data.getWidget(...)` returns flags `{directMop=false, transitiveMop=true}`
+- **THEN** the returned boost SHALL be `mopWeightTransitive` (300)
 
-#### Scenario: Activity-level only
+#### Scenario: Resolved-but-unflagged widget falls back to activity
+- **WHEN** `data.getWidget(activity, shortId)` returns a non-null widget with `directMop=false` AND `transitiveMop=false`
+- **AND** `data.activityHasMop(activity)` returns `true`
+- **THEN** the returned boost SHALL be `mopWeightActivity` (100)
+- **AND** the scorer SHALL NOT return `0` before the activity check
+
+#### Scenario: Widget null falls back to activity
 - **WHEN** `data.getWidget(activity, shortId)` returns `null` AND `data.activityHasMop(activity)` returns `true`
-- **THEN** the returned boost SHALL be `100`
+- **THEN** the returned boost SHALL be `mopWeightActivity` (100)
 
 #### Scenario: No match
-- **WHEN** neither the widget nor the activity has any MOP association
+- **WHEN** the widget carries no MOP flag AND the activity has no MOP association
 - **THEN** the returned boost SHALL be `0`
+
+---
+
+### Requirement: Parent/child widget granularity reconciliation
+
+When the exact widget lookup `widgetData.get(activity).get(shortId)` (`MopData.java:620-623`) returns no match, the scorer SHALL attempt to reconcile parent/child granularity using the GUI tree node: it SHALL try the resource ids of the node's ancestors and direct descendants (bounded depth ≤ 2) before declaring no-match. This addresses the case where static analysis flags a container id (e.g., `CardView`) while the runtime resolves a child id (e.g., the inner `LinearLayout`), or vice versa.
+
+The reconciliation requires access to the GUI node, which `MopScorer.score()` does not currently receive. How the node reaches the lookup (a `score()` signature change versus a caller-side resolution in `StatefulAgent.java:1364`) is settled in design.md. The depth bound and a hit-rate log SHALL guard against over-boost (a root container marked by a single MOP child).
+
+#### Scenario: Static flags parent, runtime resolves child
+- **WHEN** the exact lookup for the clicked child id returns no match
+- **AND** an ancestor within depth 2 has a MOP-flagged widget entry
+- **THEN** the scorer SHALL use the ancestor's MOP flags for the boost
+
+#### Scenario: Depth bound respected
+- **WHEN** a MOP-flagged ancestor exists only at depth 3
+- **THEN** the reconciliation SHALL NOT match it (bound is depth ≤ 2)
+- **AND** the scorer SHALL fall through to the activity-level check or `0`
+
+---
+
+### Requirement: eventType normalization in the consumer
+
+The scorer SHALL normalize `eventType` tokens to a single canonical form before comparison so that a producer `snake_case` token (e.g., `long_click`, `item_selected`) and the consumer `camelCase` token (e.g., `longClick`, `itemSelected`) for the same event compare equal (B6). Normalization SHALL be performed in the consumer (`MopData`/`MopScorer`); the producer and the gh13 JSON schema are NOT changed.
+
+#### Scenario: snake_case producer token matches camelCase consumer token
+- **WHEN** the JSON listener `eventType` is `long_click`
+- **AND** the consumer compares it against `longClick`
+- **THEN** the two SHALL compare equal after normalization
 
 ---
 
@@ -127,6 +161,8 @@ These weights are configurable via `ape.properties` but the hardcoded defaults S
 - **INV-MOP-04**: When `Config.mopDataPath` is `null`, the MOP scoring pass SHALL be skipped entirely. The `sata` variant's behaviour SHALL be identical with and without `MopData.java` present in the JAR.
 - **INV-MOP-05**: The WTG scoring pass SHALL execute AFTER the existing MOP scoring pass in `adjustActionsByGUITree()`. Pass order: base priority -> unvisited bonus -> state transition bonus -> MOP boost -> WTG boost -> coverage boost.
 - **INV-MOP-06**: `MopScorer.scoreWtg()` SHALL return 0 when `MopData` is null, when WTG data is absent, when the widget has no matching WTG transition, or when `Config.mopWeightWtg` is 0.
+- **INV-MOP-07**: The activity-level fallback (`+mopWeightActivity`) SHALL be reachable both when widget resolution returns `null` AND when it returns a widget whose MOP flags are all false. A resolved-but-unflagged widget SHALL NOT short-circuit to `0` before the activity check.
+- **INV-MOP-08**: `eventType` comparison in the scorer SHALL be normalization-invariant: a producer `snake_case` token and the consumer `camelCase` token for the same event SHALL compare equal.
 
 ### Requirement: WTG Scoring Pass in adjustActionsByGUITree
 

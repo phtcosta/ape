@@ -39,9 +39,8 @@ The two modes target different exploration bottlenecks:
 
 ### Error
 
-- All errors are handled internally by `LlmRouter.selectAction()` — no exceptions propagate to `StatefulAgent`
-- Network errors and unparseable responses trigger `LlmCircuitBreaker.recordFailure()`
-- Non-network, non-parse errors (null screenshot) are logged but do not trigger circuit breaker failure
+- All errors are handled internally by `LlmRouter.selectAction()` — no exceptions propagate to `StatefulAgent`.
+- Network errors, unparseable responses, AND a null screenshot SHALL trigger `LlmCircuitBreaker.recordFailure()`. A persistent null-screenshot condition therefore opens the breaker and stops further LLM attempts for the recovery window.
 
 ---
 
@@ -54,6 +53,7 @@ The two modes target different exploration bottlenecks:
 - **INV-RTR-05**: The 2 LLM modes are independent: disabling one mode SHALL NOT affect the other. Each mode is gated by its own Config flag.
 - **INV-RTR-06**: `LlmRouter.selectAction()` SHALL explicitly null out large intermediate objects (`pngBytes`, `base64Image`, `messages`) in a `finally` block to prevent memory pressure from accumulated screenshots.
 - **INV-RTR-07**: `totalCalls` SHALL be incremented at the start of each `selectAction()` invocation, counting all attempts regardless of success or failure. The circuit breaker independently limits consecutive failures. There is no call budget limit.
+- **INV-RTR-08**: `Config.llmPercentage` SHALL be clamped to the closed interval `[0.0, 1.0]` at load time. A configured value `< 0` SHALL become `0.0`; a value `> 1` SHALL become `1.0`.
 
 ---
 
@@ -160,7 +160,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 `LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` returns `ModelAction` or `null`. Pipeline:
 
 1. `totalCalls++` — counts this attempt regardless of outcome (per INV-RTR-07).
-2. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → return null.
+2. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → `breaker.recordFailure()`, log `[APE-RV] LLM screenshot capture failed, skipping LLM step`, return null. A persistent null-capture condition therefore opens the breaker and halts retries for the recovery window.
 4. `ImageProcessor.processScreenshot(pngBytes)` → base64 JPEG. If null → return null.
 5. `ApePromptBuilder.build(tree, state, actions, mopData, base64Image, recentActions)` → messages.
 6. `SglangClient.chat(messages)` → `ChatResponse`. If IOException → `breaker.recordFailure()`, return null.
@@ -175,7 +175,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 **Memory cleanup**: Steps 3-9 SHALL be wrapped in a `try-finally` block that nulls out `pngBytes`, `base64Image`, and `messages`.
 
-**Error behavior**: Any step failure → log warning, record circuit breaker failure if network-related, return null (SATA fallback).
+**Error behavior**: Any step failure → log warning, record circuit breaker failure for network-related failures AND for a null screenshot, return null (SATA fallback).
 
 #### Scenario: Full pipeline success
 
@@ -192,12 +192,13 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 - **AND** a log SHALL be emitted: `[APE-RV] LLM no match at (pixelX,pixelY), SATA fallback`
 - **AND** `breaker.recordSuccess()` SHALL be called (LLM worked, just no match)
 
-#### Scenario: Screenshot capture fails
+#### Scenario: Screenshot capture fails trips the breaker
 
-- **WHEN** `ScreenshotCapture.capture()` returns null
+- **WHEN** `ScreenshotCapture.capture()` returns null (secure window)
 - **THEN** `selectAction()` SHALL return null immediately
 - **AND** no HTTP request SHALL be made
-- **AND** circuit breaker SHALL NOT be affected (not a network error)
+- **AND** `breaker.recordFailure()` SHALL be called
+- **AND** after the breaker's failure threshold of consecutive null captures, `shouldRoute*()` SHALL return false (breaker OPEN), stopping per-step retries
 
 #### Scenario: SGLang timeout
 
@@ -365,3 +366,21 @@ When the random hook fires and LLM returns a non-null action, the telemetry mode
 - **AND** `Config.llmPercentage` is `0.7`
 - **THEN** the new-state hook SHALL fire (not the random hook)
 - **AND** only one LLM call SHALL be made for that step
+
+---
+
+### Requirement: Config — llmPercentage clamping
+
+`Config.llmPercentage` SHALL be clamped to `[0.0, 1.0]` at load (`Config.java:153`). This rejects malformed probabilities: a value `> 1.0` would otherwise make `shouldRouteRandom()` always fire (since `random.nextDouble() < 1.5` is always true), and a negative value is meaningless.
+
+#### Scenario: Value above 1 is clamped
+- **WHEN** `ape.properties` sets `ape.llmPercentage=1.5`
+- **THEN** `Config.llmPercentage` SHALL be `1.0`
+
+#### Scenario: Negative value is clamped
+- **WHEN** `ape.properties` sets `ape.llmPercentage=-0.2`
+- **THEN** `Config.llmPercentage` SHALL be `0.0`
+
+#### Scenario: In-range value unchanged
+- **WHEN** `ape.properties` sets `ape.llmPercentage=0.7`
+- **THEN** `Config.llmPercentage` SHALL be `0.7`

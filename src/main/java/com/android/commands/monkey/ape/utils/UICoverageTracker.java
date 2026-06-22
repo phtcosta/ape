@@ -17,6 +17,7 @@ package com.android.commands.monkey.ape.utils;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,18 +32,41 @@ import com.android.commands.monkey.ape.model.State;
  * have been interacted with. The coverage gap metric (fraction of untested widgets, 0.0-1.0)
  * feeds into {@code StatefulAgent.adjustActionsByGUITree()} as a per-action priority boost.
  *
- * <p>Widget identification uses {@code Name.toXPath()} for targeted actions and
- * {@code ActionType.name()} for non-targeted actions (BACK, MENU).
+ * <p>Widget identification incorporates the action type for ALL actions:
+ * {@code Name.toXPath() + "|" + ActionType.name()} for targeted actions and
+ * {@code ActionType.name()} for non-targeted actions (BACK, MENU). Including the type
+ * for targeted actions keeps distinct action types on the same target widget separate
+ * (INV-COV-06).
  *
  * <p>State identification uses the {@link State} object directly as the map key,
  * leveraging the existing {@code equals()}/{@code hashCode()} contract via {@code StateKey}.
+ *
+ * <p>{@code stateData} is a bounded access-ordered map: once it exceeds
+ * {@code Config.coverageMaxStates} live entries, the least-recently-used state is evicted
+ * and its interaction counts are folded into a per-Activity rollup, so eviction bounds
+ * memory without zeroing already-counted coverage (INV-COV-05). Per-state tracking stays
+ * fragment-level for steering; per-Activity reporting aggregates the fragments via
+ * {@link #getActivityCoverageGap(String)}.
  */
 public class UICoverageTracker {
 
-    /** Per-state data: registered widget IDs and their interaction counts. */
-    private final Map<State, Map<String, Integer>> stateData = new HashMap<>();
+    /** Live per-state data: registered widget IDs and their interaction counts (bounded, LRU). */
+    private final Map<State, Map<String, Integer>> stateData =
+            new LinkedHashMap<State, Map<String, Integer>>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<State, Map<String, Integer>> eldest) {
+                    if (size() > Config.coverageMaxStates) {
+                        foldIntoRollup(eldest.getKey(), eldest.getValue());
+                        return true;
+                    }
+                    return false;
+                }
+            };
 
-    /** Total unique widgets registered across all states (telemetry). */
+    /** Per-Activity coverage folded in from evicted states (Activity → widgetId → count). */
+    private final Map<String, Map<String, Integer>> activityRollup = new HashMap<>();
+
+    /** Total unique widgets registered across all live states (telemetry). */
     private int totalElements;
 
     /** Total interactions recorded across all states (telemetry). */
@@ -193,9 +217,73 @@ public class UICoverageTracker {
             return "";
         }
         if (action.requireTarget() && action.getTarget() != null) {
-            return action.getTarget().toXPath();
+            // Include the action type so distinct types on the same target widget
+            // (e.g. SCROLL_DOWN vs SCROLL_UP, CLICK vs LONG_CLICK) stay distinct (INV-COV-06).
+            return action.getTarget().toXPath() + "|" + action.getType().name();
         }
         return action.getType().name();
+    }
+
+    /** Fold an evicted state's interaction counts into its Activity's rollup (INV-COV-05). */
+    private void foldIntoRollup(State state, Map<String, Integer> data) {
+        if (state == null || data == null) {
+            return;
+        }
+        String activity = state.getActivity();
+        if (activity == null) {
+            return;
+        }
+        Map<String, Integer> agg = activityRollup.get(activity);
+        if (agg == null) {
+            agg = new HashMap<>();
+            activityRollup.put(activity, agg);
+        }
+        for (Map.Entry<String, Integer> e : data.entrySet()) {
+            mergeMax(agg, e.getKey(), e.getValue());
+        }
+        // The evicted widgets are no longer live; keep the live-element telemetry honest.
+        totalElements -= data.size();
+    }
+
+    private static void mergeMax(Map<String, Integer> map, String key, Integer value) {
+        int v = value != null ? value : 0;
+        Integer prev = map.get(key);
+        map.put(key, Math.max(prev != null ? prev : 0, v));
+    }
+
+    /**
+     * Reported coverage gap for an Activity, aggregating all of its fragments — both the
+     * live {@code stateData} entries and the evicted ones folded into the rollup — so that
+     * NamingFactory refinement (one Activity → many {@code StateKey}s) does not inflate the
+     * reported gap. Returns 1.0 for an unknown/null Activity with no recorded widgets.
+     */
+    public float getActivityCoverageGap(String activity) {
+        if (activity == null) {
+            return 1.0f;
+        }
+        Map<String, Integer> agg = new HashMap<>();
+        Map<String, Integer> rolled = activityRollup.get(activity);
+        if (rolled != null) {
+            agg.putAll(rolled);
+        }
+        for (Map.Entry<State, Map<String, Integer>> se : stateData.entrySet()) {
+            State s = se.getKey();
+            if (s != null && activity.equals(s.getActivity())) {
+                for (Map.Entry<String, Integer> e : se.getValue().entrySet()) {
+                    mergeMax(agg, e.getKey(), e.getValue());
+                }
+            }
+        }
+        if (agg.isEmpty()) {
+            return 1.0f;
+        }
+        int interacted = 0;
+        for (int count : agg.values()) {
+            if (count > 0) {
+                interacted++;
+            }
+        }
+        return 1.0f - ((float) interacted / agg.size());
     }
 
     /** Returns total unique widgets registered across all states (telemetry). */

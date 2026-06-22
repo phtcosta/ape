@@ -217,6 +217,12 @@ public class SataAgent extends StatefulAgent {
 
     protected void logActionSelected(Action action, SataEventType type) {
         Logger.iformat("Select action %s by strategy %s", action, type);
+        // Every action chosen by the SATA chain is attributed to the SATA source
+        // for the [APE-STEP] telemetry (A-5); the LLM/budget early-returns that
+        // bypass this method set their own source explicitly.
+        if (action != null && action.isModelAction()) {
+            ((ModelAction) action).setDecisionSource(ModelAction.DecisionSource.SATA);
+        }
         logEvent(type);
     }
 
@@ -314,6 +320,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction trivial = selectNewActionForTrivialActivity();
             if (trivial != null) {
                 Logger.iformat("[APE-RV] Budget exhausted for %s, navigating to trivial activity", newState.getActivity());
+                trivial.setDecisionSource(ModelAction.DecisionSource.Budget);
                 return trivial;
             }
             // Fall through to normal SATA chain — budget is advisory, not blocking
@@ -325,6 +332,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "new-state");
             if (result != null) {
+                result.setDecisionSource(ModelAction.DecisionSource.LLM);
                 return result;
             }
         }
@@ -335,6 +343,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "stagnation");
             if (result != null) {
+                result.setDecisionSource(ModelAction.DecisionSource.LLM);
                 graphStableCounter = 0;
                 return result;
             }
@@ -345,6 +354,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "random");
             if (result != null) {
+                result.setDecisionSource(ModelAction.DecisionSource.LLM);
                 return result;
             }
         }

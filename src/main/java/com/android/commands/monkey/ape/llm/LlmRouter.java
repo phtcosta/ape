@@ -244,6 +244,10 @@ public class LlmRouter {
             // Step 1: Capture screenshot
             pngBytes = screenshot.capture(deviceWidth, deviceHeight);
             if (pngBytes == null) {
+                // A null capture (secure window) is a failure, not a free retry: record it so a
+                // persistently-null app opens the breaker and stops per-step LLM attempts.
+                breaker.recordFailure();
+                breakerTrips = breaker.getTripCount();
                 Logger.println("[APE-RV] LLM screenshot capture failed, skipping LLM step");
                 nullCount++;
                 return null;

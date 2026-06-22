@@ -33,7 +33,7 @@ Activities are excluded from triggering because they are already reachable via G
 
 ## Invariants
 
-- **INV-CT-01**: Component triggering SHALL only fire when `Config.componentPercentage > 0` AND `MopData.hasComponents()` is true. When `componentPercentage` is 0.0 (default when no mopDataPath), behavior SHALL be identical to APE-RV without component triggering.
+- **INV-CT-01**: Component triggering SHALL only fire when `Config.componentPercentage > 0` AND `MopData.hasComponents()` is true. When `componentPercentage` is `0.0` (the default, regardless of whether `mopDataPath` is set), behavior SHALL be identical to APE-RV without component triggering.
 - **INV-CT-02**: Component triggering SHALL be probabilistic — on each step in `SataAgent.selectNewActionNonnull()`, a random check against `componentPercentage` determines whether to trigger. The trigger is a side-effect; normal SATA action selection continues regardless.
 - **INV-CT-03**: Only BroadcastReceivers and Services SHALL be triggered. Activities and ContentProviders are excluded.
 
@@ -121,19 +121,25 @@ If the catalog file is absent, an empty catalog SHALL be used (no extras for any
 
 ### Requirement: Config — componentPercentage
 
-`Config.componentPercentage` (double) SHALL control the probability of component triggering per step. Default: `0.05` when `Config.mopDataPath` is set, `0.0` otherwise.
+`Config.componentPercentage` (double) SHALL control the probability of component triggering per step. The default SHALL be `0.0` regardless of `Config.mopDataPath`. Component triggering is enabled only by an explicit `ape.componentPercentage` setting in `ape.properties`.
 
-#### Scenario: Default with mopDataPath
+This decouples component triggering from MOP scoring: setting `ape.mopDataPath` (which enables the MOP scorer) SHALL NOT change `componentPercentage`. An experiment arm that wants both MOP scoring and triggering SHALL set `ape.componentPercentage` explicitly.
+
+Anchor: `Config.java:169-170`. Sole consumer: `SataAgent.java:351-354`.
+
+#### Scenario: Default with mopDataPath set
 - **WHEN** `ape.properties` sets `ape.mopDataPath` but not `ape.componentPercentage`
-- **THEN** `Config.componentPercentage` SHALL default to `0.05` (5%)
+- **THEN** `Config.componentPercentage` SHALL default to `0.0` (triggering disabled)
+- **AND** no component triggering SHALL occur
 
 #### Scenario: Default without mopDataPath
-- **WHEN** `ape.properties` does not set `ape.mopDataPath`
+- **WHEN** `ape.properties` does not set `ape.mopDataPath` and does not set `ape.componentPercentage`
 - **THEN** `Config.componentPercentage` SHALL default to `0.0` (disabled)
 
-#### Scenario: Explicit override
+#### Scenario: Explicit override enables triggering
 - **WHEN** `ape.properties` sets `ape.componentPercentage=0.10`
 - **THEN** `Config.componentPercentage` SHALL be `0.10` regardless of `mopDataPath`
+- **AND** triggering SHALL fire with probability `0.10` per step (subject to INV-CT-01)
 ## Requirements
 ### Requirement: Probabilistic component triggering in SataAgent
 
@@ -215,17 +221,23 @@ If the catalog file is absent, an empty catalog SHALL be used (no extras for any
 
 ### Requirement: Config — componentPercentage
 
-`Config.componentPercentage` (double) SHALL control the probability of component triggering per step. Default: `0.05` when `Config.mopDataPath` is set, `0.0` otherwise.
+`Config.componentPercentage` (double) SHALL control the probability of component triggering per step. The default SHALL be `0.0` regardless of `Config.mopDataPath`. Component triggering is enabled only by an explicit `ape.componentPercentage` setting in `ape.properties`.
 
-#### Scenario: Default with mopDataPath
+This decouples component triggering from MOP scoring: setting `ape.mopDataPath` (which enables the MOP scorer) SHALL NOT change `componentPercentage`. An experiment arm that wants both MOP scoring and triggering SHALL set `ape.componentPercentage` explicitly.
+
+Anchor: `Config.java:169-170`. Sole consumer: `SataAgent.java:351-354`.
+
+#### Scenario: Default with mopDataPath set
 - **WHEN** `ape.properties` sets `ape.mopDataPath` but not `ape.componentPercentage`
-- **THEN** `Config.componentPercentage` SHALL default to `0.05` (5%)
+- **THEN** `Config.componentPercentage` SHALL default to `0.0` (triggering disabled)
+- **AND** no component triggering SHALL occur
 
 #### Scenario: Default without mopDataPath
-- **WHEN** `ape.properties` does not set `ape.mopDataPath`
+- **WHEN** `ape.properties` does not set `ape.mopDataPath` and does not set `ape.componentPercentage`
 - **THEN** `Config.componentPercentage` SHALL default to `0.0` (disabled)
 
-#### Scenario: Explicit override
+#### Scenario: Explicit override enables triggering
 - **WHEN** `ape.properties` sets `ape.componentPercentage=0.10`
 - **THEN** `Config.componentPercentage` SHALL be `0.10` regardless of `mopDataPath`
+- **AND** triggering SHALL fire with probability `0.10` per step (subject to INV-CT-01)
 

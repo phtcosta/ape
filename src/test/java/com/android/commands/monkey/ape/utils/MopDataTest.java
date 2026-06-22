@@ -654,6 +654,29 @@ public class MopDataTest {
         assertNull(d.getWindow(Integer.MAX_VALUE));
     }
 
+    // 15.27 — gh15 A-2 B6: eventType normalization (INV-MOP-08)
+    @Test
+    public void testEventTypeNormalizationSnakeCamelEqual() throws Exception {
+        // snake_case and camelCase of the same event collapse to one canonical token
+        assertEquals(MopData.normalizeEventType("longClick"),
+                MopData.normalizeEventType("long_click"));
+        assertEquals(MopData.normalizeEventType("itemSelected"),
+                MopData.normalizeEventType("item_selected"));
+        assertEquals("click", MopData.normalizeEventType("click"));
+        assertNull(MopData.normalizeEventType(null));
+
+        // end-to-end: the JSON listener emits snake_case; the consumer queries camelCase
+        String reaches = "{\"className\":\"C\",\"methods\":[" +
+                "{\"signature\":\"<C: void h()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true}]}";
+        String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
+                "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
+                "{\"eventType\":\"long_click\",\"handler\":\"<C: void h()>\"}]}]}";
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")));
+        MopData.Widget w = d.getWidget("C", "b");
+        assertTrue("snake_case JSON matches camelCase query", w.isDirectMop("longClick"));
+        assertTrue("snake_case JSON matches snake_case query", w.isDirectMop("long_click"));
+    }
+
     /** Build a minimal complete JSON from raw array/object element strings (no trailing commas). */
     private static String synthetic(String reachElem, String winElems, String transElems, String compObj) {
         StringBuilder sb = new StringBuilder("{\"package\":\"C\",\"mainActivity\":\"C\",\"complete\":true");

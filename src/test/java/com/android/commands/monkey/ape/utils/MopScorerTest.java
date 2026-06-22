@@ -269,7 +269,10 @@ public class MopScorerTest {
     public void testScoreEventTypeAwareMatchesClick() throws Exception {
         MopData d = loadEventTypeFixture();
         assertEquals(Config.mopWeightDirect, MopScorer.score("C", "b", d, "click"));
-        assertEquals(0, MopScorer.score("C", "b", d, "longClick"));
+        // longClick is unflagged on widget b, but activity C has MOP (b's click is
+        // direct), so the score falls back to the activity level (B4, INV-MOP-07).
+        // Pre-B4 this returned 0 (the resolved-but-unflagged short-circuit).
+        assertEquals(Config.mopWeightActivity, MopScorer.score("C", "b", d, "longClick"));
     }
 
     @Test // 17.4
@@ -305,5 +308,60 @@ public class MopScorerTest {
     public void testStateMopDensityNullSafe() {
         // data==null short-circuits before touching the State (the regression-relevant guard I added).
         assertEquals(0, MopScorer.stateMopDensity(null, null));
+    }
+
+    // =========================================================================
+    // gh15 A-2 — B4 activity fallback (INV-MOP-07) and B3 containment foundation
+    // =========================================================================
+
+    /** Build MopData where the given activity has the listed widgets with explicit directMop flags. */
+    private static MopData buildWidgetData(String activity, Map<String, Boolean> idToDirectMop) {
+        Map<String, Map<String, MopData.Widget>> widgetData = new HashMap<>();
+        Map<String, MopData.Widget> widgets = new HashMap<>();
+        for (Map.Entry<String, Boolean> e : idToDirectMop.entrySet()) {
+            MopData.Widget w = new MopData.Widget();
+            w.directMop = e.getValue();
+            widgets.put(e.getKey(), w);
+        }
+        widgetData.put(activity, widgets);
+        Set<String> mopActivities = new HashSet<>();
+        mopActivities.add(activity);
+        return MopData.forTest(widgetData, mopActivities, null);
+    }
+
+    /**
+     * B4 (INV-MOP-07): a resolved-but-unflagged widget falls back to the activity
+     * boost instead of short-circuiting to 0; a null widget in a MOP activity also
+     * falls back; a non-MOP activity still yields 0.
+     */
+    @Test
+    public void testScoreResolvedButUnflaggedFallsBackToActivity() {
+        Map<String, Boolean> ids = new HashMap<>();
+        ids.put("plain", false);   // resolves, no MOP flag
+        ids.put("flagged", true);  // direct MOP
+        MopData data = buildWidgetData("A", ids);
+
+        assertEquals(Config.mopWeightActivity, MopScorer.score("A", "plain", data, null));
+        assertEquals(Config.mopWeightActivity, MopScorer.score("A", "absent", data, null));
+        assertEquals(Config.mopWeightDirect, MopScorer.score("A", "flagged", data, null));
+        assertEquals(0, MopScorer.score("B", "plain", data, null));
+    }
+
+    /**
+     * B3 foundation: static analysis may flag a container id while the runtime
+     * resolves an inner child id. Scoring the container id recovers the direct
+     * boost that the child id alone would miss — which is what the StatefulAgent
+     * containment loop does by scoring {child} ∪ ancestors(≤2) ∪ descendants(≤2).
+     * The full GUITreeNode traversal needs a live tree and is device-gated (6.3).
+     */
+    @Test
+    public void testScoreByContainerVsChildId() {
+        Map<String, Boolean> ids = new HashMap<>();
+        ids.put("card", true);    // container flagged by static analysis
+        ids.put("inner", false);  // child the runtime resolves, unflagged
+        MopData data = buildWidgetData("A", ids);
+
+        assertEquals(Config.mopWeightDirect, MopScorer.score("A", "card", data, null));
+        assertEquals(Config.mopWeightActivity, MopScorer.score("A", "inner", data, null));
     }
 }

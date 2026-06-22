@@ -85,4 +85,43 @@ public class ConfigTest {
     public void testHeuristicInput_defaultIsTrue() {
         assertTrue(Config.heuristicInput);
     }
+
+    // ---------------------------------------------------------------------------
+    // gh15 A-3: componentPercentage default decoupled from mopDataPath (INV-CT-01).
+    // The default is a literal 0.0 (triggering disabled) regardless of mopDataPath;
+    // triggering is enabled only by an explicit ape.componentPercentage. The
+    // "default 0.0 even when mopDataPath is set" path is not unit-testable here
+    // (the field is static final, captured at class load with mopDataPath null in
+    // the JVM env) — it is asserted by the on-device gate: a sata_mop run emits no
+    // "[APE-RV] Triggering" without an explicit ape.componentPercentage.
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testComponentPercentage_defaultIsZero() {
+        assertEquals(0.0, Config.componentPercentage, 1e-9);
+    }
+
+    @Test
+    public void testComponentPercentage_explicitOverrideHonoured() {
+        String prev = Config.get("ape.componentPercentage");
+        try {
+            Config.set("ape.componentPercentage", "0.10");
+            assertEquals(0.10, Config.getDouble("ape.componentPercentage", 0.0), 1e-9);
+        } finally {
+            if (prev != null) {
+                Config.set("ape.componentPercentage", prev);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // gh15 A-6: llmPercentage clamped to [0,1] at load (INV-RTR-08).
+    // Only the in-range default (0.02) is asserted on the field here: the field is
+    // static final, captured once at class load, so the out-of-range cases
+    // (1.5 -> 1.0, -0.2 -> 0.0) cannot be re-evaluated in the same JVM. The clamp
+    // expression (Math.max(0.0, Math.min(1.0, ...))) guarantees those bounds.
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testLlmPercentage_defaultInRangeUnchanged() {
+        assertEquals(0.02, Config.llmPercentage, 1e-9);
+    }
 }

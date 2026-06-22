@@ -393,8 +393,8 @@ public class MopData {
                 direct = flags != null && flags[0];
                 transitive = flags != null && flags[1];
             }
-            orInto(w.directMopByEventType, l.eventType, direct);
-            orInto(w.transitiveMopByEventType, l.eventType, transitive);
+            orInto(w.directMopByEventType, normalizeEventType(l.eventType), direct);
+            orInto(w.transitiveMopByEventType, normalizeEventType(l.eventType), transitive);
             w.directMop |= direct;
             w.transitiveMop |= transitive;
         }
@@ -403,6 +403,28 @@ public class MopData {
     private static void orInto(Map<String, Boolean> map, String key, boolean value) {
         Boolean prev = map.get(key);
         map.put(key, (prev != null && prev) || value);
+    }
+
+    /**
+     * Canonicalize an {@code eventType} token so producer snake_case and consumer
+     * camelCase forms of the same event compare equal (INV-MOP-08): lowercase and
+     * strip separators, so {@code long_click} and {@code longClick} both map to
+     * {@code longclick}. Returns null for null. Applied on both the map-building
+     * side (JSON keys) and the query side (Widget.isDirectMop/isTransitiveMop).
+     */
+    static String normalizeEventType(String eventType) {
+        if (eventType == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder(eventType.length());
+        for (int i = 0; i < eventType.length(); i++) {
+            char c = eventType.charAt(i);
+            if (c == '_' || c == '-') {
+                continue;
+            }
+            sb.append(Character.toLowerCase(c));
+        }
+        return sb.toString();
     }
 
     // -------------------------------------------------------------------------
@@ -753,16 +775,18 @@ public class MopData {
 
         /** Direct-MOP flag for the given event type, falling back to the aggregate (match-any). */
         public boolean isDirectMop(String eventType) {
-            if (eventType != null && directMopByEventType.containsKey(eventType)) {
-                return Boolean.TRUE.equals(directMopByEventType.get(eventType));
+            String key = normalizeEventType(eventType);
+            if (key != null && directMopByEventType.containsKey(key)) {
+                return Boolean.TRUE.equals(directMopByEventType.get(key));
             }
             return directMop;
         }
 
         /** Transitive-MOP flag for the given event type, falling back to the aggregate. */
         public boolean isTransitiveMop(String eventType) {
-            if (eventType != null && transitiveMopByEventType.containsKey(eventType)) {
-                return Boolean.TRUE.equals(transitiveMopByEventType.get(eventType));
+            String key = normalizeEventType(eventType);
+            if (key != null && transitiveMopByEventType.containsKey(key)) {
+                return Boolean.TRUE.equals(transitiveMopByEventType.get(key));
             }
             return transitiveMop;
         }

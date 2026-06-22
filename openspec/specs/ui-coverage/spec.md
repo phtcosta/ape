@@ -49,7 +49,7 @@ The coverage boost is **per-action**, not uniform. Each action receives a boost 
 - `totalInteractions: int` — sum of all interaction counts (consumer: logging/telemetry)
 
 ### Side-Effects
-- **[Memory]**: Widget sets and interaction counts grow monotonically during the session. No pruning is performed.
+- **[Memory]**: `stateData` is bounded to `Config.coverageMaxStates` live entries; the least-recently-updated entries are evicted after their counts are folded into the per-Activity rollup (INV-COV-05), so memory is bounded without zeroing reported coverage.
 
 ### Error
 - None. All methods are null-safe and return default values for unknown states.
@@ -60,25 +60,54 @@ The coverage boost is **per-action**, not uniform. Each action receives a boost 
 - **INV-COV-02**: For a given state, the coverage gap SHALL monotonically decrease (or remain equal) as interactions are recorded. It SHALL NOT increase unless new widgets are registered for the same state.
 - **INV-COV-03**: `getCoverageGap(unknownState)` SHALL return 1.0 for any state that has not been registered.
 - **INV-COV-04**: `widgetId(action)` SHALL return a non-null, non-empty string for any non-null `ModelAction`.
+- **INV-COV-05**: `stateData` SHALL be bounded. When the bound is reached, the tracker SHALL evict entries but SHALL preserve the per-Activity rollup so that already-counted coverage is not zeroed mid-run.
+- **INV-COV-06**: The coverage key for a target action SHALL incorporate the action type, so two distinct action types on the same target widget are tracked as distinct coverage elements.
 
 ## ADDED Requirements
 
 ### Requirement: UICoverageTracker — Widget Registration
 
-`UICoverageTracker.registerScreenElements(State state, List<ModelAction> actions)` SHALL register all actions of the state as trackable widgets. The widget ID for each action is computed as:
-- For actions with a target (`requireTarget() == true`): `action.getTarget().toXPath()`
+`UICoverageTracker.registerScreenElements(State state, List<ModelAction> actions)` SHALL register all actions of the state as trackable widgets. The widget ID for each action SHALL incorporate the action type for ALL actions:
+- For actions with a target (`requireTarget() == true`): `action.getTarget().toXPath() + "|" + action.getType().name()`
 - For actions without a target (BACK, MENU): `action.getType().name()`
 
-Registration is idempotent — re-registering the same state replaces the widget set.
+Including the action type for target actions ensures distinct action types on the same target widget are tracked separately (INV-COV-06). Registration is idempotent — re-registering the same state replaces the widget set while preserving prior interaction counts for widgets still present.
 
-#### Scenario: Register widgets for a new state
-- **WHEN** `registerScreenElements(stateA, actions)` is called for a state with actions targeting `//Button[@text="OK"]`, `//EditText[@resource-id="email"]`, and `MODEL_BACK`
-- **THEN** the state shall have 3 registered elements
-- **AND** element IDs SHALL be `"//Button[@text=\"OK\"]"`, `"//EditText[@resource-id=\"email\"]"`, and `"MODEL_BACK"`
+#### Scenario: Register distinct action types on the same target
+- **WHEN** `registerScreenElements(stateA, actions)` is called for a state where the same `RecyclerView` target has both `MODEL_SCROLL_DOWN` and `MODEL_SCROLL_UP` actions
+- **THEN** the state SHALL have two distinct registered elements
+- **AND** their IDs SHALL be `"<xpath>|MODEL_SCROLL_DOWN"` and `"<xpath>|MODEL_SCROLL_UP"`
 
-#### Scenario: Re-register same state with different widgets
+#### Scenario: Non-target action keyed by type
+- **WHEN** the state has a `MODEL_BACK` action
+- **THEN** its element ID SHALL be `"MODEL_BACK"`
+
+#### Scenario: Re-register preserves counts for present widgets
 - **WHEN** `registerScreenElements(stateA, newActions)` is called after a previous registration
-- **THEN** the state SHALL have the new widget set (replacing the old one)
+- **THEN** widgets still present SHALL retain their prior interaction counts
+- **AND** widgets no longer present SHALL be dropped
+
+### Requirement: Per-Activity coverage aggregation for reporting
+
+Coverage reporting SHALL aggregate per Activity, collapsing the `naming`-level fragments that `StateKey` (`StateKey.java:47,57`) produces for one Activity. The reported coverage for an Activity SHALL be computed over the union of its fragments' registered widgets and interactions, so that finer NamingFactory refinement does not inflate the reported gap. The per-`State` tracking used for steering MAY remain fragment-level; only the reported metric aggregates.
+
+#### Scenario: Fragments of one Activity report as one
+- **WHEN** `MainActivity` has fragmented into 4 `StateKey`s via naming refinement
+- **THEN** the reported coverage for `MainActivity` SHALL aggregate all 4 fragments' widgets and interactions
+- **AND** the reported gap SHALL NOT count the same Activity four times
+
+### Requirement: Bounded stateData
+
+`UICoverageTracker.stateData` SHALL be bounded to a configurable maximum number of entries. When the bound is exceeded, the tracker SHALL evict the least-recently-updated entries, after folding their coverage into the per-Activity rollup so that eviction does not zero already-counted coverage mid-run (INV-COV-05). This replaces the current unbounded growth (`StatefulAgent.java:163`, no prune).
+
+#### Scenario: Eviction preserves the rollup
+- **WHEN** `stateData` reaches its bound and an entry is evicted
+- **THEN** the evicted entry's interaction counts SHALL already be folded into the Activity rollup
+- **AND** the reported per-Activity coverage SHALL NOT decrease due to the eviction
+
+#### Scenario: Bound configurable
+- **WHEN** the configured bound is `N`
+- **THEN** `stateData` SHALL hold at most `N` live entries at any time
 
 ### Requirement: UICoverageTracker — Interaction Recording
 
