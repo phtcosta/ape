@@ -6,7 +6,7 @@ Depends on change `mop-parser-fidelity` (#0) — apply that first; it restores t
 
 - [ ] 1.1 Delete the `if (data.activityHasMop(activity)) return Config.mopWeightActivity;` branch in `MopScorer.score` (`MopScorer.java:51-53`) so unflagged/null widgets return `0`. Keep the `data == null` guard, the direct/transitive branches, and the event-type fallback.
 - [ ] 1.2 Delete `Config.mopWeightActivity` (`Config.java`) and every reference: the `MopScorer` Javadoc weight list, the `mop-guidance` comment in `MopData`, and any `ape.properties` documentation. No dead references or `# removed` comments (P3).
-- [ ] 1.3 Update `MopScorerTest`: resolved-but-unflagged widget on a MOP activity → `0`; null widget on a MOP activity → `0`; direct → `500`; transitive → `300` (unchanged).
+- [ ] 1.3 Update `MopScorerTest`: rewrite the four assertions that currently expect `Config.mopWeightActivity` — `MopScorerTest.java:275` (`score("C","b",d,"longClick")`), `:344` (`score("A","plain",data,null)`), `:345` (`score("A","absent",data,null)`), `:365` (`score("A","inner",data,null)`) — to expect `0`. Keep direct → `500` and transitive → `300` assertions unchanged. After deleting `Config.mopWeightActivity` these references must not survive (P3); the grep gate in 3.2 confirms it.
 - [ ] 1.4 Run `/sdd-test-run MopScorerTest`
 
 ## 2. MOP-target greedy short-circuit (action-selection)

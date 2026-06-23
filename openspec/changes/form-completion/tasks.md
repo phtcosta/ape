@@ -22,16 +22,18 @@
 - [ ] 3.1 Implement `selectSubmitCandidate(State)`: return the highest-`getMopBoost()>0` action if present (INV-FORM-05); else a lone enabled `Button` action; else a clickable whose visible `getText()` matches a fixed submit-word set; else `null` (INV-FORM-04) — implements `form-completion` "Prioritize a single submit candidate"
 - [ ] 3.2 Resolve OQ2: pin the submit-word set and case sensitivity; keep it a small fixed list, no classifier
 - [ ] 3.3 Add unit tests: MOP-boosted target wins over word heuristic; lone Button chosen without MOP; submit-word clickable chosen over a non-matching sibling; `null`/`submit=none` when nothing matches
-- [ ] 3.4 Run `/sdd-test-run ape`
+- [ ] 3.4 Guard the `mop-discriminative-boost` short-circuit (`SataAgent.selectNewActionEpsilonGreedyRandomly`): while `hasUnfilledEditText(state)` holds, the unvisited-`mopBoost>0` short-circuit SHALL skip the form submit candidate, so the MOP target is not clicked on an empty form (INV-FORM-06, design D7). Add a selection unit test: with an unfilled `EditText` and an unvisited `mopBoost=500` submit, the short-circuit does NOT pick the submit; once fields are filled, it does. (Composes with #2 — apply after that change.)
+- [ ] 3.5 Run `/sdd-test-run ape`
 
 ## 4. Form-completion boost pass
 
 - [ ] 4.1 Add the form-completion boost pass at the end of `StatefulAgent.adjustActionsByGUITree()` (after the coverage pass, `StatefulAgent.java:1434`): if `!hasUnfilledEditText(...)` return (INV-FORM-01); else boost each unfilled-`EditText` action by `W_FILL` and the single `selectSubmitCandidate` by `W_SUBMIT`, setting `formBoost` on each; boosts strictly positive (INV-FORM-02) — implements `form-completion` "Form-completion boost pass placement and provenance"
 - [ ] 4.2 Resolve OQ4: set `W_FILL`/`W_SUBMIT` magnitudes and submit-vs-fields ordering relative to the MOP `+500/+300` scale
 - [ ] 4.3 Emit one log line per form state: `[APE-RV] FORM boost: state=<activity>#<key>, fields=<n>, submit=<id|none>`; no line when context absent (INV-FORM-01)
-- [ ] 4.4 Add unit tests where feasible (provenance recorded; no-op and no log line when context absent; priority only increases) — covers INV-FORM-01/02
-- [ ] 4.5 Run `/sdd-doc-code <FormCompletion-or-StatefulAgent-path>`
-- [ ] 4.6 Run `/sdd-test-run ape`
+- [ ] 4.4 Extend the per-step `[APE-STEP]` line in `StatefulAgent.resolveNewAction()` (`StatefulAgent.java:1266-1272`): add a `form=%d` field after `menu=%d`, passing `newAction.getFormBoost()`, so the form boost has the same per-step visibility as `mop`/`wtg`/`coverage`/`menu`
+- [ ] 4.5 Add unit tests where feasible (provenance recorded; no-op and no log line when context absent; priority only increases) — covers INV-FORM-01/02
+- [ ] 4.6 Run `/sdd-doc-code <FormCompletion-or-StatefulAgent-path>`
+- [ ] 4.7 Run `/sdd-test-run ape`
 
 ## 5. Deterministic fill in checkInput()
 

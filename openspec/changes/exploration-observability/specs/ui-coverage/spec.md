@@ -9,10 +9,10 @@ The dump SHALL be invoked from the agent teardown path (`SataAgent.tearDown()`, 
 For each tracked state the line format SHALL be:
 
 ```
-[APE-RV] UICOV state=<stateKey> discovered=<W> interacted=<D> gap=<1-D/W> byType=Click:a/b,Edit:c/d,Button:e/f mopReach=<0|1>
+[APE-RV] UICOV state=<stateKey> discovered=<W> interacted=<D> gap=<1-D/W> byType=MODEL_CLICK:a/b,MODEL_LONG_CLICK:c/d mopReach=<0|1>
 ```
 
-where `discovered` (`W`) is the count of registered widgets for the state, `interacted` (`D`) is the count of distinct registered widgets whose interaction count is greater than 0, `gap` is `1 - D/W` (or `1.0` when `W == 0`), `byType` is a per-action-type breakdown of `interacted/discovered` derived from the element-key convention `"<xpath>|<TYPE>"` / `"<TYPE>"` owned by `widgetId()` (`UICoverageTracker.java:215`), and `mopReach` is `1` when the supplied predicate returns true for the state and `0` otherwise.
+where `discovered` (`W`) is the count of registered widgets for the state, `interacted` (`D`) is the count of distinct registered widgets whose interaction count is greater than 0, `gap` is `1 - D/W` (or `1.0` when `W == 0`), and `mopReach` is `1` when the supplied predicate returns true for the state and `0` otherwise. `byType` is a per-action-type breakdown of `interacted/discovered`, where the type label is the `TYPE` segment of each element key — the `ActionType.name()` value (`MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_*`, …), parsed as the substring after the last `|` or the whole key when no `|` is present (the `widgetId()` convention, `UICoverageTracker.java:215`). The breakdown distinguishes **action types**, not widget classes: there is no `Edit` or `Button` action type — a clicked `EditText` and a clicked `Button` are both `MODEL_CLICK`. Only types actually registered for the state appear; the order follows `ActionType` declaration order.
 
 The dump SHALL be read-only: it SHALL NOT register widgets, record interactions, evict entries, or mutate `stateData`, `activityRollup`, or any interaction count. It MAY additionally emit one line for a state at the moment that state is evicted from the bounded `stateData` (LRU eviction), so that states evicted before teardown are still reported once.
 
@@ -26,8 +26,8 @@ The dump SHALL be read-only: it SHALL NOT register widgets, record interactions,
 - **THEN** its `[APE-RV] UICOV` line SHALL report `discovered=8 interacted=0 gap=1.0`
 
 #### Scenario: byType breakdown reflects per-action-type coverage
-- **WHEN** a state registered 2 `Click` widgets (1 interacted), 1 `Edit` widget (0 interacted), and 1 `Button` widget (1 interacted)
-- **THEN** the line SHALL include `byType=Click:1/2,Edit:0/1,Button:1/1`
+- **WHEN** a state registered 3 `MODEL_CLICK` actions (2 interacted) and 1 `MODEL_LONG_CLICK` action (0 interacted)
+- **THEN** the line SHALL include `byType=MODEL_CLICK:2/3,MODEL_LONG_CLICK:0/1`
 
 #### Scenario: mopReach reflects activityHasMop
 - **WHEN** the supplied predicate returns true for the state's Activity (i.e. `_mopData != null && _mopData.activityHasMop(activity)`)

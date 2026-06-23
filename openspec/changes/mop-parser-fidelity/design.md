@@ -1,6 +1,6 @@
 ## Context
 
-`MopData` parses the static-analysis JSON into the widget→MOP-flag map that `MopScorer` reads. The parse step `MopData.parseWindows` (`MopData.java:308-320`) stores each base activity's widgets in a `Map<String idName, Widget>` and overwrites on duplicate keys (last-write-wins), and it stores empty-`idName` widgets under the `""` key. The cmpmop measurement (169 JCA APKs, `docs/20260622_investigacao_mop.md` §1/§3) shows this discards 1,165 / 2,578 flagged widgets across 12 of the 19 substrate APKs, demoting their `+500`/`+300` boosts to the uniform `+100` activity fallback before `MopScorer` runs. A second defect in the same parser (`MopData.java:460-478`) keys the WTG convenience view by the full window name (e.g. `MainActivity#OptionsMenu`) while the runtime consumer (`StatefulAgent` WTG pass) queries by base activity (`newState.getActivity()` = `MainActivity`), so menu-sourced steering edges are never found.
+`MopData` parses the static-analysis JSON into the widget→MOP-flag map that `MopScorer` reads. The parse step `MopData.parseWindows` (`MopData.java:308-320`) stores each base activity's widgets in a `Map<String idName, Widget>` and overwrites on duplicate keys (last-write-wins), and it stores empty-`idName` widgets under the `""` key. The cmpmop measurement (169 JCA APKs, `docs/20260622_investigacao_mop.md` §1/§3) shows this discards 1,165 / 2,578 flagged widgets across 12 of the 19 substrate APKs, demoting their `+500`/`+300` boosts to the uniform `+100` activity fallback before `MopScorer` runs. A second defect in the same parser (`MopData.java:460-478`) keys the WTG convenience view by the full window name (e.g. `MainActivity#OptionsMenu`) while the runtime consumer (`StatefulAgent` WTG pass) queries by base activity (`newState.getActivity()` = `MainActivity`), so menu-sourced steering edges are never found. Realigning the key to the base activity also requires re-pointing the OPTIONSMENU-gateway precompute (`MopData.precomputeMopOptionsMenus`, `:597`), the view's other consumer, to the base key — otherwise it would lose the gh13 menu-gateway boost (see D3a).
 
 This change is consumer-side only; the rvsec-gator JSON contract is unchanged. It precedes change #2 (discriminative boost), which depends on the restored substrate.
 
@@ -24,6 +24,7 @@ static_analysis.json
 | `MopData.parseWindows` | Build the widget map with collision/empty-id retention | `windows[]` JSON, `bySignature` | `widgetData` map |
 | `MopData.mopRank` (new, private) | Rank a widget's MOP strength for collision resolution | `Widget` | `int` (2=direct, 1=transitive, 0=none) |
 | `MopData` WTG view construction (`:460-478`) | Build `wtgTransitions` keyed/targeted by base activity | `transitions[]`, `windowsById` | `wtgTransitions` map |
+| `MopData.precomputeMopOptionsMenus` (`:597`) | Query the base-keyed view for the OPTIONSMENU-gateway set | `windows`, `wtgTransitions`, `mopActivities` | `Set<baseActivity>` |
 | `MopData.getWidget` / `getWtgTransitions` | Lookup by base activity + shortId | `activity`, `shortId` | `Widget` / `List<WtgTransition>` (unchanged) |
 
 ## Mapping: Spec -> Implementation -> Test
@@ -31,10 +32,11 @@ static_analysis.json
 | Requirement | Implementation | Test |
 |-------------|---------------|------|
 | `mop-guidance` MODIFIED "MopData — Static Analysis JSON Loader" (collision retention) | `parseWindows` collision branch + `mopRank` | `MopDataTest` collision case (synthetic JSON, two same-`idName` widgets) |
-| INV-MOP-09 (strongest-flag-wins) | `parseWindows` only overwrites when `mopRank(incoming) > mopRank(resident)` | `MopDataTest` flagged-not-overwritten |
-| INV-MOP-10 (empty-id not bucketed) | `parseWindows` skips `idName.isEmpty()`, increments `droppedFlaggedNoId` | `MopDataTest` empty-id absent + counter |
+| INV-MOP-19 (strongest-flag-wins) | `parseWindows` only overwrites when `mopRank(incoming) > mopRank(resident)` | `MopDataTest` flagged-not-overwritten |
+| INV-MOP-20 (empty-id not bucketed) | `parseWindows` skips `idName.isEmpty()`, increments `droppedFlaggedNoId` | `MopDataTest` empty-id absent + counter |
 | `wtg-navigation` MODIFIED "MopData — WTG Parsing (Pass 3)" (base-activity keying) | `wtgTransitions.put(baseActivity(source.name), …)`, `WtgTransition(targetActivity = baseActivity(target.name))` | `MopDataTest`/`MopScorerTest` menu-transition reachable by base activity |
 | INV-WTG-04 (base-activity key + target) | `baseActivity()` applied to source key and stored target | `MopScorerTest` scoreWtg fires for `#OptionsMenu`-sourced edge queried by base activity |
+| INV-WTG-05 (all consumers query by base activity) | `precomputeMopOptionsMenus` queries `wtgTransitions.get(activity)` (base) not `get(w.name)` (`:597`) | `MopDataTest.testActivitiesWithMopOptionsMenuPrecomputed` (gateway "C" still qualifies) |
 
 ## Goals / Non-Goals
 
@@ -57,6 +59,8 @@ static_analysis.json
 **D2 — Empty `idName` = do not bucket, count and log (vs. attribute matching).** `extractShortId(resourceID)` never yields `""` for a runtime widget that has a resource id, so the `""` bucket is unreachable by `getWidget`; bucketing only risks overwriting and hides the loss. Skip storage, increment `droppedFlaggedNoId`, and log the per-load total. Matching these widgets by class/text/bounds is deferred (P1) — it is a new matcher, not a fidelity fix.
 
 **D3 — W: base-activity the WTG source key AND the stored target (vs. base-activity only the source, or fix at query time).** `activityHasMop` and the runtime consumer both key by base activity; the WTG view must align on both ends. Keying the source by `baseActivity(source.name)` makes menu-window edges (`MainActivity#OptionsMenu`) reachable when on `MainActivity`; storing `baseActivity(target.name)` makes `activityHasMop(targetActivity)` resolve. Doing it at storage (one source of truth) is simpler than base-activity-izing at every `scoreWtg` query.
+
+**D3a — Re-point the OPTIONSMENU-gateway precompute to the base key.** `MopData.precomputeMopOptionsMenus` (`MopData.java:597`) is a *second* consumer of `wtgTransitions`, and it currently looks the view up by the full `#OptionsMenu` window name. Once D3 collapses the source key to the base activity, that lookup would return `null` and the gh13 menu-gateway boost (`activityHasMopOptionsMenu` → `scoreOpenMenu`, +`mopWeightOpenMenu`) would silently stop firing. The precompute already computes the base activity locally (`activity = w.name` truncated at `#`); the fix is to query `wtgTransitions.get(activity)` instead of `get(w.name)`. Consequence: the gateway test widens from "a *menu-item* click navigates to a MOP activity" to "*any* base-activity click edge navigates to a MOP activity" — a deliberate over-approximation that never misses a real gateway and, at worst, applies the open-menu boost where a non-menu widget also reaches the MOP path. Keeping a separate suffix-keyed index just to preserve that distinction is more machinery for a heuristic boost (P1); the existing test `MopDataTest.testActivitiesWithMopOptionsMenuPrecomputed` already pins the recovered behavior.
 
 **D4 — `mopRank` is a private static helper in `MopData`.** Single use site (the collision branch); no public surface.
 
@@ -94,6 +98,7 @@ JSON → `parseWindows` builds `widgetData`/`wtgTransitions` with base-activity 
 - **[Empty-id widgets still unscorable at the widget level]** → accepted and made visible via the drop counter; affects labnex/duress (no resource ids). Not fixable by id; deferred.
 - **[Base-activity WTG keying merges menu and base transitions under one key]** → intended: when on the base activity (menu open or not) all those widgets are candidates; `activityHasMop` is already base-keyed.
 - **[Menu scenario behavior change in `wtg-navigation` spec]** → the existing `#OptionsMenu`-keyed scenario is updated; this is a correction of a latent bug (consumer never queried that key), not a regression.
+- **[OPTIONSMENU-gateway precompute would break without D3a]** → re-keying the source to the base activity orphans the precompute's `get(w.name)` lookup; D3a re-points it to the base key. The widened gateway test (any base-activity edge vs. menu-only) is a deliberate over-approximation — it never under-qualifies, and the worst case is a redundant open-menu boost. `MopDataTest.testActivitiesWithMopOptionsMenuPrecomputed` guards the recovered behavior.
 
 ## Testing Strategy
 
@@ -105,6 +110,13 @@ JSON → `parseWindows` builds `widgetData`/`wtgTransitions` with base-activity 
 | Unit (regression) | No-collision / no-empty-id JSON yields identical map | existing `MopDataTest` cases stay green | — |
 
 Tests load synthetic JSON through the real parser (as the gh13 parser tests do — `MopDataTest` §15), since the collision/empty-id logic lives in `parseWindows` and is bypassed by `MopData.forTest`.
+
+## Cross-change reconciliation (gh13, still active)
+
+Change `gh13-mopdata-schema-v2` is not yet archived, so the base `mop-guidance` spec still shows its pre-gh13 form. Two collisions must be resolved at archive time:
+
+- **Invariant numbering.** gh13 occupies `INV-MOP-07`..`INV-MOP-18`. This change therefore numbers its new invariants `INV-MOP-19` (strongest-flag-wins) and `INV-MOP-20` (empty-id not bucketed) to avoid clashing with gh13's `INV-MOP-09`/`INV-MOP-10`.
+- **Shared requirement.** Both this change and gh13 MODIFY `MopData — Static Analysis JSON Loader`. The full-requirement restatement in `specs/mop-guidance/spec.md` here is anchored on the pre-gh13 base and still carries legacy `reachesMop` wording in two inherited scenarios. Before archiving, this change MUST be rebased onto gh13's archived version of that requirement (which uses the `reachesTarget` vocabulary and INV-MOP-07/08), grafting only the two new paragraphs (collision retention, empty-id) and their scenarios — so the rebase does not silently revert gh13's vocabulary fix. Archive gh13 first.
 
 ## Open Questions
 

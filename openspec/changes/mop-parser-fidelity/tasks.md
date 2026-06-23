@@ -6,7 +6,7 @@ Scope: consumer-side parser fix in `MopData` (`src/main/java/com/android/command
 
 - [ ] 1.1 Add private `static int mopRank(Widget w)` to `MopData` returning `2` if `directMop`, `1` if `transitiveMop`, else `0` (Decision D1).
 - [ ] 1.2 Add a private `int droppedFlaggedNoId` accumulator field on `MopData` (reset per `load`).
-- [ ] 1.3 Rewrite the widget-store loop in `parseWindows` (`MopData.java:313-320`): keep `mopActivities.add(activity)` for flagged widgets; for `idName == null || idName.isEmpty()` do NOT store, and increment `droppedFlaggedNoId` when the widget is flagged (INV-MOP-10); for non-empty `idName` store only when no resident exists or `mopRank(incoming) > mopRank(resident)` (INV-MOP-09, strongest-flag-wins, order-independent).
+- [ ] 1.3 Rewrite the widget-store loop in `parseWindows` (`MopData.java:313-320`): keep `mopActivities.add(activity)` for flagged widgets; for `idName == null || idName.isEmpty()` do NOT store, and increment `droppedFlaggedNoId` when the widget is flagged (INV-MOP-20); for non-empty `idName` store only when no resident exists or `mopRank(incoming) > mopRank(resident)` (INV-MOP-19, strongest-flag-wins, order-independent).
 - [ ] 1.4 Emit one summary line at the end of `load()` when `droppedFlaggedNoId > 0`: `[APE-RV] MopData: dropped <N> flagged widgets with no resource id` (P4: state-of-now wording).
 - [ ] 1.5 Add unit tests in `MopDataTest` (synthetic JSON through the real parser, per gh13 §15 pattern): (a) duplicate `shortId` flagged-then-unflagged → `getWidget` returns flagged; (b) duplicate `shortId` unflagged-then-flagged → `getWidget` returns flagged (order-independent); (c) empty-`idName` flagged widget → no `""` entry, `droppedFlaggedNoId` incremented, `activityHasMop` still true; (d) no-collision JSON → map identical to current behavior (regression).
 - [ ] 1.6 Run `/sdd-test-run MopDataTest`
@@ -14,8 +14,9 @@ Scope: consumer-side parser fix in `MopData` (`src/main/java/com/android/command
 ## 2. WTG base-activity keying (wtg-navigation, sub-fix W)
 
 - [ ] 2.1 In the WTG convenience-view construction (`MopData.java:460-478`): key `wtgTransitions` by `baseActivity(source.name)` (currently `source.name`) and construct each `WtgTransition` with `targetActivity = baseActivity(target.name)` (currently `target.name`) (INV-WTG-04, Decision D3).
-- [ ] 2.2 Add unit tests: (a) `MainActivity#OptionsMenu`-sourced click edge is returned by `getWtgTransitions("…MainActivity")` and the `#OptionsMenu` key returns empty (`MopDataTest`); (b) a `#`-suffixed target reduces to its base so `MopScorer.scoreWtg` finds `activityHasMop(base)` and returns `mopWeightWtg` (`MopScorerTest`).
-- [ ] 2.3 Run `/sdd-test-run MopScorerTest`
+- [ ] 2.2 Re-point the OPTIONSMENU-gateway precompute to the base key (INV-WTG-05, Decision D3a): in `precomputeMopOptionsMenus` (`MopData.java:597`) query `wtgTransitions.get(activity)` (the base activity already computed at `:586`) instead of `wtgTransitions.get(w.name)`. Without this, D3 silently disables the gh13 menu-gateway boost.
+- [ ] 2.3 Add unit tests: (a) `MainActivity#OptionsMenu`-sourced click edge is returned by `getWtgTransitions("…MainActivity")` and the `#OptionsMenu` key returns empty (`MopDataTest`); (b) a `#`-suffixed target reduces to its base so `MopScorer.scoreWtg` finds `activityHasMop(base)` and returns `mopWeightWtg` (`MopScorerTest`); (c) confirm `MopDataTest.testActivitiesWithMopOptionsMenuPrecomputed` (gateway "C" via a `C#OptionsMenu`-sourced edge) still passes after 2.1+2.2 — it is the regression guard for D3a.
+- [ ] 2.4 Run `/sdd-test-run MopScorerTest`
 
 ## 3. Integration & Verification
 

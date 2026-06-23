@@ -2,7 +2,7 @@
 
 ### Requirement: MopScorer — Priority Boost
 
-`MopScorer.score(String activity, String shortId, MopData data)` SHALL return an integer priority boost according to the following scale. The boost is additive: it is added to the existing `ModelAction.priority`, never replacing it.
+`MopScorer.score(String activity, String shortId, MopData data, String eventType)` SHALL return an integer priority boost according to the following scale. The boost is additive: it is added to the existing `ModelAction.priority`, never replacing it. (The `eventType` parameter selects the per-event-type MOP flag and is unchanged by this change.)
 
 | Condition | Boost |
 |-----------|-------|
@@ -32,6 +32,22 @@ The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged
 #### Scenario: No match
 - **WHEN** the widget carries no MOP flag AND the activity has no MOP association
 - **THEN** the returned boost SHALL be `0`
+
+### Requirement: Parent/child widget granularity reconciliation
+
+When the exact widget lookup `widgetData.get(activity).get(shortId)` (`MopData.java:620-623`) returns no match, the scorer SHALL attempt to reconcile parent/child granularity using the GUI tree node: it SHALL try the resource ids of the node's ancestors and direct descendants (bounded depth ≤ 2) before declaring no-match. This addresses the case where static analysis flags a container id (e.g., `CardView`) while the runtime resolves a child id (e.g., the inner `LinearLayout`), or vice versa.
+
+The reconciliation requires access to the GUI node, which `MopScorer.score()` does not currently receive. How the node reaches the lookup (a `score()` signature change versus a caller-side resolution in `StatefulAgent.java:1364`) is settled in design.md. The depth bound and a hit-rate log SHALL guard against over-boost (a root container marked by a single MOP child).
+
+#### Scenario: Static flags parent, runtime resolves child
+- **WHEN** the exact lookup for the clicked child id returns no match
+- **AND** an ancestor within depth 2 has a MOP-flagged widget entry
+- **THEN** the scorer SHALL use the ancestor's MOP flags for the boost
+
+#### Scenario: Depth bound respected
+- **WHEN** a MOP-flagged ancestor exists only at depth 3
+- **THEN** the reconciliation SHALL NOT match it (bound is depth ≤ 2)
+- **AND** the scorer SHALL fall through to `0` (the activity-level fallback is removed by this change)
 
 ### Requirement: Config.mopDataPath Flag
 

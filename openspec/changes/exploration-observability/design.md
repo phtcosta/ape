@@ -90,8 +90,8 @@ SataAgent.tearDown()                              [Item #4 — coverage dump]
 ### `UICoverageTracker.dump(Function<State,Boolean> mopReach)` (or equivalent predicate)
 
 - **Preconditions**: called once, at teardown; `mopReach` non-null. (An overload may also be called on LRU eviction for a single state.)
-- **Behavior**: for each `State` in `stateData`, compute `discovered = totalRegistered(state)`, `interacted = distinct widgets with count > 0`, `gap = 1 - interacted/discovered` (or `1.0` when `discovered == 0`), a per-action-type breakdown `byType=Type:interacted/discovered,...` derived from the `"<xpath>|<TYPE>"` / `"<TYPE>"` element keys, and `mopReach.apply(state) ? 1 : 0`. Emit one line:
-  `[APE-RV] UICOV state=<stateKey> discovered=<W> interacted=<D> gap=<1-D/W> byType=Click:a/b,Edit:c/d,Button:e/f mopReach=<0|1>`
+- **Behavior**: for each `State` in `stateData`, compute `discovered = totalRegistered(state)`, `interacted = distinct widgets with count > 0`, `gap = 1 - interacted/discovered` (or `1.0` when `discovered == 0`), a per-action-type breakdown `byType=<TYPE>:interacted/discovered,...` where `<TYPE>` is the `ActionType.name()` segment of the `"<xpath>|<TYPE>"` / `"<TYPE>"` element key (e.g. `MODEL_CLICK`, `MODEL_LONG_CLICK`; action types, not widget classes), and `mopReach.apply(state) ? 1 : 0`. Emit one line:
+  `[APE-RV] UICOV state=<stateKey> discovered=<W> interacted=<D> gap=<1-D/W> byType=MODEL_CLICK:a/b,MODEL_LONG_CLICK:c/d mopReach=<0|1>`
 - **Postconditions**: `stateData`, `activityRollup`, and all counts are unchanged (read-only). One line per tracked state.
 - **Errors**: none; null/empty states are skipped or reported with `gap=1.0`.
 

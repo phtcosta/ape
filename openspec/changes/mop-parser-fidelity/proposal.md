@@ -6,7 +6,7 @@
 
 - **Widget collision** (`mop-guidance`): on `idName` collision within a base activity, retain the widget with the strongest MOP flag (`direct > transitive > unflagged`) instead of last-write-wins, so a flagged widget is never overwritten by an unflagged sibling. Recovers ~730 flagged widgets.
 - **Empty `idName`** (`mop-guidance`): stop bucketing widgets whose `idName` is empty (the `""` key is unreachable at runtime — `extractShortId(resourceID)` never yields `""` for a real widget). Count the flagged-but-id-less widgets dropped and log the per-load total for observability. These ~435 widgets remain unaddressable by resource id by their nature; matching them by class/text is explicitly out of scope (P1).
-- **WTG keying** (`wtg-navigation`, sub-fix W): key the `wtgTransitions` view by base activity (strip the `#`-suffix from the source window name) and store transition targets as base activities, so `MopScorer.scoreWtg`'s base-activity query (`shortId == widgetName && activityHasMop(targetActivity)`) matches. Recovers ~34 silenced steering edges across keepitup/sambalite/syncthingfork.
+- **WTG keying** (`wtg-navigation`, sub-fix W): key the `wtgTransitions` view by base activity (strip the `#`-suffix from the source window name) and store transition targets as base activities, so `MopScorer.scoreWtg`'s base-activity query (`shortId == widgetName && activityHasMop(targetActivity)`) matches. Recovers ~34 silenced steering edges across keepitup/sambalite/syncthingfork. Re-point the OPTIONSMENU-gateway precompute (`precomputeMopOptionsMenus`) to the same base key so the gh13 menu-gateway boost survives the re-keying (it would otherwise silently break).
 - No new configuration flags. Output is byte-identical where no `idName` collisions, empty ids, or `#`-suffixed WTG windows exist. Not **BREAKING** — recovers signal that was being discarded; no consumer API changes.
 
 ## Capabilities
@@ -22,7 +22,7 @@
 
 ## Impact
 
-- **Components:** `MopData.parseWindows` (`MopData.java:308-320`, widget map) and the WTG convenience-view construction (`MopData.java:460-478`). Consumers `MopScorer.score`/`scoreWtg` and `StatefulAgent.adjustActionsByGUITree` are unchanged — they read `getWidget`/`getWtgTransitions` exactly as today.
+- **Components:** `MopData.parseWindows` (`MopData.java:308-320`, widget map), the WTG convenience-view construction (`MopData.java:460-478`), and the OPTIONSMENU-gateway precompute (`MopData.precomputeMopOptionsMenus`, `:597`, re-pointed to the base key so it keeps consuming the re-keyed view — sub-fix W). Consumers `MopScorer.score`/`scoreWtg`/`scoreOpenMenu` and `StatefulAgent.adjustActionsByGUITree` are unchanged — they read `getWidget`/`getWtgTransitions`/`activityHasMopOptionsMenu` exactly as today.
 - **No producer change:** the rvsec-gator JSON contract (`static-analysis-entrypoints`) is untouched; this is a consumer-side parsing fix.
 - **Sequencing:** precedes change #2 (discriminative boost) — #2 makes the `+500`/`+300` boost decisive, which requires the flagged widgets restored here; without #0, ~half are already overwritten before scoring.
 - **Validation:** unit-testable via `MopData.forTest(...)` without a device (collision resolution, empty-id non-pollution + drop counter, base-activity WTG lookup); end-to-end in the 19-APK fair-test re-run (`docs/20260622_investigacao_mop.md` §7.5).

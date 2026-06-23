@@ -37,6 +37,7 @@ The behavior is realized as a new "form-completion boost" pass that runs after t
 - **INV-FORM-03**: Deterministic fill in `ApeAgent.checkInput()` (bypassing the `ape.inputRate` toss) SHALL apply ONLY when the form-completion context holds for the current state. Outside that context `checkInput()` SHALL retain the `RandomHelper.toss(inputRate)` gate.
 - **INV-FORM-04**: At most one submit candidate SHALL be boosted per state. `selectSubmitCandidate(state)` SHALL return at most one `ModelAction` (or none).
 - **INV-FORM-05**: When the state carries an MOP-boosted target action (`getMopBoost() > 0`), the submit candidate SHALL be that action (the highest-`mopBoost` one); the text-word heuristic SHALL be used only when no MOP-boosted target exists on the state.
+- **INV-FORM-06**: While the form-completion context holds (≥1 unfilled `EditText` on the state), the MOP-target greedy short-circuit introduced by `mop-discriminative-boost` (`SataAgent.selectNewActionEpsilonGreedyRandomly`) SHALL NOT select the form's submit candidate. Deterministic field-filling takes precedence; the submit candidate becomes eligible for the short-circuit (or any other selection path) only once no unfilled `EditText` remains. This prevents the submit handler — typically the `mopBoost>0` action (INV-FORM-05) — from being clicked on an empty form, which would waste the click and the monitored-operation attempt.
 
 ## ADDED Requirements
 
@@ -106,6 +107,12 @@ When the form-completion context holds, the system SHALL select exactly one subm
 - **THEN** the `"Encrypt"` clickable SHALL be the submit candidate
 - **AND** the `"Cancel"` clickable SHALL NOT receive the submit boost
 
+#### Scenario: MOP submit candidate is not clicked before fields are filled
+- **WHEN** the form-completion context holds, the submit candidate has `getMopBoost() == 500` and is unvisited, and at least one `EditText` on the state is still unfilled
+- **THEN** the MOP-target greedy short-circuit SHALL NOT select the submit candidate on that step (INV-FORM-06)
+- **AND** selection SHALL proceed so an unfilled `EditText` action is filled first
+- **AND** once all `EditText` fields are filled, the submit candidate SHALL become selectable
+
 #### Scenario: No identifiable submit candidate
 - **WHEN** the form-completion context holds, no action has `getMopBoost() > 0`, there is no lone `Button`, and no clickable's text matches a submit-word
 - **THEN** the pass SHALL boost only the unfilled `EditText` actions
@@ -115,6 +122,8 @@ When the form-completion context holds, the system SHALL select exactly one subm
 
 The form-completion boost SHALL be applied by a pass in `StatefulAgent.adjustActionsByGUITree()` that runs after the coverage pass, mirroring the coverage pass structure. The pass SHALL set `ModelAction.formBoost` on each boosted action via an accessor mirroring `setCoverageBoost`/`setMopBoost`, so that per-action telemetry can report the form boost alongside the MOP, WTG, coverage, and menu boosts. The pass SHALL emit at most one log line per state, and only when the form-completion context holds.
 
+The per-step `[APE-STEP]` decision-attribution line (`StatefulAgent.resolveNewAction`, `StatefulAgent.java:1266-1272`) SHALL include a `form=<formBoost>` field alongside the existing `mop=`/`wtg=`/`coverage=`/`menu=` fields, reporting `ModelAction.getFormBoost()` for the selected action, so the form boost has the same per-step visibility as the other passes.
+
 #### Scenario: Pass runs after coverage and records provenance
 - **WHEN** the form-completion context holds and the pass boosts an unfilled `EditText` action by the field boost
 - **THEN** that action's `getFormBoost()` SHALL equal the applied field boost
@@ -123,6 +132,10 @@ The form-completion boost SHALL be applied by a pass in `StatefulAgent.adjustAct
 #### Scenario: Single log line per form state
 - **WHEN** the form-completion context holds for a state with three unfilled `EditText` fields and one submit candidate with id `btn_encrypt`
 - **THEN** exactly one line SHALL be emitted: `[APE-RV] FORM boost: state=<activity>#<key>, fields=3, submit=btn_encrypt`
+
+#### Scenario: Form boost reported on the per-step line
+- **WHEN** the selected action carries a form boost of `W_FILL` set by the pass
+- **THEN** the `[APE-STEP]` line for that step SHALL include `form=<W_FILL>` alongside the `mop=`/`wtg=`/`coverage=`/`menu=` fields
 
 #### Scenario: No log line when context absent
 - **WHEN** the form-completion context is `false` for the state

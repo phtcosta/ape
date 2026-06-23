@@ -53,7 +53,9 @@ SataAgent.selectNewActionEpsilonGreedyRandomly:
 
 **D3 — `activityHasMop` predicate stays; only its `+100` scoring use is deleted.** It still serves WTG target tests and `stateMopDensity`. Deleting the predicate would break those.
 
-**D4 — `INV-MOP-07` removal.** The invariant mandated the activity fallback; it is obsolete. It lives in the `mop-guidance` top-level Invariants section (not inside a requirement), so the delta records its removal in the MODIFIED "MopScorer — Priority Boost" narrative; the Invariants section is reconciled at sync/archive.
+**D4 — `INV-MOP-07` removal.** This change removes the invariant that mandates the activity-level fallback. It lives in the base `mop-guidance` top-level Invariants section (not inside a requirement), so the delta records its removal in the MODIFIED "MopScorer — Priority Boost" narrative; the Invariants section is reconciled at sync/archive.
+
+**Caveat — `INV-MOP-07` is double-booked with active gh13.** In the *base* spec `INV-MOP-07` is the activity fallback (the one removed here). The still-active `gh13-mopdata-schema-v2` change re-uses the same number `INV-MOP-07` for a *different* meaning (read the gh60 `directlyReachesTarget`/`reachesTarget` keys). So the removal here targets the activity-fallback invariant **by semantics, not by number**: if gh13 archives first, the activity-fallback `INV-MOP-07` no longer exists under that number and this change's removal becomes a no-op on an already-renumbered invariant — verify at archive time that the activity-fallback guarantee is gone and that gh13's reachability `INV-MOP-07` is preserved (renumber one of them if both must coexist). The `grep "INV-MOP-07"` gate in tasks 3.2 runs over `src/` (implementation references), which is unaffected by the spec-side numbering clash.
 
 ## API Design
 
@@ -78,6 +80,7 @@ SataAgent.selectNewActionEpsilonGreedyRandomly:
 ## Risks / Trade-offs
 
 - **[Short-circuit could over-exploit MOP widgets, starving breadth]** → bounded to unvisited targets (fires once each); if measured to harm coverage, fall back to D2's conservative alternative (remove `+100` only). Recorded in Open Questions.
+- **[Short-circuit may click a form submit before its fields are filled]** → when the `mopBoost>0` target is a form submit control, clicking it on an empty form wastes the monitored-operation attempt. The `form-completion` change adds a guard (INV-FORM-06) that skips the submit candidate in this short-circuit while the state has unfilled `EditText`s. This change ships first; the guard lands with `form-completion`.
 - **[Removing `+100` zeroes MOP-activity widgets with no flagged sibling]** → intended; those carried no MOP signal. Navigation toward MOP activities remains the WTG/menu job.
 - **[INV-MOP-07 lives outside a requirement]** → removal noted in prose; archive step reconciles the Invariants section.
 
