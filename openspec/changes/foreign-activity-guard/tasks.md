@@ -3,7 +3,7 @@
 ## 1. Config and pure seam
 
 - [ ] 1.1 Add `Config.foreignActivityGuard` (`ape.foreignActivityGuard`, default true) with a current-state comment (P4)
-- [ ] 1.2 Add the static `SYSTEM_INTERACTION_PACKAGES` set (`com.android.packageinstaller`, `com.android.permissioncontroller`) and the pure static `shouldModel(String pkg, boolean filterAccepts, Set<String> systemWhitelist)` to `MonkeySourceApe` (null pkg → true)
+- [ ] 1.2 Add the static `SYSTEM_INTERACTION_PACKAGES` set (`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller` — the Google-image entry is what the RVSec AVD actually shows; the whitelist is guard-local only, it does not grant permissions or change `checkAppActivity`) and the pure static `shouldModel(String pkg, boolean filterAccepts, Set<String> systemWhitelist)` to `MonkeySourceApe` (null pkg → true)
 
 ## 2. Guard wiring (MonkeySourceApe)
 
@@ -13,7 +13,7 @@
 
 ## 3. Unit tests (JVM, pure seam)
 
-- [ ] 3.1 `shouldModel` matrix: in-package accepted; foreign rejected; each of the two whitelist packages accepted; `com.android.systemui` NOT whitelisted (rejected → guard BACKs out); null pkg accepted (INV-EXPL-20/-21)
+- [ ] 3.1 `shouldModel` matrix: in-package accepted; foreign rejected; each of the three whitelist packages accepted (`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`); `com.android.systemui` NOT whitelisted (rejected → guard BACKs out); null pkg accepted (INV-EXPL-20/-21)
 - [ ] 3.2 Log-throttle semantics: first deflection of a package signals log, repeat does not (plain `Set` contract test alongside the seam)
 - [ ] 3.3 Run the new test class via `mvn test -Dtest=MonkeySourceApeForeignGuardTest`
 - [ ] 3.4 Flag-off assertion (INV-EXPL-22): with `Config.foreignActivityGuard=false` the guard block is bypassed — no BACK deflection, no guard log line; event generation is identical to the pre-guard path (the flag gates the whole block, `shouldModel` itself has no flag)
