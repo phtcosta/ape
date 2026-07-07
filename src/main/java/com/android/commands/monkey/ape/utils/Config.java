@@ -176,6 +176,11 @@ public class Config {
 
     // gh9-exploration-refactor: UI coverage, activity budget, WTG, dynamic epsilon, heuristic input.
     public static final int coverageBoostWeight = Config.getInteger("ape.coverageBoostWeight", 100);
+    // mop-fairtest: sibling-state-depriority — priority subtracted (floored at 1) from redundant,
+    // already-interacted actions in an over-fragmented activity (Model state count >
+    // maxStatesPerActivity). Default 24; 0 = disabled. Threshold reuses maxStatesPerActivity (no new
+    // flag). Steering/target-less/novel actions are exempt (INV-COV-10/11/12).
+    public static final int siblingStatePenalty = Config.getInteger("ape.siblingStatePenalty", 24);
     // gh15 A-4: max live per-state entries in UICoverageTracker before eviction.
     // Evicted entries are folded into the per-Activity rollup, so coverage is not
     // lost — this only bounds memory (INV-COV-05).

@@ -1051,6 +1051,33 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 : ModelAction.DecisionSource.SATA;
     }
 
+    /**
+     * sibling-state-depriority (pure, INV-COV-10/11): whether an action should be de-prioritized as a
+     * redundant sibling re-interaction. True only when the pass is enabled ({@code penalty > 0}), the
+     * activity is over-fragmented ({@code siblings > maxStates}), and the action is a target-carrying,
+     * non-steering ({@code mopBoost <= 0 && wtgBoost <= 0}), already-interacted (non-novel) widget.
+     * Target-less, steering, and activity-novel actions are exempt.
+     */
+    static boolean shouldPenalizeSibling(int penalty, int siblings, int maxStates,
+            boolean requireTarget, int mopBoost, int wtgBoost, boolean interacted) {
+        if (penalty <= 0 || siblings <= maxStates) {
+            return false;
+        }
+        if (!requireTarget || mopBoost > 0 || wtgBoost > 0) {
+            return false;
+        }
+        return interacted;
+    }
+
+    /**
+     * sibling-state-depriority (pure, INV-COV-12): the penalized priority — {@code priority - penalty}
+     * floored at 1 so the action stays roulette-visible (priority 0 would drop it from the priority
+     * mass entirely, a stronger-than-intended silent exclusion).
+     */
+    static int siblingPenalizedPriority(int priority, int penalty) {
+        return Math.max(1, priority - penalty);
+    }
+
     private static final String[] PROVIDER_OPERATIONS = {"query", "insert", "update"};
 
     /**
@@ -1568,6 +1595,39 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             if (covBoostedCount > 0) {
                 Logger.iformat("[APE-RV] Coverage boost: state=%s#%s, boosted=%d/%d, gap=%.2f",
                         newState.getActivity(), newState.getStateKey(), covBoostedCount, covTotalTarget, coverageGap);
+            }
+        }
+        // Sibling-depriority pass (sibling-state-depriority) — MUST run after the WTG pass (so
+        // mopBoost/wtgBoost are populated for the exemptions) and immediately after the coverage-boost
+        // pass. In an over-fragmented activity (Model state count > maxStatesPerActivity), subtract a
+        // fixed penalty (floored at 1) from redundant, already-interacted, non-steering widget actions
+        // so the roulette mass shifts off sibling re-interactions. Novel/MOP/WTG-steered/target-less
+        // actions are exempt; disabled at siblingStatePenalty=0 (INV-COV-10/11/12).
+        if (Config.siblingStatePenalty > 0) {
+            String activity = newState.getActivity();
+            ActivityNode an = getGraph().getActivityNode(activity);
+            int siblings = an == null ? 0 : an.getStates().size();
+            if (siblings > Config.maxStatesPerActivity) {
+                int penalized = 0;
+                int total = 0;
+                for (ModelAction action : newState.getActions()) {
+                    if (!action.isValid() || !action.isResolvedAt(timestamp)) continue;
+                    total++;
+                    boolean interacted = action.requireTarget()
+                            && _coverageTracker.hasActivityInteraction(
+                                    activity, UICoverageTracker.widgetId(action));
+                    if (shouldPenalizeSibling(Config.siblingStatePenalty, siblings,
+                            Config.maxStatesPerActivity, action.requireTarget(),
+                            action.getMopBoost(), action.getWtgBoost(), interacted)) {
+                        action.setPriority(siblingPenalizedPriority(
+                                action.getPriority(), Config.siblingStatePenalty));
+                        penalized++;
+                    }
+                }
+                if (penalized > 0) {
+                    Logger.iformat("[APE-RV] Sibling depriority: state=%s#%s, penalized=%d/%d, siblings=%d",
+                            activity, newState.getStateKey(), penalized, total, siblings);
+                }
             }
         }
         // Form-completion pass — when the state carries ≥1 unfilled EditText, raise the priority
