@@ -7,7 +7,7 @@
 ## 2. Wiring
 
 - [x] 2.1 `MonkeySourceApe.java:480`: replace `mUiAutomation.waitForIdle(1000, 1000 * 10)` with `mUiAutomation.waitForIdle(1000, Config.maxIdleTimeoutMs)` — the `getRootInActiveWindow()` capture at `:484` stays unconditional (best-effort wait, unchanged)
-- [x] 2.2 `StatefulAgent.java:576`: replace the hardcoded `>= 10` seconds break threshold with `>= Config.maxIdleTimeoutMs / 1000` so the "window stuck animating" break stays coupled to the ceiling
+- [x] 2.2 Replace the hardcoded `>= 10` seconds "window stuck animating" break threshold with `>= Config.maxIdleTimeoutMs / 1000` in **both** slow-capture retry loops — `StatefulAgent.java:576` (`refreshNewState`) and `:640` (`checkAndRefreshNewState`) — so neither break can diverge from the ceiling (both compare the same `getRootInActiveWindowSlow` duration; `refreshNewState`'s is load-bearing, `checkAndRefreshNewState`'s has extra exits but is coupled by construction)
 
 ## 3. Unit tests (JVM)
 

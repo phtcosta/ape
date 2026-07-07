@@ -637,7 +637,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                     Logger.iprintln("Checking trivial new state: NOT top naming equivalent.");
                 }
             }
-            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= 10) {
+            // idle-timeout-cap: same "window stuck animating" break as refreshNewState, over the same
+            // getRootInActiveWindowSlow duration — derived from the same flag (÷1000) so the ceiling
+            // and both retry-loop breaks stay coupled (INV-EXPL-25). Default 10s. This loop also has
+            // retry/early-exit paths, but the break must not diverge from the ceiling by construction.
+            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= Config.maxIdleTimeoutMs / 1000) {
                 break;
             }
         }
