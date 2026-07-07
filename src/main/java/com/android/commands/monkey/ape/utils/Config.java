@@ -90,6 +90,10 @@ public class Config {
     public static final int flushImagesThreshold = Config.getInteger("ape.flushImagesThreshold", 10);
     public static final int imageWriterCount = Config.getInteger("ape.imageWriterCount", 3);
     public static final long defaultGUIThrottle = Config.getLong("ape.defaultGUIThrottle", 200L);
+    // idle-timeout-cap: global timeout (ms) of the getRootInActiveWindowSlow idle wait
+    // and (÷1000) the refreshNewState "window stuck animating" break threshold. Default
+    // 10000 == the former `1000 * 10` literal; 10000/1000 == 10 == the former `>= 10`.
+    public static final long maxIdleTimeoutMs = Config.getLong("ape.maxIdleTimeoutMs", 10000L);
     public static final long swipeDuration = Config.getLong("ape.swipeDuration", 200);
     public static final double fuzzingRate = Config.getDouble("ape.fuzzingRate", 0.02D);
     public static final long refectchInfoWaitingInterval = Config.getLong("ape.refectchInfoWaitingInterval", 50);

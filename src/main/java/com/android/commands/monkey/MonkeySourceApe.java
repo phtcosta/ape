@@ -20,6 +20,7 @@ import static com.android.commands.monkey.ape.utils.Config.defaultGUIThrottle;
 import static com.android.commands.monkey.ape.utils.Config.doFuzzing;
 import static com.android.commands.monkey.ape.utils.Config.fuzzingRate;
 import static com.android.commands.monkey.ape.utils.Config.imageWriterCount;
+import static com.android.commands.monkey.ape.utils.Config.maxIdleTimeoutMs;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoCount;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoWaitingInterval;
 import static com.android.commands.monkey.ape.utils.Config.swipeDuration;
@@ -477,7 +478,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     public AccessibilityNodeInfo getRootInActiveWindowSlow() {
         try {
-            mUiAutomation.waitForIdle(1000, 1000 * 10);
+            mUiAutomation.waitForIdle(1000, maxIdleTimeoutMs);
         } catch (TimeoutException e) {
             e.printStackTrace();
         }

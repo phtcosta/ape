@@ -573,7 +573,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 GUITreeBuilder.release(removed);
                 model.release(removed);
             }
-            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= 10) {
+            // idle-timeout-cap: break threshold derives from the same flag as the
+            // getRootInActiveWindowSlow ceiling (÷1000), so lowering the ceiling keeps
+            // this "window stuck animating" break firing (INV-EXPL-25). Default 10s.
+            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= Config.maxIdleTimeoutMs / 1000) {
                 break;
             }
         }

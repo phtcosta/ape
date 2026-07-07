@@ -142,4 +142,21 @@ public class ConfigTest {
     public void testSaveGUITreeToXmlEveryStep_defaultIsFalse() {
         assertFalse(Config.saveGUITreeToXmlEveryStep);
     }
+
+    // ---------------------------------------------------------------------------
+    // idle-timeout-cap 1.1: ape.maxIdleTimeoutMs parametrizes the getRootInActive
+    // WindowSlow idle-wait ceiling and (÷1000) the refreshNewState break threshold.
+    // The default 10000 is byte-identical to the former `1000 * 10` literal, and
+    // the derived break threshold 10000/1000 == 10 matches the former `>= 10`
+    // literal (INV-EXPL-23, INV-EXPL-25).
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testMaxIdleTimeoutMs_defaultIs10000() {
+        assertEquals(10000L, Config.maxIdleTimeoutMs);
+    }
+
+    @Test
+    public void testMaxIdleTimeoutMs_derivedBreakSecondsIs10() {
+        assertEquals(10L, Config.maxIdleTimeoutMs / 1000);
+    }
 }
