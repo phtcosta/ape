@@ -1020,17 +1020,49 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
     }
 
+    /**
+     * activity-frontier Lever A (pure). Returns {@code weight} when {@code shortId} matches the
+     * {@code widgetName} of some WTG transition whose {@code targetActivity} is NOT in
+     * {@code visitedTargets}; 0 otherwise (or when {@code weight <= 0} / {@code shortId} is empty).
+     * Mirrors {@code MopScorer.scoreWtg}'s resource-id match but keys on unvisited-ness instead of
+     * MOP-reachability (INV-WTG-06). Testable without the Graph via the visited-target set.
+     */
+    static int frontierBoost(String shortId, java.util.List<MopData.WtgTransition> transitions,
+            Set<String> visitedTargets, int weight) {
+        if (weight <= 0 || shortId == null || shortId.isEmpty() || transitions == null) {
+            return 0;
+        }
+        for (MopData.WtgTransition t : transitions) {
+            if (shortId.equals(t.widgetName) && !visitedTargets.contains(t.targetActivity)) {
+                return weight;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * activity-frontier (INV-CT-07): the decision source for a non-model action's {@code [APE-STEP]}
+     * line. {@code EVENT_TRIGGER_ACTIVITY} (the stagnation launcher) is a {@code Component} decision;
+     * every other non-model action stays on the {@code SATA} chain that produced it. Pure.
+     */
+    static ModelAction.DecisionSource nonModelDecisionSource(ActionType type) {
+        return type == ActionType.EVENT_TRIGGER_ACTIVITY
+                ? ModelAction.DecisionSource.Component
+                : ModelAction.DecisionSource.SATA;
+    }
+
     private static final String[] PROVIDER_OPERATIONS = {"query", "insert", "update"};
 
     /**
      * gh13 T1.4+T1.5: build the round-robin trigger candidates from MOP data. Package-visible
      * and side-effect-free so it can be unit-tested without the Android runtime.
      *
-     * Rules (INV-MOP-15): skip components with reachesTarget=false; skip activities unless
-     * Config.activityTriggerEnabled; skip non-exported activities. Each surviving component
-     * yields one tuple per (intentFilter × action); a component with no filters but non-empty
-     * targetMethods yields one component-name-only tuple (filter=null, action=null). Each
-     * reachable provider with non-null authorities yields three operation tuples.
+     * Rules (INV-MOP-15): the probabilistic tuple pool holds only BroadcastReceivers and Services
+     * (ContentProviders keep their separate provider path; activities are handled exclusively by
+     * the stagnation launcher — EVENT_TRIGGER_ACTIVITY, decision_source=Component — and never enter
+     * this pool). Skip components with reachesTarget=false. Each surviving component yields one
+     * tuple per (intentFilter × action); a component with no filters but non-empty targetMethods
+     * yields one component-name-only tuple (filter=null, action=null).
      */
     static java.util.List<TriggerTuple> buildTriggerTuples(MopData data) {
         java.util.List<TriggerTuple> tuples = new java.util.ArrayList<>();
@@ -1038,12 +1070,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         java.util.List<ComponentInfo> candidates = new java.util.ArrayList<>();
         candidates.addAll(data.getReceivers());
         candidates.addAll(data.getServices());
-        if (Config.activityTriggerEnabled) {
-            candidates.addAll(data.getActivities());
-        }
         for (ComponentInfo c : candidates) {
             if (!c.reachesTarget) continue;
-            if ("activity".equals(c.componentType) && !c.exported) continue;
             boolean emitted = false;
             for (ComponentInfo.IntentFilter f : c.intentFilters) {
                 for (String action : f.actions) {
@@ -1140,9 +1168,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             return AndroidDevice.sendBroadcast(intent);
         } else if (c instanceof ComponentInfo.ServiceInfo) {
             return AndroidDevice.startService(intent);
-        } else if (c instanceof ComponentInfo.ActivityInfo) {
-            return AndroidDevice.startActivity(intent);
         }
+        // activity-frontier: the tuple pool no longer carries ActivityInfo (activities are launched
+        // only by the stagnation launcher's own startActivity path). Providers use dispatchProvider.
         return false;
     }
 
@@ -1309,12 +1337,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                     newAction.getFormBoost());
             return newAction;
         } else {
-            // Non-model actions (e.g. event-level) carry no per-mechanism boosts; still
-            // attributed to the SATA chain that produced them (INV-SEL-04). clock as above.
+            // Non-model actions (e.g. event-level) carry no per-mechanism boosts. The decision
+            // source is derived from the action's type: the stagnation launcher
+            // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
+            // action stays on the SATA chain that produced it (INV-SEL-04). clock as above.
             Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s",
                     getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
                     newState.getStateKey(), action,
-                    ModelAction.DecisionSource.SATA.name());
+                    nonModelDecisionSource(action.getType()).name());
             return action;
         }
     }
@@ -1461,6 +1491,20 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             int wtgBoostedCount = 0;
             int wtgTotalTarget = 0;
             int wtgMaxBoost = 0;
+            // activity-frontier Lever A: own transitions lookup (scoreWtg's int return hides the
+            // target and only fires when MOP-reachable). Precompute which transition targets are
+            // already visited so the frontier decision is a pure set lookup (INV-WTG-06).
+            List<MopData.WtgTransition> transitions = _mopData.getWtgTransitions(activity);
+            Set<String> visitedTargets = new HashSet<>();
+            if (Config.frontierBoostWeight > 0) {
+                for (MopData.WtgTransition t : transitions) {
+                    if (getGraph().getActivityNode(t.targetActivity) != null) {
+                        visitedTargets.add(t.targetActivity);
+                    }
+                }
+            }
+            int frontierBoostedCount = 0;
+            int frontierMaxBoost = 0;
             for (ModelAction action : newState.getActions()) {
                 if (!action.requireTarget() || !action.isValid()) continue;
                 if (!action.isResolvedAt(timestamp)) continue;
@@ -1475,10 +1519,25 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                     wtgBoostedCount++;
                     if (boost > wtgMaxBoost) wtgMaxBoost = boost;
                 }
+                // activity-frontier Lever A: reward a widget whose WTG transition targets an
+                // as-yet-unvisited activity, independent of MOP-reachability. setPriority is the
+                // steering mechanism (wtgBoost is telemetry-only); the wtgBoost accumulation is
+                // read-modify-write so it stacks with the MOP-reach boost above (INV-WTG-06/07).
+                int fBoost = frontierBoost(shortId, transitions, visitedTargets, Config.frontierBoostWeight);
+                if (fBoost > 0) {
+                    action.setPriority(action.getPriority() + fBoost);
+                    action.setWtgBoost(action.getWtgBoost() + fBoost);
+                    frontierBoostedCount++;
+                    if (fBoost > frontierMaxBoost) frontierMaxBoost = fBoost;
+                }
             }
             if (wtgBoostedCount > 0) {
                 Logger.iformat("[APE-RV] WTG boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
                         activity, newState.getStateKey(), wtgBoostedCount, wtgTotalTarget, wtgMaxBoost);
+            }
+            if (frontierBoostedCount > 0) {
+                Logger.iformat("[APE-RV] Frontier boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
+                        activity, newState.getStateKey(), frontierBoostedCount, wtgTotalTarget, frontierMaxBoost);
             }
         }
         // Coverage boost pass — per-action boost for widgets untested ANYWHERE in the current

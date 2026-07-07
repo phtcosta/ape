@@ -23,7 +23,7 @@ Lever A lives entirely inside the existing WTG scoring pass. Lever B is a new ea
 | frontier term in the WTG pass | add weight when transition target is unvisited | WTG match + `Graph.getActivityNode(target)` | priority += weight |
 | `Config.activityTriggerEnabled` (repurposed) | gate for the stagnation launcher (default flips to true) | properties | boolean |
 | `ActionType.EVENT_TRIGGER_ACTIVITY` | new non-model constant (`requireTarget()=false`, `isModelAction()=false`) | — | — |
-| `ActivityTriggerAction extends Action` | carries target `className` + optional deep-link URI string | candidate | action instance |
+| `ActivityTriggerAction extends Action` | carries launch `packageName` (from `MopData.getPackageName()`) + target `className` + optional deep-link URI string | candidate | action instance |
 | launcher block in `selectNewActionNonnull` | stagnation check + candidate pick + return action | `graphStableCounter`, MopData activities, Graph | `ActivityTriggerAction` or fall-through |
 | candidate seams (static, pure) | filter + round-robin + URI building | `List<ComponentInfo>`, visited-set, rr-index | candidate / URI |
 | dispatch case in `MonkeySourceApe` | build intent (explicit or ACTION_VIEW) + `AndroidDevice.startActivity` | `ActivityTriggerAction` | launch + throttle |
@@ -77,13 +77,14 @@ if (Config.activityTriggerEnabled && getMopData() != null
         // the Action base. decision_source=Component is produced downstream by teaching
         // resolveNewAction's non-model else-branch to attribute EVENT_TRIGGER_ACTIVITY as
         // Component (it currently hardcodes SATA — StatefulAgent.java:1308-1315).
-        return new ActivityTriggerAction(candidate.className, buildDeepLinkUri(candidate));
+        return new ActivityTriggerAction(getMopData().getPackageName(),
+                candidate.className, buildDeepLinkUri(candidate));
     }
 }
 ```
 
-### Dispatch (new case in `MonkeySourceApe` event generation, EVENT_RESTART template)
-Explicit intent (`setComponent(new ComponentName(MopData.getPackageName(), className))`, `FLAG_ACTIVITY_NEW_TASK`) or `ACTION_VIEW` + `Uri.parse(deepLink)` when non-null; `AndroidDevice.startActivity(intent)`; throttle; failures logged WARNING and the run continues (existing `startActivity` error contract). The package component is `MopData.getPackageName()`, never derived from the target class name (main-spec INV-CT-04, ComponentName Package Derivation).
+### Dispatch (new `case EVENT_TRIGGER_ACTIVITY` in `MonkeySourceApe.generateEventsForActionInternal`, EVENT_RESTART template)
+Explicit intent (`setComponent(new ComponentName(action.getPackageName(), action.getClassName()))`) or `ACTION_VIEW` + `Uri.parse(deepLink)` constrained to the app via `setPackage(action.getPackageName())` when the deep-link is non-null; `AndroidDevice.startActivity(intent)` (which adds `FLAG_ACTIVITY_NEW_TASK`); failures logged WARNING and the run continues (existing `startActivity` error contract). The package is the one the `ActivityTriggerAction` captured from `MopData.getPackageName()` in the launcher — never derived from the target class name (main-spec INV-CT-04, ComponentName Package Derivation). Carrying the package on the action (rather than reaching into `MopData` from the dispatch) keeps `MonkeySourceApe` decoupled from `MopData` while preserving the INV-CT-04 source guarantee.
 
 ## Data Flow
 

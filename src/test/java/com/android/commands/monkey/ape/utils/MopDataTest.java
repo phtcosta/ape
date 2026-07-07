@@ -705,10 +705,11 @@ public class MopDataTest {
         assertEquals(250, Config.mopWeightOpenMenu);
         assertTrue(Config.fuzzInputTyped);
         assertFalse(Config.mopStrictPackageMatch);
-        assertFalse(Config.activityTriggerEnabled);
+        // activity-frontier: default flipped to true (repurposed to gate the stagnation launcher).
+        assertTrue(Config.activityTriggerEnabled);
         boolean prev = Config.activityTriggerEnabled;
-        Config.activityTriggerEnabled = true;
-        try { assertTrue(Config.activityTriggerEnabled); }
+        Config.activityTriggerEnabled = false;
+        try { assertFalse(Config.activityTriggerEnabled); }
         finally { Config.activityTriggerEnabled = prev; }
     }
 

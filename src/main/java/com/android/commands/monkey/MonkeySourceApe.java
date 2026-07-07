@@ -51,6 +51,7 @@ import com.android.commands.monkey.ape.agent.ReplayAgent;
 import com.android.commands.monkey.ape.events.ApeEvent;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StartAction;
@@ -64,12 +65,14 @@ import android.app.ActivityManager.RunningTaskInfo;
 import android.app.UiAutomation;
 import android.app.UiAutomationConnection;
 import android.content.ComponentName;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManagerGlobal;
 import android.os.Build;
+import android.net.Uri;
 import android.os.HandlerThread;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -910,6 +913,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
         case EVENT_ACTIVATE:
             generateActivateEvent();
             break;
+        case EVENT_TRIGGER_ACTIVITY:
+            generateActivityTriggerEvent((ActivityTriggerAction) action);
+            break;
         case MODEL_BACK:
             generateKeyBackEvent();
             break;
@@ -935,6 +941,31 @@ public class MonkeySourceApe implements MonkeyEventSource {
             break;
         default:
             throw new RuntimeException("Should not reach here");
+        }
+    }
+
+    /**
+     * activity-frontier (Lever B) dispatch — launch the stagnation-selected activity. Uses an
+     * ACTION_VIEW deep-link intent when the manifest provided a URI, otherwise an explicit-component
+     * intent {@code ComponentName(action.getPackageName(), action.getClassName())} (the package
+     * originates from {@code MopData.getPackageName()}, never the class name — INV-CT-04).
+     * FLAG_ACTIVITY_NEW_TASK is added by {@code AndroidDevice.startActivity}. Failures are logged
+     * WARNING and the run continues (existing startActivity error contract).
+     */
+    private void generateActivityTriggerEvent(ActivityTriggerAction action) {
+        Intent intent = new Intent();
+        String deepLink = action.getDeepLinkUri();
+        if (deepLink != null) {
+            intent.setAction(Intent.ACTION_VIEW);
+            intent.setData(Uri.parse(deepLink));
+            intent.setPackage(action.getPackageName());
+        } else {
+            intent.setComponent(new ComponentName(action.getPackageName(), action.getClassName()));
+        }
+        boolean ok = AndroidDevice.startActivity(intent);
+        if (!ok) {
+            Logger.wformat("[APE-RV] Triggering activity failed: %s/%s",
+                    action.getPackageName(), action.getClassName());
         }
     }
 

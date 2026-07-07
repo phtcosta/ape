@@ -47,6 +47,7 @@ import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.SubsequenceFilter;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
+import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -58,6 +59,7 @@ import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.RandomHelper;
+import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
@@ -411,6 +413,27 @@ public class SataAgent extends StatefulAgent {
                 return result;
             }
         }
+        // activity-frontier (Lever B): stagnation-triggered activity launcher. Fires once per
+        // stagnation episode, at the same escalation point the LLM stagnation hook uses (so an
+        // enabled LLM hook above takes precedence). A first-class EVENT_TRIGGER_ACTIVITY step —
+        // model-visible, attributed Component in resolveNewAction, no graph edge (INV-CT-05/06/07).
+        if (shouldTriggerAtStagnation(Config.activityTriggerEnabled, getMopData() != null,
+                graphStableCounter, graphStableRestartThreshold)) {
+            Set<String> visited = new HashSet<>();
+            for (ActivityNode an : getGraph().getActivityNodes()) {
+                visited.add(an.activity);
+            }
+            ComponentInfo candidate = selectTriggerCandidate(getMopData().getActivities(),
+                    visited, getMopData().getMainActivity(), _triggerRoundRobinIndex);
+            _triggerRoundRobinIndex++;
+            if (candidate != null) {
+                graphStableCounter = 0;
+                Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);
+                // Package captured from MopData (never from the class name — INV-CT-04).
+                return new ActivityTriggerAction(getMopData().getPackageName(),
+                        candidate.className, buildDeepLinkUri(candidate));
+            }
+        }
         // gh11: component triggering (probabilistic, fires with Config.componentPercentage)
         if (Config.componentPercentage > 0 && getMopData() != null && getMopData().hasComponents()
                 && getRandom().nextDouble() < Config.componentPercentage) {
@@ -601,6 +624,71 @@ public class SataAgent extends StatefulAgent {
     // Navigation-essential BACK sites do not consult this map. The action objects are never
     // mutated — only the roulette/short-circuit candidate sets are shaped.
     private final Map<String, Integer> backMenuPicks = new HashMap<>();
+
+    // activity-frontier (Lever B): round-robin cursor over the manifest activity list, persisted
+    // across stagnation episodes so repeated launches walk the frontier (INV-CT-06).
+    private int _triggerRoundRobinIndex = 0;
+
+    /**
+     * activity-frontier gate seam (pure, INV-CT-05/08). The stagnation launcher fires only when it
+     * is enabled, MopData is loaded, and the graph-stable counter is exactly at the mid-threshold
+     * escalation point (equality, not {@code >=}, so it fires once per episode). Off entirely when
+     * disabled or no MopData.
+     */
+    static boolean shouldTriggerAtStagnation(boolean enabled, boolean hasMopData,
+            int graphStableCounter, int graphStableRestartThreshold) {
+        return enabled && hasMopData && graphStableCounter == graphStableRestartThreshold / 2;
+    }
+
+    /**
+     * activity-frontier candidate seam (pure). Walks {@code activities} starting at {@code rrIndex}
+     * (wrapping once) and returns the first satisfying, at call time, ALL of: exported,
+     * no permission gate ({@code permission == null}), not the main activity (by {@code isMain} flag
+     * or by name equal to {@code mainActivity}), and currently unvisited ({@code className} not in
+     * {@code visitedActivities}). Null when none qualifies. The caller owns the index increment.
+     */
+    static ComponentInfo selectTriggerCandidate(List<? extends ComponentInfo> activities,
+            Set<String> visitedActivities, String mainActivity, int rrIndex) {
+        if (activities == null || activities.isEmpty()) {
+            return null;
+        }
+        int n = activities.size();
+        for (int i = 0; i < n; i++) {
+            int idx = (((rrIndex + i) % n) + n) % n; // safe modulo for any rrIndex
+            ComponentInfo c = activities.get(idx);
+            if (c.exported && c.permission == null && !c.isMain
+                    && !c.className.equals(mainActivity)
+                    && !visitedActivities.contains(c.className)) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * activity-frontier deep-link seam (pure). Returns {@code scheme + "://" + host + path} built
+     * from the first intent-filter that declares {@code ACTION_VIEW} and a non-empty scheme list
+     * (host/path default to empty when absent); null when no such filter exists (explicit-component
+     * fallback). Best-effort URI from the parsed manifest parts (INV-CT-07 dispatch precondition).
+     */
+    static String buildDeepLinkUri(ComponentInfo activity) {
+        if (activity == null) {
+            return null;
+        }
+        for (ComponentInfo.IntentFilter f : activity.intentFilters) {
+            if (!f.actions.contains("android.intent.action.VIEW")) {
+                continue;
+            }
+            if (f.data.schemes.isEmpty()) {
+                continue;
+            }
+            String scheme = f.data.schemes.get(0);
+            String host = f.data.hosts.isEmpty() ? "" : f.data.hosts.get(0);
+            String path = f.data.paths.isEmpty() ? "" : f.data.paths.get(0);
+            return scheme + "://" + host + path;
+        }
+        return null;
+    }
 
     /**
      * Physical-widget identity for the pick cap: {@code target.toXPath() + "|" + actionType + "|" +

@@ -32,6 +32,10 @@ public enum ActionType {
     EVENT_CLEAN_RESTART, // kill the process and clean the app cache, and start the activity
     EVENT_NOP, // throttle
     EVENT_ACTIVATE,
+    // activity-frontier: stagnation-triggered activity launch. In the EVENT_* group (before
+    // MODEL_BACK) on purpose — requireTarget()/isModelAction() are ordinal-range checks over the
+    // MODEL_* block, so a MODEL-block placement would flip both predicates true (INV-EXPL-13).
+    EVENT_TRIGGER_ACTIVITY,
 
     // a model action can be used as a label of an edge in the model.
     MODEL_BACK,

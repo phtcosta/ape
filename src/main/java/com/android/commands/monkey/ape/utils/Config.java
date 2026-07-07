@@ -140,8 +140,12 @@ public class Config {
     public static boolean fuzzInputTyped = Config.getBoolean("ape.fuzzInputTyped", true);
     // gh13: package/mainActivity sanity check (T1.7). true ⇒ mismatch rejects MopData.load (CI gate).
     public static boolean mopStrictPackageMatch = Config.getBoolean("ape.mopStrictPackageMatch", false);
-    // gh13: activity component triggering (T1.4). Default OFF — gh11 sandwichroulette -45pp evidence.
-    public static boolean activityTriggerEnabled = Config.getBoolean("ape.activityTriggerEnabled", false);
+    // mop-fairtest: activity-frontier — gate for the stagnation activity launcher (Lever B).
+    // Default true. Repurposed from the deleted gh11 probabilistic activity-trigger branch (that
+    // path, which the -45pp evidence measured, no longer exists). This flag now gates only the
+    // stagnation-bounded, manifest-filtered, once-per-episode EVENT_TRIGGER_ACTIVITY launcher.
+    // Fair-test obligation: non-MOP baseline arms MUST set this false (and frontierBoostWeight=0).
+    public static boolean activityTriggerEnabled = Config.getBoolean("ape.activityTriggerEnabled", true);
     // mop-target-revisit-cap: max deterministic MOP short-circuit picks per
     // (widget XPath, action type, activity) key per run. <= 0 = unlimited (restores the
     // uncapped mop-discriminative-boost behavior). The boost still participates in the
@@ -179,6 +183,11 @@ public class Config {
     public static final int activityBaseBudget = Config.getInteger("ape.activityBaseBudget", 50);
     public static final int activityBudgetPerWidget = Config.getInteger("ape.activityBudgetPerWidget", 5);
     public static final int mopWeightWtg = Config.getInteger("ape.mopWeightWtg", 200);
+    // mop-fairtest: activity-frontier (Lever A) — priority added in the WTG scoring pass to actions
+    // whose WTG transition targets a currently-unvisited activity (Graph.getActivityNode == null),
+    // independent of MOP-reachability. Default 200; 0 = off. Stacks additively with mopWeightWtg.
+    // Fair-test obligation: non-MOP baseline arms MUST set this 0 (and activityTriggerEnabled=false).
+    public static final int frontierBoostWeight = Config.getInteger("ape.frontierBoostWeight", 200);
     public static final boolean dynamicEpsilon = Config.getBoolean("ape.dynamicEpsilon", true);
     public static final double maxEpsilon = Config.getDouble("ape.maxEpsilon", 0.15);
     public static final double minEpsilon = Config.getDouble("ape.minEpsilon", 0.02);
