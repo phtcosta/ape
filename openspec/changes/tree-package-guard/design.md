@@ -33,9 +33,11 @@ One guard, one seam, one flag — mirroring `foreign-activity-guard`. The guard 
 | Component | Responsibility | Input | Output |
 |-----------|---------------|-------|--------|
 | `Config.treePackageGuard` | flag `ape.treePackageGuard` (default true) | properties | boolean |
-| `SYSTEM_INTERACTION_PACKAGES` | reused from `foreign-activity-guard` (not redefined) | — | permission/installer packages that may own a tree over the app |
-| `static boolean shouldRefetch(String topPkg, String treePkg, Set<String> systemWhitelist)` | pure guard decision | top package + tree package + whitelist | boolean |
-| guard block in `generateEvents` | on mismatch with retries left → `continue`; on exhaustion → fall through (model) | `topComp`, `info`, remaining `repeat` | re-fetch or normal flow |
+| `ForeignActivityGuard.SYSTEM_INTERACTION_PACKAGES` | reused from `foreign-activity-guard` (not redefined) | — | permission/installer packages that may own a tree over the app |
+| `TreePackageGuard.shouldRefetch(String topPkg, String treePkg, Set<String> systemWhitelist)` (pure static) | pure guard decision | top package + tree package + whitelist | boolean |
+| guard block in `generateEvents` | on mismatch with retries left → `continue`; on exhaustion → fall through (model); delegates to `TreePackageGuard` | `topComp`, `info`, remaining `repeat` | re-fetch or normal flow |
+
+**Seam location.** `shouldRefetch` lives in a new dependency-free class `com.android.commands.monkey.ape.TreePackageGuard`, not in `MonkeySourceApe` — for the same reason as `foreign-activity-guard`'s `ForeignActivityGuard`: `MonkeySourceApe` cannot be JVM-class-loaded off-device (its `UiAutomation` field references `android.app.IUiAutomationConnection`, absent from the test classpath), so a `MonkeySourceApe`-hosted static would be untestable. It reuses `ForeignActivityGuard.SYSTEM_INTERACTION_PACKAGES` for the whitelist.
 
 ## Composition with `foreign-activity-guard`
 
@@ -69,12 +71,12 @@ If `foreign-activity-guard` is not yet merged when this is implemented, the whit
 2. **Fail-open after exhaustion.** On the last iteration (`repeat == 0`) a persisting mismatch falls through to `updateState` and is modeled as today. Refetching forever would deadlock capture on any legitimately mixed surface (e.g. an overlay from another package). The guard is an opportunistic absorber of transient frames, not a hard gate. This is the deliberate difference from `foreign-activity-guard`, which BACKs out (its foreign screen is never legitimate); a tree mismatch **can** be legitimate, so it must fail open.
 3. **Tree identity = `info.getPackageName()`.** The accessibility root carries its owning package. Compare against `topComp.getPackageName()` (the task applicationId, same source `foreign-activity-guard` uses). A null `treePkg` is uncheckable → treat as match (do not refetch), deferring to existing paths. A null `topComp` bypasses the guard (mirrors `checkAppActivity:1186-1190` and the foreign guard).
 4. **Whitelist exemption shares `foreign-activity-guard`'s set.** A runtime-permission dialog (`com.android.permissioncontroller` / `com.google.android.permissioncontroller`, or the legacy `com.android.packageinstaller`) legitimately owns the tree while `topComp` still reports the app. Treating that as a mismatch would refetch away a real interaction surface. Reusing the same set keeps the two guards coherent: a package the foreign guard would not BACK out of is also not a tree mismatch here.
-5. **Pure seam `shouldRefetch(topPkg, treePkg, whitelist)`.** `AccessibilityNodeInfo` and ActivityManager are runtime-only; passing the two package strings keeps the decision JVM-testable (zero tests today). Mirrors `foreign-activity-guard`'s `shouldModel` seam so the two are reviewed the same way.
+5. **Pure seam `TreePackageGuard.shouldRefetch(topPkg, treePkg, whitelist)`.** `AccessibilityNodeInfo` and ActivityManager are runtime-only; passing the two package strings keeps the decision JVM-testable (zero tests today). The seam lives in its own dependency-free class (not `MonkeySourceApe`, which is not JVM-loadable off-device), mirroring `foreign-activity-guard`'s `ForeignActivityGuard.shouldModel` seam so the two are reviewed the same way.
 6. **Log throttled once per `top→tree` pair per run.** A persistent mismatch would otherwise spam the trace on every one of the (up to 4) refetch iterations, every step.
 
 ## API Design
 
-### `static boolean shouldRefetch(String topPkg, String treePkg, Set<String> systemWhitelist)`
+### `TreePackageGuard.shouldRefetch(String topPkg, String treePkg, Set<String> systemWhitelist)` (public static)
 Returns `true` (the pair is a foreign-tree mismatch, re-fetch) when **all** hold: `treePkg != null`, `!treePkg.equals(topPkg)`, and `!systemWhitelist.contains(treePkg)`. Returns `false` (proceed to model) otherwise — matching packages, a null `treePkg` (uncheckable), or a whitelisted tree owner. Pure, no I/O. (`topPkg` null is a caller concern: the guard block only runs when `topComp != null`.)
 
 ### Guard block (inside the existing `while (repeat-- > 0)` loop)
@@ -84,7 +86,7 @@ if (Config.treePackageGuard && topComp != null) {
     String topPkg = topComp.getPackageName();
     CharSequence tp = info.getPackageName();
     String treePkg = tp == null ? null : tp.toString();
-    if (shouldRefetch(topPkg, treePkg, SYSTEM_INTERACTION_PACKAGES)) {
+    if (TreePackageGuard.shouldRefetch(topPkg, treePkg, ForeignActivityGuard.SYSTEM_INTERACTION_PACKAGES)) {
         if (mismatchPairs.add(topPkg + "->" + treePkg)) {
             Logger.iformat("[APE-RV] Tree/package mismatch: top=%s tree=%s -> refetch", topPkg, treePkg);
         }

@@ -25,6 +25,7 @@ import static com.android.commands.monkey.ape.utils.Config.maxIdleTimeoutMs;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoCount;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoWaitingInterval;
 import static com.android.commands.monkey.ape.utils.Config.swipeDuration;
+import static com.android.commands.monkey.ape.utils.Config.treePackageGuard;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -44,6 +45,7 @@ import com.android.commands.monkey.ape.AndroidDevice;
 import com.android.commands.monkey.ape.ForeignActivityGuard;
 import com.android.commands.monkey.ape.ImageWriterQueue;
 import com.android.commands.monkey.ape.StopTestingException;
+import com.android.commands.monkey.ape.TreePackageGuard;
 import com.android.commands.monkey.ape.agent.ApeAgent;
 import com.android.commands.monkey.ape.agent.ReplayAgent;
 import com.android.commands.monkey.ape.events.ApeEvent;
@@ -131,6 +133,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
     // (add() returns true on first). The pure decision + whitelist live in the
     // dependency-free ForeignActivityGuard so they are JVM-testable.
     private final Set<String> deflectedPackages = new HashSet<>();
+
+    // tree-package-guard: once-per-(top->tree)-pair log throttle for refetch deflections.
+    private final Set<String> mismatchPairs = new HashSet<>();
 
     /**
      * UiAutomation client and connection
@@ -800,7 +805,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
         while (repeat-- > 0) {
             topComp = this.getTopActivityComponentName();
             info = getRootInActiveWindow();
-            // this two operations may not be the same
+            // These two fetches come from independent subsystems (ActivityManager vs the
+            // accessibility bridge) and may disagree during a relaunch; the tree-package-guard
+            // below cross-checks their packages before modeling the pair.
             if (info == null) {
                 sleep(refectchInfoWaitingInterval);
                 continue;
@@ -823,6 +830,28 @@ public class MonkeySourceApe implements MonkeyEventSource {
                         generateKeyBackEvent();
                         generateThrottleEvent(mThrottle);
                         return; // no updateState, no modeling
+                    }
+                }
+                // tree-package-guard: topComp is in-package (or whitelisted/null) here, but
+                // the accessibility tree can still be owned by another package during a
+                // relaunch race (AM reports MainActivity while the launcher tree is painted).
+                // On a foreign-tree mismatch, refetch within THIS loop while retries remain
+                // (repeat > 0); on exhaustion (repeat == 0) fall through and model the pair
+                // (fail-open — a `continue` on the last iteration would wrongly exit to NOP).
+                if (treePackageGuard && topComp != null) {
+                    String topPkg = topComp.getPackageName();
+                    CharSequence tp = info.getPackageName();
+                    String treePkg = tp == null ? null : tp.toString();
+                    if (TreePackageGuard.shouldRefetch(topPkg, treePkg,
+                            ForeignActivityGuard.SYSTEM_INTERACTION_PACKAGES)) {
+                        if (mismatchPairs.add(topPkg + "->" + treePkg)) {
+                            Logger.iformat("[APE-RV] Tree/package mismatch: top=%s tree=%s -> refetch",
+                                    topPkg, treePkg);
+                        }
+                        if (repeat > 0) {
+                            continue; // re-fetch topComp+info on the next loop iteration
+                        }
+                        // retries exhausted -> fail-open: fall through and model as today
                     }
                 }
                 nullInfoCounter = 0;

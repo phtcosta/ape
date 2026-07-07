@@ -190,6 +190,12 @@ public class Config {
     // them. Default true (guard active); false restores the pre-guard modeling path.
     public static final boolean foreignActivityGuard = Config.getBoolean("ape.foreignActivityGuard", true);
 
+    // mop-fairtest: tree-package-guard — when topComp is in-package but the accessibility
+    // tree is owned by another package (relaunch race: AM reports MainActivity while the
+    // launcher tree is still painted), refetch within the existing loop instead of modeling
+    // the mismatched pair; fail-open on exhaustion. Default true; false restores old path.
+    public static final boolean treePackageGuard = Config.getBoolean("ape.treePackageGuard", true);
+
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
         if (configFile.exists()) {
