@@ -185,6 +185,11 @@ public class Config {
     // independent experiment variables (INV-CT-01).
     public static final double componentPercentage = Config.getDouble("ape.componentPercentage", 0.0);
 
+    // mop-fairtest: foreign-activity-guard — deflect screens whose top activity is a
+    // foreign package (launcher/installer leak) with one raw BACK instead of modeling
+    // them. Default true (guard active); false restores the pre-guard modeling path.
+    public static final boolean foreignActivityGuard = Config.getBoolean("ape.foreignActivityGuard", true);
+
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
         if (configFile.exists()) {

@@ -19,6 +19,7 @@ package com.android.commands.monkey;
 import static com.android.commands.monkey.ape.utils.Config.defaultGUIThrottle;
 import static com.android.commands.monkey.ape.utils.Config.doFuzzing;
 import static com.android.commands.monkey.ape.utils.Config.fuzzingRate;
+import static com.android.commands.monkey.ape.utils.Config.foreignActivityGuard;
 import static com.android.commands.monkey.ape.utils.Config.imageWriterCount;
 import static com.android.commands.monkey.ape.utils.Config.maxIdleTimeoutMs;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoCount;
@@ -31,13 +32,16 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.TimeoutException;
 
 import com.android.commands.monkey.ape.Agent;
 import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.ForeignActivityGuard;
 import com.android.commands.monkey.ape.ImageWriterQueue;
 import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.agent.ApeAgent;
@@ -122,6 +126,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     int nullInfoCounter = 0;
     int lostFocusedCounter = 0;
+
+    // foreign-activity-guard: once-per-package log throttle for guard deflections
+    // (add() returns true on first). The pure decision + whitelist live in the
+    // dependency-free ForeignActivityGuard so they are JVM-testable.
+    private final Set<String> deflectedPackages = new HashSet<>();
 
     /**
      * UiAutomation client and connection
@@ -774,7 +783,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
     }
 
     /**
-     * generate a random event based on mFactor
+     * Fetch the current screen, ask the agent for an action, and enqueue its events.
+     * The foreign-activity-guard deflects an out-of-package top activity with one raw
+     * BACK before {@code updateState}, so foreign screens are never modeled.
      */
     protected void generateEvents() {
         if (hasEvent()) {
@@ -795,6 +806,25 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 continue;
             }
             if (info != null) {
+                // foreign-activity-guard: a screen that turned foreign between
+                // checkAppActivity and this fresh topComp fetch (launcher/installer leak)
+                // is deflected with one raw BACK and never modeled — closing the TOCTOU
+                // window at the modeling boundary (INV-EXPL-20). Whitelist packages and a
+                // null topComp bypass the guard. The BACK is raw (not an [APE-STEP]): it is
+                // not counted as a step and is invisible to the BACK/MENU pick cap.
+                if (foreignActivityGuard && topComp != null) {
+                    String pkg = topComp.getPackageName();
+                    boolean accepts = MonkeyUtils.getPackageFilter().isPackageValid(pkg);
+                    if (!ForeignActivityGuard.shouldModel(pkg, accepts,
+                            ForeignActivityGuard.SYSTEM_INTERACTION_PACKAGES)) {
+                        if (deflectedPackages.add(pkg)) {
+                            Logger.iformat("[APE-RV] Foreign activity: pkg=%s -> BACK", pkg);
+                        }
+                        generateKeyBackEvent();
+                        generateThrottleEvent(mThrottle);
+                        return; // no updateState, no modeling
+                    }
+                }
                 nullInfoCounter = 0;
                 action = mAgent.updateState(topComp, info);
                 if (action == null) {
@@ -906,20 +936,6 @@ public class MonkeySourceApe implements MonkeyEventSource {
         long throttle = mThrottle + action.getThrottle();
         generateThrottleEvent(throttle);
         endLogAction(action);
-    }
-
-    protected boolean checkPackage(ComponentName topComp, AccessibilityNodeInfo info) {
-        String packageName = topComp.getPackageName();
-        String infoPkg = info.getPackageName().toString();
-        if (!infoPkg.equals(packageName)) {
-            Logger.wformat("Different packages: top(%s) v.s. info(%s).", packageName, infoPkg);
-            return false;
-        }
-        if (!MonkeyUtils.getPackageFilter().checkEnteringPackage(packageName)) {
-            Logger.format("Disallowed package: %s", packageName);
-            return false;
-        }
-        return true;
     }
 
     public void clearPackage(String packageName) {
