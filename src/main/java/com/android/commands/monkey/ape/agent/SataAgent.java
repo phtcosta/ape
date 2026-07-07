@@ -28,9 +28,11 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import com.android.commands.monkey.MonkeySourceApe;
@@ -48,6 +50,7 @@ import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.model.ActionType;
@@ -55,6 +58,7 @@ import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.RandomHelper;
+import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import android.content.ComponentName;
@@ -217,13 +221,56 @@ public class SataAgent extends StatefulAgent {
 
     protected void logActionSelected(Action action, SataEventType type) {
         Logger.iformat("Select action %s by strategy %s", action, type);
-        // Every action chosen by the SATA chain is attributed to the SATA source
-        // for the [APE-STEP] telemetry (A-5); the LLM/budget early-returns that
-        // bypass this method set their own source explicitly.
-        if (action != null && action.isModelAction()) {
+        // Decision-source attribution is set at the priority-consuming PICK SITES
+        // (the roulettes and the MOP short-circuits inside EARLY_STAGE/EPSILON_GREEDY),
+        // so those two branches own the source of their finalized action. Every other
+        // branch selects for reasons other than priority, so its action is attributed
+        // SATA here — a fresh write that also clears any stale source carried over from
+        // a previous step. INV-SEL-04: this only changes which enum value is carried,
+        // never the number of [APE-STEP] lines and never a boost field.
+        if (action != null && action.isModelAction()
+                && type != SataEventType.EARLY_STAGE && type != SataEventType.EPSILON_GREEDY) {
             ((ModelAction) action).setDecisionSource(ModelAction.DecisionSource.SATA);
         }
         logEvent(type);
+    }
+
+    /**
+     * The mechanism holding the largest positive boost on this action, ties resolved by the
+     * fixed precedence MOP &gt; WTG &gt; Menu &gt; Form &gt; Coverage; SATA when no boost is
+     * positive. This is largest-contributing-boost attribution on a priority-consuming pick:
+     * it reports which mechanism boosted the chosen action the most, NOT a counterfactual
+     * claim that the boost changed the outcome (P4). It is applied only at the pick sites that
+     * actually consume priority — the epsilon-greedy roulette ({@code randomlyPickAction}),
+     * the EARLY_STAGE unvisited roulette ({@code randomPickWithPriority}), and the two MOP
+     * short-circuits ({@code selectUnvisitedMopTarget}, {@code pickBestMopTarget}). Back-/Menu-
+     * unvisited, least-visited, and graph-navigation picks are attributed SATA at their own
+     * return sites even though they live inside EARLY_STAGE/EPSILON_GREEDY.
+     */
+    static ModelAction.DecisionSource attributeByLargestBoost(ModelAction action) {
+        int mop = action.getMopBoost();
+        int wtg = action.getWtgBoost();
+        int menu = action.getMenuBoost();
+        int form = action.getFormBoost();
+        int coverage = action.getCoverageBoost();
+        int max = Math.max(Math.max(Math.max(mop, wtg), Math.max(menu, form)), coverage);
+        if (max <= 0) {
+            return ModelAction.DecisionSource.SATA;
+        }
+        // Tie precedence MOP > WTG > Menu > Form > Coverage.
+        if (mop == max) {
+            return ModelAction.DecisionSource.MOP;
+        }
+        if (wtg == max) {
+            return ModelAction.DecisionSource.WTG;
+        }
+        if (menu == max) {
+            return ModelAction.DecisionSource.Menu;
+        }
+        if (form == max) {
+            return ModelAction.DecisionSource.Form;
+        }
+        return ModelAction.DecisionSource.Coverage;
     }
 
     protected void logEvent(SataEventType type) {
@@ -234,6 +281,12 @@ public class SataAgent extends StatefulAgent {
     public void tearDown() {
         super.tearDown();
         printCounters();
+        // Per-state UI-coverage dump (read-only). mopReach is computed here because the
+        // tracker holds no MopData reference (D4): a state's Activity gates a MOP target
+        // iff _mopData != null && activityHasMop(activity).
+        MopData mopData = getMopData();
+        getCoverageTracker().dump(
+                state -> mopData != null && mopData.activityHasMop(state.getActivity()));
     }
 
     protected void printCounters() {
@@ -416,6 +469,8 @@ public class SataAgent extends StatefulAgent {
         if (back.isValid()) {
             if (back.isUnvisited()) {
                 Logger.iprintln("Select Back because Back action is unvisited.");
+                // Chosen because Back is unvisited, not because of any boost — SATA.
+                back.setDecisionSource(ModelAction.DecisionSource.SATA);
                 return back;
             }
         }
@@ -423,15 +478,181 @@ public class SataAgent extends StatefulAgent {
         if (menu.isValid()) {
             if (menu.isUnvisited()) {
                 Logger.iprintln("Select Menu because Menu action is unvisited.");
+                // Chosen because Menu is unvisited, not because of its menuBoost — SATA.
+                menu.setDecisionSource(ModelAction.DecisionSource.SATA);
                 return menu;
             }
         }
+        // Form-submit guard (extended INV-FORM-06): while the form has unfilled EditTexts, exclude
+        // the submit candidate from BOTH the MOP short-circuit and the least-visited pick so it is
+        // not clicked on an empty form. Computed once per step; the convergent predicate
+        // (INV-FORM-07) lifts it once every field is filled.
+        ModelAction submitExcluded = null;
+        if (FormCompletion.hasUnfilledEditText(newState, timestamp)) {
+            submitExcluded = FormCompletion.selectSubmitCandidate(newState, timestamp);
+        }
+        // MOP-target greedy short-circuit: a valid, enabled, unvisited action carrying a
+        // discriminative MOP boost is selected before roulette, mirroring the Back/Menu-
+        // unvisited short-circuits above. Bounded to unvisited mopBoost>0 so it fires once
+        // per MOP target and never overrides least-visited for visited actions
+        // (INV-SEL-MOP-01/02). The caller attributes it via logActionSelected(.,EPSILON_GREEDY).
+        ModelAction mopTarget = selectUnvisitedMopTarget(submitExcluded);
+        if (mopTarget != null) {
+            Logger.iformat("Select MOP target %s because it is unvisited (mopBoost=%d).",
+                    mopTarget, mopTarget.getMopBoost());
+            // Boost-based deterministic pick: attribute by largest contributing boost.
+            mopTarget.setDecisionSource(attributeByLargestBoost(mopTarget));
+            return mopTarget;
+        }
         if (egreedy()) { // TODO: this is different from Sarsa.
             Logger.iformat("Try to select the least visited action.");
-            return newState.greedyPickLeastVisited(ActionFilter.ENABLED_VALID);
+            // Least-visited pick: priority (and any boost) is only a tie-break, not the
+            // reason for selection — SATA.
+            ModelAction leastVisited = newState.greedyPickLeastVisited(ActionFilter.ENABLED_VALID, submitExcluded);
+            if (leastVisited != null) {
+                leastVisited.setDecisionSource(ModelAction.DecisionSource.SATA);
+            }
+            return leastVisited;
         }
         Logger.iformat("Try to randomly select a visited action.");
-        return newState.randomlyPickAction(getRandom(), ActionFilter.ENABLED_VALID);
+        // Priority roulette: attribute by largest contributing boost.
+        ModelAction roulettePick = newState.randomlyPickAction(getRandom(), ActionFilter.ENABLED_VALID);
+        if (roulettePick != null) {
+            roulettePick.setDecisionSource(attributeByLargestBoost(roulettePick));
+        }
+        return roulettePick;
+    }
+
+    /**
+     * The enabled, valid, UNVISITED action with the largest discriminative MOP boost; null
+     * when none exists (the short-circuit is then a no-op — INV-SEL-MOP-02). The unvisited/
+     * enabled/valid gating is the {@code ENABLED_VALID_UNVISITED} filter; the ranking is
+     * {@link #pickBestMopTarget}.
+     */
+    protected ModelAction selectUnvisitedMopTarget(ModelAction excluded) {
+        // INV-FORM-06: while the form has unfilled EditTexts, the submit candidate (typically the
+        // mopBoost>0 action — INV-FORM-05) must NOT be short-circuited; fields are filled first.
+        // {@code excluded} is computed once by the caller and shared with the least-visited guard
+        // so the submit is not clicked on an empty form. The revisit cap (mop-target-revisit-cap)
+        // filters candidates whose (widget,type,activity) key has reached ape.mopTargetPickCap.
+        return pickCappedMopTarget(newState.collectActions(ActionFilter.ENABLED_VALID_UNVISITED),
+                excluded, newState.getActivity());
+    }
+
+    /** As {@link #pickBestMopTarget(Iterable, ModelAction)} with no exclusion. */
+    static ModelAction pickBestMopTarget(Iterable<ModelAction> candidates) {
+        return pickBestMopTarget(candidates, null);
+    }
+
+    /**
+     * The action with the largest discriminative MOP boost ({@code mopBoost > 0}) among the
+     * candidates, ties broken by highest priority; null when none carries a positive boost.
+     * Pure — the caller supplies the already-filtered (unvisited/enabled/valid) candidates.
+     * {@code excluded}, when non-null, is skipped (the INV-FORM-06 form-submit guard).
+     */
+    static ModelAction pickBestMopTarget(Iterable<ModelAction> candidates, ModelAction excluded) {
+        ModelAction best = null;
+        for (ModelAction action : candidates) {
+            if (action == excluded) {
+                continue;
+            }
+            if (action.getMopBoost() <= 0) {
+                continue;
+            }
+            if (best == null
+                    || action.getMopBoost() > best.getMopBoost()
+                    || (action.getMopBoost() == best.getMopBoost()
+                            && action.getPriority() > best.getPriority())) {
+                best = action;
+            }
+        }
+        return best;
+    }
+
+    // mop-target-revisit-cap: per-run count of deterministic MOP picks, keyed by
+    // (widget XPath, action type, activity). NamingFactory refinement re-arms the "unvisited"
+    // MOP short-circuit for the same physical widget in every near-duplicate state; this cap
+    // bounds the deterministic override across those states (INV-SEL-MOP-04). The boost itself
+    // is untouched, so the action stays in the priority roulette.
+    private final Map<String, Integer> mopTargetPicks = new HashMap<>();
+
+    /**
+     * Physical-widget identity for the pick cap: {@code target.toXPath() + "|" + actionType + "|" +
+     * activity}, matching the {@code UICoverageTracker.widgetId} convention (xpath|type) scoped by
+     * activity. Null when the action or its target/XPath is null — such actions are uncountable and
+     * stay pickable (defensive; production {@code mopBoost>0} actions always carry a target). Pure.
+     */
+    static String mopPickKey(ModelAction action, String activity) {
+        if (action == null) {
+            return null;
+        }
+        Name target = action.getTarget();
+        if (target == null) {
+            return null;
+        }
+        String xpath = target.toXPath();
+        if (xpath == null) {
+            return null;
+        }
+        return xpath + "|" + action.getType().name() + "|" + activity;
+    }
+
+    /**
+     * Whether a candidate may still be selected by the deterministic MOP sites. True when the cap
+     * is disabled ({@code cap <= 0}), when the key is uncountable ({@code key == null}), or when the
+     * key's recorded count is below the cap. Pure read — no mutation, no logging.
+     */
+    static boolean eligibleForMopPick(Map<String, Integer> picks, String key, int cap) {
+        if (cap <= 0 || key == null) {
+            return true;
+        }
+        return picks.getOrDefault(key, 0) < cap;
+    }
+
+    /**
+     * Records one deterministic MOP pick for {@code key}. Returns true iff this increment brought
+     * the count to exactly {@code cap} — the single moment to log the cap event (subsequent picks
+     * are filtered by {@link #eligibleForMopPick}, so the key never reaches the cap twice). No-op
+     * returning false when the cap is disabled or the key is uncountable (INV-SEL-MOP-05: no
+     * counter update). Mutates only {@code picks}.
+     */
+    static boolean recordMopPick(Map<String, Integer> picks, String key, int cap) {
+        if (cap <= 0 || key == null) {
+            return false;
+        }
+        int n = picks.getOrDefault(key, 0) + 1;
+        picks.put(key, n);
+        return n == cap;
+    }
+
+    /**
+     * Filters {@code candidates} through the revisit cap, invokes the pure {@link #pickBestMopTarget}
+     * on the eligible subset, and records the selected key (logging once when it reaches the cap).
+     * With the cap disabled this is exactly {@code pickBestMopTarget(candidates, excluded)} with no
+     * counting (INV-SEL-MOP-05).
+     */
+    private ModelAction pickCappedMopTarget(Iterable<ModelAction> candidates, ModelAction excluded,
+            String activity) {
+        int cap = Config.mopTargetPickCap;
+        Iterable<ModelAction> eligible = candidates;
+        if (cap > 0) {
+            List<ModelAction> filtered = new ArrayList<>();
+            for (ModelAction a : candidates) {
+                if (eligibleForMopPick(mopTargetPicks, mopPickKey(a, activity), cap)) {
+                    filtered.add(a);
+                }
+            }
+            eligible = filtered;
+        }
+        ModelAction picked = pickBestMopTarget(eligible, excluded);
+        if (picked != null) {
+            String key = mopPickKey(picked, activity);
+            if (recordMopPick(mopTargetPicks, key, cap)) {
+                Logger.iformat("[APE-RV] MOP target capped: activity=%s widget=%s picks=%d",
+                        activity, picked.getTarget().toXPath(), cap);
+            }
+        }
+        return picked;
     }
 
     public void onRefillBuffer(Subsequence seq) {
@@ -599,7 +820,7 @@ public class SataAgent extends StatefulAgent {
                             lastTarget = target; // prefer colder state
                         } else if (target.getVisitedCount() == lastTarget.getVisitedCount()
                                 && getMopData() != null
-                                && MopScorer.stateMopDensity(target, getMopData()) > MopScorer.stateMopDensity(lastTarget, getMopData())) {
+                                && MopScorer.stateMopDensity(target, getMopData(), getTimestamp()) > MopScorer.stateMopDensity(lastTarget, getMopData(), getTimestamp())) {
                             lastIndex = i;
                             lastTarget = target; // MOP density tiebreaker
                         }
@@ -611,7 +832,7 @@ public class SataAgent extends StatefulAgent {
                             lastTarget = target;
                         } else if (an1.getVisitedCount() == an2.getVisitedCount()
                                 && getMopData() != null
-                                && MopScorer.stateMopDensity(target, getMopData()) > MopScorer.stateMopDensity(lastTarget, getMopData())) {
+                                && MopScorer.stateMopDensity(target, getMopData(), getTimestamp()) > MopScorer.stateMopDensity(lastTarget, getMopData(), getTimestamp())) {
                             lastIndex = i;
                             lastTarget = target; // MOP density tiebreaker
                         }
@@ -634,6 +855,8 @@ public class SataAgent extends StatefulAgent {
         }
         ModelAction action = refillBuffer(path);
         if (action != null) {
+            // ABA graph-navigation pick: not priority-driven — SATA.
+            action.setDecisionSource(ModelAction.DecisionSource.SATA);
             Logger.iformat("Move from A (%s) to B (%s) for ABA within %d steps that start from action %s",
                     A, B, path.size(), action);
         }
@@ -849,10 +1072,10 @@ public class SataAgent extends StatefulAgent {
                 if (getMopData() != null && selectedPaths.size() > 1) {
                     // Prefer path to state with highest MOP density
                     Subsequence best = selectedPaths.get(0);
-                    int bestDensity = MopScorer.stateMopDensity(best.getLastState(), getMopData());
+                    int bestDensity = MopScorer.stateMopDensity(best.getLastState(), getMopData(), getTimestamp());
                     for (int pi = 1; pi < selectedPaths.size(); pi++) {
                         Subsequence candidate = selectedPaths.get(pi);
-                        int density = MopScorer.stateMopDensity(candidate.getLastState(), getMopData());
+                        int density = MopScorer.stateMopDensity(candidate.getLastState(), getMopData(), getTimestamp());
                         if (density > bestDensity) {
                             best = candidate;
                             bestDensity = density;
@@ -861,7 +1084,7 @@ public class SataAgent extends StatefulAgent {
                     // If all densities equal, fall back to random
                     int finalDensity = bestDensity;
                     boolean allEqual = selectedPaths.stream()
-                            .allMatch(p -> MopScorer.stateMopDensity(p.getLastState(), getMopData()) == finalDensity);
+                            .allMatch(p -> MopScorer.stateMopDensity(p.getLastState(), getMopData(), getTimestamp()) == finalDensity);
                     path = allEqual ? RandomHelper.randomPick(selectedPaths) : best;
                 } else {
                     path = RandomHelper.randomPick(selectedPaths);
@@ -969,11 +1192,46 @@ public class SataAgent extends StatefulAgent {
         // 1). Greedy action on this state.
         List<ModelAction> actions = getGreedyActions(prev, next); // this.actionDiffer.getUnsaturated(currentState, newState, true);
         if (!actions.isEmpty()) {
-            action = RandomHelper.randomPickWithPriority(actions);
+            // Form-submit guard (extended INV-FORM-06): EARLY_STAGE consumes unvisited actions HERE,
+            // before the epsilon-greedy short-circuit (selectNewActionEpsilonGreedyRandomly) is ever
+            // reached, so the submit exclusion must also apply to this roulette. Drop the submit
+            // candidate while the form has unfilled EditTexts; computed once, reused for the MOP
+            // probe and the pick below.
+            List<ModelAction> candidates = actions;
+            if (FormCompletion.hasUnfilledEditText(next, timestamp)) {
+                ModelAction submit = FormCompletion.selectSubmitCandidate(next, timestamp);
+                if (submit != null) {
+                    candidates = new ArrayList<>(actions.size());
+                    for (ModelAction a : actions) {
+                        if (a != submit) {
+                            candidates.add(a);
+                        }
+                    }
+                }
+            }
+            // MOP-target short-circuit (INV-SEL-MOP-03): take the unvisited action with the largest
+            // discriminative MOP boost deterministically, before the probabilistic roulette dilutes
+            // it — exactly where EARLY_STAGE consumes unvisited actions (the epsilon-greedy probe is
+            // shadowed here). Null (no boosted candidate) is a no-op; the roulette then runs
+            // unchanged. Chain order intact. The revisit cap (mop-target-revisit-cap) filters
+            // candidates whose (widget,type,activity) key has reached ape.mopTargetPickCap.
+            ModelAction mopTarget = pickCappedMopTarget(candidates, null, next.getActivity());
+            if (mopTarget != null) {
+                Logger.iformat("Find a greedy MOP target %s in 0-step (mopBoost=%d).",
+                        mopTarget, mopTarget.getMopBoost());
+                checkDisableRestart(mopTarget);
+                // Boost-based deterministic pick: attribute by largest contributing boost.
+                mopTarget.setDecisionSource(attributeByLargestBoost(mopTarget));
+                return mopTarget;
+            }
+            action = RandomHelper.randomPickWithPriority(candidates);
             if (action != null) {
                 Logger.iprintln("Find a greedy action in 0-step");
                 // super.disableRestart();
                 checkDisableRestart(action);
+                // Priority roulette over EARLY_STAGE unvisited candidates: attribute by
+                // largest contributing boost.
+                action.setDecisionSource(attributeByLargestBoost(action));
                 return action;
             }
         }
@@ -984,6 +1242,9 @@ public class SataAgent extends StatefulAgent {
             State t = getGraph().getNameGlobalTarget(a);
             if (t != null && isGreedyState(next, t)) {
                 Logger.iformat("Find a greedy state %s via a global action %s.", t, a);
+                // Graph-navigation pick (greedy state via a global action): not priority-
+                // driven — SATA.
+                a.setDecisionSource(ModelAction.DecisionSource.SATA);
                 return a;
             }
         }
@@ -996,7 +1257,12 @@ public class SataAgent extends StatefulAgent {
                 ModelAction firstAction = path.getFirstAction();
                 checkDisableRestart(firstAction);
             }
-            return refillBuffer(path);
+            // Shortest-path navigation pick: not priority-driven — SATA.
+            ModelAction navAction = refillBuffer(path);
+            if (navAction != null) {
+                navAction.setDecisionSource(ModelAction.DecisionSource.SATA);
+            }
+            return navAction;
         }
         return null;
     }
@@ -1011,7 +1277,10 @@ public class SataAgent extends StatefulAgent {
         // 3). Back
         if (ActionFilter.ENABLED_VALID_UNVISITED.include(next.getBackAction())) {
             Logger.iprintln("Find a greedy (unvisited) back action.");
-            return next.getBackAction();
+            // Chosen because Back is unvisited, not because of any boost — SATA.
+            ModelAction backAction = next.getBackAction();
+            backAction.setDecisionSource(ModelAction.DecisionSource.SATA);
+            return backAction;
         }
         // 4). Backtrack to parent.
         List<Subsequence> selectedPaths = getGraph().findShortestPaths(next, backtrackSubsequenceFilter, Integer.MAX_VALUE);
@@ -1021,7 +1290,12 @@ public class SataAgent extends StatefulAgent {
             if (path.size() <= 1) {
                 checkDisableRestart(path.getFirstAction());
             }
-            return refillBuffer(path);
+            // Backtrack navigation pick: not priority-driven — SATA.
+            ModelAction navAction = refillBuffer(path);
+            if (navAction != null) {
+                navAction.setDecisionSource(ModelAction.DecisionSource.SATA);
+            }
+            return navAction;
         }
         return null;
     }

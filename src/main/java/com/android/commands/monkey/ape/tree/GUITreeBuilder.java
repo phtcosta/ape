@@ -462,7 +462,10 @@ public class GUITreeBuilder {
     }
 
     protected boolean checkAndRemoveWebView(GUITreeNode node) {
-        int countNodesWithAction = node.getDescendantCount(); // count(node, actionNodeFilter);
+        // INV-TREE-11: threshold over actionable descendants only, per the long-standing
+        // comment. Counting every descendant made virtually all real WebViews exceed the
+        // bar on non-actionable content nodes and get discarded unexplored.
+        int countNodesWithAction = countActionableDescendants(node);
         if (countNodesWithAction > ignoreWebViewThreshold) {
             Logger.iformat("Too many nodes in WebView (%d > %d), remove the WebView.", countNodesWithAction,
                     ignoreWebViewThreshold);
@@ -470,6 +473,26 @@ public class GUITreeBuilder {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Counts the descendants of {@code node} that carry a GUI action (clickable,
+     * checkable, scrollable or long-clickable) — the same actionability predicate the
+     * naming/action layer uses (see {@code ActionPatchNamer}). Excludes {@code node}
+     * itself. This is the "actionable descendants" metric named in the
+     * {@code checkAndRemoveWebView} comment (INV-TREE-11).
+     */
+    protected static int countActionableDescendants(GUITreeNode node) {
+        int count = 0;
+        for (Iterator<GUITreeNode> it = node.getChildren(); it.hasNext();) {
+            GUITreeNode child = it.next();
+            if (child.isClickable() || child.isCheckable() || child.isScrollable()
+                    || child.isLongClickable()) {
+                count++;
+            }
+            count += countActionableDescendants(child);
+        }
+        return count;
     }
 
     protected GUITreeNode buildNodeFromXml(Document document) {
@@ -595,6 +618,7 @@ public class GUITreeBuilder {
         node.setLongClickable(info.isLongClickable());
         node.setScrollable(info.isScrollable());
         node.setFocusable(info.isFocusable());
+        node.setIsPassword(info.isPassword());
 
         node.setFocused(info.isFocused());
 

@@ -2,11 +2,16 @@ package com.android.commands.monkey.ape.utils;
 
 import static org.junit.Assert.*;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Predicate;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -665,5 +670,363 @@ public class UICoverageTrackerTest {
         // ...but its coverage survives in the per-Activity rollup (gap stays 0.0).
         assertEquals("rollup preserves evicted coverage",
                 0.0f, tracker.getActivityCoverageGap("com.example.Kept"), 0.001f);
+    }
+
+    // =======================================================================
+    // Coverage dump (exploration-observability item #4): [APE-RV] UICOV lines
+    // =======================================================================
+
+    /** Builds a per-state widget map keyed by the widgetId convention "<xpath>|<TYPE>". */
+    private static Map<String, Integer> data(Object... kv) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (int i = 0; i < kv.length; i += 2) {
+            m.put((String) kv[i], (Integer) kv[i + 1]);
+        }
+        return m;
+    }
+
+    @Test
+    public void testDump_partialCoverageLine() throws Exception {
+        // 10 registered widgets, 3 interacted => gap 0.7 (spec scenario).
+        State state = createState("com.example.MainActivity");
+        Map<String, Integer> d = new LinkedHashMap<>();
+        for (int i = 0; i < 10; i++) {
+            d.put("//Button[@i=\"" + i + "\"]|MODEL_CLICK", i < 3 ? 1 : 0);
+        }
+        String line = tracker.formatCoverageLine(state, d, s -> false);
+        assertTrue(line, line.startsWith("[APE-RV] UICOV state="));
+        assertTrue(line, line.contains("discovered=10 interacted=3 gap=0.7"));
+        assertTrue(line, line.endsWith("mopReach=0"));
+    }
+
+    @Test
+    public void testDump_fullyUnexploredGapOne() throws Exception {
+        State state = createState("com.example.Empty");
+        Map<String, Integer> d = new LinkedHashMap<>();
+        for (int i = 0; i < 8; i++) {
+            d.put("//W[@i=\"" + i + "\"]|MODEL_CLICK", 0);
+        }
+        String line = tracker.formatCoverageLine(state, d, s -> false);
+        assertTrue(line, line.contains("discovered=8 interacted=0 gap=1.0"));
+    }
+
+    @Test
+    public void testDump_byTypeBreakdownInActionTypeOrder() throws Exception {
+        // 3 MODEL_CLICK (2 interacted) + 1 MODEL_LONG_CLICK (0 interacted).
+        State state = createState("com.example.ByType");
+        Map<String, Integer> d = data(
+                "//a|MODEL_CLICK", 1,
+                "//b|MODEL_CLICK", 2,
+                "//c|MODEL_CLICK", 0,
+                "//d|MODEL_LONG_CLICK", 0);
+        String line = tracker.formatCoverageLine(state, d, s -> false);
+        // MODEL_CLICK precedes MODEL_LONG_CLICK in ActionType declaration order.
+        assertTrue(line, line.contains("byType=MODEL_CLICK:2/3,MODEL_LONG_CLICK:0/1"));
+    }
+
+    @Test
+    public void testDump_mopReachReflectsPredicate() throws Exception {
+        State state = createState("com.example.MopActivity");
+        Map<String, Integer> d = data("//x|MODEL_CLICK", 1);
+        assertTrue(tracker.formatCoverageLine(state, d, s -> true).endsWith("mopReach=1"));
+        assertTrue(tracker.formatCoverageLine(state, d, s -> false).endsWith("mopReach=0"));
+        // Null predicate (e.g. _mopData == null at the call site) => 0.
+        assertTrue(tracker.formatCoverageLine(state, d, null).endsWith("mopReach=0"));
+    }
+
+    @Test
+    public void testDump_oneLinePerTrackedState() throws Exception {
+        for (int i = 0; i < 5; i++) {
+            Name w = fakeName("//B[@i=\"" + i + "\"]");
+            State s = createState("com.example.S" + i, w);
+            tracker.registerScreenElements(s, Arrays.asList(
+                    createTargetedAction(s, w, ActionType.MODEL_CLICK)));
+        }
+        String out = captureDump(s -> false);
+        int stateLines = 0;
+        int activityLines = 0;
+        for (String l : out.split("\n")) {
+            // "[APE-RV] UICOV state=" is the per-state token; "[APE-RV] UICOV-ACT" is the new
+            // per-activity token. A bare contains("[APE-RV] UICOV") would match both (prefix).
+            if (l.contains("[APE-RV] UICOV state=")) {
+                stateLines++;
+            }
+            if (l.contains("[APE-RV] UICOV-ACT")) {
+                activityLines++;
+            }
+        }
+        assertEquals("one UICOV line per tracked state", 5, stateLines);
+        // 5 distinct activities (com.example.S0..S4), each with one live fragment.
+        assertEquals("one UICOV-ACT line per activity", 5, activityLines);
+    }
+
+    @Test
+    public void testDump_isReadOnly_INV_COV_07() throws Exception {
+        Name w1 = fakeName("//A");
+        Name w2 = fakeName("//B");
+        State s = createState("com.example.ReadOnly", w1, w2);
+        ModelAction a1 = createTargetedAction(s, w1, ActionType.MODEL_CLICK);
+        ModelAction a2 = createTargetedAction(s, w2, ActionType.MODEL_CLICK);
+        tracker.registerScreenElements(s, Arrays.asList(a1, a2));
+        tracker.recordInteraction(s, a1);
+
+        int elementsBefore = tracker.getTotalElements();
+        int interactionsBefore = tracker.getTotalInteractions();
+        float gapBefore = tracker.getCoverageGap(s);
+
+        captureDump(state -> true);
+
+        assertEquals("dump must not change totalElements", elementsBefore, tracker.getTotalElements());
+        assertEquals("dump must not change totalInteractions", interactionsBefore, tracker.getTotalInteractions());
+        assertEquals("dump must not change coverage gap", gapBefore, tracker.getCoverageGap(s), 0.0f);
+    }
+
+    // =======================================================================
+    // Per-Activity coverage dump (uicov-activity-rollup): [APE-RV] UICOV-ACT lines
+    // =======================================================================
+
+    /** Extracts the single UICOV-ACT line for the given activity from a dump, or fails. */
+    private static String activityLine(String dump, String activity) {
+        String needle = "[APE-RV] UICOV-ACT activity=" + activity + " ";
+        String found = null;
+        for (String l : dump.split("\n")) {
+            if (l.contains(needle)) {
+                assertNull("duplicate UICOV-ACT line for " + activity, found);
+                found = l;
+            }
+        }
+        assertNotNull("no UICOV-ACT line for " + activity + " in:\n" + dump, found);
+        return found;
+    }
+
+    /** Seeds the private activityRollup so a rollup-sourced activity can be dumped (simulates eviction). */
+    @SuppressWarnings("unchecked")
+    private void seedRollup(String activity, Map<String, Integer> widgets) throws Exception {
+        Field f = UICoverageTracker.class.getDeclaredField("activityRollup");
+        f.setAccessible(true);
+        Map<String, Map<String, Integer>> rollup = (Map<String, Map<String, Integer>>) f.get(tracker);
+        rollup.put(activity, new LinkedHashMap<>(widgets));
+    }
+
+    /** INV-COV-08: 3 fragments with the same 10 widget keys collapse into one line, discovered=10. */
+    @Test
+    public void activityLineCollapsesFragments() throws Exception {
+        Name[] w = new Name[10];
+        for (int i = 0; i < 10; i++) {
+            w[i] = fakeName("//Button[@i=\"" + i + "\"]");
+        }
+        State frag2Interacted = null;
+        ModelAction interactAction = null;
+        for (int f = 0; f < 3; f++) {
+            State frag = createState("com.example.MainActivity", fakeName("frag" + f));
+            List<ModelAction> actions = new ArrayList<>();
+            for (int i = 0; i < 10; i++) {
+                actions.add(createTargetedAction(frag, w[i], ActionType.MODEL_CLICK));
+            }
+            tracker.registerScreenElements(frag, actions);
+            if (f == 1) {
+                frag2Interacted = frag;
+                interactAction = actions.get(0); // widget X = w[0]
+            }
+        }
+        tracker.recordInteraction(frag2Interacted, interactAction);
+
+        String line = activityLine(captureDump(s -> false), "com.example.MainActivity");
+        assertTrue(line, line.contains("discovered=10"));   // union, not 30
+        assertTrue(line, line.contains("interacted=1"));     // X counted once
+        assertTrue(line, line.contains("gap=0.9"));
+        assertTrue(line, line.contains("liveStates=3"));
+    }
+
+    /** Evicted (rollup) fragment aggregates with a live fragment; liveStates counts only the live one. */
+    @Test
+    public void rollupIncludedInActivityLine() throws Exception {
+        // Rollup holds a covered widget A from an evicted fragment.
+        Map<String, Integer> rolled = new LinkedHashMap<>();
+        rolled.put("//A|MODEL_CLICK", 2);
+        seedRollup("com.example.SettingsActivity", rolled);
+
+        // Live fragment holds an uncovered widget B.
+        Name b = fakeName("//B");
+        State live = createState("com.example.SettingsActivity", b);
+        tracker.registerScreenElements(live, Arrays.asList(
+                createTargetedAction(live, b, ActionType.MODEL_CLICK)));
+
+        String line = activityLine(captureDump(s -> false), "com.example.SettingsActivity");
+        assertTrue(line, line.contains("discovered=2"));   // A (rollup) ∪ B (live)
+        assertTrue(line, line.contains("interacted=1"));    // A covered, B not
+        assertTrue(line, line.contains("liveStates=1"));    // only B is live
+    }
+
+    /** Activity present only in the rollup (all fragments evicted) reports liveStates=0. */
+    @Test
+    public void rollupOnlyActivityLine() throws Exception {
+        Map<String, Integer> rolled = new LinkedHashMap<>();
+        rolled.put("//X|MODEL_CLICK", 1);
+        rolled.put("//Y|MODEL_CLICK", 0);
+        seedRollup("com.example.LoginActivity", rolled);
+
+        String line = activityLine(captureDump(s -> false), "com.example.LoginActivity");
+        assertTrue(line, line.contains("discovered=2"));
+        assertTrue(line, line.contains("interacted=1"));
+        assertTrue(line, line.contains("liveStates=0"));
+    }
+
+    /** UICOV-ACT lines are emitted in lexicographic activity-name order. */
+    @Test
+    public void activityLinesDeterministicOrder() throws Exception {
+        String[] activities = {"com.example.Zeta", "com.example.Alpha", "com.example.Mid"};
+        for (String a : activities) {
+            Name w = fakeName("//w-" + a);
+            State s = createState(a, w);
+            tracker.registerScreenElements(s, Arrays.asList(
+                    createTargetedAction(s, w, ActionType.MODEL_CLICK)));
+        }
+        String dump = captureDump(s -> false);
+        int iAlpha = dump.indexOf("UICOV-ACT activity=com.example.Alpha");
+        int iMid = dump.indexOf("UICOV-ACT activity=com.example.Mid");
+        int iZeta = dump.indexOf("UICOV-ACT activity=com.example.Zeta");
+        assertTrue("Alpha before Mid", iAlpha >= 0 && iAlpha < iMid);
+        assertTrue("Mid before Zeta", iMid < iZeta);
+    }
+
+    /** INV-COV-07 parity: the activity dump mutates neither stateData nor activityRollup. */
+    @Test
+    public void activityDumpIsReadOnly() throws Exception {
+        Name b = fakeName("//B");
+        State live = createState("com.example.RO", b);
+        tracker.registerScreenElements(live, Arrays.asList(
+                createTargetedAction(live, b, ActionType.MODEL_CLICK)));
+        Map<String, Integer> rolled = new LinkedHashMap<>();
+        rolled.put("//A|MODEL_CLICK", 1);
+        seedRollup("com.example.RO", rolled);
+
+        Field sdF = UICoverageTracker.class.getDeclaredField("stateData");
+        sdF.setAccessible(true);
+        Field arF = UICoverageTracker.class.getDeclaredField("activityRollup");
+        arF.setAccessible(true);
+        int stateBefore = ((Map<?, ?>) sdF.get(tracker)).size();
+        int rollupBefore = ((Map<?, ?>) arF.get(tracker)).size();
+
+        captureDump(s -> true);
+
+        assertEquals("dump must not change stateData size", stateBefore, ((Map<?, ?>) sdF.get(tracker)).size());
+        assertEquals("dump must not change activityRollup size", rollupBefore, ((Map<?, ?>) arF.get(tracker)).size());
+    }
+
+    /** formatActivityLine is pure and host-testable, mirroring formatCoverageLine. */
+    @Test
+    public void formatActivityLineIsPure() {
+        Map<String, Integer> merged = data(
+                "//a|MODEL_CLICK", 1,
+                "//b|MODEL_CLICK", 0,
+                "//c|MODEL_LONG_CLICK", 0);
+        String line = tracker.formatActivityLine("com.example.Fmt", merged, 2);
+        assertTrue(line, line.startsWith("[APE-RV] UICOV-ACT activity=com.example.Fmt "));
+        assertTrue(line, line.contains("discovered=3 interacted=1 gap=0.7"));
+        assertTrue(line, line.contains("byType=MODEL_CLICK:1/2,MODEL_LONG_CLICK:0/1"));
+        assertTrue(line, line.endsWith("liveStates=2"));
+    }
+
+    // =======================================================================
+    // Activity-scoped interaction membership (coverage-boost-activity-scope)
+    // =======================================================================
+
+    /** INV-COV-09: interacting X in fragment S1 marks X interacted for the whole Activity. */
+    @Test
+    public void activityInteractionCoversFragments() throws Exception {
+        Name w = fakeName("//Widget[@id=\"x\"]");
+        State s1 = createState("com.example.MainActivity", fakeName("s1"));
+        State s2 = createState("com.example.MainActivity", fakeName("s2"));
+        ModelAction a1 = createTargetedAction(s1, w, ActionType.MODEL_CLICK);
+        ModelAction a2 = createTargetedAction(s2, w, ActionType.MODEL_CLICK);
+        tracker.registerScreenElements(s1, Arrays.asList(a1));
+        tracker.registerScreenElements(s2, Arrays.asList(a2));
+
+        tracker.recordInteraction(s1, a1);
+
+        String widgetId = UICoverageTracker.widgetId(a1);
+        assertTrue(tracker.hasActivityInteraction("com.example.MainActivity", widgetId));
+        // ...but the sibling fragment's own per-state count is still 0.
+        assertEquals(0, tracker.getInteractionCount(s2, widgetId));
+    }
+
+    /** Unknown widget → false. */
+    @Test
+    public void hasActivityInteractionFalseForUnknown() throws Exception {
+        Name w = fakeName("//W");
+        State s = createState("com.example.MainActivity", w);
+        tracker.registerScreenElements(s, Arrays.asList(
+                createTargetedAction(s, w, ActionType.MODEL_CLICK)));
+        assertFalse(tracker.hasActivityInteraction("com.example.MainActivity", "//Never|MODEL_CLICK"));
+        assertFalse(tracker.hasActivityInteraction(null, "//W|MODEL_CLICK"));
+    }
+
+    /** INV-COV-09: membership survives LRU eviction of the fragment it was recorded in. */
+    @Test
+    public void activityInteractionSurvivesEviction() throws Exception {
+        Name w = fakeName("//Kept");
+        State s1 = createState("com.example.EvictActivity", w);
+        ModelAction a1 = createTargetedAction(s1, w, ActionType.MODEL_CLICK);
+        tracker.registerScreenElements(s1, Arrays.asList(a1));
+        tracker.recordInteraction(s1, a1);
+        String widgetId = UICoverageTracker.widgetId(a1);
+        assertTrue(tracker.hasActivityInteraction("com.example.EvictActivity", widgetId));
+
+        // Flood > coverageMaxStates distinct states so s1 is LRU-evicted (folded into rollup).
+        int fillers = Config.coverageMaxStates + 1;
+        for (int i = 0; i < fillers; i++) {
+            Name fw = fakeName("//Filler[@i=\"" + i + "\"]");
+            State fs = createState("com.example.Filler" + i, fw);
+            tracker.registerScreenElements(fs, Arrays.asList(
+                    createTargetedAction(fs, fw, ActionType.MODEL_CLICK)));
+        }
+        // s1's per-state entry is gone, but activity membership is cumulative and never evicts.
+        assertEquals("s1 per-state entry evicted", 0, tracker.getInteractionCount(s1, widgetId));
+        assertTrue("activity membership survives eviction",
+                tracker.hasActivityInteraction("com.example.EvictActivity", widgetId));
+    }
+
+    /** The exact differential the boost call-site consumes: interacted in S1, locally 0 in S2. */
+    @Test
+    public void siblingFragmentInteractedButLocallyZero() throws Exception {
+        Name w = fakeName("//Shared");
+        State s1 = createState("com.example.Sib", fakeName("f1"));
+        State s2 = createState("com.example.Sib", fakeName("f2"));
+        ModelAction a1 = createTargetedAction(s1, w, ActionType.MODEL_CLICK);
+        ModelAction a2 = createTargetedAction(s2, w, ActionType.MODEL_CLICK);
+        tracker.registerScreenElements(s1, Arrays.asList(a1));
+        tracker.registerScreenElements(s2, Arrays.asList(a2));
+        tracker.recordInteraction(s1, a1);
+
+        String widgetId = UICoverageTracker.widgetId(a2);
+        assertTrue("interacted somewhere in the activity",
+                tracker.hasActivityInteraction("com.example.Sib", widgetId));
+        assertEquals("but locally untested in the sibling fragment",
+                0, tracker.getInteractionCount(s2, widgetId));
+    }
+
+    /** First-touch on an unregistered state still records activity membership (both branches). */
+    @Test
+    public void activityInteractionCapturedOnUnregisteredState() throws Exception {
+        Name w = fakeName("//FirstTouch");
+        State s = createState("com.example.Unreg", w);
+        ModelAction a = createTargetedAction(s, w, ActionType.MODEL_CLICK);
+        // No registerScreenElements → recordInteraction hits the unregistered-state branch.
+        tracker.recordInteraction(s, a);
+        assertTrue(tracker.hasActivityInteraction("com.example.Unreg", UICoverageTracker.widgetId(a)));
+    }
+
+    /** Runs the dump while capturing stdout (the [APE] Logger writes to System.out). */
+    private String captureDump(Predicate<State> mopReach) {
+        PrintStream original = System.out;
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(buffer));
+            tracker.dump(mopReach);
+        } finally {
+            System.setOut(original);
+        }
+        return buffer.toString();
     }
 }

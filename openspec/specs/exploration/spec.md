@@ -58,6 +58,12 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-10**: `RandomAgent` extends `StatefulAgent` and uses the same priority-weighted selection infrastructure. It does NOT implement a separate pure-random algorithm. The distinction from `SataAgent` is that `RandomAgent` uses `StatefulAgent`'s base priority assignment without SATA's directed graph navigation heuristics.
 - **INV-EXPL-11**: `StatefulAgent.adjustActionsByGUITree()` SHALL be called after base priority assignment and before the agent's selection step. Any priority modifications made by external components (e.g., MOP guidance in Phase 3) MUST be applied inside or after this method, not before it.
 - **INV-EXPL-12**: A `ModelAction` with a higher `priority` value SHALL be preferred over one with a lower `priority` value when `RandomHelper.randomPickWithPriority()` is used for selection within `StatefulAgent`.
+- **INV-EXPL-14**: Given identical `-s` seed, APK, and configuration, the sequence of `RandomHelper` draws SHALL be identical across runs.
+- **INV-EXPL-15**: No run SHALL spend more than 101 consecutive `checkAppActivity` iterations waiting for a foreground package without triggering a relaunch.
+- **INV-EXPL-16**: `tearDown()` SHALL run on every termination path of the exploration loop, normal or abnormal.
+- **INV-EXPL-17**: Per-step debug artifacts (PNG/XML) SHALL be written only when explicitly enabled via `ape.properties`.
+- **INV-EXPL-18**: Every fuzz gesture branch SHALL emit exactly one event per invocation.
+- **INV-EXPL-19**: No touch event SHALL ever be delivered to coordinates derived from bounds other than the resolved node's own bounds.
 
 ## Requirements
 
@@ -193,7 +199,7 @@ Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, 
 
 ---
 
-## SataAgent Action Selection Flow
+**SataAgent Action Selection Flow**
 
 ```mermaid
 flowchart TD
@@ -298,7 +304,7 @@ Beyond simple greedy unvisited-action selection, `SataAgent` uses multi-step gra
 
 ### Requirement: SataAgent — Trivial Activity Detection
 
-`SataAgent` identifies activities that are difficult to explore further as "trivial" and avoids spending excessive time in them. An activity is trivial when it has fewer states than `ape.trivialActivityRankThreshold` (default: `3`) OR when its visited rate is below a threshold relative to the median/mean visit count across all activities. When the current activity is non-trivial and a trivial activity has unvisited actions reachable via strong transitions, `SataAgent` SHOULD navigate to that trivial activity to exploit unexplored actions there.
+`SataAgent` SHALL identify activities that are difficult to explore further as "trivial" and SHALL avoid spending excessive time in them. An activity is trivial when it has fewer states than `ape.trivialActivityRankThreshold` (default: `3`) OR when its visited rate is below a threshold relative to the median/mean visit count across all activities. When the current activity is non-trivial and a trivial activity has unvisited actions reachable via strong transitions, `SataAgent` SHOULD navigate to that trivial activity to exploit unexplored actions there.
 
 #### Scenario: Current activity is trivial
 
@@ -335,7 +341,7 @@ Beyond simple greedy unvisited-action selection, `SataAgent` uses multi-step gra
 
 ### Requirement: StatefulAgent — Priority-Based Action Selection
 
-`StatefulAgent` and its subclasses use a `priority` integer field on each `ModelAction` to break ties and express preferences. Higher numeric priority means higher preference. The method `StatefulAgent.adjustActionsByGUITree()` is called after the base priority has been assigned and before the agent selects an action. This is the designated extension point where external components MAY call `ModelAction.setPriority(int)` to boost specific actions.
+`StatefulAgent` and its subclasses SHALL use a `priority` integer field on each `ModelAction` to break ties and express preferences. Higher numeric priority means higher preference. The method `StatefulAgent.adjustActionsByGUITree()` is called after the base priority has been assigned and before the agent selects an action. This is the designated extension point where external components MAY call `ModelAction.setPriority(int)` to boost specific actions.
 
 When `Config.mopDataPath` is non-null, `StatefulAgent` SHALL load `MopData` at construction time and apply MOP scoring in `adjustActionsByGUITree()` after the base priority loop. The MOP scoring pass SHALL only apply to actions where `action.requireTarget() == true` AND `action.isValid() == true`. The boost is additive: `action.setPriority(action.getPriority() + MopScorer.score(...))`. When `Config.mopDataPath` is null, the MOP scoring pass is skipped entirely and the method behaves identically to its pre-Phase-3 form.
 
@@ -362,7 +368,7 @@ The selection method `RandomHelper.randomPickWithPriority(List<ModelAction>)` MU
 
 ### Requirement: StatefulAgent — BFS and DFS Traversal Modes
 
-When the strategy is `bfs` or `dfs`, `MonkeySourceApe` creates a `StatefulAgent` configured with a BFS queue or DFS stack respectively. These modes do not use the ABA heuristic or epsilon-greedy selection of `SataAgent`; instead they traverse the state graph using classical breadth-first or depth-first order over unvisited states. Both modes still use the `Model` for state tracking and both apply `adjustActionsByGUITree()` for priority adjustments.
+When the strategy is `bfs` or `dfs`, `MonkeySourceApe` SHALL create a `StatefulAgent` configured with a BFS queue or DFS stack respectively. These modes do not use the ABA heuristic or epsilon-greedy selection of `SataAgent`; instead they traverse the state graph using classical breadth-first or depth-first order over unvisited states. Both modes still use the `Model` for state tracking and both apply `adjustActionsByGUITree()` for priority adjustments.
 
 #### Scenario: BFS strategy visits states level by level
 
@@ -381,7 +387,7 @@ When the strategy is `bfs` or `dfs`, `MonkeySourceApe` creates a `StatefulAgent`
 
 ### Requirement: Output Persistence on Termination
 
-On normal termination (when `StopTestingException` is caught), the exploration engine SHALL save graph artefacts to the output directory. The serialised graph (`sataModel.obj`) is written by `ObjectOutputStream` and contains the full in-memory `Graph` object. The Graphviz file (`sataGraph.dot`) is a DOT representation of every state and transition. The visualisation file (`sataGraph.vis.js`) is a vis.js JSON representation. All writes MUST complete before the process exits. If `ape.saveObjModel=false`, the `sataModel.obj` file SHALL NOT be written (default `true`). If `ape.saveDotGraph=false`, the `sataGraph.dot` file SHALL NOT be written (default `false`). If `ape.saveVisGraph=false`, the `sataGraph.vis.js` file SHALL NOT be written (default `true`).
+On termination — normal (when `StopTestingException` is caught) or abnormal (any other `Throwable` escaping the exploration loop) — the exploration engine SHALL save graph artefacts to the output directory. The `tearDown()` call chain (agent teardown, model serialisation, coverage dump, timeline) SHALL execute inside a `finally` block in `Monkey`, so an uncaught `RuntimeException` from the event loop still produces the run's outputs before the process exits. The serialised graph (`sataModel.obj`) is written by `ObjectOutputStream` and contains the full in-memory `Graph` object. The Graphviz file (`sataGraph.dot`) is a DOT representation of every state and transition. The visualisation file (`sataGraph.vis.js`) is a vis.js JSON representation. All writes MUST complete before the process exits. If `ape.saveObjModel=false`, the `sataModel.obj` file SHALL NOT be written (default `true`). If `ape.saveDotGraph=false`, the `sataGraph.dot` file SHALL NOT be written (default `false`). If `ape.saveVisGraph=false`, the `sataGraph.vis.js` file SHALL NOT be written (default `true`).
 
 #### Scenario: Normal termination with defaults
 
@@ -398,6 +404,12 @@ On normal termination (when `StopTestingException` is caught), the exploration e
 - **AND** the session terminates normally
 - **THEN** `sataModel.obj` SHALL NOT be created or overwritten
 - **AND** `sataGraph.vis.js` SHALL still be written (independent flag)
+
+#### Scenario: abnormal termination still persists outputs
+
+- **WHEN** a `RuntimeException` escapes the exploration loop
+- **THEN** `tearDown()` SHALL still run (via `finally`) and write the enabled artefacts before the process exits
+- **AND** the exception SHALL still propagate (the run is reported as failed)
 
 ---
 
@@ -438,7 +450,7 @@ All numeric and boolean tuning parameters MUST be loaded from `ape.properties` a
 | `ape.saveDotGraph` | boolean | false | Save Graphviz DOT graph on termination |
 | `ape.saveVisGraph` | boolean | true | Save vis.js JSON visualisation on termination |
 | `ape.takeScreenshot` | boolean | true | Save screenshots |
-| `ape.saveGUITreeToXmlEveryStep` | boolean | true | Save GUITree XML per step |
+| `ape.saveGUITreeToXmlEveryStep` | boolean | false | Save GUITree XML per step (default flipped to `false` by this change — see "Per-Step Debug Artifact Defaults" / INV-EXPL-17) |
 | `ape.defaultGUIThrottle` | long (ms) | 200 | Delay between injected events |
 | `ape.trivialActivityRankThreshold` | int | 3 | Minimum activity count before trivial-activity logic activates |
 
@@ -734,11 +746,106 @@ When `Config.dynamicEpsilon` is `false`, the existing behavior SHALL be preserve
 
 ### Requirement: Config Flags for Dynamic Epsilon
 
+`Config` SHALL declare the following flags controlling coverage-adaptive epsilon, loaded from `ape.properties` at class-loading time:
+
 | Flag | Property Key | Type | Default | Description |
 |------|-------------|------|---------|-------------|
 | `dynamicEpsilon` | `ape.dynamicEpsilon` | boolean | `true` | Enable coverage-adaptive epsilon |
 | `maxEpsilon` | `ape.maxEpsilon` | double | `0.15` | Epsilon when coverage gap is 1.0 |
 | `minEpsilon` | `ape.minEpsilon` | double | `0.02` | Epsilon when coverage gap is 0.0 |
+
+#### Scenario: Dynamic epsilon flags default correctly
+- **WHEN** `ape.properties` sets none of `ape.dynamicEpsilon`, `ape.maxEpsilon`, or `ape.minEpsilon`
+- **THEN** `Config.dynamicEpsilon` SHALL default to `true`, `Config.maxEpsilon` to `0.15`, and `Config.minEpsilon` to `0.02`
+
+---
+
+### Requirement: Seeded Agent Decision Reproducibility
+
+All agent-decision randomness routed through `RandomHelper` (priority roulettes such as `randomPickWithPriority`, uniform picks, `toss`, and `ApeFuzzer` gesture generation) SHALL be driven by a `java.util.Random` seeded from the Monkey `-s` seed. `MonkeySourceApe` SHALL call `RandomHelper.seed(seed)` exactly once during construction, with the same seed value that initializes `Monkey.mRandom`. Two runs launched with the same `-s`, the same APK, and the same configuration SHALL produce the same sequence of `RandomHelper` draws. (Previously `RandomHelper` used `ThreadLocalRandom.current()`, which cannot be seeded; the `-s` flag governed only the small subset of decisions using `mRandom`, so no run was reproducible.)
+
+#### Scenario: identical seeds produce identical draw sequences
+- **WHEN** `RandomHelper.seed(42)` is called and a sequence of `randomPick`/`toss`/`nextInt` draws is recorded, then `RandomHelper.seed(42)` is called again
+- **THEN** repeating the same sequence of calls SHALL yield the same values in the same order
+
+#### Scenario: seed comes from the Monkey -s flag
+- **WHEN** the Monkey is launched with `-s 12345`
+- **THEN** `RandomHelper` SHALL be seeded with `12345` before the first agent decision
+
+---
+
+### Requirement: Bounded Foreground Wait
+
+When `waitForActivity` is active and the foreground package is not in the allowed set, `MonkeySourceApe.checkAppActivity()` throttles 100 ms and re-checks on the next `getNextEvent()`. This wait SHALL be bounded: a consecutive-iteration counter SHALL be maintained, and when it exceeds 100 iterations (~10 s) the engine SHALL log `[APE-RV] waitForActivity exceeded 100 cycles, relaunching`, clear the wait state, and relaunch the app under test via the existing restart path (`startRandomMainApp`). The counter SHALL reset whenever the allowed package reaches the foreground. (Previously there was no counter, timeout, or relaunch: an app that never returned to the foreground consumed the entire `--running-minutes` budget in 100 ms throttles, producing a run with zero actions.)
+
+#### Scenario: wedged app is relaunched
+- **WHEN** the foreground package remains disallowed for 101 consecutive `checkAppActivity` iterations with `waitForActivity` active
+- **THEN** the wait state SHALL be cleared
+- **AND** the app under test SHALL be relaunched
+- **AND** one `[APE-RV] waitForActivity exceeded 100 cycles, relaunching` line SHALL be emitted
+
+#### Scenario: normal wait resets the counter
+- **WHEN** the allowed package reaches the foreground after 5 wait iterations
+- **THEN** the counter SHALL reset to 0
+- **AND** no relaunch SHALL occur
+
+---
+
+### Requirement: Per-Step Debug Artifact Defaults
+
+`ape.takeScreenshotForEveryStep` and `ape.saveGUITreeToXmlEveryStep` SHALL default to `false`. Both are debug aids: the experiment pipeline consumes neither (coverage comes from logcat, the trace from stdout; the aperv-tool pulls no per-step PNG/XML), and the LLM path captures its own screenshots on demand via `ScreenshotCapture`, independent of these flags. Per-step PNG + XML writes are pure I/O overhead on the exploration loop (estimated 20-40% of step throughput on an emulator). Debug runs re-enable either flag via `ape.properties`.
+
+#### Scenario: defaults are off
+- **WHEN** `ape.properties` contains neither key
+- **THEN** `Config.takeScreenshotForEveryStep` SHALL be `false`
+- **AND** `Config.saveGUITreeToXmlEveryStep` SHALL be `false`
+- **AND** no per-step PNG or XML SHALL be written
+
+#### Scenario: debug re-enable
+- **WHEN** `ape.properties` contains `ape.saveGUITreeToXmlEveryStep=true`
+- **THEN** a `step-N.xml` SHALL be written each step, as before
+
+#### Scenario: LLM screenshots unaffected
+- **WHEN** `ape.takeScreenshotForEveryStep=false` and the LLM routes a step
+- **THEN** `ScreenshotCapture` SHALL still capture its on-demand screenshot for the prompt
+
+---
+
+### Requirement: Fuzz Gesture Emission
+
+Every branch of the fuzzer's default gesture switch (drag, pinch/zoom, click) SHALL append exactly one event to the output list. `generatePinchOrZoomEvent` SHALL end with `events.add(new ApePinchOrZoomEvent(points))` (previously the gesture was built and discarded — the `events` parameter was never used, so ~1/3 of default-branch fuzz iterations emitted nothing).
+
+Before appending, `generatePinchOrZoomEvent` SHALL size the `points` array to exactly the number of entries it writes and emit no `null` entry. The current allocation `new PointF[4 + count << 1]` evaluates by Java precedence to `(4 + count) << 1` = `8 + 2·count`, while only `6 + 2·count` entries are written — leaving two trailing `null` slots that the constructor would dereference. The `ApePinchOrZoomEvent` constructor SHALL validate the array length (reject arrays shorter than 6 entries — 1 count slot + 1 duration slot + 2 coordinates × (count+1) pointers with count ≥ 0 gives the minimum valid payload of 6) BEFORE dereferencing any element, so a malformed array is rejected rather than throwing `NullPointerException`.
+
+#### Scenario: pinch/zoom branch emits
+- **WHEN** the fuzzer's gesture switch selects the pinch/zoom branch
+- **THEN** exactly one `ApePinchOrZoomEvent` SHALL be appended to the event list
+- **AND** its points array SHALL have at least 6 entries
+
+#### Scenario: emitted points array has no null entries
+- **WHEN** the pinch/zoom branch builds its `points` array for any `count ≥ 0`
+- **THEN** the array passed to `ApePinchOrZoomEvent` SHALL have length equal to the number of written entries
+- **AND** it SHALL contain no `null` element and construction SHALL NOT throw `NullPointerException`
+
+#### Scenario: short payload rejected
+- **WHEN** an `ApePinchOrZoomEvent` is constructed with 5 points
+- **THEN** the constructor SHALL reject it before dereferencing any element
+
+---
+
+### Requirement: Off-Screen Action Handling
+
+When `generateClickEventAt` finds that the target node's bounds do not intersect the visible screen (`getVisibleBounds` returns null), it SHALL NOT emit any touch event and SHALL log one `[APE-RV] off-screen action dropped: <action>` line. It SHALL NOT substitute the display bounds and click the screen center: that behavior executed an unrelated click while the model credited the original action, creating false edges (260 occurrences measured across 17/1513 baseline runs). The invalid-bounds branch (`!bounds.contains(p)`) keeps its no-event behavior and gains the same log line. Visit/coverage crediting of the dropped action is unchanged in this change (the markVisited-before-event-generation reorder is a separate, deferred item); the log line makes the wasted-step frequency measurable.
+
+#### Scenario: off-screen node produces no event
+- **WHEN** a MODEL_CLICK resolves to a node whose bounds do not intersect the visible screen
+- **THEN** no touch event SHALL be enqueued
+- **AND** one `[APE-RV] off-screen action dropped` line SHALL be emitted
+- **AND** no click SHALL be delivered to the screen center
+
+#### Scenario: on-screen node unchanged
+- **WHEN** the node's bounds intersect the visible screen
+- **THEN** click generation SHALL be identical to the previous implementation
 
 ## Invariants (Dynamic Epsilon)
 

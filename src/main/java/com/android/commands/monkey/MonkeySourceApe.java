@@ -331,6 +331,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     private boolean waitForActivity;
 
+    /** INV-EXPL-15: consecutive checkAppActivity cycles spent waiting for the expected package. */
+    private int waitForActivityCycles;
+
     private boolean clearPackageOnGeneratingActivity;
 
     private int lastStartTimestamp = -1;
@@ -357,8 +360,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
     protected void generateClickEventAt(Rect nodeRect, long waitTime, ClickPoint clickPoint) {
         Rect bounds = getVisibleBounds(nodeRect);
         if (bounds == null) {
-            Logger.wprintln("Error to fetch bounds.");
-            bounds = AndroidDevice.getDisplayBounds();
+            // INV-EXPL-19: the node's bounds do not intersect the visible screen. Drop the
+            // action rather than substituting the display bounds and clicking its centre
+            // (that delivered an unrelated click the model credited to this action).
+            Logger.wformat("[APE-RV] off-screen action dropped: %s", nodeRect);
+            return;
         }
 
         PointF p1;
@@ -401,7 +407,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
         if (!bounds.contains((int) p1.x, (int) p1.y)) {
             // throw new RuntimeException("Bug");
+            // INV-EXPL-19: click point fell outside the resolved bounds; emit no event.
             Logger.wformat("Invalid bounds: %s", bounds);
+            Logger.wformat("[APE-RV] off-screen action dropped: %s", nodeRect);
             return;
         }
         long downAt = SystemClock.uptimeMillis();
@@ -1124,6 +1132,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
     }
 
 
+    /** The primary app under test (first configured main app); used for the MOP package/mainActivity sanity check. */
+    public ComponentName getMainApp() {
+        return mMainApps.get(0);
+    }
+
     public ComponentName randomlyPickMainApp() {
         int total = mMainApps.size();
         int index = mRandom.nextInt(total);
@@ -1178,6 +1191,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
         String pkg = cn.getPackageName();
         boolean allow = MonkeyUtils.getPackageFilter().isPackageValid(pkg);
         if (allow) {
+            this.waitForActivityCycles = 0; // expected package is in the foreground
             if (this.waitForActivity) {
                 Logger.iformat("Expected activity package [%s] is loaded...", pkg);
                 // needed.
@@ -1188,6 +1202,17 @@ public class MonkeySourceApe implements MonkeyEventSource {
             return;
         }
         if (this.waitForActivity) {
+            // INV-EXPL-15: bound the wait. If the expected package never foregrounds, this branch
+            // would otherwise throttle 100ms forever and wedge the run; relaunch after 100 cycles.
+            if (++this.waitForActivityCycles > 100) {
+                Logger.iprintln("[APE-RV] waitForActivity exceeded 100 cycles, relaunching");
+                this.waitForActivity = false;
+                this.waitForActivityFromClean = false;
+                this.waitForActivityCycles = 0;
+                clearEvent();
+                startRandomMainApp();
+                return;
+            }
             Logger.iprintln("We are still waiting for activity loading. Let's wait for another 100ms...");
             generateThrottleEvent(100);
             return;

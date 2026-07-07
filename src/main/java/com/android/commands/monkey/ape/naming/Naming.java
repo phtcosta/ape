@@ -418,6 +418,18 @@ public class Naming implements Serializable {
         return naming(tree, false).getName(node);
     }
 
+    /**
+     * INV-NAME-13: membership test over a list already sorted by {@link #comparator}. Guards the
+     * {@code Collections.binarySearch} result with {@code >= 0}: binarySearch returns
+     * {@code -(insertionPoint) - 1} for an absent namelet, which is {@code <= -2} whenever it sorts
+     * after the first element. The old {@code == -1} test misclassified those as present, so an
+     * ancestor outside the set was treated as included. Extracted so it is JVM-testable without a
+     * full {@link Naming} instance ({@code comparator} is static and depends only on depth/exprStr).
+     */
+    static boolean containsNamelet(List<Namelet> sorted, Namelet n) {
+        return Collections.binarySearch(sorted, n, comparator) >= 0;
+    }
+
     private Namelet select(List<Namelet> namelets) {
         Namelet namelet = null;
         if (namelets == null || namelets.size() == 0) {
@@ -435,7 +447,7 @@ public class Naming implements Serializable {
         for (int i = namelets.size() - 1; i >= 0; i--) {
             Namelet n = namelets.get(i).getParent();
             while (n != null) {
-                if (Collections.binarySearch(namelets, n, comparator) == -1) {
+                if (!containsNamelet(namelets, n)) {
                     break;
                 }
                 n = n.getParent();

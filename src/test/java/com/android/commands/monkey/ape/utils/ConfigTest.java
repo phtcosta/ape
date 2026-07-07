@@ -124,4 +124,22 @@ public class ConfigTest {
     public void testLlmPercentage_defaultInRangeUnchanged() {
         assertEquals(0.02, Config.llmPercentage, 1e-9);
     }
+
+    // ---------------------------------------------------------------------------
+    // exploration-effectiveness 1.1: per-step debug artifacts now default false
+    // for throughput (INV-EXPL-17). Both flags are `static final`, captured at
+    // class load, so the override direction (an ape.properties key flipping them
+    // back to true) cannot be re-evaluated in the same JVM — override is
+    // config-driven via Config.getBoolean at load time (same limitation noted for
+    // the gh15 static-final flags above). We assert the shipped defaults here.
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testTakeScreenshotForEveryStep_defaultIsFalse() {
+        assertFalse(Config.takeScreenshotForEveryStep);
+    }
+
+    @Test
+    public void testSaveGUITreeToXmlEveryStep_defaultIsFalse() {
+        assertFalse(Config.saveGUITreeToXmlEveryStep);
+    }
 }

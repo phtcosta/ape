@@ -19,12 +19,20 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.ThreadLocalRandom;
 
 public class RandomHelper {
 
+    // INV-EXPL-14: a single seedable generator so a run is reproducible from its seed. Was
+    // ThreadLocalRandom.current(), which cannot be seeded and made every run non-deterministic.
+    private static Random random = new Random();
+
+    /** Seed the shared generator; call once at startup with the same value that seeds Monkey.mRandom. */
+    public static void seed(long seed) {
+        random = new Random(seed);
+    }
+
     public static Random getRandom() {
-        return ThreadLocalRandom.current();
+        return random;
     }
     
     public static int nextInt() {

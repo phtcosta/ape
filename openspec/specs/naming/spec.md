@@ -134,6 +134,10 @@ sequenceDiagram
 
 - **INV-NAME-12**: For any two `GUITree`s `t1` and `t2` that differ only in widget properties not covered by `N`'s `Namelet` set (i.e., no `NamerType` in any `Namelet`'s `Namer` reads those properties), `N.naming(t1)` and `N.naming(t2)` MUST produce equal `StateKey` values. Abstraction MUST ignore irrelevant properties.
 
+- **INV-NAME-13**: Every `binarySearch` not-found test in `ape.naming` SHALL use `index < 0`; no code path SHALL index an array or list with a negative binary-search result.
+
+- **INV-NAME-14**: No refinement-guard condition SHALL compare a quantity different from the one its threshold names and its log message reports.
+
 ---
 
 ## Requirements
@@ -344,3 +348,33 @@ The per-`Naming` cache of `NamingResult` values (`Naming.treeToNamingResult`) MU
 - **WHEN** `Naming.release(tree)` is called for a `GUITree` `t`,
 - **THEN** the cache entry for `t` MUST be removed from `treeToNamingResult`,
 - **AND** a subsequent call to `Naming.naming(t, false)` MUST recompute the `NamingResult` from the DOM.
+
+---
+
+### Requirement: Namelet Binary-Search Not-Found Contract
+
+`Naming.select()` locates a `Namelet` in the sorted namelet array via `Collections.binarySearch`. A negative return value SHALL be treated as "absent" regardless of its magnitude: `binarySearch` returns `-(insertionPoint) - 1`, so a missing element whose insertion point is not 0 yields a value below `-1`. The not-found test SHALL be `index < 0`, never `index == -1`. (Previously the `== -1` test let a missing namelet with insertion point ≠ 0 pass as "present", selecting a namelet whose refinement chain does not apply — a silently wrong abstraction, not a crash.)
+
+#### Scenario: absent namelet with non-zero insertion point
+- **WHEN** `Naming.select()` searches for a namelet that is absent and whose insertion point in the sorted array is greater than 0 (binarySearch returns ≤ -2)
+- **THEN** the namelet SHALL be treated as absent
+- **AND** no namelet SHALL be selected from the negative index
+
+#### Scenario: present namelet unchanged
+- **WHEN** the namelet exists in the array (binarySearch returns ≥ 0)
+- **THEN** selection behavior SHALL be identical to the previous implementation
+
+---
+
+### Requirement: Per-State GUITree Cap Enforcement
+
+The refinement guards in `NamingFactory` that implement the `ape.maxGUITreesPerState` contract (declared in this capability's Data Contracts, default 20) SHALL test the state's own GUITree count (`state.getGUITrees().size() > maxGUITreesPerState`). Both guard sites previously tested `an.getStates().size()` — a copy-paste of the `maxStatesPerActivity` check on the preceding line — so the per-state GUITree cap never engaged: the condition was unreachable (any activity exceeding it had already returned on the previous check), states accumulated GUITrees without bound (a known OOM contributor), and the guards' own log messages ("Already too many GUI trees", printing `state.getGUITrees().size()`) described a check that was not being made.
+
+#### Scenario: over-cap state suppresses refinement
+- **WHEN** a state holds 21 GUITrees with `ape.maxGUITreesPerState=20`
+- **THEN** the refinement guard SHALL fire (refinement suppressed for that state)
+- **AND** the log line SHALL report the state's GUITree count
+
+#### Scenario: under-cap state refines normally
+- **WHEN** a state holds 5 GUITrees and its activity is under `maxStatesPerActivity`
+- **THEN** refinement SHALL proceed as before

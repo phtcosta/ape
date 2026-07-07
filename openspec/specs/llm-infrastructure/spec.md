@@ -56,7 +56,7 @@ The infrastructure is designed for graceful degradation: if any component fails 
 
 ---
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: SglangClient — OpenAI-Compatible HTTP Client
 
@@ -265,6 +265,10 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 ### Requirement: LlmException — LLM Error Type
 
 `LlmException` SHALL be a `RuntimeException` subclass with two constructors: `LlmException(String message)` and `LlmException(String message, Throwable cause)`. It is used internally by `SglangClient` for error handling. Per INV-LLM-01, `LlmException` SHALL never propagate to callers of `SglangClient.chat()`.
+
+#### Scenario: LlmException stays internal to SglangClient
+- **WHEN** an internal error occurs inside `SglangClient.chat()` and an `LlmException` is raised
+- **THEN** it SHALL be caught within `SglangClient` and SHALL NOT propagate to the caller (per INV-LLM-01)
 
 ---
 

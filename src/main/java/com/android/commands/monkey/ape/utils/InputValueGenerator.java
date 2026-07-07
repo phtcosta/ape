@@ -16,8 +16,10 @@
 package com.android.commands.monkey.ape.utils;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 
@@ -126,34 +128,64 @@ public class InputValueGenerator {
     }
 
     /**
-     * Matches a text against category keywords (case-insensitive).
+     * Matches a text against category keywords (INV-INP-05).
      * Keyword priority follows spec order: email > password > phone > url > number > search.
+     *
+     * <p>Comparison is token-based, not raw substring: the identifier is split on
+     * separators ({@code _ - . / :} and space) and camelCase boundaries, lowercased,
+     * and each token is compared for EQUALITY with a keyword. Raw {@code contains}
+     * matching mislabeled "account_name" as NUMBER (via "count"), "security_answer"
+     * as URL (via "uri"), "hotel" as PHONE (via "tel").
      */
     private InputCategory matchKeywords(String text) {
-        String lower = text.toLowerCase(Locale.US);
+        Set<String> tokens = tokenize(text);
 
-        if (lower.contains("email")) {
+        if (containsAny(tokens, "email")) {
             return InputCategory.EMAIL;
         }
-        if (lower.contains("password") || lower.contains("passwd")) {
+        if (containsAny(tokens, "password", "passwd")) {
             return InputCategory.PASSWORD;
         }
-        if (lower.contains("phone") || lower.contains("tel")) {
+        if (containsAny(tokens, "phone", "tel")) {
             return InputCategory.PHONE;
         }
-        if (lower.contains("url") || lower.contains("website") || lower.contains("uri")) {
+        if (containsAny(tokens, "url", "website", "uri")) {
             return InputCategory.URL;
         }
-        if (lower.contains("number") || lower.contains("amount")
-                || lower.contains("quantity") || lower.contains("price")
-                || lower.contains("count")) {
+        if (containsAny(tokens, "number", "amount", "quantity", "price", "count")) {
             return InputCategory.NUMBER;
         }
-        if (lower.contains("search")) {
+        if (containsAny(tokens, "search")) {
             return InputCategory.SEARCH;
         }
 
         return InputCategory.GENERIC;
+    }
+
+    /**
+     * Splits an identifier into lowercased tokens, breaking on the separator class
+     * {@code [_\-./: ]} and on camelCase boundaries (a lower/digit followed by an
+     * upper, e.g. "userEmailField" → user, email, field).
+     */
+    private static Set<String> tokenize(String text) {
+        String withBoundaries = text.replaceAll("([a-z0-9])([A-Z])", "$1 $2");
+        Set<String> tokens = new HashSet<>();
+        for (String part : withBoundaries.split("[_\\-./: ]+")) {
+            if (!part.isEmpty()) {
+                tokens.add(part.toLowerCase(Locale.US));
+            }
+        }
+        return tokens;
+    }
+
+    /** True when any of {@code keywords} equals a token in {@code tokens}. */
+    private static boolean containsAny(Set<String> tokens, String... keywords) {
+        for (String keyword : keywords) {
+            if (tokens.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

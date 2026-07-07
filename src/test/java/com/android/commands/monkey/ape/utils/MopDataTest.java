@@ -2,8 +2,10 @@ package com.android.commands.monkey.ape.utils;
 
 import org.junit.Test;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileWriter;
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -16,7 +18,7 @@ import static org.junit.Assert.*;
 /**
  * Unit tests for MopData. The WTG data-layer tests use the package-private
  * {@code MopData.forTest()} factory; the parser tests (gh13 §15) load real and synthetic
- * JSON through {@code MopData.load()}, which is JVM-runnable because the parser uses
+ * JSON through {@code MopData.load(, null, null)}, which is JVM-runnable because the parser uses
  * {@code org.json} rather than {@code android.util.JsonReader} (design D21).
  */
 public class MopDataTest {
@@ -45,10 +47,10 @@ public class MopDataTest {
     // -------------------------------------------------------------------------
 
     /**
-     * INV-WTG-01 + Scenario: Parse click transitions.
-     * Simulates the result of parsing click transitions from cryptoapp fixture:
-     * sourceId=1382 (MainActivity#OptionsMenu) -> targetId=1394 (CipherActivity)
-     * with event type=click, widgetName=menu_item_cipher.
+     * INV-WTG-01/04 + Scenario: Parse click transitions.
+     * Simulates the result of parsing click transitions from the cryptoapp fixture:
+     * the MainActivity#OptionsMenu-sourced edges are keyed under the base activity
+     * MainActivity (INV-WTG-04), so the consumer queries by base activity.
      */
     @Test
     public void testClickTransitions_storedCorrectly() {
@@ -60,7 +62,7 @@ public class MopDataTest {
         transitions.add(new MopData.WtgTransition(
                 "menu_item_message_digest", "android.view.MenuItem",
                 "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
-        wtg.put("br.unb.cic.cryptoapp.MainActivity#OptionsMenu", transitions);
+        wtg.put("br.unb.cic.cryptoapp.MainActivity", transitions);
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("br.unb.cic.cryptoapp.cipher.CipherActivity");
@@ -71,8 +73,10 @@ public class MopDataTest {
         assertTrue("WTG data should be present", data.hasWtgData());
 
         List<MopData.WtgTransition> result =
-                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity#OptionsMenu");
+                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity");
         assertEquals(2, result.size());
+        assertTrue("suffixed key no longer used (INV-WTG-04)",
+                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity#OptionsMenu").isEmpty());
 
         MopData.WtgTransition t0 = result.get(0);
         assertEquals("menu_item_cipher", t0.widgetName);
@@ -140,8 +144,9 @@ public class MopDataTest {
 
     /**
      * Scenario: Parse MenuItem click transitions (from cryptoapp fixture).
-     * Window 1382 = MainActivity#OptionsMenu, Window 1397 = MessageDigestActivity.
-     * Transition: menu_item_message_digest click -> MessageDigestActivity.
+     * Window 1382 = MainActivity#OptionsMenu reduces to base MainActivity (INV-WTG-04),
+     * Window 1397 = MessageDigestActivity. Transition: menu_item_message_digest click ->
+     * MessageDigestActivity, queried by the base source activity.
      */
     @Test
     public void testMenuItemClickTransition() {
@@ -150,12 +155,12 @@ public class MopDataTest {
         transitions.add(new MopData.WtgTransition(
                 "menu_item_message_digest", "android.view.MenuItem",
                 "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
-        wtg.put("br.unb.cic.cryptoapp.MainActivity#OptionsMenu", transitions);
+        wtg.put("br.unb.cic.cryptoapp.MainActivity", transitions);
 
         MopData data = buildTestData(wtg, new HashSet<String>());
 
         List<MopData.WtgTransition> result =
-                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity#OptionsMenu");
+                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity");
         assertEquals(1, result.size());
         assertEquals("menu_item_message_digest", result.get(0).widgetName);
         assertEquals("android.view.MenuItem", result.get(0).widgetClass);
@@ -219,7 +224,7 @@ public class MopDataTest {
     }
 
     // =========================================================================
-    // gh13 §15 — parser tests over real + synthetic JSON via MopData.load()
+    // gh13 §15 — parser tests over real + synthetic JSON via MopData.load(, null, null)
     // =========================================================================
 
     private static final String FRESH = "cryptoapp.apk.gh60-fresh.json";
@@ -244,7 +249,7 @@ public class MopDataTest {
     // 15.1
     @Test
     public void testFullFixtureLoadsAllFields() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         assertNotNull(d);
         assertEquals(PKG, d.getPackageName());
         assertEquals(MAIN, d.getMainActivity());
@@ -302,10 +307,10 @@ public class MopDataTest {
         assertEquals("no directMop widget in cryptoapp", 0, directWidgets);
     }
 
-    // 15.2 — BUG-FIX GATE (INV-MOP-07, D20)
+    // 15.2 — BUG-FIX GATE: transitiveMop derived from gh60 reachesTarget keys (D20)
     @Test
     public void testWidgetTransitiveMopDerivedFromGh60Targets() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         assertNotNull(d);
         MopData.Widget w = d.getWidget(MDA, "buttonGenerateHash");
         assertNotNull("buttonGenerateHash must be indexed under MessageDigestActivity", w);
@@ -336,7 +341,7 @@ public class MopDataTest {
     // 15.3
     @Test
     public void testEditTextWidgetMetadataCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         MopData.Widget e = d.getWidget(MDA, "editTextMessageDigest");
         assertNotNull(e);
         assertEquals("android.widget.EditText", e.type);
@@ -356,13 +361,13 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"id\":2,\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void h()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")));
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
         assertNotNull(d);
         assertTrue(d.getWidget("C", "b").transitiveMop);
         // legacy reachesMop key is ignored (P3, forward-compat fall-through)
         String legacyReach = "{\"className\":\"C\",\"methods\":[" +
                 "{\"signature\":\"<C: void h()>\",\"reachesMop\":true}]}";
-        MopData d2 = MopData.load(writeTempJson(synthetic(legacyReach, win, "", "")));
+        MopData d2 = MopData.load(writeTempJson(synthetic(legacyReach, win, "", "")), null, null);
         assertNotNull(d2);
         assertFalse("legacy reachesMop must NOT register", d2.getWidget("C", "b").transitiveMop);
     }
@@ -371,16 +376,16 @@ public class MopDataTest {
     @Test
     public void testCompleteSentinel() throws Exception {
         String body = "\"reachability\":[],\"windows\":[],\"transitions\":[],\"components\":{}";
-        assertNull(MopData.load(writeTempJson("{" + body + "}")));               // absent
-        assertNull(MopData.load(writeTempJson("{\"complete\":false," + body + "}"))); // false
-        assertNotNull(MopData.load(writeTempJson("{\"complete\":true," + body + "}"))); // true
+        assertNull(MopData.load(writeTempJson("{" + body + "}"), null, null));               // absent
+        assertNull(MopData.load(writeTempJson("{\"complete\":false," + body + "}"), null, null)); // false
+        assertNotNull(MopData.load(writeTempJson("{\"complete\":true," + body + "}"), null, null)); // true
     }
 
     // 15.6
     @Test
     public void testTopLevelPackageAndMainActivity() throws Exception {
         MopData d = MopData.load(writeTempJson(
-                "{\"package\":\"a.b.c\",\"mainActivity\":\"a.b.c.Main\",\"complete\":true}"));
+                "{\"package\":\"a.b.c\",\"mainActivity\":\"a.b.c.Main\",\"complete\":true}"), null, null);
         assertEquals("a.b.c", d.getPackageName());
         assertEquals("a.b.c.Main", d.getMainActivity());
     }
@@ -404,10 +409,88 @@ public class MopDataTest {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Task 5.3/5.4 — [APE-MOP-DATA] load status line (INV-MOP-21)
+    // -------------------------------------------------------------------------
+
+    /** Capture stdout (the [APE] Logger stream) while loading. */
+    private static String captureLoad(String path, String pkg, String main) {
+        PrintStream original = System.out;
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try {
+            System.setOut(new PrintStream(buffer));
+            MopData.load(path, pkg, main);
+        } finally {
+            System.setOut(original);
+        }
+        return buffer.toString();
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0, from = 0;
+        for (int i; (i = haystack.indexOf(needle, from)) >= 0; from = i + needle.length()) {
+            count++;
+        }
+        return count;
+    }
+
+    // 5.4 — success line carries the counters, exactly one status line
+    @Test
+    public void testStatusLineLoadedEmitsCounters() {
+        String out = captureLoad(fixturePath(FRESH), null, null);
+        assertTrue(out, out.contains("[APE-MOP-DATA] status=loaded"));
+        assertTrue(out, out.contains("package=" + PKG));
+        assertTrue(out, out.contains("windows=5"));
+        assertTrue(out, out.contains("widgets="));
+        assertTrue(out, out.contains("flagged=2"));
+        assertTrue(out, out.contains("droppedNoId="));
+        assertTrue(out, out.contains("transitions=35"));
+        assertEquals("exactly one status line", 1, countOccurrences(out, "[APE-MOP-DATA] status="));
+    }
+
+    // 5.4 — rejection reasons
+    @Test
+    public void testStatusLineIncompleteReason() throws Exception {
+        String out = captureLoad(writeTempJson("{\"package\":\"a.b\"}"), null, null);
+        assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=incomplete"));
+        assertEquals(1, countOccurrences(out, "[APE-MOP-DATA] status="));
+    }
+
+    @Test
+    public void testStatusLineParseErrorReason() throws Exception {
+        String out = captureLoad(writeTempJson("{ this is not valid json "), null, null);
+        assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=parse-error"));
+    }
+
+    @Test
+    public void testStatusLineFileMissingReason() {
+        String out = captureLoad("/nonexistent/path/does-not-exist.json", null, null);
+        assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=file-missing"));
+    }
+
+    @Test
+    public void testStatusLinePackageMismatchReason() {
+        boolean prev = Config.mopStrictPackageMatch;
+        Config.mopStrictPackageMatch = true;
+        try {
+            String out = captureLoad(fixturePath(FRESH), "x.y.z.OTHER", null);
+            assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=package-mismatch"));
+        } finally {
+            Config.mopStrictPackageMatch = prev;
+        }
+    }
+
+    // 5.3 — unset path stays silent (spec: no status line required when MOP disabled)
+    @Test
+    public void testStatusLineNullPathEmitsNoLine() {
+        String out = captureLoad(null, null, null);
+        assertFalse(out, out.contains("[APE-MOP-DATA]"));
+    }
+
     // 15.9
     @Test
     public void testReachabilityClassFieldsCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         boolean sawMain = false, sawReachable = false;
         for (MopData.ReachabilityClass rc : d.getReachability()) {
             assertNotNull(rc.className);
@@ -424,7 +507,7 @@ public class MopDataTest {
     // 15.10
     @Test
     public void testWidgetCoreFieldsCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         MopData.Widget e = d.getWidget(MDA, "editTextMessageDigest");
         assertNotNull(e);
         assertEquals("editTextMessageDigest", e.idName);
@@ -439,7 +522,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"sp\",\"type\":\"android.widget.Spinner\",\"prompt\":\"Pick\",\"spinnerMode\":\"dropdown\"}," +
                 "{\"idName\":\"bt\",\"type\":\"android.widget.Button\",\"contentDescription\":\"Encrypt\",\"tooltipText\":\"Tap\"}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")));
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
         MopData.Widget sp = d.getWidget("C", "sp");
         assertEquals("Pick", sp.prompt);
         assertEquals("dropdown", sp.spinnerMode);
@@ -454,7 +537,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"a\",\"type\":\"android.widget.Button\"}," +
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"prompt\":null,\"tooltipText\":null}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")));
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
         assertNull(d.getWidget("C", "a").prompt);
         assertNull(d.getWidget("C", "b").prompt);
         assertNull(d.getWidget("C", "b").tooltipText);
@@ -463,7 +546,7 @@ public class MopDataTest {
     // 15.13
     @Test
     public void testSpinnerEntriesCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         MopData.Widget sp = d.getWidget(MDA, "spinnerMessageDigest");
         assertEquals(13, sp.entries.size());
         assertTrue(sp.entries.contains("MD5"));
@@ -472,7 +555,7 @@ public class MopDataTest {
     // 15.14
     @Test
     public void testListenerFieldsCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         MopData.Widget w = d.getWidget(MDA, "buttonGenerateHash");
         assertFalse(w.listeners.isEmpty());
         MopData.Listener l = w.listeners.get(0);
@@ -488,7 +571,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void unknown()>\",\"handlerReachesTarget\":true}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")));
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
         assertTrue(d.getWidget("C", "b").transitiveMop);
     }
 
@@ -500,14 +583,14 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void h()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")));
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
         assertTrue(d.getWidget("C", "b").transitiveMop);
     }
 
     // 15.17
     @Test
     public void testTransitionEventFieldsCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         boolean found = false;
         for (MopData.Transition t : d.getTransitions()) {
             for (MopData.TransitionEvent e : t.events) {
@@ -523,7 +606,7 @@ public class MopDataTest {
     // 15.18
     @Test
     public void testTransitionImplicitEventsPreservedInRawView() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         boolean implicitInRaw = false;
         for (MopData.Transition t : d.getTransitions()) {
             for (MopData.TransitionEvent e : t.events) {
@@ -531,13 +614,12 @@ public class MopDataTest {
             }
         }
         assertTrue("implicit events survive in raw transitions", implicitInRaw);
-        // WTG convenience view is click-only
-        for (List<MopData.WtgTransition> list : new ArrayList<List<MopData.WtgTransition>>() {{
-            add(d.getWtgTransitions(MAIN + "#OptionsMenu"));
-        }}) {
-            // (presence-only; click-only filtering verified by parser construction)
-            assertNotNull(list);
-        }
+        // WTG convenience view is click-only and keyed by base activity (INV-WTG-04):
+        // the menu-sourced edges land under MAIN, and the suffixed key is unused.
+        assertFalse("click transitions stored under the base activity",
+                d.getWtgTransitions(MAIN).isEmpty());
+        assertTrue("suffixed key no longer populated",
+                d.getWtgTransitions(MAIN + "#OptionsMenu").isEmpty());
     }
 
     // 15.19
@@ -557,12 +639,12 @@ public class MopDataTest {
         // transition: C#OptionsMenu --click mc--> C.Crypto (which hasMop via 'go')
         String trans = "{\"sourceId\":3,\"targetId\":4,\"events\":[" +
                 "{\"type\":\"click\",\"handler\":\"x\",\"widgetId\":9,\"widgetClass\":\"android.view.MenuItem\",\"widgetName\":\"mc\"}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, wins, trans, "")));
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, wins, trans, "")), null, null);
         assertTrue(d.activityHasMopOptionsMenu("A"));
         assertFalse(d.activityHasMopOptionsMenu("B"));
         assertTrue("gateway: menu navigates to MOP activity", d.activityHasMopOptionsMenu("C"));
         // real fixture gateway
-        MopData real = MopData.load(fixturePath(FRESH));
+        MopData real = MopData.load(fixturePath(FRESH), null, null);
         assertTrue(real.activityHasMopOptionsMenu(MAIN));
     }
 
@@ -575,7 +657,7 @@ public class MopDataTest {
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}," +
                 "{\"eventType\":\"longClick\",\"handler\":\"<C: void other()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")));
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
         MopData.Widget w = d.getWidget("C", "b");
         assertTrue(w.isDirectMop("click"));
         assertFalse(w.isDirectMop("longClick"));
@@ -587,7 +669,7 @@ public class MopDataTest {
     public void testEmptyArraysParseToEmptyCollections() throws Exception {
         String json = "{\"complete\":true,\"reachability\":[],\"windows\":[],\"transitions\":[]," +
                 "\"components\":{\"activities\":[],\"receivers\":[],\"services\":[],\"providers\":[]}}";
-        MopData d = MopData.load(writeTempJson(json));
+        MopData d = MopData.load(writeTempJson(json), null, null);
         assertNotNull(d);
         assertTrue(d.isComplete());
         assertTrue(d.getReachability().isEmpty());
@@ -609,7 +691,7 @@ public class MopDataTest {
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}," +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")));
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
         MopData.Widget w = d.getWidget("C", "b");
         assertEquals(Boolean.TRUE, w.directMopByEventType.get("click"));
         assertEquals(2, w.listeners.size());
@@ -634,7 +716,7 @@ public class MopDataTest {
     @Test
     public void testCompleteSentinelInMiddleStillRecognized() throws Exception {
         MopData d = MopData.load(writeTempJson(
-                "{\"package\":\"a.b\",\"complete\":true,\"windows\":[]}"));
+                "{\"package\":\"a.b\",\"complete\":true,\"windows\":[]}"), null, null);
         assertNotNull(d);
         assertTrue(d.isComplete());
     }
@@ -642,13 +724,13 @@ public class MopDataTest {
     // 15.25
     @Test
     public void testLoadNullPathReturnsNullCleanly() {
-        assertNull(MopData.load(null));
+        assertNull(MopData.load(null, null, null));
     }
 
     // 15.26
     @Test
     public void testGetWindowUnknownIdReturnsNull() {
-        MopData d = MopData.load(fixturePath(FRESH));
+        MopData d = MopData.load(fixturePath(FRESH), null, null);
         assertNull(d.getWindow(0));
         assertNull(d.getWindow(-1));
         assertNull(d.getWindow(Integer.MAX_VALUE));
@@ -671,13 +753,211 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"long_click\",\"handler\":\"<C: void h()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")));
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
         MopData.Widget w = d.getWidget("C", "b");
         assertTrue("snake_case JSON matches camelCase query", w.isDirectMop("longClick"));
         assertTrue("snake_case JSON matches snake_case query", w.isDirectMop("long_click"));
     }
 
     /** Build a minimal complete JSON from raw array/object element strings (no trailing commas). */
+    // =========================================================================
+    // mop-parser-fidelity (#0) — widget-map fidelity (INV-MOP-19/20) + WTG keying
+    // =========================================================================
+
+    private static final String ENC_REACH = "{\"className\":\"C\",\"methods\":["
+            + "{\"signature\":\"<C: void enc()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true}]}";
+    private static final String ENC_LISTENER =
+            "\"listeners\":[{\"eventType\":\"click\",\"handler\":\"<C: void enc()>\"}]";
+
+    // 1.5(a): duplicate shortId, flagged-then-unflagged → flagged retained (INV-MOP-19).
+    @Test
+    public void testWidgetCollision_flaggedThenUnflagged_keepsFlagged() throws Exception {
+        String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":["
+                + "{\"idName\":\"submit\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "},"
+                + "{\"idName\":\"submit\",\"type\":\"android.widget.Button\",\"listeners\":[]}]}";
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null);
+        MopData.Widget w = d.getWidget("C", "submit");
+        assertNotNull(w);
+        assertTrue("flagged widget retained on collision", w.directMop);
+    }
+
+    // 1.5(b): order-independent — unflagged-then-flagged → flagged retained (INV-MOP-19).
+    @Test
+    public void testWidgetCollision_unflaggedThenFlagged_keepsFlagged() throws Exception {
+        String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":["
+                + "{\"idName\":\"submit\",\"type\":\"android.widget.Button\",\"listeners\":[]},"
+                + "{\"idName\":\"submit\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null);
+        MopData.Widget w = d.getWidget("C", "submit");
+        assertNotNull(w);
+        assertTrue("strongest flag wins regardless of order", w.directMop);
+    }
+
+    // 1.5(c): empty idName flagged widget → not bucketed, counted, activity still flagged (INV-MOP-20).
+    @Test
+    public void testEmptyIdWidget_notBucketed_countedAndActivityFlagged() throws Exception {
+        String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":["
+                + "{\"idName\":\"\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null);
+        assertNull("empty-id widget not stored under the \"\" key", d.getWidget("C", ""));
+        assertEquals("flagged-no-id drop counted", 1, d.getDroppedFlaggedNoId());
+        assertTrue("activity still flagged via mopActivities", d.activityHasMop("C"));
+    }
+
+    // 1.5(d): regression — no-collision JSON stores all distinct ids; zero drops.
+    @Test
+    public void testNoCollision_allWidgetsStored() throws Exception {
+        String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":["
+                + "{\"idName\":\"a\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "},"
+                + "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[]}]}";
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null);
+        assertNotNull(d.getWidget("C", "a"));
+        assertNotNull(d.getWidget("C", "b"));
+        assertTrue(d.getWidget("C", "a").directMop);
+        assertEquals(0, d.getDroppedFlaggedNoId());
+    }
+
+    // 2.3(a): menu-sourced edge reachable by BASE activity; the suffixed key returns empty (INV-WTG-04).
+    @Test
+    public void testWtgKeyedByBaseActivity_menuSource() throws Exception {
+        String wins = "{\"id\":1,\"type\":\"OPTIONSMENU\",\"name\":\"C#OptionsMenu\",\"widgets\":[]},"
+                + "{\"id\":2,\"type\":\"ACTIVITY\",\"name\":\"Tgt\",\"widgets\":[]}";
+        String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
+                + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"android.view.MenuItem\",\"widgetName\":\"item\"}]}";
+        MopData d = MopData.load(writeTempJson(synthetic("", wins, trans, "")), null, null);
+        List<MopData.WtgTransition> base = d.getWtgTransitions("C");
+        assertEquals("menu edge stored under base activity", 1, base.size());
+        assertEquals("item", base.get(0).widgetName);
+        assertTrue("suffixed key no longer used", d.getWtgTransitions("C#OptionsMenu").isEmpty());
+    }
+
+    // 2.3 target reduction: a "#"-suffixed target window is stored as its base activity (INV-WTG-04).
+    @Test
+    public void testWtgTargetReducedToBase() throws Exception {
+        String wins = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"Src\",\"widgets\":[]},"
+                + "{\"id\":2,\"type\":\"ACTIVITY\",\"name\":\"Tgt#Dialog\",\"widgets\":[]}";
+        String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
+                + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"x\",\"widgetName\":\"go\"}]}";
+        MopData d = MopData.load(writeTempJson(synthetic("", wins, trans, "")), null, null);
+        List<MopData.WtgTransition> list = d.getWtgTransitions("Src");
+        assertEquals(1, list.size());
+        assertEquals("target reduced to base activity", "Tgt", list.get(0).targetActivity);
+    }
+
+    // =========================================================================
+    // mop-parser-fidelity (#0) group 4 — DIALOG re-keying to host (INV-MOP-25)
+    // =========================================================================
+
+    // Host activity opens the dialog; dialog window name is the dialog class.
+    private static final String DIALOG_HOST_WINS =
+            "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"Host\",\"widgets\":[]},"
+            + "{\"id\":2,\"type\":\"DIALOG\",\"name\":\"android.app.AlertDialog\",\"widgets\":["
+            + "{\"idName\":\"btn_confirm\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
+    private static final String DIALOG_OPEN_TRANS =
+            "{\"sourceId\":1,\"targetId\":2,\"events\":["
+            + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"x\",\"widgetName\":\"open\"}]}";
+
+    // 4.4(a)+(e): dialog widget resolvable via host; dialog-class key removed (move-not-copy).
+    @Test
+    public void testDialogReKey_widgetResolvableViaHost_dialogClassRemoved() throws Exception {
+        MopData d = MopData.load(
+                writeTempJson(synthetic(ENC_REACH, DIALOG_HOST_WINS, DIALOG_OPEN_TRANS, "")), null, null);
+        MopData.Widget w = d.getWidget("Host", "btn_confirm");
+        assertNotNull("dialog widget re-keyed under host activity", w);
+        assertTrue("flag preserved through merge", w.directMop);
+        assertNull("dialog-class key removed from widget map (move-not-copy, A2)",
+                d.getWidget("android.app.AlertDialog", "btn_confirm"));
+    }
+
+    // 4.4(b): collision on re-key keeps the strongest flag (INV-MOP-19 applied in the merge).
+    @Test
+    public void testDialogReKey_collisionKeepsStrongest() throws Exception {
+        String wins = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"Host\",\"widgets\":["
+                + "{\"idName\":\"shared\",\"type\":\"android.widget.Button\",\"listeners\":[]}]},"
+                + "{\"id\":2,\"type\":\"DIALOG\",\"name\":\"android.app.AlertDialog\",\"widgets\":["
+                + "{\"idName\":\"shared\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
+        MopData d = MopData.load(
+                writeTempJson(synthetic(ENC_REACH, wins, DIALOG_OPEN_TRANS, "")), null, null);
+        assertTrue("dialog's flagged widget wins over unflagged host resident",
+                d.getWidget("Host", "shared").directMop);
+    }
+
+    // 4.4(c): a dialog-only host is promoted to activityHasMop (D6/F3).
+    @Test
+    public void testDialogReKey_dialogOnlyHostPromoted() throws Exception {
+        MopData d = MopData.load(
+                writeTempJson(synthetic(ENC_REACH, DIALOG_HOST_WINS, DIALOG_OPEN_TRANS, "")), null, null);
+        assertTrue("host with no flags of its own promoted via reachable dialog",
+                d.activityHasMop("Host"));
+    }
+
+    // 4.4(d): orphan dialog (no incoming transition) is counted on an [APE-RV] line, stays under
+    // its dialog-class key, and is NOT resolvable via any host; the [APE-MOP-DATA] line is
+    // unchanged (F2 regression guard).
+    @Test
+    public void testDialogReKey_orphanCountedAndNotReKeyed() throws Exception {
+        String json = synthetic(ENC_REACH, DIALOG_HOST_WINS, "", "");   // no transitions → orphan
+        MopData d = MopData.load(writeTempJson(json), null, null);
+        assertNull("orphan dialog not resolvable via host", d.getWidget("Host", "btn_confirm"));
+        assertNotNull("orphan dialog widget stays under dialog-class key",
+                d.getWidget("android.app.AlertDialog", "btn_confirm"));
+
+        String out = captureLoad(writeTempJson(json), null, null);
+        assertTrue(out, out.contains("[APE-RV] MopData: 1 orphan DIALOG windows (no incoming transition)"));
+        String statusLine = null;
+        for (String line : out.split("\\R")) {
+            if (line.contains("[APE-MOP-DATA]")) statusLine = line;
+        }
+        assertNotNull("status line present", statusLine);
+        assertFalse("orphan diagnostic must not leak onto the [APE-MOP-DATA] line (F2)",
+                statusLine.contains("orphan"));
+    }
+
+    // 4.4(f): triple-collision (direct/transitive/unflagged, same idName) across host+dialog,
+    // both merge directions — strongest flag wins and the merge never downgrades a resident.
+    @Test
+    public void testDialogReKey_tripleCollision_strongestWinsBothDirections() throws Exception {
+        String reach = "{\"className\":\"C\",\"methods\":["
+                + "{\"signature\":\"<C: void d()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true},"
+                + "{\"signature\":\"<C: void t()>\",\"reachesTarget\":true,\"directlyReachesTarget\":false}]}";
+        String direct = "\"listeners\":[{\"eventType\":\"click\",\"handler\":\"<C: void d()>\"}]";
+        String transitive = "\"listeners\":[{\"eventType\":\"click\",\"handler\":\"<C: void t()>\"}]";
+        // host: unflagged x + transitive x ; dialog: direct x → direct wins on host after merge.
+        String wins = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"Host\",\"widgets\":["
+                + "{\"idName\":\"x\",\"type\":\"android.widget.Button\",\"listeners\":[]},"
+                + "{\"idName\":\"x\",\"type\":\"android.widget.Button\"," + transitive + "}]},"
+                + "{\"id\":2,\"type\":\"DIALOG\",\"name\":\"android.app.AlertDialog\",\"widgets\":["
+                + "{\"idName\":\"x\",\"type\":\"android.widget.Button\"," + direct + "}]}";
+        MopData d = MopData.load(
+                writeTempJson(synthetic(reach, wins, DIALOG_OPEN_TRANS, "")), null, null);
+        assertTrue("direct dialog widget wins the triple collision", d.getWidget("Host", "x").directMop);
+
+        // Swap strengths: host direct, dialog transitive → merge must NOT downgrade the host.
+        String wins2 = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"Host\",\"widgets\":["
+                + "{\"idName\":\"x\",\"type\":\"android.widget.Button\"," + direct + "}]},"
+                + "{\"id\":2,\"type\":\"DIALOG\",\"name\":\"android.app.AlertDialog\",\"widgets\":["
+                + "{\"idName\":\"x\",\"type\":\"android.widget.Button\"," + transitive + "}]}";
+        MopData d2 = MopData.load(
+                writeTempJson(synthetic(reach, wins2, DIALOG_OPEN_TRANS, "")), null, null);
+        assertTrue("merge never downgrades a stronger resident", d2.getWidget("Host", "x").directMop);
+    }
+
+    // 4.4(g): the dialog-class mopActivities entry is retained so the OPTIONSMENU-gateway
+    // precompute (condition 2) still fires for an activity whose only MOP route is a click edge
+    // into a flagged DIALOG (A6). If the re-key dropped that entry, this would be false.
+    @Test
+    public void testDialogReKey_retainsDialogClassForGatewayDetection() throws Exception {
+        String wins = "{\"id\":1,\"type\":\"OPTIONSMENU\",\"name\":\"Src#OptionsMenu\",\"widgets\":["
+                + "{\"idName\":\"item\",\"type\":\"android.view.MenuItem\",\"listeners\":[]}]},"
+                + "{\"id\":2,\"type\":\"DIALOG\",\"name\":\"android.app.AlertDialog\",\"widgets\":["
+                + "{\"idName\":\"btn\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
+        String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
+                + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"android.view.MenuItem\",\"widgetName\":\"item\"}]}";
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, wins, trans, "")), null, null);
+        assertTrue("gateway fires via retained dialog-class mopActivities entry (A6)",
+                d.activityHasMopOptionsMenu("Src"));
+    }
+
     private static String synthetic(String reachElem, String winElems, String transElems, String compObj) {
         StringBuilder sb = new StringBuilder("{\"package\":\"C\",\"mainActivity\":\"C\",\"complete\":true");
         sb.append(",\"reachability\":[").append(reachElem).append("]");

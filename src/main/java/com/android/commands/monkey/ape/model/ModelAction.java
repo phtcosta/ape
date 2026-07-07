@@ -40,7 +40,7 @@ public class ModelAction extends Action {
      * budget-exhausted early-return set their own source explicitly.
      */
     public enum DecisionSource {
-        SATA, MOP, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget
+        SATA, MOP, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form
     }
 
     // Resolution information
@@ -60,6 +60,7 @@ public class ModelAction extends Action {
     private int wtgBoost;
     private int coverageBoost;
     private int menuBoost;
+    private int formBoost;
 
     public ModelAction(State state, ActionType type) {
         this(state, null, type);
@@ -205,6 +206,7 @@ public class ModelAction extends Action {
         this.wtgBoost = 0;
         this.coverageBoost = 0;
         this.menuBoost = 0;
+        this.formBoost = 0;
     }
 
     public int getMopBoost() { return this.mopBoost; }
@@ -218,6 +220,10 @@ public class ModelAction extends Action {
     public int getCoverageBoost() { return this.coverageBoost; }
 
     public void setCoverageBoost(int coverageBoost) { this.coverageBoost = coverageBoost; }
+
+    public int getFormBoost() { return this.formBoost; }
+
+    public void setFormBoost(int formBoost) { this.formBoost = formBoost; }
 
     public int getMenuBoost() { return this.menuBoost; }
 

@@ -725,6 +725,10 @@ public class Monkey {
         } else if (mUseApe) {
             AndroidDevice.initializeAndroidDevice(mAm, mWm, mPm);
             AndroidDevice.checkInteractive();
+            // INV-EXPL-14: seed APE's RandomHelper with the same seed as mRandom so a run is
+            // reproducible. mSeed is only in scope here, not in the MonkeySourceApe constructor
+            // (which receives the already-constructed Random, from which the seed is unrecoverable).
+            com.android.commands.monkey.ape.utils.RandomHelper.seed(mSeed);
             mEventSource = new MonkeySourceApe(mRandom, mMainApps, mThrottle,
                     mRandomizeThrottle, mPermissionTargetSystem, mOutputDirectory);
             mEventSource.setVerbose(mVerbose);
@@ -774,12 +778,13 @@ public class Monkey {
             // Release the rotation lock if it's still held and restore the
             // original orientation.
             new MonkeyRotationEvent(Surface.ROTATION_0, false).injectEvent(mWm, mAm, mVerbose);
+            // INV-EXPL-16: flush APE state (model, coverage, traces) even when runMonkeyCycles
+            // throws — otherwise a crash mid-run silently loses every result of the run.
+            if (this.mEventSource instanceof MonkeySourceApe) {
+                ((MonkeySourceApe) this.mEventSource).tearDown();
+            }
         }
         mNetworkMonitor.stop();
-
-        if (this.mEventSource instanceof MonkeySourceApe) {
-            ((MonkeySourceApe) this.mEventSource).tearDown();
-        }
 
         synchronized (this) {
             if (mRequestAnrTraces) {

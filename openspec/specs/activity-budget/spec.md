@@ -26,7 +26,7 @@ The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`.
 - **INV-BUD-02**: Budget SHALL be computed exactly once per activity at registration time and SHALL NOT be recalculated.
 - **INV-BUD-03**: `remainingBudget(activityName)` SHALL be non-negative (clamped to 0 minimum).
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: ActivityBudgetTracker — Budget Allocation
 

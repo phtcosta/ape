@@ -118,9 +118,10 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `evolveModel` / `actionRefinementFirst` — controls model refinement behavior
 - `maxStatesPerActivity` / `maxGUITreesPerState` — state space limits
 - `takeScreenshot` / `saveGUITreeToXmlEveryStep` — debug output
+- `takeScreenshotForEveryStep` / `saveGUITreeToXmlEveryStep` — per-step PNG/XML artifacts; **both default `false`** for throughput (INV-EXPL-17). The aperv-tool deployment pulls neither artifact and the LLM path uses its own on-demand `ScreenshotCapture`; re-enable for local debugging with `ape.takeScreenshotForEveryStep=true` / `ape.saveGUITreeToXmlEveryStep=true` in `ape.properties`
 - `defaultGUIThrottle` — delay between actions
 - `mopDataPath` — path to static analysis JSON on device (null = MOP scoring disabled)
-- `mopWeightDirect` / `mopWeightTransitive` / `mopWeightActivity` — MOP scoring weights (defaults: 500/300/100), configurable via `ape.properties`
+- `mopWeightDirect` / `mopWeightTransitive` — MOP scoring weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost)
 - `mopWeightOpenMenu` — boost on the MODEL_MENU action when the activity's OPTIONSMENU is a MOP gateway (default 250; gh13 T1.2)
 - `fuzzInputTyped` — type-aware EditText fuzzing from static `inputType`/`hint` (default true; set false to restore the legacy random-string generator — gh13 T1.3 rollback knob)
 - `mopStrictPackageMatch` — reject `MopData.load` when the JSON package/mainActivity diverges from the runtime values (default false = warn-only; gh13 T1.7)

@@ -1,0 +1,25 @@
+# Tasks — foreign-activity-guard
+
+## 1. Config and pure seam
+
+- [ ] 1.1 Add `Config.foreignActivityGuard` (`ape.foreignActivityGuard`, default true) with a current-state comment (P4)
+- [ ] 1.2 Add the static `SYSTEM_INTERACTION_PACKAGES` set (`com.android.packageinstaller`, `com.android.permissioncontroller`) and the pure static `shouldModel(String pkg, boolean filterAccepts, Set<String> systemWhitelist)` to `MonkeySourceApe` (null pkg → true)
+
+## 2. Guard wiring (MonkeySourceApe)
+
+- [ ] 2.1 Insert the guard block in `generateEvents` inside the `while (repeat-- > 0)` refetch loop, after the `info != null` check and before `updateState`: evaluate `shouldModel` with `topComp.getPackageName()` + `isPackageValid` (mirroring `checkAppActivity`'s predicate); on negative, enqueue one `generateKeyBackEvent()` + throttle and return without modeling; `topComp == null` bypasses the guard
+- [ ] 2.2 Add the once-per-package log throttle (`Set<String> deflectedPackages`) emitting `[APE-RV] Foreign activity: pkg=<pkg> -> BACK` on first deflection only
+- [ ] 2.3 Delete the dead `checkPackage(ComponentName, AccessibilityNodeInfo)` (`MonkeySourceApe.java:910-922`, no callers — P3); update the `generateEvents` comment to the current contract (P4)
+
+## 3. Unit tests (JVM, pure seam)
+
+- [ ] 3.1 `shouldModel` matrix: in-package accepted; foreign rejected; each of the two whitelist packages accepted; `com.android.systemui` NOT whitelisted (rejected → guard BACKs out); null pkg accepted (INV-EXPL-20/-21)
+- [ ] 3.2 Log-throttle semantics: first deflection of a package signals log, repeat does not (plain `Set` contract test alongside the seam)
+- [ ] 3.3 Run the new test class via `mvn test -Dtest=MonkeySourceApeForeignGuardTest`
+- [ ] 3.4 Flag-off assertion (INV-EXPL-22): with `Config.foreignActivityGuard=false` the guard block is bypassed — no BACK deflection, no guard log line; event generation is identical to the pre-guard path (the flag gates the whole block, `shouldModel` itself has no flag)
+
+## 4. Verification
+
+- [ ] 4.1 Full suite: `mvn test` (0 failures/errors)
+- [ ] 4.2 `openspec validate foreign-activity-guard --strict`
+- [ ] 4.3 Device smoke (rebuilt jar): run an app that leaked in cmpft2 (e.g. the winterkongress schedule APK whose trace contains `NexusLauncherActivity`) — trace shows `Foreign activity: ... -> BACK`, UICOV-ACT rollup contains NO foreign-package activity, no restart storm vs the cmpft2 trace of the same APK

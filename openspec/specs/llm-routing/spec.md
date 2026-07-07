@@ -57,7 +57,7 @@ The two modes target different exploration bottlenecks:
 
 ---
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: LlmRouter Lifecycle
 
@@ -157,7 +157,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 ### Requirement: Action Selection Pipeline
 
-`LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` returns `ModelAction` or `null`. Pipeline:
+`LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` SHALL return `ModelAction` or `null`. Pipeline:
 
 1. `totalCalls++` — counts this attempt regardless of outcome (per INV-RTR-07).
 2. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → `breaker.recordFailure()`, log `[APE-RV] LLM screenshot capture failed, skipping LLM step`, return null. A persistent null-capture condition therefore opens the breaker and halts retries for the recovery window.
@@ -308,9 +308,11 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 **Aggregate summary** (printed at `StatefulAgent.tearDown()`):
 ```
-[APE-RV] LLM Summary: calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> matched=<N> no_match=<N> null=<N> breaker_trips=<N>
+[APE-RV] LLM Summary: calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> matched=<N> no_match=<N> null=<N> screenshot_failed=<N> breaker_trips=<N>
 [APE-RV] Decision ratio: LLM=<N>/<total> (<pct>%), SATA=<N>/<total> (<pct>%)
 ```
+
+`screenshot_failed` counts the routing attempts abandoned because `ScreenshotCapture` returned null (e.g. FLAG_SECURE windows). It SHALL be maintained as its own counter, separate from the aggregate `null` count (which also covers HTTP, parse, and mapping failures), so per-app degradation of the LLM arm to SATA is countable post-hoc from the summary line alone. Screenshot failures still count toward `null` as today (the step yields no action) — `screenshot_failed` attributes the cause.
 
 #### Scenario: Successful action logged
 
@@ -326,6 +328,11 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 - **WHEN** `shouldRouteStagnation(150)` is called with `graphStableRestartThreshold = 200`
 - **THEN** a log entry SHALL be emitted: `[APE-RV] LLM mode=stagnation, state=MainActivity#abc123`
+
+#### Scenario: Screenshot failures counted separately
+
+- **WHEN** a run ends after 5 LLM routing attempts of which 3 were abandoned at screenshot capture (secure window) and 1 failed at parse
+- **THEN** the summary line SHALL report `null=4 screenshot_failed=3`
 
 ---
 

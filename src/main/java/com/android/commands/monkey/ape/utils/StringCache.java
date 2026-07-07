@@ -105,14 +105,21 @@ public class StringCache {
     }
 
     public static String nextString() {
-        int i = ThreadLocalRandom.current().nextInt(stringList.size());
-        String string = null;
-        if (!stringList.isEmpty()) {
-            string = stringList.get(i);
-            Logger.iformat("Select [%s] %d/%d from string list", string, i, stringList.size());
+        // INV-INP-06: check for an empty cache BEFORE drawing an index. On a
+        // text-sparse screen (typical login form, where /sdcard/ape.strings is not
+        // pushed and no on-screen text has been captured) the list is genuinely
+        // empty; nextInt(0) would throw IllegalArgumentException.
+        if (stringList.isEmpty()) {
+            String string = RandomHelper.nextFormattedString();
+            Logger.iformat("Use random string %s", string);
+            return string;
         }
 
-        if (string == null || RandomHelper.toss(Config.randomFormattedStringProp)) {
+        int i = ThreadLocalRandom.current().nextInt(stringList.size());
+        String string = stringList.get(i);
+        Logger.iformat("Select [%s] %d/%d from string list", string, i, stringList.size());
+
+        if (RandomHelper.toss(Config.randomFormattedStringProp)) {
             string = RandomHelper.nextFormattedString();
             Logger.iformat("Use random string %s", string);
         }

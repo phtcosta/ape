@@ -46,7 +46,7 @@ The prompt uses Qwen3-VL's normalized coordinate space [0, 1000) for both input 
 
 ---
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: System Message
 

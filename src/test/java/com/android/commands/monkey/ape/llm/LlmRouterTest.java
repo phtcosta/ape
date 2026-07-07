@@ -56,7 +56,44 @@ public class LlmRouterTest {
         assertEquals(0, router.getMatchedCount());
         assertEquals(0, router.getNoMatchCount());
         assertEquals(0, router.getNullCount());
+        assertEquals(0, router.getScreenshotFailedCount());
         assertEquals(0, router.getBreakerTrips());
+    }
+
+    // -------------------------------------------------------------------------
+    // screenshot_failed counter split (task §5.5 / llm-routing spec)
+    //
+    // The increment itself lives in selectAction()'s screenshot-null branch,
+    // which loads AndroidDevice (getDisplayBounds) and is device-gated — the same
+    // reason the A-6 breaker behavior is not unit-tested here (see the note at the
+    // bottom of this class). We therefore verify the counter split at the two JVM
+    // seams that ARE observable without a device: the accessor default and the
+    // summary-line format.
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void screenshotFailedCount_defaultsToZero() {
+        LlmRouter router = new LlmRouter(new java.util.Random(42));
+        assertEquals("screenshot_failed counter starts at 0", 0, router.getScreenshotFailedCount());
+    }
+
+    @Test
+    public void printSummary_includesScreenshotFailedField_separateFromNull() {
+        LlmRouter router = new LlmRouter(new java.util.Random(42));
+        java.io.PrintStream originalOut = System.out;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        try {
+            System.setOut(new java.io.PrintStream(captured, true));
+            router.printSummary();
+        } finally {
+            System.setOut(originalOut);
+        }
+        String out = captured.toString();
+        // The summary line reports screenshot_failed as its own field, adjacent to null.
+        assertTrue("summary must expose screenshot_failed field, got: " + out,
+                out.contains("screenshot_failed=0"));
+        assertTrue("summary must still expose the aggregate null field, got: " + out,
+                out.contains("null=0"));
     }
 
     // -------------------------------------------------------------------------

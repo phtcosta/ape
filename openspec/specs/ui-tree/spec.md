@@ -51,12 +51,19 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 - **INV-TREE-05**: Every `GUITreeNode` in a tree produced by `GUITreeBuilder` MUST have screen bounds that are representable within the device's screen dimensions (no negative dimensions).
 - **INV-TREE-06**: Two `GUITree` instances built from structurally identical `AccessibilityNodeInfo` hierarchies MUST produce the same structural hash, enabling non-determinism detection by `NamingFactory`.
 - **INV-TREE-07**: `GUITreeNode.getScrollType()` MUST return `"none"` when `isScrollable()` returns `false`, regardless of `className`.
+- **INV-TREE-08**: `GUITree.contains` SHALL never index `currentNodes` with a negative binary-search result; a negative result always yields `false`.
+- **INV-TREE-09**: Every `GUITreeNode` built from an accessibility node SHALL carry that node's `isPassword()` value.
+- **INV-TREE-10**: After `clearChildren` returns without a logged DOM abort, the DOM element SHALL have zero children; the in-memory child list SHALL be empty in every case.
+- **INV-TREE-11**: The WebView-removal threshold SHALL be evaluated over actionable descendants only.
+- **INV-TREE-12**: `clearChildren` SHALL NOT propagate `DOMException` to its caller; a rejected removal degrades to a logged partial DOM prune.
 
 ---
 
 ## Requirements
 
 ### Requirement: GUITree Construction from AccessibilityService
+
+`GUITreeBuilder` SHALL construct a `GUITree` from the Android `AccessibilityService` node hierarchy, producing a non-null root `GUITreeNode` and a flat node list in which each node carries the `className`, `bounds`, `clickable`, `scrollable`, and `enabled` values read from its `AccessibilityNodeInfo`.
 
 #### Scenario: Builder constructs tree from accessibility hierarchy
 - **WHEN** `GUITreeBuilder` is invoked with a valid `AccessibilityNodeInfo` root from the Android `AccessibilityService`
@@ -97,6 +104,8 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 
 ### Requirement: Action Assignment to Widget Nodes
 
+`GUITreeNode` action assignment SHALL be fully determined by the node's widget properties via `resetActions()`: a `clickable` node MUST receive `MODEL_CLICK`, and a `scrollable` node MUST receive scroll actions whose direction follows `getScrollType()`.
+
 #### Scenario: Clickable widget node receives MODEL_CLICK
 - **WHEN** `resetActions()` is called on a `GUITreeNode` with an array that contains `MODEL_CLICK`
 - **THEN** the node's `isClickable()` flag MUST return `true` after the call
@@ -131,6 +140,8 @@ The following types also remain on the blocklist: `EVENT_START`, `EVENT_RESTART`
 
 ### Requirement: Structural Diff Between GUI Trees
 
+`GUITreeWidgetDiffer` SHALL compute a structural diff between a before-`GUITree` and an after-`GUITree`, identifying added, removed, and changed widget nodes, and MUST NOT report unchanged nodes as changed.
+
 #### Scenario: GUITreeWidgetDiffer identifies changed widgets between two trees
 - **WHEN** `GUITreeWidgetDiffer` is given a before-`GUITree` and an after-`GUITree` where one widget node changed its `text` property
 - **THEN** the diff result MUST identify that widget node as changed
@@ -139,3 +150,61 @@ The following types also remain on the blocklist: `EVENT_START`, `EVENT_RESTART`
 #### Scenario: Identical trees produce empty diff
 - **WHEN** `GUITreeWidgetDiffer` is given two `GUITree` instances built from identical `AccessibilityNodeInfo` hierarchies
 - **THEN** the diff result MUST be empty (no added, removed, or changed nodes reported)
+
+---
+
+### Requirement: GUITree.contains Not-Found Contract
+
+`GUITree.contains(GUITreeNode)` locates the node's `Name` in the sorted `currentNames` array via `Arrays.binarySearch` before comparing the resident node. A negative return value SHALL be treated as "absent" (`index < 0`), never tested with `index == -1`. `Model.update` calls `tree.contains(node)` on every step precisely to discard stale nodes gracefully; the previous `== -1` test turned a not-found with insertion point ≠ 0 into a negative array index (`ArrayIndexOutOfBoundsException`), converting a graceful guard into a run-aborting crash. The four sibling lookups in `GUITree` already use `index < 0`; `contains` SHALL match them.
+
+#### Scenario: stale node absent with non-zero insertion point
+- **WHEN** `GUITree.contains(node)` is called for a node whose `Name` is absent from `currentNames` and whose insertion point is greater than 0 (binarySearch returns ≤ -2)
+- **THEN** `contains` SHALL return false
+- **AND** no exception SHALL be thrown
+
+#### Scenario: present node unchanged
+- **WHEN** the node's `Name` is found (binarySearch returns ≥ 0)
+- **THEN** behavior SHALL be identical to the previous implementation
+
+---
+
+### Requirement: isPassword Capture
+
+`GUITreeBuilder.fillNode` SHALL copy `AccessibilityNodeInfo.isPassword()` into the `GUITreeNode` (`setIsPassword`), alongside the other per-node properties it already captures. The heuristic-input capability's category detection lists `node.isPassword()` as its priority-1 PASSWORD signal; without the capture the flag is constant `false` and that rule is unreachable, so real password fields fall through to keyword matching or GENERIC values, authentication flows fail, and code paths behind login (typical MOP-bearing handlers in crypto apps) are never reached. The XML serialization of the node reflects the captured value.
+
+#### Scenario: password field captured
+- **WHEN** a `GUITreeNode` is built from an `AccessibilityNodeInfo` whose `isPassword()` returns true
+- **THEN** `node.isPassword()` SHALL return true
+- **AND** the node's XML serialization SHALL carry `password="true"`
+
+#### Scenario: non-password field unchanged
+- **WHEN** the accessibility node's `isPassword()` returns false
+- **THEN** `node.isPassword()` SHALL return false
+
+---
+
+### Requirement: WebView Pruning Correctness
+
+WebView pruning SHALL be structurally correct on both of its halves, and its DOM half SHALL be exception-safe:
+
+1. `GUITreeNode.clearChildren` SHALL remove **all** DOM children in the normal case, iterating until the element is empty. The in-memory prune (`childCount = 0`, `children = null`) SHALL be applied unconditionally, before any DOM mutation.
+2. If the DOM element rejects a removal with `org.w3c.dom.DOMException`, `clearChildren` SHALL stop the DOM removal loop, log one line — `[APE-RV] clearChildren DOM prune aborted: <exception message>` — and return normally. The exception SHALL NOT propagate to the caller (INV-TREE-12).
+3. `GUITreeBuilder.checkAndRemoveWebView` SHALL compare the `ape.ignoreWebViewThreshold` (default 64) against the count of **actionable** descendants only (as its inline comment always stated), not the total descendant count. Counting all descendants made virtually every real WebView exceed the bar on non-actionable nodes, so legitimate web content was discarded and never explored.
+
+#### Scenario: clearChildren empties the DOM
+- **WHEN** `clearChildren` is called on a node with 10 DOM children
+- **THEN** the node SHALL have 0 DOM children afterwards
+
+#### Scenario: DOM rejection does not abort the run
+- **WHEN** `clearChildren` is called on a node whose DOM element throws `DOMException` on the third `removeChild` call
+- **THEN** `clearChildren` SHALL return normally (no exception reaches the caller)
+- **AND** the node's in-memory child list SHALL be empty (`getChildCount() == 0`)
+- **AND** one `[APE-RV] clearChildren DOM prune aborted` line SHALL be logged
+
+#### Scenario: content-heavy but action-sparse WebView kept
+- **WHEN** a WebView subtree has 100 non-actionable descendants and 10 actionable ones, with `ape.ignoreWebViewThreshold=64`
+- **THEN** the WebView SHALL be kept (10 ≤ 64)
+
+#### Scenario: action-heavy WebView still pruned
+- **WHEN** a WebView subtree has 80 actionable descendants, with the default threshold
+- **THEN** the WebView SHALL be pruned, and in the normal (non-degraded) case no phantom child SHALL remain in the DOM

@@ -80,6 +80,7 @@ import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.tree.GUITreeWidgetDiffer;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
@@ -159,7 +160,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         graph.addListener(this);
         this.model = new Model(graph);
         this.timestamp = graph.getTimestamp();
-        this._mopData = MopData.load(Config.mopDataPath);
+        ComponentName mainApp = ape.getMainApp();
+        this._mopData = requireMopArm(
+                MopData.load(Config.mopDataPath, mainApp.getPackageName(), mainApp.getClassName()),
+                Config.mopDataPath);
         this._coverageTracker = new UICoverageTracker();
         this._budgetTracker = new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget);
         this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
@@ -170,8 +174,35 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         return _mopData;
     }
 
+    /**
+     * INV-MOP-22: a run with {@code ape.mopDataPath} set SHALL either have MOP data or abort —
+     * it SHALL never silently run as pure SATA and mislabel the arm (the failure class that
+     * invalidated the earlier build-skew round). Returns {@code loaded} unchanged when the path
+     * is unset (MOP disabled) or the data loaded; throws when the path is set but load failed.
+     */
+    static MopData requireMopArm(MopData loaded, String path) {
+        if (loaded == null && path != null) {
+            throw new StopTestingException("MOP arm cannot arm: ape.mopDataPath is set (" + path
+                    + ") but MopData.load returned null; aborting rather than running as pure SATA"
+                    + " and mislabeling the arm (INV-MOP-22)");
+        }
+        return loaded;
+    }
+
     protected UICoverageTracker getCoverageTracker() {
         return _coverageTracker;
+    }
+
+    /**
+     * The form-completion context for the current state: true when {@code currentState} carries at
+     * least one unfilled {@code EditText}. Read by {@link ApeAgent#checkInput} to fill
+     * deterministically (bypassing the inputRate toss). {@code checkInput} runs after
+     * {@code moveForward} has promoted {@code newState} to {@code currentState} and nulled
+     * {@code newState}, so this reads {@code currentState} (INV-FORM-07).
+     */
+    @Override
+    protected boolean inFormCompletionContext() {
+        return currentState != null && FormCompletion.hasUnfilledEditText(currentState, timestamp);
     }
 
     protected ActivityBudgetTracker getBudgetTracker() {
@@ -1086,10 +1117,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     private boolean dispatchTrigger(TriggerTuple t) {
         ComponentInfo c = t.component;
-        int lastDot = c.className.lastIndexOf('.');
-        String packageName = lastDot > 0 ? c.className.substring(0, lastDot) : c.className;
         Intent intent = new Intent();
-        intent.setComponent(new ComponentName(packageName, c.className));
+        intent.setComponent(new ComponentName(_mopData.getPackageName(), c.className));
         if (t.action != null) {
             intent.setAction(t.action);
         }
@@ -1263,19 +1292,25 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             newGUITreeAction = newAction.getResolvedGUITreeAction();
             Utils.assertNotNull(newGUITreeAction);
             // A-5: one decision-attribution line per finally-selected action (INV-SEL-04).
+            // clock is the device wall clock (epoch millis) at emission — enables offline
+            // temporal joins with externally collected artifacts without any APE<->logcat
+            // coupling; step is the exploration step counter, a separate quantity.
             Logger.iformat(
-                    "[APE-STEP] step=%d activity=%s state=%s action=%s decision_source=%s "
-                    + "priority=%d mop=%d wtg=%d coverage=%d menu=%d",
-                    getTimestamp(), newState.getActivity(), newState.getStateKey(), newAction,
+                    "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
+                    + "priority=%d mop=%d wtg=%d coverage=%d menu=%d form=%d",
+                    getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
+                    newState.getStateKey(), newAction,
                     newAction.getDecisionSource().name(), newAction.getPriority(),
                     newAction.getMopBoost(), newAction.getWtgBoost(),
-                    newAction.getCoverageBoost(), newAction.getMenuBoost());
+                    newAction.getCoverageBoost(), newAction.getMenuBoost(),
+                    newAction.getFormBoost());
             return newAction;
         } else {
             // Non-model actions (e.g. event-level) carry no per-mechanism boosts; still
-            // attributed to the SATA chain that produced them (INV-SEL-04).
-            Logger.iformat("[APE-STEP] step=%d activity=%s state=%s action=%s decision_source=%s",
-                    getTimestamp(), newState.getActivity(), newState.getStateKey(), action,
+            // attributed to the SATA chain that produced them (INV-SEL-04). clock as above.
+            Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s",
+                    getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
+                    newState.getStateKey(), action,
                     ModelAction.DecisionSource.SATA.name());
             return action;
         }
@@ -1430,7 +1465,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                         activity, newState.getStateKey(), wtgBoostedCount, wtgTotalTarget, wtgMaxBoost);
             }
         }
-        // Coverage boost pass — per-action boost for untested widgets, decays with state visits
+        // Coverage boost pass — per-action boost for widgets untested ANYWHERE in the current
+        // Activity (activity-scoped novelty, coverage-boost-activity-scope), decaying with per-state
+        // visits (state-scoped decay, deliberately kept so it still protects against dwelling on one
+        // complex screen). The activity-scoped membership survives NamingFactory fragmentation and
+        // state eviction, so a fragment split no longer re-arms the boost for already-exercised
+        // widgets (INV-COV-09).
         if (Config.coverageBoostWeight > 0) {
             int covBoostedCount = 0;
             int covTotalTarget = 0;
@@ -1442,8 +1482,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 if (!action.isResolvedAt(timestamp)) continue;
                 covTotalTarget++;
                 String widgetId = UICoverageTracker.widgetId(action);
-                int count = _coverageTracker.getInteractionCount(newState, widgetId);
-                if (count == 0 && decayedWeight > 0) {
+                boolean interacted =
+                        _coverageTracker.hasActivityInteraction(newState.getActivity(), widgetId);
+                if (!interacted && decayedWeight > 0) {
                     action.setPriority(action.getPriority() + decayedWeight);
                     action.setCoverageBoost(decayedWeight);
                     covBoostedCount++;
@@ -1453,6 +1494,30 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 Logger.iformat("[APE-RV] Coverage boost: state=%s#%s, boosted=%d/%d, gap=%.2f",
                         newState.getActivity(), newState.getStateKey(), covBoostedCount, covTotalTarget, coverageGap);
             }
+        }
+        // Form-completion pass — when the state carries ≥1 unfilled EditText, raise the priority
+        // of every unfilled field and of a single submit candidate so the form is filled then
+        // submitted. No-op (no boost, no log) on states with no unfilled EditText (INV-FORM-01).
+        if (FormCompletion.hasUnfilledEditText(newState, timestamp)) {
+            int fields = 0;
+            for (ModelAction action : newState.getActions()) {
+                if (FormCompletion.isUnfilledEditText(action, timestamp)) {
+                    action.setPriority(action.getPriority() + FormCompletion.W_FILL);
+                    action.setFormBoost(FormCompletion.W_FILL);
+                    fields++;
+                }
+            }
+            ModelAction submit = FormCompletion.selectSubmitCandidate(newState, timestamp);
+            String submitId = "none";
+            if (submit != null) {
+                submit.setPriority(submit.getPriority() + FormCompletion.W_SUBMIT);
+                // Accumulate: the submit candidate may itself be an unfilled EditText already
+                // boosted by W_FILL above; don't clobber that provenance (the priority added both).
+                submit.setFormBoost(submit.getFormBoost() + FormCompletion.W_SUBMIT);
+                submitId = submit.getTarget() != null ? submit.getTarget().toString() : submit.toString();
+            }
+            Logger.iformat("[APE-RV] FORM boost: state=%s#%s, fields=%d, submit=%s",
+                    newState.getActivity(), newState.getStateKey(), fields, submitId);
         }
     }
 
@@ -1468,38 +1533,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
      */
     private int mopBoostWithContainment(String activity, GUITreeNode node,
                                         String eventType, boolean[] containmentHit) {
-        int best = MopScorer.score(
-                activity, MopData.extractShortId(node.getResourceID()), _mopData, eventType);
-        // Ancestors, up to 2 levels up.
-        GUITreeNode ancestor = node.getParent();
-        for (int depth = 1; depth <= 2 && ancestor != null; depth++) {
-            int b = MopScorer.score(
-                    activity, MopData.extractShortId(ancestor.getResourceID()), _mopData, eventType);
+        // Walk the containment neighborhood in the canonical order (self, ancestors
+        // ≤2 up, descendants ≤2 down) shared with the typed-input path (INV-MOP-23,
+        // design D3). The node's own short id is index 0; every subsequent id that
+        // strictly improves the boost is an ancestor/descendant hit.
+        java.util.List<String> ids = MopScorer.containmentShortIds(node);
+        int best = MopScorer.score(activity, ids.get(0), _mopData, eventType);
+        for (int i = 1; i < ids.size(); i++) {
+            int b = MopScorer.score(activity, ids.get(i), _mopData, eventType);
             if (b > best) {
                 best = b;
                 containmentHit[0] = true;
-            }
-            ancestor = ancestor.getParent();
-        }
-        // Descendants, up to 2 levels down (children and grandchildren).
-        java.util.Iterator<GUITreeNode> children = node.getChildren();
-        while (children.hasNext()) {
-            GUITreeNode child = children.next();
-            int cb = MopScorer.score(
-                    activity, MopData.extractShortId(child.getResourceID()), _mopData, eventType);
-            if (cb > best) {
-                best = cb;
-                containmentHit[0] = true;
-            }
-            java.util.Iterator<GUITreeNode> grandchildren = child.getChildren();
-            while (grandchildren.hasNext()) {
-                GUITreeNode grandchild = grandchildren.next();
-                int gb = MopScorer.score(
-                        activity, MopData.extractShortId(grandchild.getResourceID()), _mopData, eventType);
-                if (gb > best) {
-                    best = gb;
-                    containmentHit[0] = true;
-                }
             }
         }
         return best;

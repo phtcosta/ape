@@ -357,4 +357,60 @@ public class InputValueGeneratorTest {
         InputCategory cat = generator.detectCategory(false, null, "");
         assertEquals(InputCategory.GENERIC, cat);
     }
+
+    // -----------------------------------------------------------------------
+    // INV-INP-05: token-equality matching (not raw substring)
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testDetectCategory_accountNameNotNumber() {
+        // "account_name" tokenizes to {account, name}; token "account" != keyword
+        // "count", so it must NOT be classified NUMBER (raw contains() mislabeled it).
+        InputCategory cat = generator.detectCategory(false, "com.example:id/account_name", null);
+        assertNotEquals(InputCategory.NUMBER, cat);
+        assertEquals(InputCategory.GENERIC, cat);
+    }
+
+    @Test
+    public void testDetectCategory_securityAnswerNotUrl() {
+        // "security_answer" -> {security, answer}; token "security" != keyword "uri".
+        InputCategory cat = generator.detectCategory(false, "com.example:id/security_answer", null);
+        assertNotEquals(InputCategory.URL, cat);
+        assertEquals(InputCategory.GENERIC, cat);
+    }
+
+    @Test
+    public void testDetectCategory_hotelNotPhone() {
+        // "hotel_name" -> {hotel, name}; token "hotel" != keyword "tel".
+        InputCategory cat = generator.detectCategory(false, "com.example:id/hotel_name", null);
+        assertNotEquals(InputCategory.PHONE, cat);
+        assertEquals(InputCategory.GENERIC, cat);
+    }
+
+    @Test
+    public void testDetectCategory_camelCaseEmailField() {
+        // camelCase split: "userEmailField" -> {user, email, field}; token "email" hits.
+        InputCategory cat = generator.detectCategory(false, "com.example:id/userEmailField", null);
+        assertEquals(InputCategory.EMAIL, cat);
+    }
+
+    @Test
+    public void testDetectCategory_exactPasswordToken() {
+        InputCategory cat = generator.detectCategory(false, "password", null);
+        assertEquals(InputCategory.PASSWORD, cat);
+    }
+
+    @Test
+    public void testDetectCategory_phoneNumberPriorityIsPhone() {
+        // "phone_number" -> {phone, number}; phone is evaluated before number.
+        InputCategory cat = generator.detectCategory(false, "com.example:id/phone_number", null);
+        assertEquals(InputCategory.PHONE, cat);
+    }
+
+    @Test
+    public void testDetectCategory_exactCountTokenStillNumber() {
+        // A genuine "count" token must still classify as NUMBER (no false negative).
+        InputCategory cat = generator.detectCategory(false, "com.example:id/item_count", null);
+        assertEquals(InputCategory.NUMBER, cat);
+    }
 }

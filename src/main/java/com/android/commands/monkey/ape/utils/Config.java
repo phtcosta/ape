@@ -37,8 +37,8 @@ public class Config {
      */
     public static final boolean takeScreenshot = Config.getBoolean("ape.takeScreenshot", true);
     public static final boolean takeScreenshotForNewState = Config.getBoolean("ape.takeScreenshotForNewState", false);
-    public static final boolean takeScreenshotForEveryStep = Config.getBoolean("ape.takeScreenshotForEveryStep", true);
-    public static final boolean saveGUITreeToXmlEveryStep = Config.getBoolean("ape.saveGUITreeToXmlEveryStep", true);
+    public static final boolean takeScreenshotForEveryStep = Config.getBoolean("ape.takeScreenshotForEveryStep", false);
+    public static final boolean saveGUITreeToXmlEveryStep = Config.getBoolean("ape.saveGUITreeToXmlEveryStep", false);
 
     public static final int throttleForUnvisitedAction = Config.getInteger("ape.throttleForUnvisitedAction", 200);
     public static final int throttleForActivityTransition = Config.getInteger("ape.throttleForActivityTransition", 500);
@@ -127,7 +127,6 @@ public class Config {
     // Defaults chosen so MOP strongly dominates exploration toward monitored operations.
     public static final int mopWeightDirect = Config.getInteger("ape.mopWeightDirect", 500);
     public static final int mopWeightTransitive = Config.getInteger("ape.mopWeightTransitive", 300);
-    public static final int mopWeightActivity = Config.getInteger("ape.mopWeightActivity", 100);
 
     // gh13: OPTIONSMENU-aware menu-open boost (T1.2). Default 250 — between
     // mopWeightWtg (200) and mopWeightTransitive (300).
@@ -139,6 +138,11 @@ public class Config {
     public static boolean mopStrictPackageMatch = Config.getBoolean("ape.mopStrictPackageMatch", false);
     // gh13: activity component triggering (T1.4). Default OFF — gh11 sandwichroulette -45pp evidence.
     public static boolean activityTriggerEnabled = Config.getBoolean("ape.activityTriggerEnabled", false);
+    // mop-target-revisit-cap: max deterministic MOP short-circuit picks per
+    // (widget XPath, action type, activity) key per run. <= 0 = unlimited (restores the
+    // uncapped mop-discriminative-boost behavior). The boost still participates in the
+    // priority roulette once the deterministic override is exhausted (INV-SEL-MOP-04/05).
+    public static final int mopTargetPickCap = Config.getInteger("ape.mopTargetPickCap", 3);
 
     // LLM integration — configurable via ape.properties.
     // llmUrl=null disables LLM calls entirely (safe default when no LLM server is present).

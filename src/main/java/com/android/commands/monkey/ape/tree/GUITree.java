@@ -278,10 +278,22 @@ public class GUITree implements Serializable {
         return this.currentState;
     }
 
+    /**
+     * INV-TREE-08: normalize {@code Arrays.binarySearch}'s absent-key result to {@code -1}.
+     * binarySearch returns {@code -(insertionPoint) - 1} for a missing key, which is {@code <= -2}
+     * whenever the key sorts after the first name. Guarding with {@code == -1} let those cases
+     * index {@code currentNodes[negative]} and throw; testing this in isolation avoids the
+     * Android-coupled {@link GUITreeNode}. Returns the hit index, or {@code -1} if absent.
+     */
+    static int indexOfName(Name[] names, Name widget) {
+        int index = Arrays.binarySearch(names, widget);
+        return index < 0 ? -1 : index;
+    }
+
     public boolean contains(GUITreeNode node) {
         Name widget = node.getXPathName();
-        int index = Arrays.binarySearch(currentNames, widget);
-        if (index == -1) {
+        int index = indexOfName(currentNames, widget);
+        if (index < 0) {
             return false;
         }
         Object nodeOrNodes = currentNodes[index];

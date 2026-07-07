@@ -1,12 +1,18 @@
 package com.android.commands.monkey.ape.utils;
 
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.model.StateKey;
 
 import org.junit.Test;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -16,9 +22,16 @@ import java.util.Set;
 import static org.junit.Assert.*;
 
 /**
- * Unit tests for {@link MopScorer#scoreWtg(String, String, MopData)}.
+ * Unit tests for {@link MopScorer} (scoreWtg, score, scoreOpenMenu, eventTypeOf, stateMopDensity).
  *
  * Uses MopData.forTest() to construct test instances without android.util.JsonReader.
+ *
+ * <p>{@link MopScorer#stateMopDensity} is exercised only for its data-null and
+ * {@code activityHasMop}-false early-outs (INV-MOP-24), which return before any widget
+ * resolution. The flagged-vs-total widget count needs actions resolved to live
+ * {@code GUITreeNode}s (via {@code resolveAt}/{@code getResolvedNode}), which require an
+ * Android runtime; that path is device-validated per {@code docs/20260622_investigacao_mop.md}
+ * §7.5, mirroring how {@code FormCompletionTest} gates its node-dependent scenarios.
  */
 public class MopScorerTest {
 
@@ -172,6 +185,8 @@ public class MopScorerTest {
     /**
      * Scenario: Widget leads to MOP activity via MenuItem click (cryptoapp pattern).
      * menu_item_cipher from MainActivity#OptionsMenu -> CipherActivity (has MOP).
+     * Per INV-WTG-04 the menu edges are keyed under the base activity, so scoreWtg is
+     * queried by base activity (the runtime is on MainActivity when the menu is open).
      */
     @Test
     public void testScoreWtg_menuItemToMopActivity() {
@@ -188,13 +203,13 @@ public class MopScorerTest {
         // MessageDigestActivity NOT in mopActivities
 
         MopData data = buildData(
-                "br.unb.cic.cryptoapp.MainActivity#OptionsMenu", transitions, mopActivities);
+                "br.unb.cic.cryptoapp.MainActivity", transitions, mopActivities);
 
         assertEquals(Config.mopWeightWtg,
-                MopScorer.scoreWtg("br.unb.cic.cryptoapp.MainActivity#OptionsMenu",
+                MopScorer.scoreWtg("br.unb.cic.cryptoapp.MainActivity",
                         "menu_item_cipher", data));
         assertEquals(0,
-                MopScorer.scoreWtg("br.unb.cic.cryptoapp.MainActivity#OptionsMenu",
+                MopScorer.scoreWtg("br.unb.cic.cryptoapp.MainActivity",
                         "menu_item_message_digest", data));
     }
 
@@ -237,7 +252,7 @@ public class MopScorerTest {
                 "{\"idName\":\"mi\",\"type\":\"android.view.MenuItem\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void m()>\"}]}]}]," +
                 "\"transitions\":[],\"components\":{}}";
-        return MopData.load(writeTempJson(json));
+        return MopData.load(writeTempJson(json), null, null);
     }
 
     /** Widget b with click→MOP-direct and longClick→not (per-event-type maps). */
@@ -250,7 +265,7 @@ public class MopScorerTest {
                 "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}," +
                 "{\"eventType\":\"longClick\",\"handler\":\"<C: void none()>\"}]}]}]," +
                 "\"transitions\":[],\"components\":{}}";
-        return MopData.load(writeTempJson(json));
+        return MopData.load(writeTempJson(json), null, null);
     }
 
     @Test // 17.1
@@ -269,10 +284,9 @@ public class MopScorerTest {
     public void testScoreEventTypeAwareMatchesClick() throws Exception {
         MopData d = loadEventTypeFixture();
         assertEquals(Config.mopWeightDirect, MopScorer.score("C", "b", d, "click"));
-        // longClick is unflagged on widget b, but activity C has MOP (b's click is
-        // direct), so the score falls back to the activity level (B4, INV-MOP-07).
-        // Pre-B4 this returned 0 (the resolved-but-unflagged short-circuit).
-        assertEquals(Config.mopWeightActivity, MopScorer.score("C", "b", d, "longClick"));
+        // longClick is unflagged on widget b; with the activity-level fallback removed the
+        // event-type-specific miss scores 0 (discriminative-only).
+        assertEquals(0, MopScorer.score("C", "b", d, "longClick"));
     }
 
     @Test // 17.4
@@ -295,7 +309,7 @@ public class MopScorerTest {
         assertEquals(0, MopScorer.score("a", "b", null, "click"));
         assertEquals(0, MopScorer.scoreOpenMenu("a", null));
         assertEquals(0, MopScorer.scoreWtg("a", "b", null));
-        assertEquals(0, MopScorer.stateMopDensity(null, null));
+        assertEquals(0, MopScorer.stateMopDensity(null, null, 0));
     }
 
     @Test // 17.7
@@ -307,11 +321,11 @@ public class MopScorerTest {
     @Test // 17.8 — density null guard (JVM-testable; populated-State path is unchanged legacy code, covered by §22 integration)
     public void testStateMopDensityNullSafe() {
         // data==null short-circuits before touching the State (the regression-relevant guard I added).
-        assertEquals(0, MopScorer.stateMopDensity(null, null));
+        assertEquals(0, MopScorer.stateMopDensity(null, null, 0));
     }
 
     // =========================================================================
-    // gh15 A-2 — B4 activity fallback (INV-MOP-07) and B3 containment foundation
+    // Discriminative-only scoring (no activity fallback) + B3 containment foundation
     // =========================================================================
 
     /** Build MopData where the given activity has the listed widgets with explicit directMop flags. */
@@ -330,19 +344,19 @@ public class MopScorerTest {
     }
 
     /**
-     * B4 (INV-MOP-07): a resolved-but-unflagged widget falls back to the activity
-     * boost instead of short-circuiting to 0; a null widget in a MOP activity also
-     * falls back; a non-MOP activity still yields 0.
+     * Discriminative-only scoring: a resolved-but-unflagged widget and a null widget both
+     * score 0 even on a MOP-bearing activity (the +100 activity fallback is removed); only
+     * the flagged widget earns its boost; a non-MOP activity also yields 0.
      */
     @Test
-    public void testScoreResolvedButUnflaggedFallsBackToActivity() {
+    public void testScoreResolvedButUnflaggedScoresZero() {
         Map<String, Boolean> ids = new HashMap<>();
         ids.put("plain", false);   // resolves, no MOP flag
         ids.put("flagged", true);  // direct MOP
         MopData data = buildWidgetData("A", ids);
 
-        assertEquals(Config.mopWeightActivity, MopScorer.score("A", "plain", data, null));
-        assertEquals(Config.mopWeightActivity, MopScorer.score("A", "absent", data, null));
+        assertEquals(0, MopScorer.score("A", "plain", data, null));
+        assertEquals(0, MopScorer.score("A", "absent", data, null));
         assertEquals(Config.mopWeightDirect, MopScorer.score("A", "flagged", data, null));
         assertEquals(0, MopScorer.score("B", "plain", data, null));
     }
@@ -353,6 +367,7 @@ public class MopScorerTest {
      * boost that the child id alone would miss — which is what the StatefulAgent
      * containment loop does by scoring {child} ∪ ancestors(≤2) ∪ descendants(≤2).
      * The full GUITreeNode traversal needs a live tree and is device-gated (6.3).
+     * The unflagged child scores 0 (the activity fallback is removed).
      */
     @Test
     public void testScoreByContainerVsChildId() {
@@ -362,6 +377,94 @@ public class MopScorerTest {
         MopData data = buildWidgetData("A", ids);
 
         assertEquals(Config.mopWeightDirect, MopScorer.score("A", "card", data, null));
-        assertEquals(Config.mopWeightActivity, MopScorer.score("A", "inner", data, null));
+        assertEquals(0, MopScorer.score("A", "inner", data, null));
+    }
+
+    // -------------------------------------------------------------------------
+    // stateMopDensity (INV-MOP-24) — JVM-testable early-outs. The flagged-count
+    // path needs resolved GUITreeNodes and is device-gated (see class javadoc).
+    // -------------------------------------------------------------------------
+
+    /**
+     * Allocate a State (bypassing its ComponentName-requiring constructor, as FormCompletionTest
+     * does) on {@code activity}, carrying {@code numActions} valid MODEL_CLICK actions. The
+     * StateKey is likewise allocated and its {@code activity} field set so {@code getActivity()}
+     * works without an Android runtime.
+     */
+    private static State stateOnActivity(String activity, int numActions) throws Exception {
+        Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+        Field theUnsafe = unsafeClass.getDeclaredField("theUnsafe");
+        theUnsafe.setAccessible(true);
+        Object unsafe = theUnsafe.get(null);
+        Method allocate = unsafeClass.getMethod("allocateInstance", Class.class);
+
+        StateKey key = (StateKey) allocate.invoke(unsafe, StateKey.class);
+        Field activityField = StateKey.class.getDeclaredField("activity");
+        activityField.setAccessible(true);
+        activityField.set(key, activity);
+
+        State state = (State) allocate.invoke(unsafe, State.class);
+        Field stateKeyField = State.class.getDeclaredField("stateKey");
+        stateKeyField.setAccessible(true);
+        stateKeyField.set(state, key);
+
+        ModelAction[] actions = new ModelAction[numActions];
+        for (int i = 0; i < numActions; i++) {
+            actions[i] = new ModelAction(null, ActionType.MODEL_CLICK);
+            actions[i].setValid(true);
+        }
+        Field actionsField = State.class.getDeclaredField("actions");
+        actionsField.setAccessible(true);
+        actionsField.set(state, actions);
+        return state;
+    }
+
+    /** INV-MOP-24: null MopData short-circuits to 0 before touching the State. */
+    @Test
+    public void testStateMopDensityNullDataIsZero() throws Exception {
+        State dense = stateOnActivity("com.example.MopActivity", 10);
+        assertEquals(0, MopScorer.stateMopDensity(dense, null, 1));
+    }
+
+    /**
+     * INV-MOP-24: a dense screen (10 valid target-requiring actions) on an activity with no
+     * MOP-reachable widgets scores 0 via the {@code activityHasMop} early-out — before any
+     * widget resolution, so no live GUITreeNode is needed. The flagged-vs-total count on a
+     * MOP-bearing activity is device-gated (class javadoc).
+     */
+    @Test
+    public void testStateMopDensityDenseNonMopActivityScoresZero() throws Exception {
+        MopData data = buildWidgetData("com.example.MopActivity",
+                Collections.singletonMap("flagged", Boolean.TRUE));
+        State denseNonMop = stateOnActivity("com.example.PlainActivity", 10);
+        assertEquals(0, MopScorer.stateMopDensity(denseNonMop, data, 1));
+    }
+
+    // -------------------------------------------------------------------------
+    // mop-parser-fidelity (#0) 2.3(b): parser → scorer integration.
+    // A "#"-suffixed WTG target window reduces to its base activity, so scoreWtg
+    // finds activityHasMop(base) and returns mopWeightWtg (INV-WTG-04).
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testScoreWtg_suffixedTargetReducedToBase() throws Exception {
+        String reaches = "{\"className\":\"Tgt\",\"methods\":["
+                + "{\"signature\":\"<Tgt: void enc()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true}]}";
+        String wins = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"Src\",\"widgets\":[]},"
+                + "{\"id\":2,\"type\":\"ACTIVITY\",\"name\":\"Tgt#Dialog\",\"widgets\":["
+                + "{\"idName\":\"go\",\"type\":\"android.widget.Button\",\"listeners\":["
+                + "{\"eventType\":\"click\",\"handler\":\"<Tgt: void enc()>\"}]}]}";
+        String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
+                + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"x\",\"widgetName\":\"toCrypto\"}]}";
+        MopData d = MopData.load(writeTempJson(jsonDoc(reaches, wins, trans)), null, null);
+        assertEquals(Config.mopWeightWtg, MopScorer.scoreWtg("Src", "toCrypto", d));
+    }
+
+    private static String jsonDoc(String reach, String wins, String trans) {
+        return "{\"package\":\"P\",\"mainActivity\":\"Src\",\"complete\":true"
+                + ",\"reachability\":[" + reach + "]"
+                + ",\"windows\":[" + wins + "]"
+                + ",\"transitions\":[" + trans + "]"
+                + ",\"components\":{}}";
     }
 }

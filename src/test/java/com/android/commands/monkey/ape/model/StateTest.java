@@ -228,4 +228,25 @@ public class StateTest {
 
         assertSame(a1, state.greedyPickLeastVisited(excludeFirst));
     }
+
+    /**
+     * form-completion #1 D-7.2 guard (extended INV-FORM-06): the excluded submit candidate is
+     * skipped even when it is the least-visited action, so the next-least-visited non-excluded
+     * action wins; a null exclusion leaves behavior unchanged.
+     */
+    @Test
+    public void testExcludedActionSkippedEvenIfLeastVisited() throws Exception {
+        State state = createState(new ModelAction[0]);
+        ModelAction submit = createAction(state, 100, 0);   // least visited — would win unguarded
+        ModelAction field = createAction(state, 32, 3);
+
+        Field actionsField = State.class.getDeclaredField("actions");
+        actionsField.setAccessible(true);
+        actionsField.set(state, new ModelAction[]{submit, field});
+
+        assertSame("excluded submit skipped despite lowest visitedCount",
+                field, state.greedyPickLeastVisited(ALL, submit));
+        assertSame("null exclusion → unchanged least-visited behavior",
+                submit, state.greedyPickLeastVisited(ALL, null));
+    }
 }

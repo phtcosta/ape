@@ -38,10 +38,15 @@ public class ApePinchOrZoomEvent extends AbstractApeEvent {
     float[] values;
 
     public ApePinchOrZoomEvent(PointF[] points) {
-        this.values = fromPointsArray(points);
-        if (points.length < 4) {
+        // Validate length before dereferencing any element: fromPointsArray reads
+        // p.x/p.y for every entry, so a short or null-bearing array would NPE
+        // instead of failing the guard. The real minimum is 6 (the fuzzer writes
+        // 6 + 2*count points, count >= 0), and generateMonkeyEvents consumes a
+        // down + pointer-down + pointer-up + up = 6 slots at minimum.
+        if (points.length < 6) {
             throw new IllegalArgumentException();
         }
+        this.values = fromPointsArray(points);
     }
 
     public ApePinchOrZoomEvent(float[] values) {

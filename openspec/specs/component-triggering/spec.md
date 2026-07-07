@@ -36,110 +36,10 @@ Activities are excluded from triggering because they are already reachable via G
 - **INV-CT-01**: Component triggering SHALL only fire when `Config.componentPercentage > 0` AND `MopData.hasComponents()` is true. When `componentPercentage` is `0.0` (the default, regardless of whether `mopDataPath` is set), behavior SHALL be identical to APE-RV without component triggering.
 - **INV-CT-02**: Component triggering SHALL be probabilistic — on each step in `SataAgent.selectNewActionNonnull()`, a random check against `componentPercentage` determines whether to trigger. The trigger is a side-effect; normal SATA action selection continues regardless.
 - **INV-CT-03**: Only BroadcastReceivers and Services SHALL be triggered. Activities and ContentProviders are excluded.
+- **INV-CT-04**: The package component of every trigger `ComponentName` SHALL equal `MopData.getPackageName()`; no trigger path SHALL derive it from the component class name.
 
 ---
 
-## ADDED Requirements
-
-### Requirement: Probabilistic component triggering in SataAgent
-
-In `SataAgent.selectNewActionNonnull()`, after LLM hooks and before the SATA chain, a probabilistic check SHALL fire with probability `Config.componentPercentage`. When fired, `triggerMopComponent()` SHALL be called as a side-effect — the method triggers one component (round-robin) and returns. The normal SATA action selection continues immediately after.
-
-#### Scenario: Component trigger fires
-- **WHEN** `Config.componentPercentage` is `0.05` and `MopData.hasComponents()` is true
-- **AND** `random.nextDouble() < 0.05` on this step
-- **THEN** `triggerMopComponent()` SHALL be called
-- **AND** normal SATA action selection SHALL continue (trigger does not replace the step)
-
-#### Scenario: Component trigger does not fire
-- **WHEN** `random.nextDouble() >= Config.componentPercentage`
-- **THEN** no component trigger occurs
-- **AND** SATA proceeds normally
-
-#### Scenario: No mopDataPath set
-- **WHEN** `Config.mopDataPath` is null
-- **THEN** `Config.componentPercentage` defaults to `0.0`
-- **AND** no component triggering occurs
-
----
-
-### Requirement: Broadcast triggering
-
-`triggerMopComponent()` SHALL send targeted broadcasts to BroadcastReceivers. The intent SHALL be constructed with:
-- Action string from the receiver's first intent-filter action
-- ComponentName targeting `(packageName, receiverClassName)` for explicit delivery
-- Typed extras from `SystemBroadcastCatalog` if the action matches a known system broadcast
-
-Receivers with no intent-filter actions (`intentFilters: []`) SHALL be skipped.
-
-#### Scenario: Broadcast with catalog extras
-- **WHEN** `triggerMopComponent()` selects a receiver with action `android.intent.action.BOOT_COMPLETED`
-- **AND** `SystemBroadcastCatalog` has an entry for this action
-- **THEN** APE-RV SHALL send the broadcast with action, ComponentName, and catalog extras
-
-#### Scenario: Broadcast with no catalog match
-- **WHEN** the receiver has action `com.example.CUSTOM_ACTION` not in the catalog
-- **THEN** APE-RV SHALL send the broadcast with action + ComponentName only (no extras)
-
-#### Scenario: Protected broadcast
-- **WHEN** the broadcast action is protected (e.g., `BOOT_COMPLETED`)
-- **AND** Android throws `SecurityException`
-- **THEN** the exception SHALL be caught and logged as WARNING
-- **AND** exploration SHALL continue normally
-
----
-
-### Requirement: Service triggering
-
-`triggerMopComponent()` SHALL start Services via `AndroidDevice.startService()`. The intent SHALL use ComponentName for explicit delivery, with action from intent-filter if available. Services without intent-filters can still be started by ComponentName alone.
-
-`AndroidDevice.startService()` SHALL use reflection to handle different `IActivityManager.startService()` signatures across Android versions (M through Q).
-
-#### Scenario: Service started
-- **WHEN** `triggerMopComponent()` selects a service
-- **THEN** APE-RV SHALL start it via `AndroidDevice.startService(intent)`
-
----
-
-### Requirement: SystemBroadcastCatalog
-
-APE-RV SHALL load a catalog of system broadcast actions with typed extras from `/data/local/tmp/system-broadcast.json` on the device (pushed alongside `ape-rv.jar`). The catalog provides lookup by action string.
-
-For each entry, extras are parsed from the `adb` command field: `--es` (String), `--ei` (int), `--ez` (boolean), `--el` (long), `--ef` (float).
-
-If the catalog file is absent, an empty catalog SHALL be used (no extras for any action, no error).
-
-#### Scenario: Catalog lookup for known action
-- **WHEN** `SystemBroadcastCatalog.lookup("android.net.conn.CONNECTIVITY_CHANGE")` is called
-- **THEN** it SHALL return typed extras for that action
-
-#### Scenario: Catalog lookup for unknown action
-- **WHEN** `SystemBroadcastCatalog.lookup("com.example.CUSTOM")` is called
-- **THEN** it SHALL return an empty list
-
----
-
-### Requirement: Config — componentPercentage
-
-`Config.componentPercentage` (double) SHALL control the probability of component triggering per step. The default SHALL be `0.0` regardless of `Config.mopDataPath`. Component triggering is enabled only by an explicit `ape.componentPercentage` setting in `ape.properties`.
-
-This decouples component triggering from MOP scoring: setting `ape.mopDataPath` (which enables the MOP scorer) SHALL NOT change `componentPercentage`. An experiment arm that wants both MOP scoring and triggering SHALL set `ape.componentPercentage` explicitly.
-
-Anchor: `Config.java:169-170`. Sole consumer: `SataAgent.java:351-354`.
-
-#### Scenario: Default with mopDataPath set
-- **WHEN** `ape.properties` sets `ape.mopDataPath` but not `ape.componentPercentage`
-- **THEN** `Config.componentPercentage` SHALL default to `0.0` (triggering disabled)
-- **AND** no component triggering SHALL occur
-
-#### Scenario: Default without mopDataPath
-- **WHEN** `ape.properties` does not set `ape.mopDataPath` and does not set `ape.componentPercentage`
-- **THEN** `Config.componentPercentage` SHALL default to `0.0` (disabled)
-
-#### Scenario: Explicit override enables triggering
-- **WHEN** `ape.properties` sets `ape.componentPercentage=0.10`
-- **THEN** `Config.componentPercentage` SHALL be `0.10` regardless of `mopDataPath`
-- **AND** triggering SHALL fire with probability `0.10` per step (subject to INV-CT-01)
 ## Requirements
 ### Requirement: Probabilistic component triggering in SataAgent
 
@@ -240,4 +140,18 @@ Anchor: `Config.java:169-170`. Sole consumer: `SataAgent.java:351-354`.
 - **WHEN** `ape.properties` sets `ape.componentPercentage=0.10`
 - **THEN** `Config.componentPercentage` SHALL be `0.10` regardless of `mopDataPath`
 - **AND** triggering SHALL fire with probability `0.10` per step (subject to INV-CT-01)
+
+---
+
+### Requirement: ComponentName Package Derivation
+
+`StatefulAgent.dispatchTrigger` SHALL build the `ComponentName` for every trigger kind (broadcast, service, activity) using the app package parsed from the static-analysis JSON (`MopData.getPackageName()`, sourced from the JSON `package` field), paired with the component's fully-qualified class name. It SHALL NOT derive the package by truncating the class name at its last dot: that heuristic yields the enclosing Java namespace, which differs from the app package for any component declared in a subpackage (e.g. class `br.unb.app.receivers.MyReceiver` in app package `br.unb.app`), producing an invalid `ComponentName` and a silently failed trigger.
+
+#### Scenario: subpackaged receiver gets a valid ComponentName
+- **WHEN** the JSON declares `package="br.unb.app"` and a reachable receiver class `br.unb.app.receivers.MyReceiver` is triggered
+- **THEN** the `ComponentName` SHALL be `("br.unb.app", "br.unb.app.receivers.MyReceiver")`
+
+#### Scenario: top-level component unchanged
+- **WHEN** the component class lives directly in the app package (`br.unb.app.MainReceiver`)
+- **THEN** the `ComponentName` SHALL be `("br.unb.app", "br.unb.app.MainReceiver")` (same result as before)
 

@@ -122,11 +122,21 @@ public class State extends GraphElement {
     }
 
     public ModelAction greedyPickLeastVisited(ActionFilter filter) {
+        return greedyPickLeastVisited(filter, null);
+    }
+
+    /**
+     * As {@link #greedyPickLeastVisited(ActionFilter)}, but skips {@code excluded} when non-null —
+     * the form-submit guard (extended INV-FORM-06): the submit must not be picked by visit count
+     * while the form has unfilled EditTexts, since least-visited ignores the priority that steers
+     * fields ahead of the submit.
+     */
+    public ModelAction greedyPickLeastVisited(ActionFilter filter, ModelAction excluded) {
         ModelAction minAction = null;
         int minValue = Integer.MAX_VALUE;
         int maxPriority = Integer.MIN_VALUE;
         for (ModelAction action : actions) {
-            if (!filter.include(action)) {
+            if (action == excluded || !filter.include(action)) {
                 continue;
             }
             int vc = action.getVisitedCount();

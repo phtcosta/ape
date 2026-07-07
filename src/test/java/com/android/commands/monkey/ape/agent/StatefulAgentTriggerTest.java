@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -169,5 +170,28 @@ public class StatefulAgentTriggerTest {
         String[] insert = StatefulAgent.buildContentCommand(tuples.get(1));
         assertEquals("insert", insert[1]);
         assertEquals("--bind", insert[4]);
+    }
+
+    // 5.4 — INV-MOP-22 fail-fast: mopDataPath set but load failed → abort, never run as pure SATA
+    @Test
+    public void testRequireMopArmThrowsWhenPathSetAndLoadFailed() {
+        try {
+            StatefulAgent.requireMopArm(null, "/data/local/tmp/ape.mop.json");
+            fail("expected StopTestingException when path is set and load returned null");
+        } catch (StopTestingException expected) {
+            // ok
+        }
+    }
+
+    @Test
+    public void testRequireMopArmPassesThroughWhenLoaded() {
+        MopData d = data(null, null, null, null);
+        assertSame(d, StatefulAgent.requireMopArm(d, "/data/local/tmp/ape.mop.json"));
+    }
+
+    @Test
+    public void testRequireMopArmNoThrowWhenPathUnset() {
+        // mopDataPath unset → MOP disabled, null is a valid outcome (SATA as today)
+        assertNull(StatefulAgent.requireMopArm(null, null));
     }
 }
