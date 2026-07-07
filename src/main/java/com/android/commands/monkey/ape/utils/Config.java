@@ -148,6 +148,12 @@ public class Config {
     // priority roulette once the deterministic override is exhausted (INV-SEL-MOP-04/05).
     public static final int mopTargetPickCap = Config.getInteger("ape.mopTargetPickCap", 3);
 
+    // mop-fairtest: back-menu-pick-cap — bounds discretionary MODEL_BACK/MODEL_MENU picks per
+    // (activity, type) across NamingFactory-minted sibling states. <= 0 = unlimited (restores the
+    // pre-cap behavior). Navigation-essential BACK sites (backToActivity/backtrack/handleNullAction)
+    // are never capped; only the discretionary EARLY_STAGE + epsilon-greedy picks (INV-SEL-NAV-01..05).
+    public static final int backMenuPickCap = Config.getInteger("ape.backMenuPickCap", 3);
+
     // LLM integration — configurable via ape.properties.
     // llmUrl=null disables LLM calls entirely (safe default when no LLM server is present).
     public static final String llmUrl = Config.get("ape.llmUrl");

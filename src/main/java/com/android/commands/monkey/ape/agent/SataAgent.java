@@ -465,21 +465,32 @@ public class SataAgent extends StatefulAgent {
     }
 
     protected ModelAction selectNewActionEpsilonGreedyRandomly() {
+        // back-menu-pick-cap: bound discretionary BACK/MENU re-picks per (activity, type) across
+        // NamingFactory-minted sibling states (INV-SEL-NAV-01). Only the discretionary channels
+        // here are capped — the short-circuits, the least-visited pick, and the roulette. The
+        // navigation-essential BACK sites (selectNewActionBackToActivity, backToTrivialActivity,
+        // checkBackTrack, handleNullAction) never consult backMenuPicks (INV-SEL-NAV-03).
+        String activity = newState.getActivity();
+        int cap = Config.backMenuPickCap;
+        String backKey = backMenuPickKey(ActionType.MODEL_BACK, activity);
+        String menuKey = backMenuPickKey(ActionType.MODEL_MENU, activity);
         ModelAction back = newState.getBackAction();
         if (back.isValid()) {
-            if (back.isUnvisited()) {
+            if (back.isUnvisited() && eligibleForMopPick(backMenuPicks, backKey, cap)) {
                 Logger.iprintln("Select Back because Back action is unvisited.");
                 // Chosen because Back is unvisited, not because of any boost — SATA.
                 back.setDecisionSource(ModelAction.DecisionSource.SATA);
+                recordBackMenuPick(ActionType.MODEL_BACK, activity);
                 return back;
             }
         }
         ModelAction menu = newState.getMenuAction();
         if (menu.isValid()) {
-            if (menu.isUnvisited()) {
+            if (menu.isUnvisited() && eligibleForMopPick(backMenuPicks, menuKey, cap)) {
                 Logger.iprintln("Select Menu because Menu action is unvisited.");
                 // Chosen because Menu is unvisited, not because of its menuBoost — SATA.
                 menu.setDecisionSource(ModelAction.DecisionSource.SATA);
+                recordBackMenuPick(ActionType.MODEL_MENU, activity);
                 return menu;
             }
         }
@@ -504,21 +515,29 @@ public class SataAgent extends StatefulAgent {
             mopTarget.setDecisionSource(attributeByLargestBoost(mopTarget));
             return mopTarget;
         }
+        // back-menu-pick-cap: capped BACK/MENU must also fall out of the discretionary least-visited
+        // and roulette channels — else a refinement-minted sibling (visitedCount == 0) would win
+        // least-visited outright, merely relabeling the re-pick channel (Decision 3). One wrapped
+        // filter, stable across the roulette's count/pick passes (INV-SEL-NAV-04).
+        ActionFilter cappedFilter =
+                cappedBackMenuFilter(ActionFilter.ENABLED_VALID, backMenuPicks, activity, cap);
         if (egreedy()) { // TODO: this is different from Sarsa.
             Logger.iformat("Try to select the least visited action.");
             // Least-visited pick: priority (and any boost) is only a tie-break, not the
             // reason for selection — SATA.
-            ModelAction leastVisited = newState.greedyPickLeastVisited(ActionFilter.ENABLED_VALID, submitExcluded);
+            ModelAction leastVisited = newState.greedyPickLeastVisited(cappedFilter, submitExcluded);
             if (leastVisited != null) {
                 leastVisited.setDecisionSource(ModelAction.DecisionSource.SATA);
+                recordBackMenuPick(leastVisited.getType(), activity);
             }
             return leastVisited;
         }
         Logger.iformat("Try to randomly select a visited action.");
         // Priority roulette: attribute by largest contributing boost.
-        ModelAction roulettePick = newState.randomlyPickAction(getRandom(), ActionFilter.ENABLED_VALID);
+        ModelAction roulettePick = newState.randomlyPickAction(getRandom(), cappedFilter);
         if (roulettePick != null) {
             roulettePick.setDecisionSource(attributeByLargestBoost(roulettePick));
+            recordBackMenuPick(roulettePick.getType(), activity);
         }
         return roulettePick;
     }
@@ -576,6 +595,13 @@ public class SataAgent extends StatefulAgent {
     // is untouched, so the action stays in the priority roulette.
     private final Map<String, Integer> mopTargetPicks = new HashMap<>();
 
+    // back-menu-pick-cap: per-run count of discretionary MODEL_BACK/MODEL_MENU picks, keyed by
+    // (activity, type). NamingFactory refinement re-arms the "unvisited" BACK/MENU short-circuits
+    // for every sibling state; this cap bounds discretionary re-picks across them (INV-SEL-NAV-01).
+    // Navigation-essential BACK sites do not consult this map. The action objects are never
+    // mutated — only the roulette/short-circuit candidate sets are shaped.
+    private final Map<String, Integer> backMenuPicks = new HashMap<>();
+
     /**
      * Physical-widget identity for the pick cap: {@code target.toXPath() + "|" + actionType + "|" +
      * activity}, matching the {@code UICoverageTracker.widgetId} convention (xpath|type) scoped by
@@ -623,6 +649,96 @@ public class SataAgent extends StatefulAgent {
         int n = picks.getOrDefault(key, 0) + 1;
         picks.put(key, n);
         return n == cap;
+    }
+
+    /**
+     * back-menu-pick-cap key: {@code activity + "|" + type.name()} for the two target-less
+     * discretionary types (MODEL_BACK, MODEL_MENU); null for any other type or a null activity
+     * (uncountable → always eligible). Activity-scoped (not stateKey-scoped) so it absorbs
+     * NamingFactory refinement re-arm across sibling states. Pure. (INV-SEL-NAV-01)
+     */
+    static String backMenuPickKey(ActionType type, String activity) {
+        if (activity == null || (type != ActionType.MODEL_BACK && type != ActionType.MODEL_MENU)) {
+            return null;
+        }
+        return activity + "|" + type.name();
+    }
+
+    /**
+     * Wraps {@code base} so a capped MODEL_BACK/MODEL_MENU is additionally excluded — the discretionary
+     * least-visited and roulette channels must not re-elect a type the short-circuit already capped
+     * (a refinement-minted sibling carries {@code visitedCount == 0}, which would win least-visited
+     * outright). Eligibility is read once per type here, so the returned filter is stable across the
+     * roulette's count/pick passes (INV-SEL-NAV-04). Pure — no mutation, mirrors the base for every
+     * other action. Returned filter reads only the captured snapshot booleans.
+     */
+    static ActionFilter cappedBackMenuFilter(final ActionFilter base, Map<String, Integer> picks,
+            String activity, int cap) {
+        final boolean backEligible =
+                eligibleForMopPick(picks, backMenuPickKey(ActionType.MODEL_BACK, activity), cap);
+        final boolean menuEligible =
+                eligibleForMopPick(picks, backMenuPickKey(ActionType.MODEL_MENU, activity), cap);
+        return new BaseActionFilter() {
+            @Override
+            public boolean include(ModelAction action) {
+                if (!base.include(action)) {
+                    return false;
+                }
+                ActionType t = action.getType();
+                if (t == ActionType.MODEL_BACK) {
+                    return backEligible;
+                }
+                if (t == ActionType.MODEL_MENU) {
+                    return menuEligible;
+                }
+                return true;
+            }
+        };
+    }
+
+    /**
+     * Records a discretionary BACK/MENU pick against {@code backMenuPicks} and logs once when the
+     * (activity, type) key reaches the cap. No-op when the type is not BACK/MENU, the activity is
+     * null, or the cap is disabled. Instance method — mutates only {@code backMenuPicks}.
+     */
+    private void recordBackMenuPick(ActionType type, String activity) {
+        int cap = Config.backMenuPickCap;
+        String key = backMenuPickKey(type, activity);
+        if (recordMopPick(backMenuPicks, key, cap)) {
+            Logger.iformat("[APE-RV] BACK/MENU capped: activity=%s type=%s picks=%d",
+                    activity, type.name(), cap);
+        }
+    }
+
+    /**
+     * back-menu-pick-cap (menu-boost gate, INV-SEL-NAV): the gh13 OPTIONSMENU gateway boost is
+     * suppressed once this activity's MODEL_MENU key reaches the cap, so a capped MENU stops
+     * re-dominating the priority roulette. Below the cap the gh13 semantics are identical.
+     */
+    @Override
+    protected boolean menuPickEligible(String activity) {
+        return eligibleForMopPick(backMenuPicks,
+                backMenuPickKey(ActionType.MODEL_MENU, activity), Config.backMenuPickCap);
+    }
+
+    /**
+     * Returns {@code candidates} with any capped target-less MODEL_BACK/MODEL_MENU removed (used by
+     * the EARLY_STAGE forward roulette). Returns {@code candidates} unchanged when the cap is
+     * disabled. Read-only — never mutates the actions or {@code backMenuPicks}.
+     */
+    private List<ModelAction> dropCappedBackMenu(List<ModelAction> candidates, String activity) {
+        int cap = Config.backMenuPickCap;
+        if (cap <= 0) {
+            return candidates;
+        }
+        ActionFilter capped = cappedBackMenuFilter(ActionFilter.ALL, backMenuPicks, activity, cap);
+        List<ModelAction> out = new ArrayList<>(candidates.size());
+        for (ModelAction a : candidates) {
+            if (capped.include(a)) {
+                out.add(a);
+            }
+        }
+        return out;
     }
 
     /**
@@ -1224,7 +1340,12 @@ public class SataAgent extends StatefulAgent {
                 mopTarget.setDecisionSource(attributeByLargestBoost(mopTarget));
                 return mopTarget;
             }
-            action = RandomHelper.randomPickWithPriority(candidates);
+            // back-menu-pick-cap (INV-SEL-NAV-05): drop capped target-less BACK/MENU from the EARLY_STAGE
+            // roulette candidates. This composes with the INV-FORM-06 submit exclusion above (BACK/MENU
+            // are never the submit candidate, so the two filters are independent). The MOP probe above
+            // is untouched — it ignores target-less BACK/MENU anyway (mopBoost==0).
+            List<ModelAction> rouletteCandidates = dropCappedBackMenu(candidates, next.getActivity());
+            action = RandomHelper.randomPickWithPriority(rouletteCandidates);
             if (action != null) {
                 Logger.iprintln("Find a greedy action in 0-step");
                 // super.disableRestart();
@@ -1232,6 +1353,7 @@ public class SataAgent extends StatefulAgent {
                 // Priority roulette over EARLY_STAGE unvisited candidates: attribute by
                 // largest contributing boost.
                 action.setDecisionSource(attributeByLargestBoost(action));
+                recordBackMenuPick(action.getType(), next.getActivity());
                 return action;
             }
         }
@@ -1275,11 +1397,19 @@ public class SataAgent extends StatefulAgent {
 
     protected ModelAction findGreedyActionBackward(State prev, State next) {
         // 3). Back
-        if (ActionFilter.ENABLED_VALID_UNVISITED.include(next.getBackAction())) {
+        // back-menu-pick-cap (INV-SEL-NAV-05): under the default useActionDiffer=true this is the
+        // DOMINANT unvisited-BACK channel, reached at phase :441 before the epsilon short-circuit
+        // ever runs. Gate the direct pick on BACK-key eligibility; when capped, skip it and fall
+        // through to the backtrack path (:4) rather than re-pick BACK on every sibling state.
+        if (ActionFilter.ENABLED_VALID_UNVISITED.include(next.getBackAction())
+                && eligibleForMopPick(backMenuPicks,
+                        backMenuPickKey(ActionType.MODEL_BACK, next.getActivity()),
+                        Config.backMenuPickCap)) {
             Logger.iprintln("Find a greedy (unvisited) back action.");
             // Chosen because Back is unvisited, not because of any boost — SATA.
             ModelAction backAction = next.getBackAction();
             backAction.setDecisionSource(ModelAction.DecisionSource.SATA);
+            recordBackMenuPick(ActionType.MODEL_BACK, next.getActivity());
             return backAction;
         }
         // 4). Backtrack to parent.

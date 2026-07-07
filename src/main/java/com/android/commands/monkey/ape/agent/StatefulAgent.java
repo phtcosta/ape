@@ -1344,6 +1344,16 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
     }
 
+    /**
+     * back-menu-pick-cap hook: whether the gh13 OPTIONSMENU gateway boost may still be applied on
+     * {@code activity}. The base agent is always eligible (no cap state); {@code SataAgent} overrides
+     * this with a cap check over its per-(activity, MODEL_MENU) pick count. Consulted in the menu-boost
+     * pass of {@link #adjustActionsByGUITree()}.
+     */
+    protected boolean menuPickEligible(String activity) {
+        return true;
+    }
+
     protected void adjustActionsByGUITree() {
         // Rect displayBounds = ape.getDisplayBounds();
         for (ModelAction action : newState.getActions()) {
@@ -1430,7 +1440,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                     activity, newState.getStateKey(), boostedCount, totalTarget, maxBoost,
                     containmentBoostedCount);
             // gh13 T1.2: OPTIONSMENU gateway boost — make the agent open the menu that leads to MOP.
-            int menuBoost = MopScorer.scoreOpenMenu(activity, _mopData);
+            // back-menu-pick-cap: gate the +menuBoost by menuPickEligible so a MENU whose (activity,
+            // MODEL_MENU) key is capped stops re-dominating the roulette (base agent: always eligible;
+            // SataAgent: cap check). No setPriority/setMenuBoost when the gate is closed.
+            int menuBoost = menuPickEligible(activity) ? MopScorer.scoreOpenMenu(activity, _mopData) : 0;
             if (menuBoost > 0) {
                 for (ModelAction action : newState.getActions()) {
                     if (action.getType() == ActionType.MODEL_MENU) {
