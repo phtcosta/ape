@@ -972,6 +972,16 @@ public class MopData {
         return mopActivities.contains(activity);
     }
 
+    /**
+     * The reachability-augmented MOP activity set (INV-MOP-27) — the membership E-mín's
+     * {@code selectTriggerCandidate} orders by. Backed by the live set (not a copy); callers read
+     * only. Distinct from the per-activity {@link #activityHasMop} query so the pure launcher seam
+     * can take it as a parameter.
+     */
+    public Set<String> getMopActivities() {
+        return mopActivities;
+    }
+
     /** Count of MOP-flagged widgets dropped during parsing for lacking a resource id (INV-MOP-20). */
     public int getDroppedFlaggedNoId() {
         return droppedFlaggedNoId;

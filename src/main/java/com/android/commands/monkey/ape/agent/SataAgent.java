@@ -425,7 +425,7 @@ public class SataAgent extends StatefulAgent {
             }
             ComponentInfo candidate = selectTriggerCandidate(getMopData().getActivities(),
                     visited, getMopData().getMainActivity(), _triggerRoundRobinIndex,
-                    Config.triggerMopFirst);
+                    Config.triggerMopFirst ? getMopData().getMopActivities() : null);
             _triggerRoundRobinIndex++;
             if (candidate != null) {
                 graphStableCounter = 0;
@@ -648,30 +648,36 @@ public class SataAgent extends StatefulAgent {
      * or by name equal to {@code mainActivity}), and currently unvisited ({@code className} not in
      * {@code visitedActivities}). Null when none qualifies. The caller owns the index increment.
      *
-     * <p>E-mín (INV-CT-09): when {@code mopFirst} is true, the eligible {@code reachesTarget==true}
-     * group is walked first (round-robin from {@code rrIndex}); only when it yields nothing does the
-     * {@code reachesTarget==false} group get its round-robin turn. When {@code mopFirst} is false the
-     * two groups collapse into the single eligibility walk, byte-identical to {@code activity-frontier}
-     * (reachesTarget ignored). Ordering never widens eligibility.
+     * <p>E-mín (INV-CT-09): when {@code mopActivities} is non-null, the eligible MOP-reaching group
+     * (className in {@code mopActivities}) is walked first (round-robin from {@code rrIndex}); only
+     * when it yields nothing does the non-MOP group get its round-robin turn. When {@code
+     * mopActivities} is null the two groups collapse into the single eligibility walk, byte-identical
+     * to {@code activity-frontier} (MOP membership not consulted). MOP membership is the
+     * reachability-augmented {@code MopData.activityHasMop} truth (INV-MOP-27), NOT the
+     * component-level {@code ComponentInfo.reachesTarget} field, which false-negatives
+     * lambda-triggered activities. Ordering never widens eligibility.
      */
     static ComponentInfo selectTriggerCandidate(List<? extends ComponentInfo> activities,
-            Set<String> visitedActivities, String mainActivity, int rrIndex, boolean mopFirst) {
-        if (!mopFirst) {
-            return firstEligible(activities, visitedActivities, mainActivity, rrIndex, null);
+            Set<String> visitedActivities, String mainActivity, int rrIndex, Set<String> mopActivities) {
+        if (mopActivities == null) {
+            return firstEligible(activities, visitedActivities, mainActivity, rrIndex, null, null);
         }
-        ComponentInfo mop = firstEligible(activities, visitedActivities, mainActivity, rrIndex, Boolean.TRUE);
+        ComponentInfo mop = firstEligible(activities, visitedActivities, mainActivity, rrIndex,
+                mopActivities, Boolean.TRUE);
         return mop != null ? mop
-                : firstEligible(activities, visitedActivities, mainActivity, rrIndex, Boolean.FALSE);
+                : firstEligible(activities, visitedActivities, mainActivity, rrIndex,
+                        mopActivities, Boolean.FALSE);
     }
 
     /**
-     * Round-robin eligibility walk. {@code requireReaches} null = reachesTarget ignored (the plain
-     * activity-frontier walk); {@code Boolean.TRUE}/{@code FALSE} restricts to that reachesTarget
-     * group. Eligibility (exported, no permission gate, not main, unvisited) is identical in all
-     * three modes — only the group filter changes. Pure.
+     * Round-robin eligibility walk. {@code requireMop} null = MOP membership ignored (the plain
+     * activity-frontier walk); {@code Boolean.TRUE}/{@code FALSE} restricts to candidates whose
+     * className is / is not in {@code mopActivities}. Eligibility (exported, no permission gate, not
+     * main, unvisited) is identical in all three modes — only the group filter changes. Pure.
      */
     private static ComponentInfo firstEligible(List<? extends ComponentInfo> activities,
-            Set<String> visitedActivities, String mainActivity, int rrIndex, Boolean requireReaches) {
+            Set<String> visitedActivities, String mainActivity, int rrIndex,
+            Set<String> mopActivities, Boolean requireMop) {
         if (activities == null || activities.isEmpty()) {
             return null;
         }
@@ -679,7 +685,7 @@ public class SataAgent extends StatefulAgent {
         for (int i = 0; i < n; i++) {
             int idx = (((rrIndex + i) % n) + n) % n; // safe modulo for any rrIndex
             ComponentInfo c = activities.get(idx);
-            if (requireReaches != null && c.reachesTarget != requireReaches.booleanValue()) {
+            if (requireMop != null && mopActivities.contains(c.className) != requireMop.booleanValue()) {
                 continue;
             }
             if (c.exported && c.permission == null && !c.isMain

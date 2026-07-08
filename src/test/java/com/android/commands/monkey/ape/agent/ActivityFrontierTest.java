@@ -134,24 +134,24 @@ public class ActivityFrontierTest {
     public void testCandidateSkipsNonExported() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
                 activity("com.x.Hidden", false, false, null)));
-        assertNull(SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 0, false));
+        assertNull(SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 0, null));
     }
 
     @Test
     public void testCandidateSkipsPermissionGated() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
                 activity("com.x.Guarded", true, false, "android.permission.FOO")));
-        assertNull(SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 0, false));
+        assertNull(SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 0, null));
     }
 
     @Test
     public void testCandidateSkipsMainByFlagAndByName() {
         List<ComponentInfo> byFlag = new ArrayList<ComponentInfo>(Arrays.asList(
                 activity("com.x.Launcher", true, true, null)));
-        assertNull(SataAgent.selectTriggerCandidate(byFlag, new HashSet<String>(), "com.x.Other", 0, false));
+        assertNull(SataAgent.selectTriggerCandidate(byFlag, new HashSet<String>(), "com.x.Other", 0, null));
         List<ComponentInfo> byName = new ArrayList<ComponentInfo>(Arrays.asList(
                 activity("com.x.Main", true, false, null)));
-        assertNull(SataAgent.selectTriggerCandidate(byName, new HashSet<String>(), "com.x.Main", 0, false));
+        assertNull(SataAgent.selectTriggerCandidate(byName, new HashSet<String>(), "com.x.Main", 0, null));
     }
 
     @Test
@@ -159,14 +159,14 @@ public class ActivityFrontierTest {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
                 activity("com.x.Seen", true, false, null)));
         Set<String> visited = new HashSet<>(Arrays.asList("com.x.Seen"));
-        assertNull(SataAgent.selectTriggerCandidate(acts, visited, "com.x.Main", 0, false));
+        assertNull(SataAgent.selectTriggerCandidate(acts, visited, "com.x.Main", 0, null));
     }
 
     @Test
     public void testCandidatePicksEligible() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
                 activity("com.x.Settings", true, false, null)));
-        ComponentInfo c = SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 0, false);
+        ComponentInfo c = SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 0, null);
         assertNotNull(c);
         assertEquals("com.x.Settings", c.className);
     }
@@ -178,93 +178,97 @@ public class ActivityFrontierTest {
                 activity("com.x.Main", true, true, null),      // main → skip
                 activity("com.x.Hidden", false, false, null),  // not exported → skip
                 activity("com.x.Deep", true, false, null)));   // eligible
-        ComponentInfo c0 = SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 0, false);
+        ComponentInfo c0 = SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 0, null);
         assertEquals("com.x.Deep", c0.className);
-        ComponentInfo c1 = SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 1, false);
+        ComponentInfo c1 = SataAgent.selectTriggerCandidate(acts, new HashSet<String>(), "com.x.Main", 1, null);
         assertEquals("com.x.Deep", c1.className);
     }
 
     @Test
     public void testCandidateNullWhenEmptyOrAllVisited() {
         assertNull(SataAgent.selectTriggerCandidate(
-                new ArrayList<ComponentInfo>(), new HashSet<String>(), "com.x.Main", 0, false));
+                new ArrayList<ComponentInfo>(), new HashSet<String>(), "com.x.Main", 0, null));
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
                 activity("com.x.A", true, false, null)));
         assertNull(SataAgent.selectTriggerCandidate(
-                acts, new HashSet<>(Arrays.asList("com.x.A")), "com.x.Main", 0, false));
+                acts, new HashSet<>(Arrays.asList("com.x.A")), "com.x.Main", 0, null));
     }
 
     // ---- E-mín: MOP-first launch ordering (task 5.1, INV-CT-09) --------------
+    // MOP membership is the reachability-augmented activityHasMop truth, passed as a Set<String>
+    // (null = flag-off round-robin) — NOT ComponentInfo.reachesTarget, which false-negatives
+    // lambda-triggered activities on real apps (cryptoapp: all reachesTarget=false yet Cipher/
+    // MessageDigest/Cryptography genuinely reach MOP per reachability[]).
 
-    private static ActivityInfo activityR(String className, boolean exported, boolean isMain,
-            String permission, boolean reachesTarget) {
-        return new ActivityInfo(className, isMain, exported, Collections.<IntentFilter>emptyList(),
-                reachesTarget, Collections.<String>emptyList(), permission);
+    private static Set<String> mopSet(String... names) {
+        return new HashSet<>(Arrays.asList(names));
     }
 
     @Test
     public void testMopFirstPrefersReachingCandidate() {
-        // Plain (reachesTarget=false) comes first in list order but Crypto (true) must win.
+        // Plain (not MOP-reaching) comes first in list order but Crypto (in the MOP set) must win —
+        // Crypto models the lambda case: MOP-reaching yet components.reachesTarget would be false.
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activityR("com.x.Plain", true, false, null, false),
-                activityR("com.x.Crypto", true, false, null, true)));
+                activity("com.x.Plain", true, false, null),
+                activity("com.x.Crypto", true, false, null)));
         ComponentInfo c = SataAgent.selectTriggerCandidate(
-                acts, new HashSet<String>(), "com.x.Main", 0, true);
+                acts, new HashSet<String>(), "com.x.Main", 0, mopSet("com.x.Crypto"));
         assertNotNull(c);
         assertEquals("com.x.Crypto", c.className);
     }
 
     @Test
     public void testMopFirstFallsBackToNonMopWhenNoneReaching() {
-        // No eligible candidate reaches a target — fall back to round-robin over the non-MOP group;
-        // no candidate is skipped for lacking MOP.
+        // Flag on but no eligible candidate is MOP-reaching (empty MOP set) — fall back to
+        // round-robin over the eligible set; no candidate is skipped for lacking MOP.
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activityR("com.x.A", true, false, null, false),
-                activityR("com.x.B", true, false, null, false)));
+                activity("com.x.A", true, false, null),
+                activity("com.x.B", true, false, null)));
         ComponentInfo c0 = SataAgent.selectTriggerCandidate(
-                acts, new HashSet<String>(), "com.x.Main", 0, true);
+                acts, new HashSet<String>(), "com.x.Main", 0, mopSet());
         assertEquals("com.x.A", c0.className);
         ComponentInfo c1 = SataAgent.selectTriggerCandidate(
-                acts, new HashSet<String>(), "com.x.Main", 1, true);
+                acts, new HashSet<String>(), "com.x.Main", 1, mopSet());
         assertEquals("com.x.B", c1.className);
     }
 
     @Test
     public void testMopFirstOffIdenticalToRoundRobin() {
-        // Flag off must ignore reachesTarget entirely and match the plain round-robin walk.
+        // Flag off (null mopActivities) must ignore MOP membership and match the plain round-robin.
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activityR("com.x.Plain", true, false, null, false),
-                activityR("com.x.Crypto", true, false, null, true)));
+                activity("com.x.Plain", true, false, null),
+                activity("com.x.Crypto", true, false, null)));
         ComponentInfo off = SataAgent.selectTriggerCandidate(
-                acts, new HashSet<String>(), "com.x.Main", 0, false);
-        assertEquals("com.x.Plain", off.className); // first in list order, reachesTarget ignored
+                acts, new HashSet<String>(), "com.x.Main", 0, null);
+        assertEquals("com.x.Plain", off.className); // first in list order, MOP ignored
     }
 
     @Test
     public void testMopFirstEligibilityUnchanged() {
-        // A reachesTarget=true activity that is non-exported stays ineligible; ordering never
-        // widens eligibility, so the eligible non-MOP activity is launched instead.
+        // A MOP-reaching activity that is non-exported stays ineligible; ordering never widens
+        // eligibility, so the eligible non-MOP activity is launched instead.
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activityR("com.x.HiddenCrypto", false, false, null, true),
-                activityR("com.x.Plain", true, false, null, false)));
+                activity("com.x.HiddenCrypto", false, false, null),
+                activity("com.x.Plain", true, false, null)));
         ComponentInfo c = SataAgent.selectTriggerCandidate(
-                acts, new HashSet<String>(), "com.x.Main", 0, true);
+                acts, new HashSet<String>(), "com.x.Main", 0, mopSet("com.x.HiddenCrypto"));
         assertNotNull(c);
         assertEquals("com.x.Plain", c.className);
     }
 
     @Test
     public void testMopFirstRoundRobinWithinReachingGroup() {
-        // Two eligible reaching candidates — the MOP group itself walks round-robin by rrIndex.
+        // Two eligible MOP-reaching candidates — the MOP group itself walks round-robin by rrIndex.
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activityR("com.x.Crypto1", true, false, null, true),
-                activityR("com.x.Plain", true, false, null, false),
-                activityR("com.x.Crypto2", true, false, null, true)));
+                activity("com.x.Crypto1", true, false, null),
+                activity("com.x.Plain", true, false, null),
+                activity("com.x.Crypto2", true, false, null)));
+        Set<String> mop = mopSet("com.x.Crypto1", "com.x.Crypto2");
         ComponentInfo c0 = SataAgent.selectTriggerCandidate(
-                acts, new HashSet<String>(), "com.x.Main", 0, true);
+                acts, new HashSet<String>(), "com.x.Main", 0, mop);
         assertEquals("com.x.Crypto1", c0.className);
         ComponentInfo c1 = SataAgent.selectTriggerCandidate(
-                acts, new HashSet<String>(), "com.x.Main", 1, true);
+                acts, new HashSet<String>(), "com.x.Main", 1, mop);
         assertEquals("com.x.Crypto2", c1.className);
     }
 
