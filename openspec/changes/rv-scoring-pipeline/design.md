@@ -103,7 +103,7 @@ pipeline.apply(state, actions, scoringContext);
 
 | Layer | What | How |
 |---|---|---|
-| Characterization (BEFORE refactor) | golden priority arrays for representative GUITree fixtures at current default flags | capture with a fixed seed; assert the refactored pipeline reproduces byte-identical |
+| Characterization (BEFORE refactor) | seam-level goldens at the JVM-feasible granularity: base-priority-loop arithmetic over a reflection-built `State` fixture + the already-tested pass math seams (`MopScorer`, `frontierBoost`, `UICoverageTracker`, `FormCompletion`) | `adjustActionsByGUITree()` is deterministic (no RNG), so no seed is needed; the whole-engine wired golden is deferred to the device smoke (task 7.6) per the repo idiom (live-`GUITreeNode`/`Graph` paths are device-validated, not unit-tested), and base-loop byte-identity is task 3.7 |
 | Assembly | flags→passes matrix; `[APE-ARCH] passes=[...]` line content | `ScoringPipeline.fromConfig` unit tests over flag combinations |
 | Pass units | each pass reproduces its inline block; disabled pass is a strict no-op | per-pass tests with a stub `ScoringContext` |
 | Parity (apePureMode=true) | (i) priorities equal upstream loop, (ii) no `MODEL_MENU` in `getActions()`, (iii) fixed epsilon 0.05, (iv) legacy `StringCache` input, (v) zero `[APE-STEP]` lines | integration test with `apePureMode=true` vs an upstream reference |
@@ -112,7 +112,7 @@ pipeline.apply(state, actions, scoringContext);
 
 ## Risks / Trade-offs
 
-- **[Characterization goldens are brittle to unrelated priority changes]** → they are captured at pinned default flags and a fixed seed; any diff is either a real behavior change (must be justified) or a golden refresh with rationale. This is the point — the goldens are the tripwire.
+- **[Characterization goldens are brittle to unrelated priority changes]** → they are captured at pinned default flags (no seed needed — the scoring path is deterministic); any diff is either a real behavior change (must be justified) or a golden refresh with rationale. This is the point — the goldens are the tripwire.
 - **[`modelMenuEnabled` gating at `getActions()` vs. removing the field]** → keeping the field constructed (non-null) and gating only its presence in the selectable set preserves `INV-EXPL-06`/`INV-MODEL-01` and is the smaller edit; the cost is that the field exists-but-unused under the pure arm, which is acceptable (it is inert).
 - **[Kill-switch list drifts as new RV flags land]** → INV-ARCH-06 + the guard test convert drift into a red test; the registry is the single source of truth for both `load` forcing and the test.
 - **[Pipeline reorders behavior specified inline elsewhere]** → it does not: order is preserved (INV-ARCH-03) and the originating specs' pass-order contracts (INV-MOP-05, ui-coverage, form-completion) remain literally true because the passes still run in that order.
