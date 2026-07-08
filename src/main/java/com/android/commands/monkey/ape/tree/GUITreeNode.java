@@ -199,7 +199,13 @@ public class GUITreeNode implements Serializable {
     }
 
     public boolean isEditText() {
-        return GUITreeBuilder.isEditText(getClassName());
+        // rv-scoring-pipeline (treeEnhancementsEnabled): the fork recognizes the broader EditText
+        // family (AutoComplete/ExtractEditText/...) via GUITreeBuilder.isEditText; off -> upstream's
+        // exact android.widget.EditText match, so the pure arm inherits upstream perception.
+        // Fully-qualified: this class imports android.graphics.Bitmap.Config as `Config`.
+        return com.android.commands.monkey.ape.utils.Config.treeEnhancementsEnabled
+                ? GUITreeBuilder.isEditText(getClassName())
+                : "android.widget.EditText".equals(getClassName());
     }
 
     public GUITreeNode getRoot() {
@@ -507,8 +513,11 @@ public class GUITreeNode implements Serializable {
         } else if (className.equals("android.widget.HorizontalScrollView")
                 || className.equals("android.support.v17.leanback.widget.HorizontalGridView")
                 || className.equals("android.support.v4.view.ViewPager")
-                || className.equals("androidx.viewpager.widget.ViewPager")
-                || className.equals("androidx.viewpager2.widget.ViewPager2")) {
+                // rv-scoring-pipeline (treeEnhancementsEnabled): AndroidX ViewPager scrollable
+                // detection is a fork enhancement; off -> upstream perception (support-lib only).
+                || (com.android.commands.monkey.ape.utils.Config.treeEnhancementsEnabled
+                        && (className.equals("androidx.viewpager.widget.ViewPager")
+                            || className.equals("androidx.viewpager2.widget.ViewPager2")))) {
             return "horizontal";
         }
         if (scrollable == 1) {

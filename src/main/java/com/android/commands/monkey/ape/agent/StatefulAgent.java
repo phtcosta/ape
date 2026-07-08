@@ -173,7 +173,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 MopData.load(Config.mopDataPath, mainApp.getPackageName(), mainApp.getClassName()),
                 Config.mopDataPath);
         this._coverageTracker = new UICoverageTracker();
-        this._budgetTracker = new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget);
+        // rv-scoring-pipeline (activityBudgetEnabled): the activity budget is a fork addition; upstream
+        // has none. Off -> no tracker is built and the budget check is skipped (INV-ARCH-01).
+        this._budgetTracker = Config.activityBudgetEnabled
+                ? new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget)
+                : null;
         this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
         this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
@@ -723,7 +727,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         for (ModelAction a : newState.getActions()) {
             if (a.requireTarget()) widgetCount++;
         }
-        _budgetTracker.registerActivity(activity, widgetCount);
+        if (_budgetTracker != null) {
+            _budgetTracker.registerActivity(activity, widgetCount);
+        }
 
         Action action = resolveNewAction();
         if (action.isModelAction()) {
@@ -1278,7 +1284,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         // gh9: record interaction and budget iteration before shifting state pointers
         if (newAction != null && newState != null) {
             _coverageTracker.recordInteraction(newState, newAction);
-            _budgetTracker.recordIteration(newState.getActivity());
+            if (_budgetTracker != null) {
+                _budgetTracker.recordIteration(newState.getActivity());
+            }
         }
         doMoveForward();
     }
@@ -1351,25 +1359,32 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             // clock is the device wall clock (epoch millis) at emission — enables offline
             // temporal joins with externally collected artifacts without any APE<->logcat
             // coupling; step is the exploration step counter, a separate quantity.
-            Logger.iformat(
-                    "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
-                    + "priority=%d mop=%d wtg=%d coverage=%d menu=%d form=%d",
-                    getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
-                    newState.getStateKey(), newAction,
-                    newAction.getDecisionSource().name(), newAction.getPriority(),
-                    newAction.getMopBoost(), newAction.getWtgBoost(),
-                    newAction.getCoverageBoost(), newAction.getMenuBoost(),
-                    newAction.getFormBoost());
+            // rv-scoring-pipeline (stepTelemetryEnabled): the [APE-STEP] line is fork telemetry, not
+            // upstream. The decision_source provenance is still set during selection; only the emission
+            // is gated, so the pure arm produces zero [APE-STEP] lines (INV-ARCH-01).
+            if (Config.stepTelemetryEnabled) {
+                Logger.iformat(
+                        "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
+                        + "priority=%d mop=%d wtg=%d coverage=%d menu=%d form=%d",
+                        getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
+                        newState.getStateKey(), newAction,
+                        newAction.getDecisionSource().name(), newAction.getPriority(),
+                        newAction.getMopBoost(), newAction.getWtgBoost(),
+                        newAction.getCoverageBoost(), newAction.getMenuBoost(),
+                        newAction.getFormBoost());
+            }
             return newAction;
         } else {
             // Non-model actions (e.g. event-level) carry no per-mechanism boosts. The decision
             // source is derived from the action's type: the stagnation launcher
             // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
             // action stays on the SATA chain that produced it (INV-SEL-04). clock as above.
-            Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s",
-                    getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
-                    newState.getStateKey(), action,
-                    nonModelDecisionSource(action.getType()).name());
+            if (Config.stepTelemetryEnabled) {
+                Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s",
+                        getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
+                        newState.getStateKey(), action,
+                        nonModelDecisionSource(action.getType()).name());
+            }
             return action;
         }
     }

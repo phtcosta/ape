@@ -32,11 +32,11 @@
 
 ## 4. Gate the four flagless fork behaviors at their own sites
 
-- [ ] 4.1 `modelMenuEnabled` — gate the `menuAction` in `State.getActions()` (field stays constructed/non-null; excluded from the selectable set when false); keep `State.getMenuAction()` non-null (INV-EXPL-06 untouched)
-- [ ] 4.2 `leastVisitedPriorityTiebreak` — gate the priority tiebreak in `State.greedyPickLeastVisited()`; when false, ties broken by array order (upstream)
-- [ ] 4.3 `treeEnhancementsEnabled` — gate the three `GUITreeBuilder` perception enhancements (WebView-prune actionable count, AndroidX actionability, ViewPager scrollable); when false, upstream perception
-- [ ] 4.4 `activityBudgetEnabled` — gate `ActivityBudgetTracker` instantiation + the budget check in `SataAgent.selectNewActionNonnull()`; when false, no tracker, no check
-- [ ] 4.5 `stepTelemetryEnabled` — gate emission of the `[APE-STEP]` line (the `decisionSource` provenance field is still set); when false, zero lines
+- [x] 4.1 `modelMenuEnabled` — gate the `menuAction` in `State.getActions()` (field stays constructed/non-null; excluded from the selectable set when false); keep `State.getMenuAction()` non-null (INV-EXPL-06 untouched)
+- [x] 4.2 `leastVisitedPriorityTiebreak` — gate the priority tiebreak in `State.greedyPickLeastVisited()`; when false, ties broken by array order (upstream)
+- [x] 4.3 `treeEnhancementsEnabled` — gate the three `GUITreeBuilder` perception enhancements (WebView-prune actionable count, AndroidX actionability, ViewPager scrollable); when false, upstream perception
+- [x] 4.4 `activityBudgetEnabled` — gate `ActivityBudgetTracker` instantiation + the budget check in `SataAgent.selectNewActionNonnull()`; when false, no tracker, no check
+- [x] 4.5 `stepTelemetryEnabled` — gate emission of the `[APE-STEP]` line (the `decisionSource` provenance field is still set); when false, zero lines
 
 ## 5. Config flags and kill-switch
 

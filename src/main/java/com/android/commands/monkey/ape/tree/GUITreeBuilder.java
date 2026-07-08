@@ -22,6 +22,7 @@ import static com.android.commands.monkey.ape.utils.Config.excludeEmptyChild;
 import static com.android.commands.monkey.ape.utils.Config.excludeInvisibleNode;
 import static com.android.commands.monkey.ape.utils.Config.ignoreWebViewThreshold;
 import static com.android.commands.monkey.ape.utils.Config.patchGUITree;
+import static com.android.commands.monkey.ape.utils.Config.treeEnhancementsEnabled;
 
 import java.io.File;
 import java.util.Collections;
@@ -465,7 +466,11 @@ public class GUITreeBuilder {
         // INV-TREE-11: threshold over actionable descendants only, per the long-standing
         // comment. Counting every descendant made virtually all real WebViews exceed the
         // bar on non-actionable content nodes and get discarded unexplored.
-        int countNodesWithAction = countActionableDescendants(node);
+        // rv-scoring-pipeline (treeEnhancementsEnabled): off -> upstream over-prune (count every
+        // descendant), so the pure arm inherits upstream WebView perception (INV-ARCH-01).
+        int countNodesWithAction = treeEnhancementsEnabled
+                ? countActionableDescendants(node)
+                : node.getDescendantCount();
         if (countNodesWithAction > ignoreWebViewThreshold) {
             Logger.iformat("Too many nodes in WebView (%d > %d), remove the WebView.", countNodesWithAction,
                     ignoreWebViewThreshold);

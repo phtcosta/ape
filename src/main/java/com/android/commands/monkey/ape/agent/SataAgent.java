@@ -371,7 +371,7 @@ public class SataAgent extends StatefulAgent {
         // If unavailable, fall through to normal SATA chain (no BACK, no RESTART).
         // EVENT_RESTART caused restart loops; MODEL_BACK caused stuck loops.
         // Fallthrough is the correct behavior — lets SATA chain handle exploration.
-        if (getBudgetTracker().isBudgetExhausted(newState.getActivity())) {
+        if (Config.activityBudgetEnabled && getBudgetTracker().isBudgetExhausted(newState.getActivity())) {
             ModelAction trivial = selectNewActionForTrivialActivity();
             if (trivial != null) {
                 Logger.iformat("[APE-RV] Budget exhausted for %s, navigating to trivial activity", newState.getActivity());

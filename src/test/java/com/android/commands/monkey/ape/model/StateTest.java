@@ -249,4 +249,41 @@ public class StateTest {
         assertSame("null exclusion → unchanged least-visited behavior",
                 submit, state.greedyPickLeastVisited(ALL, null));
     }
+
+    // -----------------------------------------------------------------------
+    // rv-scoring-pipeline task 4.2: leastVisitedPriorityTiebreak seam.
+    // The static final gate cannot be flipped in-JVM, so the OFF branch (upstream
+    // array-order ties) is asserted through the pure beatsLeastVisited seam; the
+    // wired ON path is covered by the greedyPickLeastVisited tests above and the
+    // OFF wiring by the device smoke (task 7.6).
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testBeatsLeastVisited_fewerVisitsAlwaysWins() {
+        // vc below the incumbent minValue wins regardless of tiebreak flag or priority.
+        assertTrue(State.beatsLeastVisited(2, 1, 5, 999, true));
+        assertTrue(State.beatsLeastVisited(2, 1, 5, 999, false));
+    }
+
+    @Test
+    public void testBeatsLeastVisited_tieBrokenByPriorityOnlyWhenTiebreakOn() {
+        // Equal vc, strictly higher priority: RV tiebreak takes it, upstream keeps the incumbent.
+        assertTrue("tiebreak on: higher priority wins the tie",
+                State.beatsLeastVisited(3, 500, 3, 100, true));
+        assertFalse("tiebreak off: incumbent keeps the slot (upstream array-order)",
+                State.beatsLeastVisited(3, 500, 3, 100, false));
+    }
+
+    @Test
+    public void testBeatsLeastVisited_higherVisitsNeverWins() {
+        assertFalse(State.beatsLeastVisited(6, 999, 5, 0, true));
+        assertFalse(State.beatsLeastVisited(6, 999, 5, 0, false));
+    }
+
+    @Test
+    public void testBeatsLeastVisited_equalPriorityTieKeepsIncumbent() {
+        // Equal vc and equal priority: incumbent keeps the slot under both settings (strict >).
+        assertFalse(State.beatsLeastVisited(3, 100, 3, 100, true));
+        assertFalse(State.beatsLeastVisited(3, 100, 3, 100, false));
+    }
 }
