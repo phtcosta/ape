@@ -43,7 +43,7 @@ Four reach levers plus one hygiene fix, all consumer-side, all default-off or be
 ## Dependencies
 
 - **`rv-scoring-pipeline` (sibling, in progress)** — B is authored as a `ScoringPass`; its requirement is ADDED to the `scoring-pipeline` capability that the sibling introduces (interface `ScoringPass`, `ScoringPipeline.fromConfig`). This change is self-contained for `openspec validate` (it creates the capability delta as ADDED), but at implementation/archive time it MUST land after `rv-scoring-pipeline`.
-- **The 6 open changes** (`activity-frontier`, `back-menu-pick-cap`, `sibling-state-depriority`, `foreign-activity-guard`, `tree-package-guard`, `idle-timeout-cap`) are assumed **archived** first. In particular:
+- **The 5 open changes** (`activity-frontier`, `back-menu-pick-cap`, `foreign-activity-guard`, `tree-package-guard`, `idle-timeout-cap`) are assumed **archived** first. In particular:
   - E-mín is additive to `activity-frontier`'s stagnation launcher and `selectTriggerCandidate`; it does not redefine them.
   - B's `mopFrontierWeight` is additive to `activity-frontier`'s generic `frontierBoostWeight` (different predicate: B requires the target to be MOP-bearing).
 

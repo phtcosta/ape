@@ -2,13 +2,13 @@
 
 ## Context
 
-The RV scoring path is six `if`-blocks stacked inline in `StatefulAgent.adjustActionsByGUITree()` (mop-fairtest lines 1476–1660) plus a seventh, FormCompletion. Each block reads the base's `_mopData`, `_coverageTracker`, `getGraph()`, and per-run pick counters directly. Their on/off state is a scatter of `Config` weights (`mopDataPath`, `mopWeightWtg`, `frontierBoostWeight`, `coverageBoostWeight`, `siblingStatePenalty`, `mopWeightOpenMenu`) — and two RV behaviors (`[APE-STEP]` telemetry, FormCompletion) have no flag at all. Four more fork additions (`menuAction` in `State`, the `greedyPickLeastVisited` tiebreak, the `GUITreeBuilder` perception enhancements, the `ActivityBudgetTracker`) are always-on with no flag.
+The RV scoring path is five `if`-blocks stacked inline in `StatefulAgent.adjustActionsByGUITree()` (mop-fairtest lines 1476–1660) plus a sixth, FormCompletion. Each block reads the base's `_mopData`, `_coverageTracker`, `getGraph()`, and per-run pick counters directly. Their on/off state is a scatter of `Config` weights (`mopDataPath`, `mopWeightWtg`, `frontierBoostWeight`, `coverageBoostWeight`, `mopWeightOpenMenu`) — and two RV behaviors (`[APE-STEP]` telemetry, FormCompletion) have no flag at all. Four more fork additions (`menuAction` in `State`, the `greedyPickLeastVisited` tiebreak, the `GUITreeBuilder` perception enhancements, the `ActivityBudgetTracker`) are always-on with no flag.
 
 The MOP fair-test needs a single binary whose behavior is a pure function of `ape.properties`, plus a verifiable claim that with every RV lever off the agent selects like upstream APE. That is what this refactor delivers. It is behavior-preserving at default: the passes reproduce their inline blocks and every new flag defaults to current behavior.
 
 Building blocks already present:
 - The six inline scoring blocks and their exact ordering (`StatefulAgent.java:1476-1660`); the upstream base loop that precedes them (`:1418-1476`).
-- Existing per-pass disable knobs for five of the seven passes: `mopDataPath==null` (MopWidget, MenuGateway), `mopWeightWtg==0` (Wtg), `frontierBoostWeight==0` (Frontier, added by `activity-frontier`), `coverageBoostWeight==0` (Coverage), `siblingStatePenalty==0` (SiblingPenalty, added by `sibling-state-depriority`). Only FormCompletion lacks a flag.
+- Existing per-pass disable knobs for four of the six passes: `mopDataPath==null` (MopWidget, MenuGateway), `mopWeightWtg==0` (Wtg), `frontierBoostWeight==0` (Frontier, added by `activity-frontier`), `coverageBoostWeight==0` (Coverage). Only FormCompletion lacks a flag.
 - The pass-order contracts already asserted elsewhere: `mop-guidance` INV-MOP-05 (base → unvisited → transition → MOP → WTG → coverage), `ui-coverage` (coverage pass after WTG), `form-completion` (form pass after coverage). The refactor preserves this order exactly, so those contracts stay true — the passes still run in that order, now invoked from a pipeline.
 
 ## Goals / Non-Goals
@@ -23,13 +23,13 @@ Building blocks already present:
 
 2. **`ScoringContext` bundles exactly what the inline blocks read today** — `MopData`, `UICoverageTracker`, a graph/`ActivityNode` accessor, and the mutable per-run pick counters (e.g. MOP-target and BACK/MENU pick counts) that the blocks increment. It is constructed once by `StatefulAgent` and passed to every `apply`. Mutable state that must persist across steps (pick counters) lives on the context (or on the agent, reached through it), never on the stateless pass — so a pass carries no run state and stays unit-testable with a stub context. The context is the seam that lets the passes move out of `StatefulAgent` without each pass reaching back into it.
 
-3. **Pipeline order = the exact order of the pre-refactor inline blocks.** `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `FrontierPass` → `CoveragePass` → `SiblingPenaltyPass` → `FormCompletionPass` (INV-ARCH-03). This is the order `mop-guidance`/`ui-coverage`/`form-completion` already specify; preserving it is what keeps those contracts and the characterization goldens intact. `MopFrontierPass` (change #2) will insert after `FrontierPass`; its slot is reserved by documentation only, not created here.
+3. **Pipeline order = the exact order of the pre-refactor inline blocks.** `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `FrontierPass` → `CoveragePass` → `FormCompletionPass` (INV-ARCH-03). This is the order `mop-guidance`/`ui-coverage`/`form-completion` already specify; preserving it is what keeps those contracts and the characterization goldens intact. `MopFrontierPass` (change #2) will insert after `FrontierPass`; its slot is reserved by documentation only, not created here.
 
 4. **Assembly is a single pure-ish function `ScoringPipeline.fromConfig(Config)`** returning the ordered list of **enabled** passes. It is the only place that maps flags→passes, so the flags→passes matrix is testable in isolation and the startup log `[APE-ARCH] passes=[MopWidget, Wtg, Coverage, ...]` reflects exactly the enabled set (INV-ARCH-04). `adjustActionsByGUITree()` holds one `ScoringPipeline` field, built once.
 
 5. **`adjustActionsByGUITree()` reverts to the upstream body + one for-loop.** The method becomes the upstream base-priority loop (byte-identical to `ape @ 8f51b99`) followed by `for (ScoringPass p : pipeline) p.apply(state, actions, ctx)` (INV-ARCH-05). Nothing else RV-specific remains in the method body — every RV term is a pass.
 
-6. **Five passes reuse their existing weight knobs for `isEnabled()`; only FormCompletion gets a new boolean.** `MopWidgetPass.isEnabled = mopData != null`; `MenuGatewayPass.isEnabled = mopData != null`; `WtgPass.isEnabled = mopData != null && hasWtgData() && mopWeightWtg != 0`; `FrontierPass.isEnabled = frontierBoostWeight > 0`; `CoveragePass.isEnabled = coverageBoostWeight != 0`; `SiblingPenaltyPass.isEnabled = siblingStatePenalty > 0`; `FormCompletionPass.isEnabled = Config.formCompletionEnabled` (**new** — the only pass with no pre-existing off switch). This avoids inventing redundant booleans (P1); the kill-switch (decision 8) zeroes the weights, which turns those five off through their existing knobs.
+6. **Four passes reuse their existing weight knobs for `isEnabled()`; only FormCompletion gets a new boolean.** `MopWidgetPass.isEnabled = mopData != null`; `MenuGatewayPass.isEnabled = mopData != null`; `WtgPass.isEnabled = mopData != null && hasWtgData() && mopWeightWtg != 0`; `FrontierPass.isEnabled = frontierBoostWeight > 0`; `CoveragePass.isEnabled = coverageBoostWeight != 0`; `FormCompletionPass.isEnabled = Config.formCompletionEnabled` (**new** — the only pass with no pre-existing off switch). This avoids inventing redundant booleans (P1); the kill-switch (decision 8) zeroes the weights, which turns those four off through their existing knobs.
 
 7. **The four flagless fork additions are gated at their own site, not in the pipeline** — they are not scoring passes:
    - `modelMenuEnabled` gates the fork's `menuAction` at the **selection surface**: when false, `State.getActions()` SHALL NOT include the `menuAction` and the agent SHALL never select `MODEL_MENU`. The field itself stays constructed and non-null, so `INV-EXPL-06`/`INV-MODEL-01`-style "non-null menuAction field" contracts are untouched; only the action's presence in the selectable set is gated. This is the smallest edit that reproduces upstream APE (which has no options-menu action) while keeping the field's lifecycle intact.
@@ -50,7 +50,6 @@ Building blocks already present:
 | `WtgPass` | `1520-1529` | `mopData != null && hasWtgData() && mopWeightWtg != 0` | mop-guidance (WTG Scoring Pass) |
 | `FrontierPass` | `1530-1563` | `frontierBoostWeight > 0` | wtg-navigation (WTG Frontier Boost — post-archive `activity-frontier`) |
 | `CoveragePass` | `1580-1602` | `coverageBoostWeight != 0` | ui-coverage (Coverage Boost — Per-Action) |
-| `SiblingPenaltyPass` | `1610-1635` | `siblingStatePenalty > 0` | ui-coverage (Sibling-Redundancy Deprioritization — post-archive `sibling-state-depriority`) |
 | `FormCompletionPass` | `1640-1660` | `Config.formCompletionEnabled` (**new**) | form-completion (Form-completion boost pass) |
 
 `MopFrontierPass` (strategy B) is **not** created here — it is change #2, and will insert between `FrontierPass` and `CoveragePass`.
@@ -87,7 +86,7 @@ pipeline.apply(state, actions, scoringContext);
 
 | RV behavior | Off value forced by apePureMode | Observable parity check |
 |---|---|---|
-| MopWidget/Menu/Wtg/Frontier/Coverage/Sibling passes | weights → 0 / `mopDataPath` unset | pipeline is empty; goldens equal upstream priorities |
+| MopWidget/Menu/Wtg/Frontier/Coverage passes | weights → 0 / `mopDataPath` unset | pipeline is empty; goldens equal upstream priorities |
 | FormCompletionPass | `formCompletionEnabled=false` | no deterministic fill; `checkInput` keeps the `inputRate` toss |
 | `[APE-STEP]` telemetry | `stepTelemetryEnabled=false` | zero `[APE-STEP]` lines in the trace |
 | fork `menuAction` | `modelMenuEnabled=false` | `getActions()` has no `MODEL_MENU`; no MENU key issued |
@@ -120,7 +119,7 @@ pipeline.apply(state, actions, scoringContext);
 
 ## Migration / archive ordering
 
-Archive the six implemented-but-open changes first (`activity-frontier`, `back-menu-pick-cap`, `sibling-state-depriority`, `foreign-activity-guard`, `tree-package-guard`, `idle-timeout-cap`). This change's deltas are written against post-archive main: `FrontierPass` presupposes `activity-frontier`'s frontier boost is in `wtg-navigation`; `SiblingPenaltyPass` presupposes `sibling-state-depriority` is in `ui-coverage`; `MenuGatewayPass` presupposes `back-menu-pick-cap`'s gate. No delta here re-modifies a requirement those six modify (`ActionType Classification`, `OPTIONSMENU-Aware Menu Boost`), so there is no requirement-modification collision.
+Archive the five implemented-but-open changes first (`activity-frontier`, `back-menu-pick-cap`, `foreign-activity-guard`, `tree-package-guard`, `idle-timeout-cap`). This change's deltas are written against post-archive main: `FrontierPass` presupposes `activity-frontier`'s frontier boost is in `wtg-navigation`; `MenuGatewayPass` presupposes `back-menu-pick-cap`'s gate. No delta here re-modifies a requirement those six modify (`ActionType Classification`, `OPTIONSMENU-Aware Menu Boost`), so there is no requirement-modification collision.
 
 ## Open Questions
 

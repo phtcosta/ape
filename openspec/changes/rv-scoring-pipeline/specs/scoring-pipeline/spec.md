@@ -6,7 +6,7 @@ The `scoring-pipeline` capability gives APE-RV a single, composable place for th
 
 This capability defines: a `ScoringPass` plugin interface and a `ScoringContext`; a single assembly point `ScoringPipeline.fromConfig(Config)` that maps flags to an ordered list of enabled passes and logs the assembly; the reduction of `adjustActionsByGUITree()` to the upstream base-priority loop followed by one pipeline invocation; a set of parity flags that gate the previously-flagless fork behaviors; and the `apePureMode` kill-switch with its parity invariant. It changes no default behavior — every flag defaults to current aperv behavior and every pass reproduces its inline block at default flags.
 
-The scoring **semantics** of each pass remain owned by the pass's originating capability (`mop-guidance`, `ui-coverage`, `form-completion`, and the archived `activity-frontier`/`sibling-state-depriority`/`back-menu-pick-cap`). This capability owns only the structural contract (the pipeline) and the parity contract (the kill-switch and its flags).
+The scoring **semantics** of each pass remain owned by the pass's originating capability (`mop-guidance`, `ui-coverage`, `form-completion`, and the archived `activity-frontier`/`back-menu-pick-cap`). This capability owns only the structural contract (the pipeline) and the parity contract (the kill-switch and its flags).
 
 ## Data Contracts
 
@@ -52,21 +52,21 @@ public interface ScoringPass {
 
 ### Requirement: Scoring Pipeline Assembly from Config
 
-`ScoringPipeline.fromConfig(Config)` SHALL be the single point that maps configuration to the ordered list of enabled passes. It SHALL construct the seven passes in the fixed order `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `FrontierPass` → `CoveragePass` → `SiblingPenaltyPass` → `FormCompletionPass`, retain only those whose `isEnabled()` is `true`, and emit exactly one `[APE-ARCH] passes=[...]` line listing the retained passes' `name()` values in pipeline order. No other code path SHALL assemble or reorder the pipeline.
+`ScoringPipeline.fromConfig(Config)` SHALL be the single point that maps configuration to the ordered list of enabled passes. It SHALL construct the six passes in the fixed order `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `FrontierPass` → `CoveragePass` → `FormCompletionPass`, retain only those whose `isEnabled()` is `true`, and emit exactly one `[APE-ARCH] passes=[...]` line listing the retained passes' `name()` values in pipeline order. No other code path SHALL assemble or reorder the pipeline.
 
-The fixed order SHALL equal the order of the pre-refactor inline scoring blocks in `StatefulAgent.adjustActionsByGUITree()`, which is the order the `mop-guidance` (INV-MOP-05), `ui-coverage`, and `form-completion` specs already require (base → MOP-widget → menu-gateway → WTG → frontier → coverage → sibling → form). Extracting the blocks into passes SHALL NOT change this order.
+The fixed order SHALL equal the order of the pre-refactor inline scoring blocks in `StatefulAgent.adjustActionsByGUITree()`, which is the order the `mop-guidance` (INV-MOP-05), `ui-coverage`, and `form-completion` specs already require (base → MOP-widget → menu-gateway → WTG → frontier → coverage → form). Extracting the blocks into passes SHALL NOT change this order.
 
 - **INV-ARCH-03**: The pipeline order SHALL equal the order of the pre-refactor inline scoring blocks and SHALL satisfy the pass-order contracts already asserted by `mop-guidance` (INV-MOP-05), `ui-coverage`, and `form-completion`. `MopWidgetPass` SHALL precede `WtgPass`, which SHALL precede `CoveragePass`, which SHALL precede `FormCompletionPass`.
 - **INV-ARCH-04**: `ScoringPipeline.fromConfig` SHALL be the sole assembly point. The `[APE-ARCH] passes=[...]` startup line SHALL list exactly the enabled passes, in pipeline order, and nothing else SHALL construct a pipeline.
 
 #### Scenario: only enabled passes are assembled and logged
-- **WHEN** `ScoringPipeline.fromConfig(Config)` runs with `mopDataPath=null` (MOP passes off), `coverageBoostWeight=100`, `siblingStatePenalty=24`, `formCompletionEnabled=true`
-- **THEN** the pipeline SHALL contain `CoveragePass`, `SiblingPenaltyPass`, `FormCompletionPass` in that order and no MOP/WTG/Frontier pass
-- **AND** one `[APE-ARCH] passes=[CoveragePass, SiblingPenaltyPass, FormCompletionPass]` line SHALL be emitted
+- **WHEN** `ScoringPipeline.fromConfig(Config)` runs with `mopDataPath=null` (MOP passes off), `coverageBoostWeight=100`, `formCompletionEnabled=true`
+- **THEN** the pipeline SHALL contain `CoveragePass`, `FormCompletionPass` in that order and no MOP/WTG/Frontier pass
+- **AND** one `[APE-ARCH] passes=[CoveragePass, FormCompletionPass]` line SHALL be emitted
 
 #### Scenario: full MOP arm assembles the ordered set
-- **WHEN** `fromConfig` runs with MopData present, `mopWeightWtg=200`, `frontierBoostWeight=200`, `coverageBoostWeight=100`, `siblingStatePenalty=24`, `formCompletionEnabled=true`
-- **THEN** the pipeline order SHALL be `MopWidgetPass, MenuGatewayPass, WtgPass, FrontierPass, CoveragePass, SiblingPenaltyPass, FormCompletionPass`
+- **WHEN** `fromConfig` runs with MopData present, `mopWeightWtg=200`, `frontierBoostWeight=200`, `coverageBoostWeight=100`, `formCompletionEnabled=true`
+- **THEN** the pipeline order SHALL be `MopWidgetPass, MenuGatewayPass, WtgPass, FrontierPass, CoveragePass, FormCompletionPass`
 
 #### Scenario: empty pipeline under the pure arm
 - **WHEN** `fromConfig` runs with `apePureMode=true` (all pass gates forced off)
@@ -97,7 +97,7 @@ This preserves `INV-EXPL-11` (adjustActionsByGUITree is called after base priori
 
 ### Requirement: Scoring Pass Roster and Gates
 
-The extraction SHALL yield exactly these seven passes, each extracting the inline block named, each gated by the flag named. The roster is the extraction set, not a closed list: subsequent changes MAY introduce additional passes through the same `ScoringPass` interface and `ScoringPipeline.fromConfig` assembly point, subject to INV-ARCH-02/04 and to registering any new RV flag in the `apePureMode` registry (INV-ARCH-06). (`MopFrontierPass`, strategy B, is introduced by the change `mop-reach-strategies`, not by this one.)
+The extraction SHALL yield exactly these six passes, each extracting the inline block named, each gated by the flag named. The roster is the extraction set, not a closed list: subsequent changes MAY introduce additional passes through the same `ScoringPass` interface and `ScoringPipeline.fromConfig` assembly point, subject to INV-ARCH-02/04 and to registering any new RV flag in the `apePureMode` registry (INV-ARCH-06). (`MopFrontierPass`, strategy B, is introduced by the change `mop-reach-strategies`, not by this one.)
 
 | Pass | Extracted inline block | `isEnabled()` gate |
 |---|---|---|
@@ -106,7 +106,6 @@ The extraction SHALL yield exactly these seven passes, each extracting the inlin
 | `WtgPass` | WTG-reach boost | `getMopData() != null && hasWtgData() && Config.mopWeightWtg != 0` |
 | `FrontierPass` | WTG frontier (unvisited-activity) boost | `Config.frontierBoostWeight > 0` |
 | `CoveragePass` | per-action coverage boost | `Config.coverageBoostWeight != 0` |
-| `SiblingPenaltyPass` | sibling-redundancy deprioritization | `Config.siblingStatePenalty > 0` |
 | `FormCompletionPass` | form-completion boost | `Config.formCompletionEnabled` |
 
 Each pass's scoring semantics (what boost it computes and where it writes provenance) SHALL remain exactly as its originating capability specifies; this capability SHALL NOT alter those semantics. Six passes reuse a pre-existing weight/data gate; only `FormCompletionPass` introduces a new boolean gate (`formCompletionEnabled`), because the form-completion block had no off switch before this change.
@@ -134,7 +133,7 @@ With `apePureMode=true`, APE-RV action selection SHALL be equivalent to upstream
 #### Scenario: kill-switch forces the RV flags off and logs them
 - **WHEN** `ape.properties` sets `ape.apePureMode=true` (and, redundantly, some RV flags to non-default values)
 - **THEN** after `Config.load`, `formCompletionEnabled`, `stepTelemetryEnabled`, `modelMenuEnabled`, `leastVisitedPriorityTiebreak`, `treeEnhancementsEnabled`, and `activityBudgetEnabled` SHALL all be `false`
-- **AND** every RV weight/boost integer (`frontierBoostWeight`, `coverageBoostWeight`, `siblingStatePenalty`, `mopWeightWtg`, `mopWeightOpenMenu`, ...) SHALL be `0`
+- **AND** every RV weight/boost integer (`frontierBoostWeight`, `coverageBoostWeight`, `mopWeightWtg`, `mopWeightOpenMenu`, ...) SHALL be `0`
 - **AND** `activityStableRestartThreshold` SHALL be `Integer.MAX_VALUE`
 - **AND** one `[APE-ARCH] apePureMode forced <key>=<value>` line SHALL be emitted per overwritten flag
 

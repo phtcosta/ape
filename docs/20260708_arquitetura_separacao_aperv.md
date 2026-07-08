@@ -8,7 +8,7 @@
 
 O fork é 100% aditivo (131 arquivos idênticos ao upstream, 10 modificados, 17 adicionados, 0 removidos; `naming/`, `model/`, `events/` byte-a-byte intactos), mas a separação é **incompleta e mal-posicionada**:
 
-- O grosso do RV vive na **base** `StatefulAgent.adjustActionsByGUITree()` (passes inline: MOP widget → menu gateway → WTG+frontier → coverage → sibling → form, linhas 1476–1660) e em `ApeAgent` (geração de input) — não no `SataAgent`. "Restaurar o SataAgent original" é a alavanca errada.
+- O grosso do RV vive na **base** `StatefulAgent.adjustActionsByGUITree()` (passes inline: MOP widget → menu gateway → WTG+frontier → coverage → form, linhas 1476–1660) e em `ApeAgent` (geração de input) — não no `SataAgent`. "Restaurar o SataAgent original" é a alavanca errada.
 - Um braço "APE puro" hoje exigiria zerar ~12 flags manualmente, e **dois comportamentos não têm flag**: telemetria `[APE-STEP]` (StatefulAgent.java:1360-1378) e **FormCompletion** (StatefulAgent.java:1640-1660 — dispara sempre que há EditText vazio; pior ofensor).
 - `frontierBoostWeight` (default 200) e `activityTriggerEnabled` (default true) não estão no `APERV_PROPERTY_MAPPING` do tool.py → impossível desligá-los por braço (bloqueante de experimento).
 
@@ -58,7 +58,6 @@ public interface ScoringPass {
 | `FrontierPass` (genérico, existente) | 1530-1563 | `frontierBoostWeight` |
 | `MopFrontierPass` (**novo — estratégia B**) | — | `mopFrontierWeight` (aditivo, novo) |
 | `CoveragePass` | 1580-1602 | `coverageBoostWeight` |
-| `SiblingPenaltyPass` | 1610-1635 | `siblingStatePenalty` |
 | `FormCompletionPass` | 1640-1660 | `formCompletionEnabled` (**nova**) |
 
 `adjustActionsByGUITree()` volta ao laço original (1418–1476) + um único `for (ScoringPass p : pipeline) p.apply(...)`. Montagem em `ScoringPipeline.fromConfig(Config)` — ponto único, testável.

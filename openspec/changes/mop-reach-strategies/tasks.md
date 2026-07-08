@@ -1,6 +1,6 @@
 # Tasks — mop-reach-strategies
 
-> Depends on `rv-scoring-pipeline` (B is a `ScoringPass`) and on the 6 open changes being archived (E-mín extends `activity-frontier`'s launcher). Order relative to the sibling: implement after `rv-scoring-pipeline` fixes the `ScoringPass` interface and property names.
+> Depends on `rv-scoring-pipeline` (B is a `ScoringPass`) and on the 5 open changes being archived (E-mín extends `activity-frontier`'s launcher). Order relative to the sibling: implement after `rv-scoring-pipeline` fixes the `ScoringPass` interface and property names.
 
 ## 1. Config flags (P4 current-state comments, no default changes)
 
