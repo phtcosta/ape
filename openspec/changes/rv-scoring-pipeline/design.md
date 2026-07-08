@@ -29,7 +29,7 @@ Building blocks already present:
 
 5. **`adjustActionsByGUITree()` reverts to the upstream body + one for-loop.** The method becomes the upstream base-priority loop (byte-identical to `ape @ 8f51b99`) followed by `for (ScoringPass p : pipeline) p.apply(state, actions, ctx)` (INV-ARCH-05). Nothing else RV-specific remains in the method body — every RV term is a pass.
 
-6. **Four passes reuse their existing weight knobs for `isEnabled()`; only FormCompletion gets a new boolean.** `MopWidgetPass.isEnabled = mopData != null`; `MenuGatewayPass.isEnabled = mopData != null`; `WtgPass.isEnabled = mopData != null && hasWtgData() && mopWeightWtg != 0`; `FrontierPass.isEnabled = frontierBoostWeight > 0`; `CoveragePass.isEnabled = coverageBoostWeight != 0`; `FormCompletionPass.isEnabled = Config.formCompletionEnabled` (**new** — the only pass with no pre-existing off switch). This avoids inventing redundant booleans (P1); the kill-switch (decision 8) zeroes the weights, which turns those four off through their existing knobs.
+6. **Four passes reuse their existing weight knobs for `isEnabled()`; only FormCompletion gets a new boolean.** `MopWidgetPass.isEnabled = mopData != null`; `MenuGatewayPass.isEnabled = mopData != null`; `WtgPass.isEnabled = mopData != null && hasWtgData() && mopWeightWtg != 0`; `FrontierPass.isEnabled = mopData != null && hasWtgData() && frontierBoostWeight > 0` (the frontier term reads `MopData.getWtgTransitions` — it shares WtgPass's MopData/WTG-data precondition, not `frontierBoostWeight > 0` alone; the two are one interleaved loop today and the split is parity-safe only with this guard); `CoveragePass.isEnabled = coverageBoostWeight != 0`; `FormCompletionPass.isEnabled = Config.formCompletionEnabled` (**new** — the only pass with no pre-existing off switch). This avoids inventing redundant booleans (P1); the kill-switch (decision 8) zeroes the weights, which turns those four off through their existing knobs.
 
 7. **The four flagless fork additions are gated at their own site, not in the pipeline** — they are not scoring passes:
    - `modelMenuEnabled` gates the fork's `menuAction` at the **selection surface**: when false, `State.getActions()` SHALL NOT include the `menuAction` and the agent SHALL never select `MODEL_MENU`. The field itself stays constructed and non-null, so `INV-EXPL-06`/`INV-MODEL-01`-style "non-null menuAction field" contracts are untouched; only the action's presence in the selectable set is gated. This is the smallest edit that reproduces upstream APE (which has no options-menu action) while keeping the field's lifecycle intact.
@@ -48,7 +48,7 @@ Building blocks already present:
 | `MopWidgetPass` | `StatefulAgent.java:1476-1502` | `mopData != null` | mop-guidance (MopScorer — Priority Boost) |
 | `MenuGatewayPass` | `1503-1517` | `mopData != null` | mop-guidance (OPTIONSMENU-Aware Menu Boost) |
 | `WtgPass` | `1520-1529` | `mopData != null && hasWtgData() && mopWeightWtg != 0` | mop-guidance (WTG Scoring Pass) |
-| `FrontierPass` | `1530-1563` | `frontierBoostWeight > 0` | wtg-navigation (WTG Frontier Boost — post-archive `activity-frontier`) |
+| `FrontierPass` | `1530-1563` (pre-drop approx) | `mopData != null && hasWtgData() && frontierBoostWeight > 0` | wtg-navigation (WTG Frontier Boost — post-archive `activity-frontier`) |
 | `CoveragePass` | `1580-1602` | `coverageBoostWeight != 0` | ui-coverage (Coverage Boost — Per-Action) |
 | `FormCompletionPass` | `1640-1660` | `Config.formCompletionEnabled` (**new**) | form-completion (Form-completion boost pass) |
 

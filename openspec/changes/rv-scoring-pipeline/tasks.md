@@ -17,10 +17,12 @@
 
 ## 3. Extract the six passes
 
+> Line anchors below are **pre-sibling-drop approximations** and have shifted (the dropped `sibling-state-depriority` removed its ~60-line block + two helpers from `StatefulAgent.java`). Re-derive the exact block boundaries against the current file at extraction time — treat the `:NNNN-MMMM` references as "find this block", not literal line ranges.
+
 - [ ] 3.1 `MopWidgetPass` — extract `StatefulAgent.java:1476-1502`; `isEnabled = ctx.getMopData() != null`; per-pass test reproduces the inline block (mop-guidance semantics unchanged)
 - [ ] 3.2 `MenuGatewayPass` — extract `:1503-1517`; `isEnabled = ctx.getMopData() != null` (respects the `back-menu-pick-cap` gate via the existing `menuPickEligible` hook — semantics unchanged)
 - [ ] 3.3 `WtgPass` — extract `:1520-1529`; `isEnabled = getMopData()!=null && hasWtgData() && Config.mopWeightWtg!=0`
-- [ ] 3.4 `FrontierPass` — extract `:1530-1563` (the post-archive `activity-frontier` frontier term); `isEnabled = Config.frontierBoostWeight > 0`
+- [ ] 3.4 `FrontierPass` — extract the post-archive `activity-frontier` frontier term (currently **interleaved inside the WTG loop**, sharing the `transitions`/`visitedTargets` state and doing a read-modify-write into the same `wtgBoost`); `isEnabled = getMopData() != null && getMopData().hasWtgData() && Config.frontierBoostWeight > 0` — **NOT** `frontierBoostWeight > 0` alone: the frontier term reads `MopData.getWtgTransitions(activity)`, so it carries the same MopData+WTG-data precondition as `WtgPass` (task 3.3). Splitting the interleaved loop into two independent passes is parity-safe because both the priority and the `wtgBoost` accumulation are additive/order-independent, but ONLY if `FrontierPass` re-guards on MopData/WTG-data (else it NPEs / changes behavior when MopData is null)
 - [ ] 3.5 `CoveragePass` — extract `:1580-1602`; `isEnabled = Config.coverageBoostWeight != 0`
 - [ ] 3.6 `FormCompletionPass` — extract `:1640-1660`; `isEnabled = Config.formCompletionEnabled` (**new** flag, task 5.1)
 - [ ] 3.7 Rewrite `StatefulAgent.adjustActionsByGUITree()` to the upstream base-priority loop (byte-identical to `ape @ 8f51b99`) + one `pipeline.apply(state, actions, ctx)`; hold one `ScoringPipeline` field built once at construction (INV-ARCH-05)

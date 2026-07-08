@@ -104,7 +104,7 @@ The extraction SHALL yield exactly these six passes, each extracting the inline 
 | `MopWidgetPass` | MOP-widget boost | `ScoringContext.getMopData() != null` |
 | `MenuGatewayPass` | OPTIONSMENU-gateway menu boost | `ScoringContext.getMopData() != null` |
 | `WtgPass` | WTG-reach boost | `getMopData() != null && hasWtgData() && Config.mopWeightWtg != 0` |
-| `FrontierPass` | WTG frontier (unvisited-activity) boost | `Config.frontierBoostWeight > 0` |
+| `FrontierPass` | WTG frontier (unvisited-activity) boost | `mopData != null && hasWtgData() && Config.frontierBoostWeight > 0` |
 | `CoveragePass` | per-action coverage boost | `Config.coverageBoostWeight != 0` |
 | `FormCompletionPass` | form-completion boost | `Config.formCompletionEnabled` |
 
