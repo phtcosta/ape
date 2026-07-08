@@ -42,8 +42,8 @@
 
 ## 5. E-mín — MOP-first launch ordering (TDD; after activity-frontier)
 
-- [ ] 5.1 Test-first: `selectTriggerCandidate` with `triggerMopFirst=true` prefers a `reachesTarget=true` eligible candidate; falls back to `reachesTarget=false` when no MOP candidate eligible; deterministic under fixed order; flag-off = round-robin unchanged (INV-CT-09)
-- [ ] 5.2 Implement the stable two-pass ordering (MOP-reachable eligible group first, each group in round-robin order) in `SataAgent.selectTriggerCandidate`, gated by `Config.triggerMopFirst`; eligibility filters unchanged
+- [x] 5.1 Test-first: `selectTriggerCandidate` with `triggerMopFirst=true` prefers a `reachesTarget=true` eligible candidate; falls back to `reachesTarget=false` when no MOP candidate eligible; deterministic under fixed order; flag-off = round-robin unchanged (INV-CT-09). `ActivityFrontierTest` +5 (`testMopFirst{PrefersReachingCandidate,FallsBackToNonMopWhenNoneReaching,OffIdenticalToRoundRobin,EligibilityUnchanged,RoundRobinWithinReachingGroup}`) — all 4 spec scenarios + within-group round-robin; pure JVM seam (no device deferral, unlike `MopFrontierPass.apply`)
+- [x] 5.2 Implement the stable two-pass ordering (MOP-reachable eligible group first, each group in round-robin order) in `SataAgent.selectTriggerCandidate`, gated by `Config.triggerMopFirst`; eligibility filters unchanged. Added a 5th `boolean mopFirst` param (seam idiom, like `shouldTriggerAtStagnation`) + private `firstEligible(…, Boolean requireReaches)` helper; `requireReaches==null` reproduces the plain activity-frontier walk byte-identical (flag-off parity). Production call site passes `Config.triggerMopFirst`; the 10 existing 4-arg seam calls updated to 5-arg (`false`)
 
 ## 6. G-2 — too-large reject unit consistency (regression guard; no code fix required)
 
@@ -62,7 +62,7 @@
 
 ## 7. Verification
 
-- [ ] 7.1 Full suite: `mvn test` (0 failures/errors)
-- [ ] 7.2 `openspec validate mop-reach-strategies --strict`
+- [x] 7.1 Full suite: `mvn test` (0 failures/errors) — 589 pass / 0 fail / 19 skip (was 584; +5 E-mín tests)
+- [x] 7.2 `openspec validate mop-reach-strategies --strict` — "Change 'mop-reach-strategies' is valid"
 - [x] 7.3 Device re-smoke on `cryptoapp` (RVSec API 30, shell/non-root) — VERIFIED 2026-07-08. Load line: `flagged=3 … handlersUnmatched=5 syntheticLambda=1 recovered=1` (Execute button recovered). `sata_mop_widget` (default): 772 events, `mop=300` on 12 steps, the Execute button selected `decision_source=MOP priority=652 mop=300` (+ cascade `wtg=200` as the recovered widget puts CryptographyActivity in `mopActivities`). `sata_mop_activity` (`mopActivitySourceComponents=true`): 681 events, 11 `mop>0` steps, 8× `decision_source=MOP`. Before the fix: `mop=0` on all 60 steps, no `decision_source=MOP`. Direct regression check for the bug found during `rv-scoring-pipeline` 7.6 — PASS
 - [ ] 7.4 Device smoke (future full validation run): `MopFrontierPass` boost visible in `[APE-STEP] wtg=`; with `triggerMopFirst=true` a MOP activity is launched first at stagnation; redreader-scale JSON parses. Calibrate `mopFrontierWeight` vs `frontierBoostWeight`. Confirm the `sata_mop_widget` (A′ off) vs `sata_mop_activity` (A′ on) arms differ only in `mopActivitySourceComponents`
