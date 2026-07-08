@@ -4,12 +4,17 @@ Date: 2026-07-08 · Branch `mop-fairtest` @ `0976eec` · jar rebuilt `target/ape
 
 ## Environment
 
-- AVD **RVSec** (Android 11 / API 30), headless (`-no-window -wipe-data -no-snapshot-save`), `emulator-5554`.
-- **`adb root` required.** As shell (uid 2000) event injection fails on this image with
-  `SecurityException while injecting event` after 1 event (cross-window inject denied), so APE
-  never leaves the launcher. After `adb root` (adbd → uid 0), injection works: 500–660 events/run.
-  This is a device-harness note, not a code issue — the rv-platform command is byte-identical
-  (`aperv-tool/tool.py:_build_main_command`); the production emulator runs a root adbd.
+- AVD **RVSec** (Android 11 / API 30 x86_64 google_apis — the production default per
+  `docker/android/Dockerfile`), headless (`-no-window -wipe-data -no-snapshot-save`), `emulator-5554`.
+- **Runs as shell (uid 2000) — `adb root` is NOT required** (corrected). Production explicitly does
+  *not* root: `rv-android-core/.../android.py:150` — "Phase 3 (`adb root` + `adb remount`) was
+  intentionally removed (commit c0274def, gh50 §17)"; the emulator is `-read-only` and no runtime
+  tool needs system writes. The `SecurityException while injecting event` seen on the very first
+  attempt was the **fresh `-wipe-data` first-boot state** (device not yet settled / target not
+  foregrounded), not a uid problem. Isolation test: after the device settled, `adb unroot` back to
+  shell (uid 2000) and re-run → 649 events, 0 SecurityException, 60 `[APE-STEP]`. The rv-platform
+  command is byte-identical (`aperv-tool/tool.py:_build_main_command`). **Harness note for gh74:**
+  wait for the device to fully settle (boot + launcher idle) before the first APE injection.
 - App under test: **`br.unb.cic.cryptoapp`** (instrumented APK from `results/e2e_resume`, whose
   `cryptoapp.apk.json` is byte-identical — md5 `e4f7d9af…` — to `test-apks/cryptoapp.apk.json`).
 - Invocation per arm: `CLASSPATH=/data/local/tmp/ape-rv.jar app_process /system/bin
@@ -56,11 +61,43 @@ static-final wall):
 in JVM) rather than by re-observing the downstream behavior on device — the correct evidence level
 for a forcing switch.
 
-## Caveat — MOP boost inert on cryptoapp (not a pipeline defect)
+## MOP boost inert on cryptoapp — REAL pre-existing bug (not substrate/timing)
 
-All 60 MOP-arm steps report `mop=0 wtg=0 menu=0 form=0`, `decision_source` ∈ {Coverage, SATA},
-`mopReach=0`. The MOP passes are **assembled but did not fire** during this run. Consistent with the
-documented substrate/timing finding: MOP targets fire on lifecycle/background transitions, not the
-widget clicks that dominate a 1-minute exploration, and the substrate is thin here (2 of 30 widgets
-flagged). This smoke verifies **pipeline composition and flag gating**, not MOP steering efficacy —
-that is the gh74 controlled experiment's job.
+All 60 MOP-arm steps report `mop=0 wtg=0 menu=0 form=0`, `mopReach=0`. This is **not** "substrate /
+timing" (my first, lazy read). Root-caused to a **widget→MOP signature-join failure on D8-desugared
+lambdas**, compounded by shallow exploration. This is a pre-existing defect in `MopData.load`
+(untouched by the pipeline refactor).
+
+**Bug (primary).** `MopData.deriveWidgetMopFlags` (`MopData.java:488`) joins a widget's
+`listeners[].handler` to reachability by **exact string**: `bySignature.get(l.handler)`. The producer
+per-listener override (`handlerReachesTarget`, line 484) is null on every listener ("until C3 lands"),
+so exact match is the only path. In `cryptoapp.apk.json` there are 7 widget handlers; only **2** match
+a `reachesTarget:true` signature — exactly the runtime `flagged=2`:
+
+| widget handler | matches reachability? |
+|---|---|
+| `CipherActivity$1: onClick` | ✓ |
+| `MessageDigestActivity: generateHash` | ✓ |
+| **`CryptographyActivity$$ExternalSyntheticLambda0: onClick`** (Execute button) | ✗ **DROPPED** |
+| `MainActivity: showGenerated / showScreenCipher / showScreenMessageDigest` | ✗ (navigation) |
+
+The Execute button triggers **all** the crypto (`executeOperation`→`encryptWithSecretKey`→`Cipher`…).
+Reachability *does* flag it — but under its **pre-desugar** name
+`CryptographyActivity: lambda$setupExecuteButton$0$CryptographyActivity(...)` (GATOR/Soot), while the
+widget + transitions carry the **post-D8** name `$$ExternalSyntheticLambda0: onClick` (dexlib2). Same
+lambda, two toolchains, two signatures → exact join can never match. So the single most
+MOP-relevant widget in the app is silently unflagged. This bites **non-obfuscated** apps too — it is
+D8 lambda desugaring, distinct from the R8-rename/package-filter join gap noted earlier.
+
+**Compound (secondary).** The 2 handlers that *do* match live in `CipherActivity` /
+`MessageDigestActivity`. In this run APE never left `CryptographyActivity` (61/61 steps —
+`UICOV-ACT` shows only that activity), so it never exercised the 2 correctly-matched widgets either.
+Both effects together → `mop=0` everywhere.
+
+**Scope.** The join lives in `MopData` (consumer) but the real fix is producer-side: emit per-listener
+`handlerReachesTarget`/`directlyReachesTarget` (the gh60-C3 path) resolving the lambda mapping where
+the desugaring info exists, OR reconcile the reachability signatures to the post-D8 names used by
+widgets/transitions. This belongs to **change #2 (mop-reach-strategies)** / an rv-android producer
+fix — **not** change #1. This smoke verified **pipeline composition + flag gating** (fully passed);
+it also **surfaced** that MOP steering cannot fire on lambda-handler widgets until the join is fixed —
+a hard prerequisite for any MOP arm in the gh74 experiment.
