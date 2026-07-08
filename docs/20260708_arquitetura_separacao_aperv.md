@@ -132,9 +132,19 @@ Contrato de proveniência de métricas (confirmado no código): primárias e gua
 |---|---|---|---|
 | 1 | `rv-scoring-pipeline` | Extração dos 8 passes + `ScoringPipeline.fromConfig` + flags de paridade (`formCompletionEnabled`, `stepTelemetryEnabled`, `modelMenuEnabled`, `leastVisitedPriorityTiebreak`, `treeEnhancementsEnabled`, `activityBudgetEnabled`) + `apePureMode` + testes de caracterização/paridade. Nenhum default muda. | ape (mop-fairtest) |
 | 2 | `mop-reach-strategies` | A′ (`mopActivitySourceComponents`) + B (`MopFrontierPass`/`mopFrontierWeight`) + E-mín (`triggerMopFirst`) + seams F′ (`llmPercentageNoSubstrate`, `MopData.isWidgetlessSubstrate()`) + fix G-2. Depende da 1 (B nasce como pass). | ape (mop-fairtest) |
-| 3 | `aperv-arm-variants` | Mapping completo + 5 variantes congeladas + pytest de guarda + verificação do seed. Paralelo à 2 após a 1 fixar nomes de properties. | rv-android |
+| 3 | `aperv-arm-variants` | Mapping completo + variantes + pytest de guarda + verificação do seed. Paralelo à 2 após a 1 fixar nomes de properties. | rv-android |
 
-Ordem: 1 → 2, com 3 em paralelo assim que a 1 fixar os nomes das properties.
+Ordem: 1 → 2, com 3 em paralelo assim que a 1 fixar os nomes das properties. Processo: cada change segue o workflow do repo alvo — no rv-android, issue no GitHub + OpenSpec change vinculada; sempre via comandos `openspec` (create/validate --strict/archive).
+
+### 6.1 Disposição de variantes na change 3 (`get_variants()`, tool.py:201-301)
+
+Hoje existem 13 variantes, e todas setam só 2-3 chaves, **herdando o resto dos defaults do Config** — a causa direta da contaminação por `frontierBoostWeight`/`activityTriggerEnabled`. Disposição:
+
+- **Criar (4)**: `ape_pure`, `sata_mop_widget`, `sata_mop_activity`, `sata_mop_act_frontier` — conjunto completo e explícito de flags arm-defining (matriz do §4).
+- **Manter, tornando explícitas**: `default`/`sata` (baseline aperv-sem-MOP com frontier=0, trigger=false etc. escritos), `bfs`, `random`, `sata_llm`, `sata_mop_llm` (base da rodada 2 LLM).
+- **Redefinir**: `sata_mop` → alias documentado de `sata_mop_widget` (não quebra YAMLs antigos).
+- **Congelar como estão**: as 6 `sata_mop_llm_*` do gh43 (reprodutibilidade histórica), isentas da política de explicitação.
+- A DSL `tool[:variant][@param=value,...]` (configuration_factory.py:270-311) permanece; o `@override` cobre smokes de calibração (ex.: `aperv:sata_mop_act_frontier@mop_frontier_weight=400`) sem variante nova.
 
 ## 7. Questões abertas (registradas, não bloqueiam)
 
