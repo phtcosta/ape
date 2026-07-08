@@ -67,9 +67,11 @@ E-mín only reorders **which eligible candidate is picked first**; it never wide
 
 Both are the smallest honest footprint for round-2 adaptive LLM routing (F′), which will read the bit at load and raise `llmPercentage` only for widgetless apps. Shipping the seams now keeps that round consumer-only.
 
-### D5 — G-2 makes the too-large check unit-consistent
+### D5 — G-2: the too-large check is already unit-consistent (regression guard only)
 
-`MopData.load`'s pre-read reject compares file size against a heap-derived budget. redreader (true size 48.3 MiB, reported as "50.6 MB" decimal) is falsely rejected because the size operand and the budget operand are expressed in mismatched units (decimal 10^6 vs binary 2^20). The fix computes both operands in bytes (binary) so a file whose true byte size is below `maxMemory()/factor` is not rejected, and the `size=`/`budget=` fields on the `[APE-MOP-DATA] status=rejected reason=too-large` line report consistent units. This is a MODIFY of the existing `Load memory safety` requirement (the bug lives in its comparison clause); INV-MOP-26 and the OOM-containment behaviour are preserved verbatim. Effect: redreader parses; 3/657 previously-aborted runs recover.
+**Corrected 2026-07-08 after verification.** The premise that `MopData.load`'s pre-read reject mixes decimal-MB and binary-MiB units is **false**. The comparison was born byte-consistent in `c6c5d1f` (`mop-data-load-oom`): `File.length()` (bytes) `>` `budgetBytes / PARSE_FOOTPRINT_FACTOR`, with `budgetBytes = Runtime.getRuntime().maxMemory()` (bytes). A `git log -S` over `MopData.java` finds no decimal-MB form (`1000000` / `1024*1024` / `/1000`) on either operand at any commit. So there is **no code fix**; G-2 reduces to a regression-guard test (`MopDataLoadTest.fileBelowByteBudgetNotFalselyRejected`) that pins the byte boundary (`budget = size × factor` ⇒ `budget/factor == size`, strict `>` does not fire) so a future refactor cannot introduce a mismatch. INV-MOP-29 remains a valid, **already-satisfied** invariant documenting the required byte-unit property.
+
+This is NOT a MODIFY of the `Load memory safety` requirement's behaviour — the comparison already satisfies INV-MOP-29; INV-MOP-26 and OOM containment are untouched. **The redreader "3/657 runs recover" claim is retracted:** a 48.3 MiB file's rejection is a genuine heap-budget decision (`48.3 MiB × factor` vs the device's `maxMemory()`), not a unit artifact, so a unit change — which does not exist here — could not recover it.
 
 ## Interaction map (this change × the frontier passes)
 
@@ -92,7 +94,7 @@ All applicable terms accumulate into `wtgBoost` and into `priority`. B is precis
 | Unit (B) | three-condition boost: MOP+unvisited boosted; MOP+visited not; non-MOP+unvisited not; weight 0 = byte-identical; accumulation into `wtgBoost` with mopWeightWtg/frontierBoostWeight | scoring-pass test with stub graph + MopData |
 | Unit (E-mín) | `triggerMopFirst=true` picks the reachesTarget=true eligible candidate first; determinism under fixed order; flag off = round-robin unchanged | `selectTriggerCandidate` seam test |
 | Unit (F′ flag) | default −1 not clamped; ≥0 clamped to [0,1]; no routing behaviour change | Config load + LlmRouter unchanged assertion |
-| Unit (G-2) | redreader-sized file below budget parses (not rejected); genuinely oversized still rejected; status line units consistent | size-check seam / small + oversized fixtures |
+| Unit (G-2) | regression guard: file at the byte-budget boundary (`budget = size × factor`) not rejected; genuinely oversized still rejected; `size=`/`budget=` in bytes. No code change — comparison already byte-consistent | `MopDataLoadTest` boundary + oversized fixtures |
 | Device smoke | `sata_mop_activity` and `sata_mop_act_frontier` on a deep app: `activityHasMop` count rises with A′; MopFrontier boost lines appear; MOP-first launch ordering observable; calibrate `mopFrontierWeight` | future validation run |
 
 ## Open Questions

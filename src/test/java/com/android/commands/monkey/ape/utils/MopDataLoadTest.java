@@ -97,6 +97,32 @@ public class MopDataLoadTest {
         assertFalse("file must not be parsed", out[0].contains("status=loaded"));
     }
 
+    /**
+     * 6.1 / INV-MOP-29: a file whose true byte size sits below the heap-derived byte budget is NOT
+     * falsely rejected. Unlike {@link #normalFileLoadsWithinBudget} (which uses {@code Long.MAX_VALUE}
+     * and never approaches the boundary), this pins the exact byte boundary with a finite budget:
+     * {@code budget = size * FACTOR}, so {@code budget / FACTOR == size} and the strict {@code >}
+     * reject does not fire. Both operands are bytes; a decimal-MB (10^6) conversion of either side
+     * would move this boundary and flip the result, so this is the guard that locks the byte-unit
+     * consistency of the comparison against future refactors.
+     */
+    @Test
+    public void fileBelowByteBudgetNotFalselyRejected() throws Exception {
+        String json = "{\"complete\":true,\"package\":\"com.example.boundary\"}";
+        String path = writeTempJson(json);
+        long size = new File(path).length();
+        // PARSE_FOOTPRINT_FACTOR == 6; budget/FACTOR == size exactly → the tightest non-rejecting budget.
+        long boundaryBudget = size * 6;
+
+        String[] out = new String[1];
+        MopData[] result = new MopData[1];
+        out[0] = capture(() -> result[0] = MopData.load(path, null, null, boundaryBudget));
+
+        assertNotNull("file at the byte-budget boundary must load, not be rejected", result[0]);
+        assertFalse("must not be rejected too-large", out[0].contains("reason=too-large"));
+        assertTrue("must parse to loaded", out[0].contains("status=loaded"));
+    }
+
     /** 2.3: a normal file with a generous budget loads exactly as before (regression). */
     @Test
     public void normalFileLoadsWithinBudget() throws Exception {

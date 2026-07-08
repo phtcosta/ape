@@ -45,10 +45,20 @@
 - [ ] 5.1 Test-first: `selectTriggerCandidate` with `triggerMopFirst=true` prefers a `reachesTarget=true` eligible candidate; falls back to `reachesTarget=false` when no MOP candidate eligible; deterministic under fixed order; flag-off = round-robin unchanged (INV-CT-09)
 - [ ] 5.2 Implement the stable two-pass ordering (MOP-reachable eligible group first, each group in round-robin order) in `SataAgent.selectTriggerCandidate`, gated by `Config.triggerMopFirst`; eligibility filters unchanged
 
-## 6. G-2 — too-large reject unit fix (TDD)
+## 6. G-2 — too-large reject unit consistency (regression guard; no code fix required)
 
-- [ ] 6.1 Test-first: a fixture whose true byte size is below `maxMemory()/factor` (redreader-scale) SHALL NOT be rejected `too-large`; a genuinely oversized fixture SHALL still be rejected; `size=`/`budget=` fields report bytes (INV-MOP-29)
-- [ ] 6.2 Make the too-large comparison unit-consistent in `MopData.load` (both operands in bytes/binary; no decimal-MB conversion on one side); preserve INV-MOP-26 OOM containment verbatim
+> **Finding (2026-07-08, verified):** the premised decimal-MB vs binary-MiB unit bug **does not exist
+> in the code**. `MopData.load`'s too-large comparison was born byte-consistent in `c6c5d1f`
+> (the `mop-data-load-oom` archive): `File.length()` (bytes) `>` `budgetBytes / PARSE_FOOTPRINT_FACTOR`
+> with `budgetBytes = Runtime.getRuntime().maxMemory()` (bytes). A `git log -S` over the file's history
+> finds no decimal-MB (`1000000` / `1024*1024` / `/1000`) form on either operand at any commit. So G-2's
+> code fix is a no-op; the residual, real value is a **regression-guard test** that pins INV-MOP-29 so a
+> future refactor cannot introduce a mismatch. The redreader "recovers 3/657 runs" claim is **not
+> attributable to a unit fix** — a 48.3 MiB file's rejection is a genuine heap-budget decision
+> (`48.3 MiB × factor` vs device `maxMemory()`), not a unit artifact (see proposal/design corrections).
+
+- [x] 6.1 Regression-guard test added (`MopDataLoadTest.fileBelowByteBudgetNotFalselyRejected`): a fixture at the exact byte boundary (`budget = size × factor` ⇒ `budget/factor == size`, strict `>` does not fire) SHALL NOT be rejected `too-large`; a decimal-MB conversion of either operand would move the boundary and flip it. Complements the existing `oversizedFileRejectedTooLarge` (reject side, `size=`/`budget=` in bytes). Green (INV-MOP-29)
+- [x] 6.2 No code change: the too-large comparison is already unit-consistent (both operands in bytes/binary; `budget/factor` avoids overflow) since `c6c5d1f`; INV-MOP-26 OOM containment unchanged. Verified by blame + `git log -S` history search
 
 ## 7. Verification
 
