@@ -87,10 +87,12 @@ public class ApePureModeKillSwitchTest {
                 "ape.modelMenuEnabled", "ape.leastVisitedPriorityTiebreak", "ape.treeEnhancementsEnabled",
                 "ape.activityBudgetEnabled", "ape.dynamicEpsilon", "ape.heuristicInput", "ape.fuzzInputTyped",
                 "ape.foreignActivityGuard", "ape.treePackageGuard", "ape.activityTriggerEnabled",
+                "ape.triggerMopFirst",
                 "ape.llmOnNewState", "ape.llmOnStagnation")) {
             assertEquals(k + " boolean off value", "false", forced.get(k));
         }
         for (String k : Arrays.asList("ape.coverageBoostWeight", "ape.frontierBoostWeight",
+                "ape.mopFrontierWeight",
                 "ape.mopWeightDirect", "ape.mopWeightTransitive", "ape.mopWeightOpenMenu", "ape.mopWeightWtg",
                 "ape.componentPercentage", "ape.llmPercentage", "ape.backMenuPickCap", "ape.mopTargetPickCap")) {
             assertEquals(k + " weight/cap off value", "0", forced.get(k));

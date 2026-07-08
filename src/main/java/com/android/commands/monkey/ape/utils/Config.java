@@ -163,6 +163,10 @@ public class Config {
     // stagnation-bounded, manifest-filtered, once-per-episode EVENT_TRIGGER_ACTIVITY launcher.
     // Fair-test obligation: non-MOP baseline arms MUST set this false (and frontierBoostWeight=0).
     public static boolean activityTriggerEnabled = Config.getBoolean("ape.activityTriggerEnabled", true);
+    // mop-reach-strategies E-mín (INV-CT-09): when true, selectTriggerCandidate orders MOP-reachable
+    // eligible activities ahead of non-MOP ones (each group still round-robin). Default false =
+    // round-robin unchanged. Non-final: toggled by unit tests at runtime.
+    public static boolean triggerMopFirst = Config.getBoolean("ape.triggerMopFirst", false);
     // mop-target-revisit-cap: max deterministic MOP short-circuit picks per
     // (widget XPath, action type, activity) key per run. <= 0 = unlimited (restores the
     // uncapped mop-discriminative-boost behavior). The boost still participates in the
@@ -190,6 +194,13 @@ public class Config {
     public static final double llmPercentage =
             Math.max(0.0, Math.min(1.0, Config.getDouble("ape.llmPercentage", 0.02)));
     public static final String llmPromptVariant = Config.get("ape.llmPromptVariant", "ape_current");
+    // mop-reach-strategies F′ (INV-RTR-09): LLM random-routing probability to use when the current
+    // screen is a widgetless substrate (MopData.isWidgetlessSubstrate). Default -1 sentinel = "no
+    // override" (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt from the
+    // [0,1] clamp; a >=0 value is clamped to [0,1]; any real negative collapses to the sentinel. Seam
+    // only — no consumer yet (the router wiring is a later round).
+    public static final double llmPercentageNoSubstrate =
+            clampLlmPercentageNoSubstrate(Config.getDouble("ape.llmPercentageNoSubstrate", -1.0));
 
     // gh9-exploration-refactor: UI coverage, activity budget, WTG, dynamic epsilon, heuristic input.
     public static final int coverageBoostWeight = Config.getInteger("ape.coverageBoostWeight", 100);
@@ -205,6 +216,11 @@ public class Config {
     // independent of MOP-reachability. Default 200; 0 = off. Stacks additively with mopWeightWtg.
     // Fair-test obligation: non-MOP baseline arms MUST set this 0 (and activityTriggerEnabled=false).
     public static final int frontierBoostWeight = Config.getInteger("ape.frontierBoostWeight", 200);
+    // mop-reach-strategies B (INV-MFP-01/02/03): MOP-conditioned frontier boost added by MopFrontierPass
+    // to actions whose WTG transition targets an unvisited MOP-reachable activity. Default 0 = off (the
+    // widget arm does not use it; byte-identical when 0). Stacks additively with frontierBoostWeight/
+    // mopWeightWtg in wtgBoost. Non-final: toggled by unit tests at runtime.
+    public static int mopFrontierWeight = Config.getInteger("ape.mopFrontierWeight", 0);
     public static final boolean dynamicEpsilon = Config.getBoolean("ape.dynamicEpsilon", true);
     public static final double maxEpsilon = Config.getDouble("ape.maxEpsilon", 0.15);
     public static final double minEpsilon = Config.getDouble("ape.minEpsilon", 0.02);
@@ -271,6 +287,16 @@ public class Config {
     // Methods (not static-final fields) because this class's static block forces flags BEFORE the field
     // initializers run; a field-based registry would still be null at that point.
 
+    // mop-reach-strategies 1.4 (INV-RTR-09): clamp for llmPercentageNoSubstrate. The -1 sentinel means
+    // "no override"; any real negative collapses to it; a >=0 value is clamped to [0,1] like llmPercentage.
+    // Extracted so ConfigTest can exercise the clamp despite the frozen static-final field.
+    static double clampLlmPercentageNoSubstrate(double raw) {
+        if (raw < 0.0) {
+            return -1.0;
+        }
+        return Math.min(1.0, raw);
+    }
+
     static Map<String, String> rvForcedOffValues() {
         Map<String, String> m = new LinkedHashMap<>();
         for (String k : new String[] {
@@ -278,13 +304,13 @@ public class Config {
                 "ape.leastVisitedPriorityTiebreak", "ape.treeEnhancementsEnabled", "ape.activityBudgetEnabled",
                 "ape.dynamicEpsilon", "ape.heuristicInput", "ape.fuzzInputTyped",
                 "ape.foreignActivityGuard", "ape.treePackageGuard", "ape.activityTriggerEnabled",
-                "ape.mopActivitySourceComponents",
+                "ape.mopActivitySourceComponents", "ape.triggerMopFirst",
                 "ape.llmOnNewState", "ape.llmOnStagnation" }) {
             m.put(k, "false");
         }
         for (String k : new String[] {
-                "ape.coverageBoostWeight", "ape.frontierBoostWeight", "ape.mopWeightDirect",
-                "ape.mopWeightTransitive", "ape.mopWeightOpenMenu", "ape.mopWeightWtg",
+                "ape.coverageBoostWeight", "ape.frontierBoostWeight", "ape.mopFrontierWeight",
+                "ape.mopWeightDirect", "ape.mopWeightTransitive", "ape.mopWeightOpenMenu", "ape.mopWeightWtg",
                 "ape.componentPercentage", "ape.llmPercentage", "ape.backMenuPickCap", "ape.mopTargetPickCap" }) {
             m.put(k, "0");
         }
@@ -309,6 +335,7 @@ public class Config {
         m.put("coverageMaxStates", "coverage-tracker memory bound; inert to selection when coverageBoostWeight is forced 0");
         m.put("llmModel", "LLM sampling param; inert when llmOnNewState/Stagnation forced false and llmPercentage 0");
         m.put("llmPromptVariant", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmPercentageNoSubstrate", "LLM routing override; inert when the LLM masters are forced off and llmPercentage 0");
         m.put("llmTemperature", "LLM sampling param; inert when the LLM masters are forced off");
         m.put("llmTimeoutMs", "LLM sampling param; inert when the LLM masters are forced off");
         m.put("llmTopK", "LLM sampling param; inert when the LLM masters are forced off");

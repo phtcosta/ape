@@ -5,10 +5,10 @@
 ## 1. Config flags (P4 current-state comments, no default changes)
 
 - [x] 1.1 Add `Config.mopActivitySourceComponents` (`ape.mopActivitySourceComponents`, default `false`) next to the MOP flags
-- [ ] 1.2 Add `Config.mopFrontierWeight` (`ape.mopFrontierWeight`, default `0`) next to `mopWeightWtg`/`frontierBoostWeight`
-- [ ] 1.3 Add `Config.triggerMopFirst` (`ape.triggerMopFirst`, default `false`) next to `activityTriggerEnabled`
-- [ ] 1.4 Add `Config.llmPercentageNoSubstrate` (`ape.llmPercentageNoSubstrate`, default `-1`); load with the `-1` sentinel exempt from the `[0,1]` clamp, `>=0` clamped like `llmPercentage`
-- [ ] 1.5 (PARTIAL: mopActivitySourceComponents registered in rvForcedOffValues + kill-switch guard green; 3 remaining flags pending their levers) Register the four new flags in the `apePureMode` RV-flag registry from `rv-scoring-pipeline` (INV-ARCH-06): `mopActivitySourceComponents→false`, `mopFrontierWeight→0`, `triggerMopFirst→false`, `llmPercentageNoSubstrate→-1`; the sibling's kill-switch completeness guard must stay green
+- [x] 1.2 Add `Config.mopFrontierWeight` (`ape.mopFrontierWeight`, default `0`) next to `mopWeightWtg`/`frontierBoostWeight`
+- [x] 1.3 Add `Config.triggerMopFirst` (`ape.triggerMopFirst`, default `false`) next to `activityTriggerEnabled`
+- [x] 1.4 Add `Config.llmPercentageNoSubstrate` (`ape.llmPercentageNoSubstrate`, default `-1`); load with the `-1` sentinel exempt from the `[0,1]` clamp, `>=0` clamped like `llmPercentage` (clamp extracted to the testable seam `Config.clampLlmPercentageNoSubstrate`; any real negative collapses to the `-1` sentinel)
+- [x] 1.5 Register the four new flags in the `apePureMode` RV-flag registry from `rv-scoring-pipeline` (INV-ARCH-06): `mopActivitySourceComponents→false`, `mopFrontierWeight→0`, `triggerMopFirst→false` (all in `rvForcedOffValues`); `llmPercentageNoSubstrate` classified **exempt** (`rvExemptReasons`, "inert when the LLM masters are forced off and llmPercentage 0" — consistent with `llmModel`/`llmPromptVariant`/etc., avoids polluting the off-value shape buckets; user-approved deviation from the literal `→-1`). Kill-switch completeness guard stays green (575 tests)
 
 ## 2. A′ — activity-level activityHasMop source, 3-source union (TDD)
 

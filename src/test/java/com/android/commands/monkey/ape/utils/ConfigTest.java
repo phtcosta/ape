@@ -159,4 +159,58 @@ public class ConfigTest {
     public void testMaxIdleTimeoutMs_derivedBreakSecondsIs10() {
         assertEquals(10L, Config.maxIdleTimeoutMs / 1000);
     }
+
+    // ---------------------------------------------------------------------------
+    // mop-reach-strategies 1.2: mopFrontierWeight — MOP-conditioned twin of
+    // frontierBoostWeight, gates MopFrontierPass. Default 0 = off (byte-identical
+    // to pre-change; the widget arm does not use it). Static field captured at
+    // class load, so only the default is asserted here.
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testMopFrontierWeight_defaultIsZero() {
+        assertEquals(0, Config.mopFrontierWeight);
+    }
+
+    // ---------------------------------------------------------------------------
+    // mop-reach-strategies 1.3: triggerMopFirst — E-mín MOP-first launch ordering
+    // in selectTriggerCandidate. Default false = round-robin unchanged.
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testTriggerMopFirst_defaultIsFalse() {
+        assertFalse(Config.triggerMopFirst);
+    }
+
+    // ---------------------------------------------------------------------------
+    // mop-reach-strategies 1.4: llmPercentageNoSubstrate — F′ LLM-routing override
+    // used when the substrate is widgetless. Default -1 sentinel = "no override"
+    // (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt
+    // from the [0,1] clamp; >=0 values are clamped like llmPercentage. The field is
+    // static final (default asserted here); the clamp seam is tested below.
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testLlmPercentageNoSubstrate_defaultIsMinusOneSentinel() {
+        assertEquals(-1.0, Config.llmPercentageNoSubstrate, 1e-9);
+    }
+
+    @Test
+    public void testClampLlmPercentageNoSubstrate_sentinelStaysMinusOne() {
+        assertEquals(-1.0, Config.clampLlmPercentageNoSubstrate(-1.0), 1e-9);
+    }
+
+    @Test
+    public void testClampLlmPercentageNoSubstrate_anyNegativeCollapsesToSentinel() {
+        // a real negative (not the -1 sentinel) is meaningless as a probability;
+        // it collapses to the -1 "no override" sentinel (INV-RTR-09).
+        assertEquals(-1.0, Config.clampLlmPercentageNoSubstrate(-0.2), 1e-9);
+    }
+
+    @Test
+    public void testClampLlmPercentageNoSubstrate_aboveOneClampsToOne() {
+        assertEquals(1.0, Config.clampLlmPercentageNoSubstrate(1.5), 1e-9);
+    }
+
+    @Test
+    public void testClampLlmPercentageNoSubstrate_inRangeUnchanged() {
+        assertEquals(0.5, Config.clampLlmPercentageNoSubstrate(0.5), 1e-9);
+    }
 }

@@ -8,7 +8,7 @@ Ship the F′ seam only: a config flag that round-2 adaptive LLM routing will re
 
 ### Requirement: Config — llmPercentageNoSubstrate seam
 
-`Config.llmPercentageNoSubstrate` (double) SHALL be declared in `Config.java` and loaded via `ape.llmPercentageNoSubstrate`, default `-1`. The value `-1` is a sentinel meaning "inherit `Config.llmPercentage`" — it does NOT mean a routing percentage of −1. The flag SHALL be registered in the `apePureMode` RV-flag registry (INV-ARCH-06 of `scoring-pipeline`), forced to `-1` (inherit) when `apePureMode=true` — inert because `apePureMode` also leaves `llmUrl` unset in the `ape_pure` arm.
+`Config.llmPercentageNoSubstrate` (double) SHALL be declared in `Config.java` and loaded via `ape.llmPercentageNoSubstrate`, default `-1`. The value `-1` is a sentinel meaning "inherit `Config.llmPercentage`" — it does NOT mean a routing percentage of −1. The flag SHALL be registered in the `apePureMode` RV-flag registry (INV-ARCH-06 of `scoring-pipeline`) as an **exempt** RV flag — consistent with the other LLM sampling params (`llmModel`, `llmPromptVariant`, `llmTemperature`, …), whose off-value shape does not fit the boolean/weight buckets. It is inert in the `ape_pure` arm regardless of its value because `apePureMode` forces the LLM masters off (`llmOnNewState`/`llmOnStagnation → false`, `llmPercentage → 0`) and leaves `llmUrl` unset.
 
 - The `-1` sentinel SHALL be exempt from the `[0.0, 1.0]` clamp applied to `llmPercentage` (INV-RTR-08): clamping would collapse the sentinel to `0.0`. When the configured value is `-1`, it SHALL pass through unclamped.
 - When the configured value is `>= 0`, it SHALL be clamped to `[0.0, 1.0]` exactly like `llmPercentage`.
