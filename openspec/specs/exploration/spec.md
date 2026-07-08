@@ -51,7 +51,7 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-02**: `ActionType.MODEL_BACK.requireTarget()` and `ActionType.MODEL_MENU.requireTarget()` SHALL both return `false`. Neither `MODEL_BACK` nor `MODEL_MENU` requires a widget target; both map directly to Android key events.
 - **INV-EXPL-03**: The serialised exploration graph file (`sataModel.obj`) MUST contain a Java-serialised `Model` object, not a bare `Graph`. `StatefulAgent.saveGraph()` writes `oos.writeObject(model)`, where `model` is the `Model` instance (which in turn owns the `Graph`).
 - **INV-EXPL-04**: `ActionType.MODEL_CLICK.requireTarget()`, `MODEL_LONG_CLICK.requireTarget()`, `MODEL_SCROLL_BOTTOM_UP.requireTarget()`, `MODEL_SCROLL_TOP_DOWN.requireTarget()`, `MODEL_SCROLL_LEFT_RIGHT.requireTarget()`, and `MODEL_SCROLL_RIGHT_LEFT.requireTarget()` SHALL each return `true`.
-- **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_MENU`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`).
+- **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_MENU`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`, `EVENT_TRIGGER_ACTIVITY`).
 - **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point.
 - **INV-EXPL-13**: `MODEL_MENU` SHALL be positioned in the `ActionType` enum after `MODEL_BACK` and before `MODEL_CLICK`. This placement ensures that `requireTarget()`'s ordinal range check (`MODEL_CLICK` through `MODEL_SCROLL_RIGHT_LEFT`) continues to correctly identify target-requiring actions without any change to the range boundaries.
 - **INV-EXPL-09**: When `SataAgent` triggers a forced app restart due to graph stability (i.e., `graphStableCounter` reaching `ape.graphStableRestartThreshold`), the `graphStableCounter` MUST be reset to zero immediately after the restart is initiated.
@@ -64,9 +64,7 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-17**: Per-step debug artifacts (PNG/XML) SHALL be written only when explicitly enabled via `ape.properties`.
 - **INV-EXPL-18**: Every fuzz gesture branch SHALL emit exactly one event per invocation.
 - **INV-EXPL-19**: No touch event SHALL ever be delivered to coordinates derived from bounds other than the resolved node's own bounds.
-
 ## Requirements
-
 ### Requirement: Strategy Selection
 
 The exploration strategy MUST be selected at process startup via the `--ape <strategy>` command-line argument passed to `Monkey`. The argument value is a case-sensitive string. The five legal values are `sata` (creates `SataAgent`), `ape` (creates `ApeAgent`), `bfs` (creates `StatefulAgent` with BFS queue discipline), `dfs` (creates `StatefulAgent` with DFS stack discipline), and `random` (creates `RandomAgent`). If the argument is absent or does not match any legal value, the implementation SHALL default to `sata`. The strategy object is constructed once and shared for the entire session; it MUST NOT be replaced or re-instantiated during a running session.
@@ -145,7 +143,7 @@ The full set of `MODEL_*` action types and their `requireTarget()` values are:
 | `MODEL_SCROLL_LEFT_RIGHT` | `true` | Swipe-right gesture (ViewPager tabs) |
 | `MODEL_SCROLL_RIGHT_LEFT` | `true` | Swipe-left gesture (ViewPager tabs) |
 
-Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`) SHALL have `isModelAction()` return `false` and are not used as graph edge labels.
+Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`, `EVENT_TRIGGER_ACTIVITY`) SHALL have `isModelAction()` return `false` and are not used as graph edge labels. `EVENT_TRIGGER_ACTIVITY` is the stagnation-triggered activity launch step (component-triggering spec): `requireTarget()` SHALL return `false` for it, and its event generation dispatches an activity-launch intent instead of a GUI gesture.
 
 #### Scenario: requireTarget() on BACK
 
@@ -172,7 +170,10 @@ Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT
 - **WHEN** `ActionType.EVENT_RESTART.isModelAction()` is called
 - **THEN** the return value SHALL be `false`
 
----
+#### Scenario: predicates on EVENT_TRIGGER_ACTIVITY
+
+- **WHEN** `ActionType.EVENT_TRIGGER_ACTIVITY.requireTarget()` and `ActionType.EVENT_TRIGGER_ACTIVITY.isModelAction()` are called
+- **THEN** both SHALL return `false`
 
 ### Requirement: OptionsMenu Systematic Exploration (MODEL_MENU)
 
@@ -846,6 +847,82 @@ When `generateClickEventAt` finds that the target node's bounds do not intersect
 #### Scenario: on-screen node unchanged
 - **WHEN** the node's bounds intersect the visible screen
 - **THEN** click generation SHALL be identical to the previous implementation
+
+### Requirement: Foreign-Activity Guard in Event Generation
+
+When `ape.foreignActivityGuard` is true and the freshly fetched top activity component is non-null, `generateEvents` SHALL evaluate the pure decision `shouldModel(pkg, filterAccepts, systemWhitelist)` before calling `mAgent.updateState`, where `pkg` is `topComp.getPackageName()`, `filterAccepts` is `MonkeyUtils.getPackageFilter().isPackageValid(pkg)` (the same predicate the active backstop `checkAppActivity` gates on), and `systemWhitelist` is the fixed set {`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`} (the Google-image package is required because the RVSec AVD runs a Google emulator image whose runtime-permission UI is `com.google.android.permissioncontroller`; the AOSP entry alone would never match). `com.android.systemui` is NOT whitelisted — `checkAppActivity` already treats it as invalid and restarts on it, so the guard SHALL BACK out of it. When the decision is negative, the source SHALL enqueue exactly one BACK key event plus the standard throttle and return without invoking `updateState` — the foreign screen SHALL NOT be abstracted into a `State`, SHALL NOT be registered in UI-coverage tracking, and SHALL NOT contribute actions.
+
+The decision SHALL be based exclusively on the component's package name (the task's applicationId), never on activity class-name prefixes. A null top component SHALL bypass the guard (existing START/ACTIVATE handling proceeds). A null package SHALL be treated as modelable (uncheckable — defer to the existing paths). With `ape.foreignActivityGuard` false, event generation SHALL be identical to the pre-guard specification.
+
+The first deflection of each distinct foreign package SHALL log `[APE-RV] Foreign activity: pkg=<pkg> -> BACK`; subsequent deflections of the same package SHALL NOT log (throttle — a persistent foreign screen must not spam the trace). The dead `checkPackage(ComponentName, AccessibilityNodeInfo)` helper SHALL be deleted (P3 — it has no callers and the guard supersedes its intent).
+
+- **INV-EXPL-20**: No `State` or UI-coverage registration SHALL ever originate from a screen whose package fails the guard decision.
+- **INV-EXPL-21**: Screens of the system-interaction whitelist packages SHALL NOT be backed out by the guard (the guard SHALL be a no-op for them). This is a guard-local guarantee only: it does not assert durable in-package modeling — `checkAppActivity`, which this change does not touch, may still restart over these packages on a later cycle.
+- **INV-EXPL-22**: The `ape.foreignActivityGuard` flag SHALL gate the entire guard block; with the flag false, event generation SHALL follow the pre-guard path (no BACK deflections, no guard log lines). This is a reasoning invariant over the flag placement, not a pure-seam matrix case — `shouldModel` has no flag parameter.
+
+#### Scenario: launcher screen deflected
+- **WHEN** the app under test is `com.example.app`, a click lands the device on `com.google.android.apps.nexuslauncher/.NexusLauncherActivity`, and `generateEvents` runs with the guard enabled
+- **THEN** one BACK key event SHALL be enqueued, `updateState` SHALL NOT be called, and (on first occurrence) the trace SHALL contain `[APE-RV] Foreign activity: pkg=com.google.android.apps.nexuslauncher -> BACK`
+
+#### Scenario: permission dialog not deflected by the guard
+- **WHEN** the top component's package is `com.google.android.permissioncontroller` or `com.android.permissioncontroller` (runtime permission dialog; the Google package is the one seen on the RVSec Google-image AVD)
+- **THEN** the guard SHALL be a no-op for that cycle and `updateState` SHALL proceed normally (a guard-local no-op — this does not guarantee the screen survives `checkAppActivity` on a later cycle)
+
+#### Scenario: divergent class namespace is not misflagged
+- **WHEN** the app under test has applicationId `info.metadude.android.fosdem.schedule` and the top component is `info.metadude.android.fosdem.schedule/nerd.tuxmobil.fahrplan.congress.MainActivity`
+- **THEN** the caller SHALL derive `pkg` from `topComp.getPackageName()` (the applicationId `info.metadude.android.fosdem.schedule`), never from the activity class prefix `nerd.tuxmobil.*`, so `filterAccepts` is true and the screen is modeled normally (a caller-level `getPackageName()` assertion, not a `shouldModel`-seam matrix case)
+
+#### Scenario: guard disabled
+- **WHEN** `ape.foreignActivityGuard=false` and a foreign screen reaches `generateEvents`
+- **THEN** the screen SHALL be modeled exactly as before this change (leak-and-restart behavior), with no guard log line
+
+### Requirement: Tree/Package Guard in Event Generation
+
+When `ape.treePackageGuard` is true and the freshly fetched top activity component is non-null, `generateEvents` SHALL evaluate the pure decision `shouldRefetch(topPkg, treePkg, systemWhitelist)` before calling `mAgent.updateState`, where `topPkg` is `topComp.getPackageName()`, `treePkg` is `info.getPackageName()` (the accessibility root's owning package, converted null-safely to a String), and `systemWhitelist` is the `SYSTEM_INTERACTION_PACKAGES` set defined by `foreign-activity-guard` ({`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`}). `shouldRefetch` SHALL return true (mismatch) only when `treePkg` is non-null, differs from `topPkg`, and is not in the whitelist.
+
+When `shouldRefetch` is true and at least one refetch iteration remains (`repeat > 0` inside the existing `while (repeat-- > 0)` loop), the source SHALL `continue` — re-fetching both `topComp` and `info` on the next loop iteration — and SHALL NOT invoke `updateState` on the current pair: the mismatched screen SHALL NOT be abstracted into a `State`, SHALL NOT be registered in UI-coverage tracking, and SHALL NOT be built into a `GUITree`. When `shouldRefetch` is true but the refetch iterations are exhausted (`repeat == 0`), the source SHALL fall through and model the pair exactly as today (fail-open) — the guard SHALL NOT deadlock capture on a persistent mismatch.
+
+The decision SHALL be based exclusively on package names (`topComp.getPackageName()` and `info.getPackageName()`), never on activity class-name prefixes. A null top component SHALL bypass the guard (existing null / START handling proceeds). A null tree package SHALL be treated as a match (uncheckable — defer to the existing paths, model normally). A tree owned by a whitelist package SHALL NOT be treated as a mismatch (a permission dialog legitimately owning the tree over the app is modeled, not re-fetched). With `ape.treePackageGuard` false, event generation SHALL be identical to the pre-guard specification.
+
+The first mismatch of each distinct `top→tree` package pair SHALL log `[APE-RV] Tree/package mismatch: top=<pkg> tree=<pkg> -> refetch`; subsequent mismatches of the same pair SHALL NOT log (throttle — a persistent mismatch across the refetch iterations must not spam the trace). The guard SHALL be inserted after `foreign-activity-guard`'s top-component foreign check and before `updateState`, and SHALL reuse that change's whitelist set rather than redefining it.
+
+- **INV-EXPL-26**: While at least one refetch iteration remains, no `State`, `GUITree`, or UI-coverage registration SHALL originate from a `(topComp, tree)` pair whose tree package fails the guard decision (mismatched and not whitelisted).
+- **INV-EXPL-27**: On refetch-iteration exhaustion the guard SHALL fail open — a still-mismatched pair SHALL be modeled exactly as the pre-guard path; the guard SHALL NOT prevent capture indefinitely. (Reasoning invariant over the loop-exhaustion branch, not a pure-seam matrix case — `shouldRefetch` does not see `repeat`.)
+- **INV-EXPL-28**: The `ape.treePackageGuard` flag SHALL gate the entire guard block; with the flag false, event generation SHALL follow the pre-guard path (no refetch `continue`, no guard log lines). (Reasoning invariant over the flag placement — `shouldRefetch` has no flag parameter.)
+
+#### Scenario: launcher tree under an in-package MainActivity is re-fetched
+- **WHEN** the app under test is `com.example.app`, `topComp` reports `com.example.app/.MainActivity` but the accessibility root's `getPackageName()` is `com.google.android.apps.nexuslauncher` (a relaunch frame not yet painted), the guard is enabled, and at least one refetch iteration remains
+- **THEN** `updateState` SHALL NOT be called on this pair, the loop SHALL `continue` to re-fetch both `topComp` and `info`, and (on first occurrence) the trace SHALL contain `[APE-RV] Tree/package mismatch: top=com.example.app tree=com.google.android.apps.nexuslauncher -> refetch`
+
+#### Scenario: whitelisted permission dialog tree is not a mismatch
+- **WHEN** `topComp` reports the app under test but the accessibility root's `getPackageName()` is `com.google.android.permissioncontroller` or `com.android.permissioncontroller` (a runtime-permission dialog legitimately owning the tree over the app)
+- **THEN** `shouldRefetch` SHALL return false, the guard SHALL NOT re-fetch, and `updateState` SHALL model the pair normally
+
+#### Scenario: persistent mismatch fails open on exhaustion
+- **WHEN** the tree package differs from `topComp`'s package on every refetch iteration and the last iteration is reached (`repeat == 0`)
+- **THEN** the guard SHALL NOT `continue` past loop exhaustion, and the pair SHALL be modeled via `updateState` exactly as the pre-guard behavior (fail-open — capture is not deadlocked)
+
+#### Scenario: guard disabled
+- **WHEN** `ape.treePackageGuard=false` and a `(topComp, tree)` pair with a foreign tree reaches `generateEvents`
+- **THEN** the pair SHALL be modeled exactly as before this change (unchecked pairing), with no refetch `continue` and no guard log line
+
+### Requirement: Parametrized Idle-Wait Ceiling in Slow Tree Capture
+
+The global timeout of the UiAutomation idle wait in `getRootInActiveWindowSlow` SHALL be `ape.maxIdleTimeoutMs` (default `10000` ms). The idle wait SHALL remain best-effort: on timeout, or with any flag value, the source SHALL still call `getRootInActiveWindow()` unconditionally and return the resulting tree — the wait SHALL NOT gate whether a tree is captured. The quiet-period argument of the idle wait (the first `waitForIdle` parameter, 1000 ms) SHALL NOT be changed by this flag.
+
+The "window stuck animating" break threshold of **both** slow-capture retry loops (`refreshNewState` and `checkAndRefreshNewState`, which compare the same `getRootInActiveWindowSlow` duration) SHALL be derived from the same flag as `maxIdleTimeoutMs / 1000` seconds, so that lowering the ceiling keeps the breaks firing. With `ape.maxIdleTimeoutMs` at its default `10000`, the idle-wait global timeout SHALL be `10000` ms and each break threshold SHALL be `10` seconds — byte-identical to the pre-change literals (`1000 * 10` and `>= 10`).
+
+- **INV-EXPL-23**: With `ape.maxIdleTimeoutMs` at its default `10000`, slow tree capture and both retry-loop breaks SHALL behave identically to the pre-change implementation (the global timeout is `10000` ms and the break threshold is `10` s).
+- **INV-EXPL-24**: The idle wait SHALL remain best-effort at every flag value — `getRootInActiveWindow()` SHALL be invoked unconditionally after the wait, so a tree SHALL always be captured regardless of the timeout.
+- **INV-EXPL-25**: Every "window stuck animating" retry-loop break threshold (in `refreshNewState` and `checkAndRefreshNewState`) SHALL be derived from `ape.maxIdleTimeoutMs` (as `maxIdleTimeoutMs / 1000` seconds), never from an independent literal, so the ceiling and the breaks cannot diverge.
+
+#### Scenario: default preserves current behavior
+- **WHEN** `ape.maxIdleTimeoutMs` is at its default `10000` and `getRootInActiveWindowSlow` runs
+- **THEN** the UiAutomation idle wait SHALL use a `10000` ms global timeout, both retry-loop breaks (`refreshNewState`, `checkAndRefreshNewState`) SHALL fire at `>= 10` seconds, and the observable behavior SHALL be identical to the pre-change implementation
+
+#### Scenario: lowered ceiling caps the wait and capture still proceeds
+- **WHEN** `ape.maxIdleTimeoutMs` is lowered (e.g. to `2000`) and a screen has not gone idle within that window
+- **THEN** the idle wait SHALL return after at most `2000` ms, `getRootInActiveWindow()` SHALL still be called and its tree returned (no capture is skipped), and both retry-loop breaks SHALL fire at `>= 2` seconds
 
 ## Invariants (Dynamic Epsilon)
 

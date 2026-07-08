@@ -6,7 +6,7 @@ APE-RV operates exclusively via GUI interactions (AccessibilityService + Monkey 
 
 This specification defines how APE-RV SHALL trigger Services and BroadcastReceivers at runtime using `am broadcast` and `am startservice`, with intent data derived from the static analysis JSON's `components{}` section. Triggering is probabilistic — on each exploration step, there is a `Config.componentPercentage` chance of triggering one component (round-robin). The trigger is a side-effect that does not consume a SATA step.
 
-Activities are excluded from triggering because they are already reachable via GUI exploration, and triggering them via `startActivity()` disrupts the SATA exploration flow.
+Activities are excluded from the *probabilistic* pool: they are already reachable via GUI exploration, and unfiltered per-step `startActivity()` jumps disrupt the SATA flow (the gh11 mechanism). They are instead reachable through a dedicated, model-visible **stagnation launcher** — a first-class `EVENT_TRIGGER_ACTIVITY` step (`decision_source=Component`) fired only on exploration stagnation, only to manifest-eligible frontier activities (exported, permission-free, same-package, currently unvisited). See the Stagnation-Triggered Activity Launch requirement.
 
 ---
 
@@ -35,11 +35,10 @@ Activities are excluded from triggering because they are already reachable via G
 
 - **INV-CT-01**: Component triggering SHALL only fire when `Config.componentPercentage > 0` AND `MopData.hasComponents()` is true. When `componentPercentage` is `0.0` (the default, regardless of whether `mopDataPath` is set), behavior SHALL be identical to APE-RV without component triggering.
 - **INV-CT-02**: Component triggering SHALL be probabilistic — on each step in `SataAgent.selectNewActionNonnull()`, a random check against `componentPercentage` determines whether to trigger. The trigger is a side-effect; normal SATA action selection continues regardless.
-- **INV-CT-03**: Only BroadcastReceivers and Services SHALL be triggered. Activities and ContentProviders are excluded.
+- **INV-CT-03**: Only BroadcastReceivers and Services SHALL enter the probabilistic `buildTriggerTuples` pool; ContentProviders and activities SHALL NOT enter it under any configuration. ContentProviders remain excluded from triggering entirely. Activities are launched exclusively via the stagnation launcher (`EVENT_TRIGGER_ACTIVITY`, `decision_source=Component`; see Stagnation-Triggered Activity Launch), never probabilistically.
 - **INV-CT-04**: The package component of every trigger `ComponentName` SHALL equal `MopData.getPackageName()`; no trigger path SHALL derive it from the component class name.
 
 ---
-
 ## Requirements
 ### Requirement: Probabilistic component triggering in SataAgent
 
@@ -154,4 +153,35 @@ Anchor: `Config.java:169-170`. Sole consumer: `SataAgent.java:351-354`.
 #### Scenario: top-level component unchanged
 - **WHEN** the component class lives directly in the app package (`br.unb.app.MainReceiver`)
 - **THEN** the `ComponentName` SHALL be `("br.unb.app", "br.unb.app.MainReceiver")` (same result as before)
+
+### Requirement: Stagnation-Triggered Activity Launch
+
+When `Config.activityTriggerEnabled` is true, `MopData` is loaded, and `graphStableCounter` reaches exactly `graphStableRestartThreshold / 2` (evaluated in `SataAgent.selectNewActionNonnull` after the LLM hooks, so an enabled LLM stagnation hook takes precedence), the agent SHALL attempt to select a launch candidate: the next manifest activity, in round-robin order persisted across episodes, satisfying ALL of — `exported == true`, `permission == null`, not the main activity, and currently unvisited (`Graph.getActivityNode(className) == null` at fire time). When a candidate exists, the agent SHALL reset `graphStableCounter` to 0 and return a first-class `EVENT_TRIGGER_ACTIVITY` action carrying the candidate's class name and, when available, its deep-link URI — the action is the step (it produces exactly one `[APE-STEP]` line with `decision_source=Component` and is NOT a graph edge label, mirroring `EVENT_RESTART` semantics). Because `EVENT_TRIGGER_ACTIVITY` is a non-model action, its `[APE-STEP]` line is emitted by the else-branch of `StatefulAgent.resolveNewAction` — which currently hardcodes `decision_source=SATA` for every non-model action. Satisfying `decision_source=Component` therefore REQUIRES teaching that else-branch to read the decision source from the action (attributing `EVENT_TRIGGER_ACTIVITY` as `Component`) rather than emitting a literal `SATA`; the launcher cannot set it via `ModelAction.setDecisionSource`, which does not exist on the non-model `Action` base type. When no candidate exists, selection SHALL fall through to the normal SATA chain with no side effects.
+
+Event generation SHALL dispatch the action as an explicit intent (`ComponentName(MopData.getPackageName(), className)`, `FLAG_ACTIVITY_NEW_TASK`) via `AndroidDevice.startActivity`; the package component SHALL be `MopData.getPackageName()` and SHALL NOT be derived from the target class name (main-spec INV-CT-04, ComponentName Package Derivation). When the candidate's intent-filters contain an `ACTION_VIEW` filter with non-empty `data.schemes`, the intent SHALL instead be `ACTION_VIEW` with a best-effort URI assembled from the filter's first scheme, host and path, still targeted at the component. Activities SHALL NOT participate in the `componentPercentage` probabilistic pool under any configuration — the former `activityTriggerEnabled` branch of `buildTriggerTuples` is deleted (this supersedes the activity clause of INV-CT-03; receivers/services/providers are unaffected).
+
+- **INV-CT-05**: An activity launch SHALL occur at most once per stagnation episode (the counter-equality gate plus the reset make re-fire impossible within an episode).
+- **INV-CT-06**: Every launched activity SHALL satisfy, at fire time: exported, permission-free, non-main, same-package, unvisited.
+- **INV-CT-07**: Every launch SHALL be model-visible as exactly one `[APE-STEP]` line with `decision_source=Component`; no graph edge SHALL be labeled by the launch. This requires the non-model `[APE-STEP]` branch in `StatefulAgent.resolveNewAction` to derive the source from the action instead of hardcoding `SATA`.
+- **INV-CT-08**: With `ape.activityTriggerEnabled=false`, no activity SHALL ever be launched by APE-RV (neither by the launcher nor by the probabilistic pool, which no longer contains activities).
+
+#### Scenario: stagnation launches an unvisited exported activity
+- **WHEN** `graphStableCounter` reaches `graphStableRestartThreshold / 2`, the LLM is disabled, and the manifest has an exported, permission-free, unvisited `com.x.SettingsActivity`
+- **THEN** the step SHALL be an `EVENT_TRIGGER_ACTIVITY` action for `com.x.SettingsActivity`, the `[APE-STEP]` line SHALL carry `decision_source=Component`, and `graphStableCounter` SHALL be reset to 0
+
+#### Scenario: deep-link candidate launched with VIEW intent
+- **WHEN** the selected candidate has an intent-filter with `android.intent.action.VIEW` and `data.schemes=["myscheme"]`, `hosts=[]`
+- **THEN** dispatch SHALL use `ACTION_VIEW` with URI `myscheme://` targeted at the component
+
+#### Scenario: all frontier activities visited — fall through
+- **WHEN** the stagnation point is reached but every exported, permission-free, non-main activity already has an `ActivityNode`
+- **THEN** no launch SHALL occur, `graphStableCounter` SHALL NOT be reset by the launcher, and the normal SATA chain SHALL select the step
+
+#### Scenario: launcher disabled
+- **WHEN** `ape.activityTriggerEnabled=false`
+- **THEN** no `EVENT_TRIGGER_ACTIVITY` step SHALL ever be produced and the probabilistic pool SHALL contain no activities
+
+#### Scenario: permission-gated activity is never launched
+- **WHEN** an unvisited exported activity declares `permission="android.permission.MANAGE_DOCUMENTS"`
+- **THEN** the candidate selection SHALL skip it
 
