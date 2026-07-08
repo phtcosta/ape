@@ -22,6 +22,18 @@ When `mopActivitySourceComponents=true`, `mopActivities` becomes the union of (a
 
 **Saturation risk is a consumer concern, not a source concern.** In the 70 saturated apps (>80% of screens MOP-bearing) A′ makes the predicate near-constant; that is handled by the experiment's pre-registered slice analysis (memo §3), not by narrowing the source.
 
+### D1b — A′ source is reachability-method-level, not just `components.activities[]` (cryptoapp evidence)
+
+The original A′ read `components.activities[].reachesTarget`. Device investigation on `cryptoapp.apk.json` (2026-07-08) showed that field is a **false-negative on lambda-triggered activities**: it is computed from the activity's entry points through the producer call graph, which does not traverse D8-desugared lambda/callback edges. All 4 cryptoapp activities report `components.activities[].reachesTarget=false`, yet the app provably runs `Cipher`/`MessageDigest`/key-gen. The `reachability[]` **method-level** flags are correct on the same JSON: `CryptographyActivity` 13 `reachesTarget=true` methods, `CipherActivity` 2, `MessageDigestActivity` 1, `MainActivity` 0. So A′ populates `mopActivities` from the **union of three sources** — widget-derived (today), `components.activities[].reachesTarget`, and "the activity's `reachability[]` class (`componentType=activity`) has ≥1 `reachesTarget` method." Source 3 is the lambda-gap-immune substrate; sources 1–2 are kept for recall where they fire. Same flag, same arm axis, same default-false. (This also means the "83.6%" corpus figure — computed from `components.activities[]` — is a **lower bound**; the reachability-method source can only widen it. Re-measuring the corpus with source 3 is a validation-time task, not a blocker.)
+
+### D1c — FIX 2: recover desugared-lambda widget flags consumer-side (no GATOR)
+
+The widget→MOP join (`deriveWidgetMopFlags`, exact `bySignature.get(l.handler)`) drops the D8 synthetic-lambda listener `<X$$ExternalSyntheticLambdaN: onClick>` (reachability `reachesTarget=false`) even though its delegate `<X: lambda$…$K>` is `reachesTarget=true`. Both names live in the **same** original-APK JSON, so the fix is a consumer-side bridge, not a producer re-run: build a `className → hasReachingLambda` index during `parseReachability`, and in `deriveWidgetMopFlags`, on exact miss for a `X$$ExternalSyntheticLambdaN` handler, mark `transitiveMop` iff class `X` has a `lambda$…` reaching method. **Always-on** (no flag): it only fires when MOP data is loaded, so the standalone default and `apePureMode` are byte-identical; and it is a correctness fix to an existing join, not an experiment lever. Precision on cryptoapp is exact (CryptographyActivity has exactly 1 lambda, reaching → Execute button recovered). Over-approximation is possible only when an enclosing class mixes reaching and non-reaching lambdas across multiple synthetic widgets — acceptable for a guidance boost, and bounded by INV-MOP-30 (must have lambda-method evidence, no blanket enclosing-class flag).
+
+### D1d — FIX 3: make the join outcome visible
+
+Silent collapse (the whole reason this went unnoticed across prior experiments) is fixed by reporting `handlersUnmatched`/`syntheticLambda`/`recovered` on the `status=loaded` line. Pure counters; INV-MOP-31 forbids any behavioural effect. A run with `flagged=2 handlersUnmatched=5 syntheticLambda=1 recovered=1` now announces the substrate problem instead of hiding it.
+
 ### D2 — B is a ScoringPass, additive to and disjoint-in-intent from the generic frontier
 
 `MopFrontierPass` (new, in `com.android.commands.monkey.ape.agent.scoring`) fires the three-condition boost:

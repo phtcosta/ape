@@ -10,11 +10,23 @@
 - [ ] 1.4 Add `Config.llmPercentageNoSubstrate` (`ape.llmPercentageNoSubstrate`, default `-1`); load with the `-1` sentinel exempt from the `[0,1]` clamp, `>=0` clamped like `llmPercentage`
 - [ ] 1.5 Register the four new flags in the `apePureMode` RV-flag registry from `rv-scoring-pipeline` (INV-ARCH-06): `mopActivitySourceComponents→false`, `mopFrontierWeight→0`, `triggerMopFirst→false`, `llmPercentageNoSubstrate→-1`; the sibling's kill-switch completeness guard must stay green
 
-## 2. A′ — component-level activityHasMop source (TDD)
+## 2. A′ — activity-level activityHasMop source, 3-source union (TDD)
 
 - [ ] 2.1 Test-first: `MopData.load` on a fixture with a `components.activities[]` entry `reachesTarget=true` and no MOP-flagged widget — assert `activityHasMop==true` only when `mopActivitySourceComponents=true`; assert widget-derived entries preserved (union, not replacement); assert flag-off = widget-only set (INV-MOP-27)
-- [ ] 2.2 Implement the union population in `MopData` (read JSON `reachesTarget` at the parse boundary — `Target` vocabulary; write to `mopActivities` — `MOP` vocabulary; gh13 D7). Scorer arithmetic unchanged
+- [ ] 2.1b Test-first (source 3, the cryptoapp case): a fixture where `components.activities[].reachesTarget=false` and no flagged widget, BUT the activity's `reachability[]` class (`componentType=activity`) has ≥1 method `reachesTarget=true` — assert `activityHasMop==true` only when the flag is on; assert an activity with a `reachability` class but NO reaching method is NOT added (INV-MOP-27)
+- [ ] 2.2 Implement the 3-source union in `MopData` (widget-derived + `components.activities[].reachesTarget` + `reachability[]` activity-class-with-any-reachesTarget-method). Read JSON `reachesTarget` at the parse boundary (`Target` vocabulary); write to `mopActivities` (`MOP` vocabulary; gh13 D7). Scorer arithmetic unchanged
 - [ ] 2.3 Verify no regression on the existing widget-derived scenarios with the flag off (byte-identical `mopActivities`)
+
+## 2A. FIX 2 — widget MOP-flag recovery for desugared-lambda handlers (TDD, always-on when MOP loaded)
+
+- [ ] 2A.1 Test-first: a widget whose only listener handler is `<X$$ExternalSyntheticLambda0: void onClick(...)>` (reachability `reachesTarget=false`) with enclosing class `X` carrying a `lambda$…` method `reachesTarget=true` → widget `transitiveMop==true`, base activity in `mopActivities`; a `$$ExternalSyntheticLambda` handler whose enclosing class has no reaching lambda → NOT flagged; exact-match handlers unchanged (INV-MOP-30)
+- [ ] 2A.2 Implement the enclosing-class fallback in `MopData.deriveWidgetMopFlags`: on exact-join miss, if `l.handler` class matches `<ENCLOSING$$ExternalSyntheticLambda\d+: …>`, mark `transitiveMop` (and `directMop` when the reaching lambda is `directlyReachesTarget`) iff `ENCLOSING` has a `lambda$…` reachability method with `reachesTarget=true`. Needs a `className → hasReachingLambda` index built in `parseReachability`. Active only when MOP data loaded; no flag (correctness fix)
+- [ ] 2A.3 Verify: with `mopDataPath` null (default / `apePureMode`) the recovery path is never entered (standalone default byte-identical)
+
+## 2B. FIX 3 — handler-join diagnostics on the load line (TDD)
+
+- [ ] 2B.1 Test-first: `MopData.load` counts distinct unmatched handlers, of which D8 synthetic-lambda, of which recovered; asserts `recovered ≤ syntheticLambda ≤ handlersUnmatched`; asserts counters do not alter `mopActivities`/widget flags/load outcome (INV-MOP-31)
+- [ ] 2B.2 Implement `handlersUnmatched=<n> syntheticLambda=<m> recovered=<k>` fields on the `[APE-MOP-DATA] status=loaded` line (diagnostic only)
 
 ## 3. F′ seams (TDD)
 
@@ -42,4 +54,5 @@
 
 - [ ] 7.1 Full suite: `mvn test` (0 failures/errors)
 - [ ] 7.2 `openspec validate mop-reach-strategies --strict`
-- [ ] 7.3 Device smoke (future validation run): on a deep app, confirm A′ raises the `activityHasMop` count in the load line; `MopFrontierPass` boost visible in `[APE-STEP] wtg=`; with `triggerMopFirst=true` a MOP activity is launched first at stagnation; redreader-scale JSON parses. Calibrate `mopFrontierWeight` vs `frontierBoostWeight`. Confirm the `sata_mop_widget` (A′ off) vs `sata_mop_activity` (A′ on) arms differ only in `mopActivitySourceComponents`
+- [ ] 7.3 Device re-smoke on `cryptoapp` (RVSec API 30, shell/non-root, wait for boot to settle): confirm FIX 2 + A′ make MOP actually fire — with `mopDataPath` set, the load line shows `flagged>2` and `recovered≥1` (Execute button recovered); at least one `[APE-STEP]` shows `mop>0`; with `mopActivitySourceComponents=true` the 3 crypto activities enter `mopActivities` (from source 3, since `components.activities[].reachesTarget=false` for all). This is the direct regression check for the bug found during `rv-scoring-pipeline` 7.6
+- [ ] 7.4 Device smoke (future full validation run): `MopFrontierPass` boost visible in `[APE-STEP] wtg=`; with `triggerMopFirst=true` a MOP activity is launched first at stagnation; redreader-scale JSON parses. Calibrate `mopFrontierWeight` vs `frontierBoostWeight`. Confirm the `sata_mop_widget` (A′ off) vs `sata_mop_activity` (A′ on) arms differ only in `mopActivitySourceComponents`
