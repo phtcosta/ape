@@ -303,7 +303,10 @@ public class MopDataTest {
         assertTrue("text floor", text >= 11);
         assertTrue("inputType floor", inputType >= 4);
         assertTrue("spinner entries=13 present", spinnerEntries13 >= 1);
-        assertEquals("exactly 2 transitiveMop widgets", 2, transitiveWidgets);
+        // FIX 2 (INV-MOP-30): 3, not the pre-fix 2 — the Execute button, whose D8 synthetic-lambda
+        // handler (CryptographyActivity$$ExternalSyntheticLambda0:onClick) the exact join dropped, is
+        // now recovered from CryptographyActivity's reaching lambda$setupExecuteButton$0 method.
+        assertEquals("3 transitiveMop widgets (incl. the recovered Execute button)", 3, transitiveWidgets);
         assertEquals("no directMop widget in cryptoapp", 0, directWidgets);
     }
 
@@ -442,9 +445,12 @@ public class MopDataTest {
         assertTrue(out, out.contains("package=" + PKG));
         assertTrue(out, out.contains("windows=5"));
         assertTrue(out, out.contains("widgets="));
-        assertTrue(out, out.contains("flagged=2"));
+        // FIX 2: flagged=3 (was 2) — the Execute button's desugared-lambda handler is now recovered.
+        assertTrue(out, out.contains("flagged=3"));
         assertTrue(out, out.contains("droppedNoId="));
         assertTrue(out, out.contains("transitions=35"));
+        // FIX 3 (INV-MOP-31): join diagnostics on the load line; 1 synthetic lambda recovered.
+        assertTrue(out, out.contains("handlersUnmatched=5 syntheticLambda=1 recovered=1"));
         assertEquals("exactly one status line", 1, countOccurrences(out, "[APE-MOP-DATA] status="));
     }
 

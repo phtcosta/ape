@@ -230,18 +230,19 @@ public class MopData {
                 String packageName = optStringOrNull(root, "package");
             String mainActivity = optStringOrNull(root, "mainActivity");
 
-            // Pass 1: reachability[] → typed list + bySignature index.
+            // Pass 1: reachability[] → typed list + bySignature index + FIX-2 lambda index.
             Map<String, boolean[]> bySignature = new HashMap<>();
+            Map<String, boolean[]> lambdaReachByClass = new HashMap<>();
             List<ReachabilityClass> reachability =
-                    parseReachability(root.optJSONArray("reachability"), bySignature);
+                    parseReachability(root.optJSONArray("reachability"), bySignature, lambdaReachByClass);
 
-            // Pass 2: windows[] → typed windows + widgetData + derived MOP flags.
+            // Pass 2: windows[] → typed windows + widgetData + derived MOP flags (with FIX-2 recovery).
             List<Window> windows = new ArrayList<>();
             Map<Integer, Window> windowsById = new HashMap<>();
             Map<String, Map<String, Widget>> widgetData = new HashMap<>();
             Set<String> mopActivities = new HashSet<>();
             int[] droppedFlaggedNoId = new int[1];
-            parseWindows(root.optJSONArray("windows"), bySignature,
+            parseWindows(root.optJSONArray("windows"), bySignature, lambdaReachByClass,
                     windows, windowsById, widgetData, mopActivities, droppedFlaggedNoId);
 
             // Pass 3: transitions[] → typed transitions + click-only WTG view.
@@ -267,6 +268,12 @@ public class MopData {
             List<ComponentInfo.ProviderInfo> providers = new ArrayList<>();
             parseComponents(root.optJSONObject("components"),
                     receivers, services, activities, providers);
+
+            // A′ (INV-MOP-27): widen mopActivities to the 3-source union when the flag is on. Runs
+            // before the OPTIONSMENU precompute (which reads mopActivities) so the wider set feeds
+            // every downstream consumer. Seam takes the flag as a param (static-final wall).
+            augmentActivitiesFromSources(mopActivities, activities, reachability,
+                    Config.mopActivitySourceComponents);
 
             // Precompute OPTIONSMENU gateway set (T1.2, D13) — needs WTG + mopActivities.
             Set<String> menuGateways = precomputeMopOptionsMenus(
@@ -300,10 +307,14 @@ public class MopData {
                 return null;
             }
 
+            // FIX 3 (INV-MOP-31): diagnostics on the handler→MOP join, so a silent collapse is visible.
+            int[] joinDiag = computeHandlerJoinDiagnostics(windows, bySignature, lambdaReachByClass);
             Logger.iformat("[APE-MOP-DATA] status=loaded package=%s windows=%d widgets=%d"
-                    + " flagged=%d droppedNoId=%d transitions=%d",
+                    + " flagged=%d droppedNoId=%d transitions=%d"
+                    + " handlersUnmatched=%d syntheticLambda=%d recovered=%d",
                     packageName, windows.size(), countWidgets(widgetData), countFlagged(widgetData),
-                    data.droppedFlaggedNoId, transitions.size());
+                    data.droppedFlaggedNoId, transitions.size(),
+                    joinDiag[0], joinDiag[1], joinDiag[2]);
             return data;
             } catch (JSONException e) {
                 Logger.wprintln("MopData: malformed JSON structure at " + path + ": " + e.getMessage());
@@ -324,7 +335,8 @@ public class MopData {
     // -------------------------------------------------------------------------
 
     private static List<ReachabilityClass> parseReachability(JSONArray arr,
-                                                             Map<String, boolean[]> bySignature)
+                                                             Map<String, boolean[]> bySignature,
+                                                             Map<String, boolean[]> lambdaReachByClass)
             throws JSONException {
         List<ReachabilityClass> classes = new ArrayList<>();
         if (arr == null) return classes;
@@ -351,6 +363,20 @@ public class MopData {
                         bySignature.put(m.signature,
                                 new boolean[]{m.directlyReachesTarget, m.reachesTarget});
                     }
+                    // FIX 2 (INV-MOP-30): index the enclosing class of any reaching javac-desugared
+                    // lambda body (name "lambda$…"), so a widget's D8 synthetic-lambda wrapper handler
+                    // (X$$ExternalSyntheticLambdaN) — which the producer call graph marks reachesTarget=
+                    // false — can be recovered from X's reaching lambda methods. boolean[]{direct, any}.
+                    if (rc.className != null && m.name != null && m.name.startsWith("lambda$")
+                            && (m.reachesTarget || m.directlyReachesTarget)) {
+                        boolean[] agg = lambdaReachByClass.get(rc.className);
+                        if (agg == null) {
+                            agg = new boolean[]{false, false};
+                            lambdaReachByClass.put(rc.className, agg);
+                        }
+                        agg[0] |= m.directlyReachesTarget;
+                        agg[1] |= m.reachesTarget || m.directlyReachesTarget;
+                    }
                 }
             }
             classes.add(rc);
@@ -358,18 +384,32 @@ public class MopData {
         return classes;
     }
 
+    /** Matches a D8 desugared-lambda wrapper class handler and captures the enclosing class (FIX 2). */
+    private static final java.util.regex.Pattern SYNTH_LAMBDA =
+            java.util.regex.Pattern.compile("^<(.+?)\\$\\$ExternalSyntheticLambda\\d+:");
+
+    /** Enclosing class of a D8 synthetic-lambda handler signature, or null when it is not one. */
+    static String syntheticLambdaEnclosingClass(String handler) {
+        if (handler == null) {
+            return null;
+        }
+        java.util.regex.Matcher mt = SYNTH_LAMBDA.matcher(handler);
+        return mt.find() ? mt.group(1) : null;
+    }
+
     // -------------------------------------------------------------------------
     // Pass 2: windows[] + widgets (flat, no recursion — D3)
     // -------------------------------------------------------------------------
 
     private static void parseWindows(JSONArray arr, Map<String, boolean[]> bySignature,
+                                     Map<String, boolean[]> lambdaReachByClass,
                                      List<Window> windows, Map<Integer, Window> windowsById,
                                      Map<String, Map<String, Widget>> widgetData,
                                      Set<String> mopActivities, int[] droppedFlaggedNoId)
             throws JSONException {
         if (arr == null) return;
         for (int i = 0; i < arr.length(); i++) {
-            Window w = parseWindow(arr.getJSONObject(i), bySignature);
+            Window w = parseWindow(arr.getJSONObject(i), bySignature, lambdaReachByClass);
             windows.add(w);
             if (w.id >= 0) {
                 windowsById.put(w.id, w);
@@ -417,7 +457,8 @@ public class MopData {
         return 0;
     }
 
-    private static Window parseWindow(JSONObject wo, Map<String, boolean[]> bySignature)
+    private static Window parseWindow(JSONObject wo, Map<String, boolean[]> bySignature,
+                                      Map<String, boolean[]> lambdaReachByClass)
             throws JSONException {
         Window w = new Window();
         w.id = wo.optInt("id", -1);
@@ -427,13 +468,14 @@ public class MopData {
         JSONArray widgets = wo.optJSONArray("widgets");
         if (widgets != null) {
             for (int i = 0; i < widgets.length(); i++) {
-                w.widgets.add(parseWidget(widgets.getJSONObject(i), bySignature));
+                w.widgets.add(parseWidget(widgets.getJSONObject(i), bySignature, lambdaReachByClass));
             }
         }
         return w;
     }
 
-    private static Widget parseWidget(JSONObject wo, Map<String, boolean[]> bySignature)
+    private static Widget parseWidget(JSONObject wo, Map<String, boolean[]> bySignature,
+                                      Map<String, boolean[]> lambdaReachByClass)
             throws JSONException {
         Widget w = new Widget();
         w.id = wo.optInt("id", -1);
@@ -458,7 +500,7 @@ public class MopData {
                 w.listeners.add(parseListener(listeners.getJSONObject(i)));
             }
         }
-        deriveWidgetMopFlags(w, bySignature);
+        deriveWidgetMopFlags(w, bySignature, lambdaReachByClass);
         return w;
     }
 
@@ -477,7 +519,8 @@ public class MopData {
      * (INV-MOP-17, D18). Producer-supplied handlerReachesTarget wins over the
      * local cross-reference when present (INV-MOP-12, D8).
      */
-    private static void deriveWidgetMopFlags(Widget w, Map<String, boolean[]> bySignature) {
+    private static void deriveWidgetMopFlags(Widget w, Map<String, boolean[]> bySignature,
+                                             Map<String, boolean[]> lambdaReachByClass) {
         for (Listener l : w.listeners) {
             boolean direct;
             boolean transitive;
@@ -486,6 +529,15 @@ public class MopData {
                 transitive = Boolean.TRUE.equals(l.handlerReachesTarget) || direct;
             } else {
                 boolean[] flags = l.handler != null ? bySignature.get(l.handler) : null;
+                if (flags == null && l.handler != null) {
+                    // FIX 2 (INV-MOP-30): exact join missed. If the handler is a D8 synthetic-lambda
+                    // wrapper (X$$ExternalSyntheticLambdaN), recover the flag from X's reaching
+                    // javac lambda methods — the same JSON already carries them (no GATOR re-run).
+                    String encl = syntheticLambdaEnclosingClass(l.handler);
+                    if (encl != null) {
+                        flags = lambdaReachByClass.get(encl);
+                    }
+                }
                 direct = flags != null && flags[0];
                 transitive = flags != null && flags[1];
             }
@@ -499,6 +551,87 @@ public class MopData {
     private static void orInto(Map<String, Boolean> map, String key, boolean value) {
         Boolean prev = map.get(key);
         map.put(key, (prev != null && prev) || value);
+    }
+
+    /**
+     * A′ (INV-MOP-27): widen {@code mopActivities} to the 3-source union when {@code enabled}.
+     * Source 1 (widget-derived) is already in {@code mopActivities} on entry. When enabled, adds
+     * source 2 — every {@code components.activities[]} with {@code reachesTarget=true} — and source 3
+     * — every {@code reachability[]} class with {@code componentType=="activity"} that has ≥1
+     * {@code reachesTarget} method. Source 3 is the lambda-call-graph-gap-immune substrate: the
+     * component-level flag false-negatives lambda-triggered activities (cryptoapp: all activities
+     * {@code components.reachesTarget=false} yet {@code CryptographyActivity} has 13 reaching methods).
+     * When {@code enabled==false} the set is left exactly as the widget-derived source (byte-identical).
+     * Package-private seam so a test can drive the flag past the {@code static final} wall.
+     */
+    static void augmentActivitiesFromSources(Set<String> mopActivities,
+                                             List<ComponentInfo.ActivityInfo> activities,
+                                             List<ReachabilityClass> reachability,
+                                             boolean enabled) {
+        if (!enabled) {
+            return;
+        }
+        if (activities != null) {
+            for (ComponentInfo.ActivityInfo a : activities) {
+                if (a != null && a.reachesTarget && a.className != null) {
+                    mopActivities.add(baseActivity(a.className));
+                }
+            }
+        }
+        if (reachability != null) {
+            for (ReachabilityClass rc : reachability) {
+                if (rc == null || rc.className == null || !"activity".equals(rc.componentType)) {
+                    continue;
+                }
+                for (ReachabilityMethod m : rc.methods) {
+                    if (m.reachesTarget || m.directlyReachesTarget) {
+                        mopActivities.add(baseActivity(rc.className));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * FIX 3 (INV-MOP-31): pure diagnostic counters over the widget→MOP handler join. Returns
+     * {@code [handlersUnmatched, syntheticLambda, recovered]} over the set of DISTINCT listener
+     * handler signatures: {@code handlersUnmatched} = handlers with no exact {@code bySignature}
+     * match; {@code syntheticLambda} = of those, D8 {@code $$ExternalSyntheticLambda} wrappers;
+     * {@code recovered} = of those, ones whose enclosing class has a reaching lambda (FIX 2 would
+     * flag). Never alters any parsed state; {@code recovered ≤ syntheticLambda ≤ handlersUnmatched}.
+     */
+    private static int[] computeHandlerJoinDiagnostics(List<Window> windows,
+                                                       Map<String, boolean[]> bySignature,
+                                                       Map<String, boolean[]> lambdaReachByClass) {
+        Set<String> handlers = new HashSet<>();
+        for (Window w : windows) {
+            for (Widget wd : w.widgets) {
+                for (Listener l : wd.listeners) {
+                    if (l.handler != null) {
+                        handlers.add(l.handler);
+                    }
+                }
+            }
+        }
+        int unmatched = 0;
+        int synthetic = 0;
+        int recovered = 0;
+        for (String h : handlers) {
+            if (bySignature.containsKey(h)) {
+                continue;
+            }
+            unmatched++;
+            String encl = syntheticLambdaEnclosingClass(h);
+            if (encl != null) {
+                synthetic++;
+                boolean[] agg = lambdaReachByClass.get(encl);
+                if (agg != null && agg[1]) {
+                    recovered++;
+                }
+            }
+        }
+        return new int[]{unmatched, synthetic, recovered};
     }
 
     /**

@@ -151,6 +151,12 @@ public class Config {
     public static boolean fuzzInputTyped = Config.getBoolean("ape.fuzzInputTyped", true);
     // gh13: package/mainActivity sanity check (T1.7). true ⇒ mismatch rejects MopData.load (CI gate).
     public static boolean mopStrictPackageMatch = Config.getBoolean("ape.mopStrictPackageMatch", false);
+    // mop-reach-strategies A′ (INV-MOP-27): when true, mopActivities is the UNION of the widget-derived
+    // source, components.activities[].reachesTarget, AND every reachability[] activity-class with ≥1
+    // reachesTarget method (the lambda-call-graph-gap-immune source; the component field alone false-
+    // negatives lambda-triggered activities — cryptoapp evidence). Default false = widget-only, byte-
+    // identical to pre-change. Arm axis: sata_mop_widget (false) vs sata_mop_activity (true).
+    public static final boolean mopActivitySourceComponents = Config.getBoolean("ape.mopActivitySourceComponents", false);
     // mop-fairtest: activity-frontier — gate for the stagnation activity launcher (Lever B).
     // Default true. Repurposed from the deleted gh11 probabilistic activity-trigger branch (that
     // path, which the -45pp evidence measured, no longer exists). This flag now gates only the
@@ -272,6 +278,7 @@ public class Config {
                 "ape.leastVisitedPriorityTiebreak", "ape.treeEnhancementsEnabled", "ape.activityBudgetEnabled",
                 "ape.dynamicEpsilon", "ape.heuristicInput", "ape.fuzzInputTyped",
                 "ape.foreignActivityGuard", "ape.treePackageGuard", "ape.activityTriggerEnabled",
+                "ape.mopActivitySourceComponents",
                 "ape.llmOnNewState", "ape.llmOnStagnation" }) {
             m.put(k, "false");
         }
