@@ -25,9 +25,7 @@ The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`.
 - **INV-BUD-01**: `isBudgetExhausted(activityName)` SHALL return `false` for any activity that has not been registered.
 - **INV-BUD-02**: Budget SHALL be computed exactly once per activity at registration time and SHALL NOT be recalculated.
 - **INV-BUD-03**: `remainingBudget(activityName)` SHALL be non-negative (clamped to 0 minimum).
-
 ## Requirements
-
 ### Requirement: ActivityBudgetTracker — Budget Allocation
 
 `ActivityBudgetTracker(int baseBudget, int budgetPerWidget)` SHALL accept two configuration parameters. `registerActivity(String activityName, int widgetCount)` SHALL allocate `baseBudget + (widgetCount × budgetPerWidget)` iterations to the activity. Registration is idempotent — if the activity is already registered, the call is ignored (budget is not recalculated).
@@ -63,7 +61,9 @@ The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`.
 
 ### Requirement: Budget Check in SATA Action Selection
 
-`SataAgent.selectNewActionNonnull()` SHALL check `ActivityBudgetTracker.isBudgetExhausted()` for the current activity BEFORE the normal SATA priority chain. The budget is a **soft constraint** — it influences navigation but does not block exploration:
+The activity-budget mechanism SHALL be gated by `Config.activityBudgetEnabled` (declared by the `scoring-pipeline` capability; default `true`).
+
+When `activityBudgetEnabled` is `true` (default), `StatefulAgent` SHALL instantiate the `ActivityBudgetTracker`, and `SataAgent.selectNewActionNonnull()` SHALL check `ActivityBudgetTracker.isBudgetExhausted()` for the current activity BEFORE the normal SATA priority chain. The budget is a **soft constraint** — it influences navigation but does not block exploration:
 
 1. Try `selectNewActionForTrivialActivity()` — navigate to a different activity
 2. If null: fall through to normal SATA chain
@@ -75,14 +75,22 @@ The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`.
 
 The budget's value is in the trivial activity navigation — when available, it forces diversification. When not available, the normal SATA chain (with coverage boost, WTG boost, and greedy tiebreaker) handles exploration efficiently without forced navigation.
 
-#### Scenario: Budget exhausted forces navigation via trivial activity
-- **WHEN** the current activity's budget is exhausted and a path to a trivial activity exists
+When `activityBudgetEnabled` is `false` (the `ape_pure` arm), `StatefulAgent` SHALL NOT instantiate the `ActivityBudgetTracker`, and `SataAgent.selectNewActionNonnull()` SHALL NOT perform any budget check — selection proceeds directly to the normal SATA chain, reproducing upstream APE (which has no activity budget). No `recordIteration`/`isBudgetExhausted` call SHALL occur.
+
+#### Scenario: Budget exhausted forces navigation via trivial activity (flag on)
+- **WHEN** `Config.activityBudgetEnabled` is `true`, the current activity's budget is exhausted, and a path to a trivial activity exists
 - **THEN** the agent SHALL navigate to the target activity
 
-#### Scenario: Budget exhausted, no trivial activity — fallthrough
-- **WHEN** the current activity's budget is exhausted and `selectNewActionForTrivialActivity()` returns null
+#### Scenario: Budget exhausted, no trivial activity — fallthrough (flag on)
+- **WHEN** `Config.activityBudgetEnabled` is `true`, the current activity's budget is exhausted, and `selectNewActionForTrivialActivity()` returns null
 - **THEN** the agent SHALL fall through to the normal SATA priority chain
 - **AND** exploration continues normally with all priority boosts active
+
+#### Scenario: No budget tracker or check when the flag is off
+- **WHEN** `Config.activityBudgetEnabled` is `false`
+- **THEN** `StatefulAgent` SHALL NOT instantiate an `ActivityBudgetTracker`
+- **AND** `SataAgent.selectNewActionNonnull()` SHALL perform no budget check and proceed directly to the normal SATA chain
+- **AND** no `recordIteration` or `isBudgetExhausted` call SHALL occur during the run
 
 ### Requirement: Budget is Non-Resettable
 
@@ -131,3 +139,4 @@ The activity budget SHALL NOT reset after EVENT_RESTART or EVENT_CLEAN_RESTART. 
 #### Scenario: Activity stable threshold activated
 - **WHEN** `ape.activityStableRestartThreshold` is not set in properties
 - **THEN** `Config.activityStableRestartThreshold` SHALL be 200 (previously was Integer.MAX_VALUE)
+

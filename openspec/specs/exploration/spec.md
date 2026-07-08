@@ -52,7 +52,7 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-03**: The serialised exploration graph file (`sataModel.obj`) MUST contain a Java-serialised `Model` object, not a bare `Graph`. `StatefulAgent.saveGraph()` writes `oos.writeObject(model)`, where `model` is the `Model` instance (which in turn owns the `Graph`).
 - **INV-EXPL-04**: `ActionType.MODEL_CLICK.requireTarget()`, `MODEL_LONG_CLICK.requireTarget()`, `MODEL_SCROLL_BOTTOM_UP.requireTarget()`, `MODEL_SCROLL_TOP_DOWN.requireTarget()`, `MODEL_SCROLL_LEFT_RIGHT.requireTarget()`, and `MODEL_SCROLL_RIGHT_LEFT.requireTarget()` SHALL each return `true`.
 - **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_MENU`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`, `EVENT_TRIGGER_ACTIVITY`).
-- **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point.
+- **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point. (Unchanged by `rv-scoring-pipeline`: `Config.modelMenuEnabled` gates only whether the `menuAction` is added to the State's action *set* — the field itself stays non-null in every arm, including `ape_pure`, so this invariant holds verbatim.)
 - **INV-EXPL-13**: `MODEL_MENU` SHALL be positioned in the `ActionType` enum after `MODEL_BACK` and before `MODEL_CLICK`. This placement ensures that `requireTarget()`'s ordinal range check (`MODEL_CLICK` through `MODEL_SCROLL_RIGHT_LEFT`) continues to correctly identify target-requiring actions without any change to the range boundaries.
 - **INV-EXPL-09**: When `SataAgent` triggers a forced app restart due to graph stability (i.e., `graphStableCounter` reaching `ape.graphStableRestartThreshold`), the `graphStableCounter` MUST be reset to zero immediately after the restart is initiated.
 - **INV-EXPL-10**: `RandomAgent` extends `StatefulAgent` and uses the same priority-weighted selection infrastructure. It does NOT implement a separate pure-random algorithm. The distinction from `SataAgent` is that `RandomAgent` uses `StatefulAgent`'s base priority assignment without SATA's directed graph navigation heuristics.
@@ -177,7 +177,9 @@ Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT
 
 ### Requirement: OptionsMenu Systematic Exploration (MODEL_MENU)
 
-Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, ActionType.MODEL_MENU)`, initialised in the `State` constructor immediately after `backAction`. The field SHALL be exposed via `State.getMenuAction()`. This mirrors the `backAction` / `getBackAction()` pattern exactly.
+Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, ActionType.MODEL_MENU)`, initialised in the `State` constructor immediately after `backAction`. The field SHALL be exposed via `State.getMenuAction()` and SHALL be non-null for the life of the state. This mirrors the `backAction` / `getBackAction()` pattern exactly.
+
+Inclusion of the `menuAction` in the state's **selectable** action set is gated by `Config.modelMenuEnabled` (declared by the `scoring-pipeline` capability; default `true`). When `modelMenuEnabled` is `true` (default), the `menuAction` SHALL be included in the array returned by `State.getActions()`, exactly as before this change. When `modelMenuEnabled` is `false` (the `ape_pure` arm), the `menuAction` SHALL NOT be included in `State.getActions()` and the agent SHALL never select `MODEL_MENU`; the field SHALL still be constructed and returned by `State.getMenuAction()` (so `INV-EXPL-06` holds). This reproduces upstream APE, which has no model-level options-menu action.
 
 `MonkeySourceApe.generateEventsForActionInternal()` SHALL handle `MODEL_MENU` in its switch statement by calling `generateKeyMenuEvent()`. No target widget node is required or inspected.
 
@@ -186,7 +188,13 @@ Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, 
 #### Scenario: State constructor initialises menuAction
 - **WHEN** a new `State` is constructed for any `StateKey`
 - **THEN** `state.getMenuAction()` MUST return a non-null `ModelAction` whose `getType()` returns `ActionType.MODEL_MENU`
-- **AND** the `menuAction` MUST be included in the actions array returned by `state.getActions()`
+- **AND** when `Config.modelMenuEnabled` is `true` (default) the `menuAction` MUST be included in the actions array returned by `state.getActions()`
+
+#### Scenario: MODEL_MENU excluded from selection when modelMenuEnabled is false
+- **WHEN** `Config.modelMenuEnabled` is `false` and a new `State` is constructed
+- **THEN** `state.getMenuAction()` MUST still return a non-null `ModelAction` of type `MODEL_MENU`
+- **AND** `state.getActions()` MUST NOT contain the `menuAction`
+- **AND** the agent MUST never select `MODEL_MENU` for that state
 
 #### Scenario: MODEL_MENU event generation
 - **WHEN** `MonkeySourceApe.generateEventsForActionInternal()` is called with a `ModelAction` whose type is `MODEL_MENU`
@@ -197,29 +205,6 @@ Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, 
 - **WHEN** `MonkeySourceApe.validateResolvedAction()` is called with a `ModelAction` of type `MODEL_MENU`
 - **THEN** the method SHALL return `true`
 - **AND** no widget validator (`validateClickAction`, `validateScrollAction`) SHALL be invoked
-
----
-
-**SataAgent Action Selection Flow**
-
-```mermaid
-flowchart TD
-    START([selectNewAction called]) --> BUFFER{actionBuffer\nnon-empty?}
-    BUFFER -->|yes| BUFFERED[return next buffered action\nclear if last]
-    BUFFER -->|no| STABLE{graphStableCounter\n≥ threshold?}
-    STABLE -->|yes| RESTART[trigger EVENT_RESTART\nreset counter]
-    STABLE -->|no| TRIVIAL[selectNewActionForTrivialActivity]
-    TRIVIAL -->|path found| PATH[return first step\nstore rest in buffer]
-    TRIVIAL -->|null| ABA[selectNewActionEarlyStageForABA]
-    ABA -->|path found| PATH
-    ABA -->|null| UNVISITED{current state has\nunvisited actions?}
-    UNVISITED -->|yes| BACK{backAction\nunvisited?}
-    BACK -->|yes| RET_BACK[return backAction]
-    BACK -->|no| MENU{menuAction\nunvisited?}
-    MENU -->|yes| RET_MENU[return menuAction]
-    MENU -->|no| WIDGET[return least-visited\nwidget action]
-    UNVISITED -->|no| GREEDY[epsilon-greedy over\nall valid actions\n95% least-visited\n5% random]
-```
 
 ### Requirement: SataAgent — Unvisited Action Priority
 

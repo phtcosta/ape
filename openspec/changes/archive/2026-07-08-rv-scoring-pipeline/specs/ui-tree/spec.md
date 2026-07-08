@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Gate the fork's GUITree perception enhancements behind the single `treeEnhancementsEnabled` parity flag (declared by the `scoring-pipeline` capability; default `true`), so the `ape_pure` arm inherits upstream APE's tree perception. The three enhancements — the WebView-prune actionable-count fix, AndroidX actionability, and ViewPager scrollable recognition — change *what the agent sees*, not how it scores; they are one conceptual change and share one flag. When the flag is `false`, `GUITreeBuilder` reproduces upstream perception, including the upstream WebView over-prune. `INV-TREE-02`, `INV-TREE-03`, `INV-TREE-11`, and `INV-TREE-12` describe the default (flag-on) behavior; this delta scopes them in the requirement prose and does not restate the global invariants.
+Gate the fork's GUITree perception enhancements behind the single `treeEnhancementsEnabled` parity flag (declared by the `scoring-pipeline` capability; default `true`), so the `ape_pure` arm inherits upstream APE's tree perception. The three enhancements — the WebView-prune actionable-count fix, AndroidX actionability, and ViewPager scrollable recognition — change *what the agent sees*, not how it scores; they are one conceptual change and share one flag. When the flag is `false`, `GUITreeBuilder` reproduces upstream perception, including the upstream WebView over-prune. `INV-TREE-02` and `INV-TREE-11` are gated by `treeEnhancementsEnabled`; `INV-TREE-03` (class-name-invariant) and `INV-TREE-12` (the `clearChildren` DOMException safety — an always-on crash fix, never gated, like `ApePinchOrZoom`) are flag-independent. This delta scopes the gated invariants in the requirement prose and does not restate the global invariants.
 
 > Note: AndroidX actionability is part of `GUITreeBuilder` node construction and has no dedicated named requirement; it is gated by the same `treeEnhancementsEnabled` flag and is described here for completeness. The two named requirements this delta modifies (`ViewPager Scroll Direction`, `WebView Pruning Correctness`) carry the observable gate scenarios.
 
@@ -47,13 +47,13 @@ When `treeEnhancementsEnabled` is `false` (the `ape_pure` arm), `getScrollType()
 
 ### Requirement: WebView Pruning Correctness
 
-The WebView-pruning correctness fixes are gated by `Config.treeEnhancementsEnabled` (declared by the `scoring-pipeline` capability; default `true`). When `treeEnhancementsEnabled` is `true` (default), WebView pruning SHALL be structurally correct on both of its halves, and its DOM half SHALL be exception-safe:
+The WebView-pruning **actionable-descendant threshold** (point 3 below) is gated by `Config.treeEnhancementsEnabled` (declared by the `scoring-pipeline` capability; default `true`). The `clearChildren` correctness and DOMException-safety fixes (points 1–2, INV-TREE-10/INV-TREE-12) are **always-on** — a crash/correctness fix, not a perception enhancement — so the `ape_pure` arm keeps them. WebView pruning SHALL be structurally correct on both of its halves, and its DOM half SHALL be exception-safe:
 
 1. `GUITreeNode.clearChildren` SHALL remove **all** DOM children in the normal case, iterating until the element is empty. The in-memory prune (`childCount = 0`, `children = null`) SHALL be applied unconditionally, before any DOM mutation.
 2. If the DOM element rejects a removal with `org.w3c.dom.DOMException`, `clearChildren` SHALL stop the DOM removal loop, log one line — `[APE-RV] clearChildren DOM prune aborted: <exception message>` — and return normally. The exception SHALL NOT propagate to the caller (INV-TREE-12).
 3. `GUITreeBuilder.checkAndRemoveWebView` SHALL compare the `ape.ignoreWebViewThreshold` (default 64) against the count of **actionable** descendants only (as its inline comment always stated), not the total descendant count.
 
-When `treeEnhancementsEnabled` is `false` (the `ape_pure` arm), WebView pruning SHALL reproduce upstream APE's behavior: the threshold SHALL be compared against the total descendant count (the upstream over-prune), and the `clearChildren` correctness/exception-safety fixes SHALL NOT apply. INV-TREE-11 and INV-TREE-12 describe the default (flag-on) behavior.
+When `treeEnhancementsEnabled` is `false` (the `ape_pure` arm), the threshold (point 3) SHALL be compared against the total descendant count (the upstream over-prune). Points 1–2 (the `clearChildren` in-memory prune and DOMException safety, INV-TREE-10/INV-TREE-12) remain active regardless of the flag. INV-TREE-11 describes the flag-gated threshold; INV-TREE-12 is flag-independent (always-on).
 
 #### Scenario: clearChildren empties the DOM (flag on)
 - **WHEN** `Config.treeEnhancementsEnabled` is `true` and `clearChildren` is called on a node with 10 DOM children
