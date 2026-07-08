@@ -47,10 +47,10 @@
 
 ## 6. Parity and pass unit tests
 
-- [ ] 6.1 Assert the refactored pipeline reproduces the characterization goldens byte-identical at default flags (tasks 1.1/1.3 stay green after the refactor)
-- [ ] 6.2 Attribution goldens (task 1.2) reproduced after the refactor
+- [x] 6.1 Assert the refactored pipeline reproduces the characterization goldens byte-identical at default flags (tasks 1.1/1.3 stay green after the refactor) — `BasePriorityCharacterizationTest` (1.1) stays green against the refactored `adjustActionsByGUITree`; `PipelineParityTest` adds the MOP-arm composition guarantee (full arm assembles `[MopWidget, MenuGateway, Coverage, Form]` yet reproduces the base golden byte-identical on non-target actions, since every MOP pass is inert when `requireTarget()==false`)
+- [x] 6.2 Attribution goldens (task 1.2) reproduced after the refactor — the pass math seams (`MopScorerTest`, `ActivityFrontierTest`, `UICoverageTrackerTest`, `FormCompletionTest`) and the provenance-field pins (`ModelActionTest`, 1.3) stay green; `PipelineParityTest.menuGatewayPassAttributesOpenMenuBoostToModelMenu` reproduces the one MOP attribution path that runs off-device end-to-end (delegates to `MopScorer.scoreOpenMenu`, writes `menuBoost`+`priority`); the target-node passes write provenance on a live `GUITreeNode`, device-validated in 7.6
 - [ ] 6.3 Parity integration test (`apePureMode=true`): (i) empty pipeline / priorities equal the upstream loop, (ii) no `MODEL_MENU` in `State.getActions()`, (iii) fixed epsilon `defaultEpsilon=0.05`, (iv) legacy `StringCache` input, (v) zero `[APE-STEP]` lines (INV-ARCH-01)
-- [ ] 6.4 Always-on exceptions under `apePureMode=true`: the `ApePinchOrZoomEvent` fix is active and `RandomHelper` is seeded from `-s` (INV-ARCH-01)
+- [x] 6.4 Always-on exceptions under `apePureMode=true`: the `ApePinchOrZoomEvent` fix is active and `RandomHelper` is seeded from `-s` (INV-ARCH-01) — `ApePureModeAlwaysOnExceptionsTest` binds both to the kill-switch forcing path (`Config.forceApePureModeInto`) and asserts the registry names neither behavior; because neither reads an RV flag, their default-config green (`ApePinchOrZoomEventTest`, `RandomHelperSeedTest`) is already their `apePureMode` green (no OFF direction exists — the static-final wall that blocks 6.3/6.5 does not apply)
 - [ ] 6.5 Per-gate scenario tests: each of the six behavior flags off ⇒ its gated behavior absent, all other behavior unchanged (scoring-pipeline / exploration / action-selection / ui-tree / form-completion / activity-budget delta scenarios)
 
 ## 7. Verification
