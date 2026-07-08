@@ -41,9 +41,9 @@
 ## 5. Config flags and kill-switch
 
 - [x] 5.1 Declare the seven new flags in `Config.java` (`formCompletionEnabled`, `stepTelemetryEnabled`, `modelMenuEnabled`, `leastVisitedPriorityTiebreak`, `treeEnhancementsEnabled`, `activityBudgetEnabled` = true; `apePureMode` = false) with P4 current-state comments (INV-ARCH-07)
-- [ ] 5.2 Add the RV-flag registry (single source consulted by `Config.load` forcing and the guard test) enumerating every RV-defining flag with its off/inert value
-- [ ] 5.3 In `Config.load`, when `apePureMode==true`, force every registered flag to its off/inert value (booleans→false, weights→0, `activityStableRestartThreshold`→`Integer.MAX_VALUE`) and log `[APE-ARCH] apePureMode forced <key>=<value>` per key (INV-ARCH-06)
-- [ ] 5.4 Kill-switch completeness guard test: every RV-defining flag is forced by `apePureMode`; a registered-but-unforced flag OR an unregistered RV flag fails the test (INV-ARCH-06)
+- [x] 5.2 Add the RV-flag registry (single source consulted by `Config.load` forcing and the guard test) enumerating every RV-defining flag with its off/inert value
+- [x] 5.3 In `Config.load`, when `apePureMode==true`, force every registered flag to its off/inert value (booleans→false, weights→0, `activityStableRestartThreshold`→`Integer.MAX_VALUE`) and log `[APE-ARCH] apePureMode forced <key>=<value>` per key (INV-ARCH-06)
+- [x] 5.4 Kill-switch completeness guard test: every RV-defining flag is forced by `apePureMode`; a registered-but-unforced flag OR an unregistered RV flag fails the test (INV-ARCH-06)
 
 ## 6. Parity and pass unit tests
 

@@ -18,8 +18,11 @@ package com.android.commands.monkey.ape.utils;
 import java.io.File;
 import java.io.FileInputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 public class Config {
@@ -30,6 +33,14 @@ public class Config {
         configurations = new Properties(System.getProperties());
         loadConfiguration("/data/local/tmp/ape.properties");
         loadConfiguration("/sdcard/ape.properties");
+        // rv-scoring-pipeline (task 5.3, INV-ARCH-06): the apePureMode kill-switch runs here — before the
+        // field initializers below read any value — so forcing the RV flags into `configurations` makes
+        // every getBoolean/getInteger below read the off/inert value. The fields stay public static final
+        // and no read site is apePureMode-aware. Read the raw property (the apePureMode field does not
+        // exist yet at this point in class init).
+        if (Boolean.parseBoolean(configurations.getProperty("ape.apePureMode"))) {
+            forceApePureModeInto(configurations);
+        }
     }
 
     /**
@@ -240,6 +251,78 @@ public class Config {
                 e.printStackTrace();
                 throw new RuntimeException("Fail to load the configuration file at " + configFile);
             }
+        }
+    }
+
+    // rv-scoring-pipeline (task 5.2, INV-ARCH-06): the RV-flag registry — the single source consulted by
+    // both the apePureMode forcing (forceApePureModeInto) and the completeness guard test. Every field
+    // that APE-RV adds over upstream APE (@8f51b99) is classified into exactly one of three buckets:
+    //   rvForcedOffValues() — flags forced to an off/inert value (booleans->false, weights/caps->0,
+    //                         RV-activated thresholds->upstream-inert), reproducing upstream selection;
+    //   rvUnsetKeys()       — input-path flags cleared to null (forcing a value would misfire);
+    //   rvExemptReasons()   — RV flags left untouched because they are inert once their master gate is
+    //                         forced off (or arm-neutral), each with the reason it need not be forced.
+    // Methods (not static-final fields) because this class's static block forces flags BEFORE the field
+    // initializers run; a field-based registry would still be null at that point.
+
+    static Map<String, String> rvForcedOffValues() {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (String k : new String[] {
+                "ape.formCompletionEnabled", "ape.stepTelemetryEnabled", "ape.modelMenuEnabled",
+                "ape.leastVisitedPriorityTiebreak", "ape.treeEnhancementsEnabled", "ape.activityBudgetEnabled",
+                "ape.dynamicEpsilon", "ape.heuristicInput", "ape.fuzzInputTyped",
+                "ape.foreignActivityGuard", "ape.treePackageGuard", "ape.activityTriggerEnabled",
+                "ape.llmOnNewState", "ape.llmOnStagnation" }) {
+            m.put(k, "false");
+        }
+        for (String k : new String[] {
+                "ape.coverageBoostWeight", "ape.frontierBoostWeight", "ape.mopWeightDirect",
+                "ape.mopWeightTransitive", "ape.mopWeightOpenMenu", "ape.mopWeightWtg",
+                "ape.componentPercentage", "ape.llmPercentage", "ape.backMenuPickCap", "ape.mopTargetPickCap" }) {
+            m.put(k, "0");
+        }
+        // upstream-inert value: upstream APE (@8f51b99) defaults activityStableRestartThreshold to MAX_VALUE
+        // (feature off); the fork lowered it to 200. Forcing it back to MAX_VALUE restores upstream.
+        m.put("ape.activityStableRestartThreshold", Integer.toString(Integer.MAX_VALUE));
+        return m;
+    }
+
+    static List<String> rvUnsetKeys() {
+        // mopDataPath: forcing a non-null path collides with INV-MOP-22 (a set-but-unloadable path aborts);
+        // the pure arm needs it null (MOP off). llmUrl: null == LLM disabled. Both are cleared, not set.
+        return Arrays.asList("ape.mopDataPath", "ape.llmUrl");
+    }
+
+    static Map<String, String> rvExemptReasons() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("maxEpsilon", "epsilon bound; inert when dynamicEpsilon is forced false (fixed defaultEpsilon)");
+        m.put("minEpsilon", "epsilon bound; inert when dynamicEpsilon is forced false");
+        m.put("activityBaseBudget", "budget sub-param; inert when activityBudgetEnabled is forced false (no tracker)");
+        m.put("activityBudgetPerWidget", "budget sub-param; inert when activityBudgetEnabled is forced false");
+        m.put("coverageMaxStates", "coverage-tracker memory bound; inert to selection when coverageBoostWeight is forced 0");
+        m.put("llmModel", "LLM sampling param; inert when llmOnNewState/Stagnation forced false and llmPercentage 0");
+        m.put("llmPromptVariant", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmTemperature", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmTimeoutMs", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmTopK", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmTopP", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("maxIdleTimeoutMs", "arm-neutral idle ceiling; default 10000 == the upstream literal (gh74)");
+        m.put("mopStrictPackageMatch", "MOP load-validation gate; inert when mopDataPath is unset (MopData null)");
+        m.put("apePureMode", "the kill-switch selector itself (not self-forced)");
+        return m;
+    }
+
+    // rv-scoring-pipeline (task 5.3): apply the apePureMode kill-switch to a Properties. Extracted so the
+    // completeness guard test can exercise the forcing on a throwaway Properties despite the frozen
+    // static-final fields. Logs one [APE-ARCH] line per overwritten flag (INV-ARCH-06 side-effect).
+    static void forceApePureModeInto(Properties p) {
+        for (Map.Entry<String, String> e : rvForcedOffValues().entrySet()) {
+            p.setProperty(e.getKey(), e.getValue());
+            Logger.println("[APE-ARCH] apePureMode forced " + e.getKey() + "=" + e.getValue());
+        }
+        for (String k : rvUnsetKeys()) {
+            p.remove(k);
+            Logger.println("[APE-ARCH] apePureMode forced " + k + "=<unset>");
         }
     }
 
