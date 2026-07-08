@@ -9,6 +9,9 @@ ape-bin.zip
 ape-java-proguard.jar
 ape-java.jar
 
+# legacy code moved out during evolution (P3: overwrite, never keep shims)
+backup/
+
 
 # eclipse, use mvn eclipse:eclipse to generate your project
 .settings
