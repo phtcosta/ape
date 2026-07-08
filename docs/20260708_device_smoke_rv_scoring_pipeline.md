@@ -94,7 +94,15 @@ D8 lambda desugaring, distinct from the R8-rename/package-filter join gap noted 
 `UICOV-ACT` shows only that activity), so it never exercised the 2 correctly-matched widgets either.
 Both effects together → `mop=0` everywhere.
 
-**Scope.** The join lives in `MopData` (consumer) but the real fix is producer-side: emit per-listener
+**RESOLVED (change `mop-reach-strategies`, 2026-07-08, commit 40cc2f9).** The fix is consumer-side after
+all — no GATOR re-run. `MopData.deriveWidgetMopFlags` now recovers `X$$ExternalSyntheticLambdaN` handlers
+from the enclosing class `X`'s reaching `lambda$…` methods (data already in the same JSON), and A′ adds a
+reachability-method-level activity source (the `components.activities[].reachesTarget` field shares the
+same lambda gap — false-negative on all 4 cryptoapp activities). Device re-smoke confirms: load line
+`flagged=3 … recovered=1`; the Execute button is now selected `decision_source=MOP priority=652 mop=300`
+(was `mop=0` on every step pre-fix). See `openspec/changes/mop-reach-strategies` (INV-MOP-27/30/31).
+
+**Historical note (original diagnosis).** The join lives in `MopData` (consumer); the *ideal* producer-side fix would emit per-listener
 `handlerReachesTarget`/`directlyReachesTarget` (the gh60-C3 path) resolving the lambda mapping where
 the desugaring info exists, OR reconcile the reachability signatures to the post-D8 names used by
 widgets/transitions. This belongs to **change #2 (mop-reach-strategies)** / an rv-android producer
