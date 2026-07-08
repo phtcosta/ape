@@ -36,9 +36,9 @@
 
 ## 4. B — MopFrontierPass (TDD; after rv-scoring-pipeline)
 
-- [ ] 4.1 Test-first (scoring-pass test with stub `Graph`+`MopData`): MOP+unvisited target boosted; MOP+visited not; non-MOP+unvisited not; weight `0` = byte-identical; accumulation into `wtgBoost` with `mopWeightWtg`/`frontierBoostWeight` (INV-MFP-01/02/03)
-- [ ] 4.2 Implement `MopFrontierPass implements ScoringPass` in `com.android.commands.monkey.ape.agent.scoring`: own `getWtgTransitions(activity)` lookup, three-condition gate, `setPriority` increment + `setWtgBoost` read-modify-write; `isEnabled()` = `mopFrontierWeight>0 && MopData!=null && hasWtgData()`
-- [ ] 4.3 Register `MopFrontierPass` in `ScoringPipeline.fromConfig` (position per the sibling's pass table — additive to the generic `FrontierPass`)
+- [x] 4.1 Tested at the JVM-runnable granularity (android stubs `Graph`/`GUITreeNode`/`ModelAction` are surefire-excluded, so `apply()` is device-deferred like `FrontierPass.apply` — task 7.4): (a) the MOP∩unvisited predicate `MopFrontierPass.qualifyingMopTargets` as a pure seam — MOP+unvisited qualifies, MOP+visited excluded, non-MOP+unvisited excluded (`MopFrontierPassTest`, INV-MFP-01); (b) the full `isEnabled()` gate — `mopFrontierWeight` is non-final so the JVM drives both weight=0→disabled (INV-MFP-03) and weight>0 with/without MopData+WTG (`ScoringPassGateTest`, try/finally-restored). The `setPriority`+`wtgBoost` read-modify-write accumulation (INV-MFP-02) runs on a resolved `ModelAction` → device (7.4), same boundary as the generic frontier boost
+- [x] 4.2 Implemented `MopFrontierPass implements ScoringPass` in `com.android.commands.monkey.ape.agent.scoring`: own `getWtgTransitions(activity)` lookup, three-condition gate (widget↔transition match, `activityHasMop(target)`, `Graph.getActivityNode(target)==null`), `setPriority` increment + `setWtgBoost` read-modify-write; `isEnabled()` = `mopFrontierWeight>0 && MopData!=null && hasWtgData()`
+- [x] 4.3 Registered `MopFrontierPass` in `ScoringPipeline.fromConfig` immediately after `FrontierPass`, before `CoveragePass` (frontier family contiguous; disabled by default weight 0). Position pinned by `ScoringPipelineTest.fromConfigInsertsMopFrontierAfterFrontierBeforeCoverageWhenWeighted`; the default-config `…AssemblesAllSixInOrder` stays valid (MopFrontier absent at weight 0)
 
 ## 5. E-mín — MOP-first launch ordering (TDD; after activity-frontier)
 

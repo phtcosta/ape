@@ -37,11 +37,13 @@ public final class ScoringPipeline {
     }
 
     /**
-     * Builds the pipeline from configuration. Constructs the six passes in the fixed order
-     * {@code MopWidget → MenuGateway → WTG → Frontier → Coverage → FormCompletion} (INV-ARCH-03) —
-     * the exact order of the pre-refactor inline blocks — and retains only those whose
-     * {@code isEnabled()} is true. Each pass decides {@code isEnabled()} from {@link Config}'s static
-     * gates and the run-fixed {@link ScoringContext#getMopData()} at construction.
+     * Builds the pipeline from configuration. Constructs the passes in the fixed order
+     * {@code MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion}
+     * (INV-ARCH-03; the frontier family stays contiguous) and retains only those whose
+     * {@code isEnabled()} is true. The six original passes are the exact order of the pre-refactor
+     * inline blocks; {@code MopFrontierPass} (Lever B) is additive, disabled unless
+     * {@code mopFrontierWeight > 0}. Each pass decides {@code isEnabled()} from {@link Config}'s gates
+     * and the run-fixed {@link ScoringContext#getMopData()} at construction.
      *
      * @param cfg present for signature fidelity with the spec; the pass gates read {@code Config}'s
      *            {@code public static final} fields directly.
@@ -52,6 +54,7 @@ public final class ScoringPipeline {
         candidates.add(new MenuGatewayPass(ctx));
         candidates.add(new WtgPass(ctx));
         candidates.add(new FrontierPass(ctx));
+        candidates.add(new MopFrontierPass(ctx));
         candidates.add(new CoveragePass(ctx));
         candidates.add(new FormCompletionPass(ctx));
         return new ScoringPipeline(candidates);

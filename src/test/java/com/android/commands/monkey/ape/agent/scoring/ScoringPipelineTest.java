@@ -122,6 +122,25 @@ public class ScoringPipelineTest {
     }
 
     @Test
+    public void fromConfigInsertsMopFrontierAfterFrontierBeforeCoverageWhenWeighted() {
+        // Task 4.3 / INV-MFP registration position: MopFrontierPass joins the roster only when
+        // mopFrontierWeight>0, immediately after the generic FrontierPass and before CoveragePass —
+        // the frontier family stays contiguous (INV-ARCH-03 relative order preserved).
+        StubScoringContext ctx = new StubScoringContext();
+        ctx.mopData = mopWithWtg();
+        int saved = com.android.commands.monkey.ape.utils.Config.mopFrontierWeight;
+        try {
+            com.android.commands.monkey.ape.utils.Config.mopFrontierWeight = 200;
+            ScoringPipeline p = ScoringPipeline.fromConfig(null, ctx);
+            assertEquals(Arrays.asList(
+                    "MopWidgetPass", "MenuGatewayPass", "WtgPass", "FrontierPass",
+                    "MopFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
+        } finally {
+            com.android.commands.monkey.ape.utils.Config.mopFrontierWeight = saved;
+        }
+    }
+
+    @Test
     public void fromConfigCoverageOnlyArmWhenNoMopData() {
         StubScoringContext ctx = new StubScoringContext(); // mopData == null
         ScoringPipeline p = ScoringPipeline.fromConfig(null, ctx);

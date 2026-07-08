@@ -71,6 +71,29 @@ public class ScoringPassGateTest {
         assertTrue("MopData with WTG data", new FrontierPass(ctxWithMop(mopWithWtg())).isEnabled());
     }
 
+    // ---- MopFrontierPass: gated on mopFrontierWeight>0 && mopData+WTG (Lever B) ----
+    // mopFrontierWeight is non-final, so unlike the static-final weights above this JVM CAN
+    // exercise both the weight-off (default 0 → disabled, INV-MFP-03) and weight-on branches.
+
+    @Test
+    public void mopFrontierPassRequiresWeightAndMopDataAndWtgData() {
+        // Default weight 0 → disabled even with full MopData+WTG (byte-identical to absent).
+        assertFalse("default weight 0",
+                new MopFrontierPass(ctxWithMop(mopWithWtg())).isEnabled());
+        int saved = com.android.commands.monkey.ape.utils.Config.mopFrontierWeight;
+        try {
+            com.android.commands.monkey.ape.utils.Config.mopFrontierWeight = 200;
+            assertFalse("weight>0 but no MopData",
+                    new MopFrontierPass(ctxWithMop(null)).isEnabled());
+            assertFalse("weight>0 but no WTG data",
+                    new MopFrontierPass(ctxWithMop(mopNoWtg())).isEnabled());
+            assertTrue("weight>0 with MopData+WTG",
+                    new MopFrontierPass(ctxWithMop(mopWithWtg())).isEnabled());
+        } finally {
+            com.android.commands.monkey.ape.utils.Config.mopFrontierWeight = saved;
+        }
+    }
+
     // ---- CoveragePass / FormCompletionPass: on at default config -------------
 
     @Test
