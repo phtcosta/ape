@@ -22,7 +22,7 @@ import java.util.HashSet;
 import static org.junit.Assert.assertEquals;
 
 /**
- * rv-scoring-pipeline group 6 (tasks 6.1, 6.2) — parity of the refactored pipeline against the
+ * rv-scoring-pipeline group 6 (tasks 6.1, 6.2, 6.3(i)) — parity of the refactored pipeline against the
  * characterization goldens, exercised end-to-end through {@link StatefulAgent#adjustActionsByGUITree()}
  * at the JVM-feasible granularity (the {@code sun.misc.Unsafe} reflection idiom, cf.
  * {@code BasePriorityCharacterizationTest}/{@code UICoverageTrackerTest}).
@@ -128,6 +128,14 @@ public class PipelineParityTest {
         return mop;
     }
 
+    /** An empty pipeline via the package-private ctor — the OUTCOME apePureMode produces. */
+    private static ScoringPipeline emptyPipeline() throws Exception {
+        java.lang.reflect.Constructor<ScoringPipeline> ctor =
+                ScoringPipeline.class.getDeclaredConstructor(java.util.List.class);
+        ctor.setAccessible(true);
+        return ctor.newInstance(Collections.emptyList());
+    }
+
     // ---- 6.1: MOP arm assembles but reproduces the base golden on non-targets ----
 
     @Test
@@ -184,5 +192,28 @@ public class PipelineParityTest {
 
         assertEquals("no gateway → no menu boost", 0, menu.getMenuBoost());
         assertEquals("priority stays at base", NON_TARGET_BASE, menu.getPriority());
+    }
+
+    // ---- 6.3(i): empty pipeline (pure-arm outcome) yields upstream base priorities ----
+
+    @Test
+    public void emptyPipelineYieldsUpstreamBasePriorities() throws Exception {
+        // apePureMode forces every gate off, so fromConfig would assemble an empty pipeline. The
+        // static-final wall blocks producing that OFF config in-JVM (tasks 6.3/6.5 defer the wired
+        // apePureMode run to device 7.6), but the OUTCOME — an empty pipeline — is constructible
+        // directly, discharging the scoring-pipeline scenario "empty pipeline yields upstream
+        // priorities": adjustActionsByGUITree == the base loop plus a no-op apply.
+        ModelAction backUnvisited = nonTargetAction(ActionType.MODEL_BACK, false);
+        ModelAction backVisited = nonTargetAction(ActionType.MODEL_BACK, true);
+        SataAgent agent = bareAgent(stateWith("com.x.Main", backUnvisited, backVisited),
+                MopData.forTest(null, null, null));
+        setField(agent, "scoringPipeline", emptyPipeline()); // the pure-arm outcome
+
+        agent.adjustActionsByGUITree();
+
+        assertEquals("unvisited: (1<<3)+5, empty pipeline adds nothing",
+                NON_TARGET_BASE + UNVISITED_BONUS, backUnvisited.getPriority());
+        assertEquals("visited: (1<<3), empty pipeline adds nothing",
+                NON_TARGET_BASE, backVisited.getPriority());
     }
 }
