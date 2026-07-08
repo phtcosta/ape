@@ -17,18 +17,18 @@ import java.util.Locale;
  * <p>Deliberately minimal (P1): no form classifier, no field-dependency model, no new text
  * generator. Filling reuses the existing type-aware {@code ApeAgent.generateInputText}.
  */
-final class FormCompletion {
+public final class FormCompletion {
 
     private FormCompletion() {}
 
     /** Per-field fill boost. Positive and larger than {@link #W_SUBMIT} so fields are walked first. */
-    static final int W_FILL = 150;
+    public static final int W_FILL = 150;
     /**
      * Submit-candidate boost. Positive (INV-FORM-02) and below {@link #W_FILL}. These magnitudes
      * tune only the roulette/tiebreaker path; the short-circuit ordering is enforced by the
      * INV-FORM-06 guard. Initial values pending the §7.5 device tuning (OQ4).
      */
-    static final int W_SUBMIT = 100;
+    public static final int W_SUBMIT = 100;
 
     /** Submit-like words matched case-insensitively against a clickable's visible text (OQ2). */
     private static final String[] SUBMIT_WORDS = {
@@ -40,7 +40,7 @@ final class FormCompletion {
      * True iff the action is a resolved, valid, target-requiring {@code EditText} whose node has
      * no text yet ({@code getInputText() == null}). Null/unresolved nodes yield false.
      */
-    static boolean isUnfilledEditText(ModelAction action, int timestamp) {
+    public static boolean isUnfilledEditText(ModelAction action, int timestamp) {
         if (action == null || !action.requireTarget() || !action.isValid()) {
             return false;
         }
@@ -62,7 +62,7 @@ final class FormCompletion {
      * True iff the state carries at least one unfilled {@code EditText} action — the
      * "form-completion context". Pure; reads {@code State.getActions()} without mutation.
      */
-    static boolean hasUnfilledEditText(State state, int timestamp) {
+    public static boolean hasUnfilledEditText(State state, int timestamp) {
         if (state == null) {
             return false;
         }
@@ -81,7 +81,7 @@ final class FormCompletion {
      * else a click whose visible text matches a submit word. Pure (no mutation); must run after
      * the MOP pass so {@code mopBoost} is populated.
      */
-    static ModelAction selectSubmitCandidate(State state, int timestamp) {
+    public static ModelAction selectSubmitCandidate(State state, int timestamp) {
         if (state == null) {
             return null;
         }

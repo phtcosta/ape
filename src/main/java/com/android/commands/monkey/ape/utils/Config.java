@@ -211,6 +211,26 @@ public class Config {
     // the mismatched pair; fail-open on exhaustion. Default true; false restores old path.
     public static final boolean treePackageGuard = Config.getBoolean("ape.treePackageGuard", true);
 
+    // rv-scoring-pipeline: parity flags (INV-ARCH-07). Each gates a previously-flagless fork behavior
+    // so an "APE-pure" arm is expressible. Every default preserves current aperv behavior — with none
+    // of these keys set, selection is identical to pre-change aperv. The apePureMode kill-switch
+    // (task 5.3) forces the six behavior gates off; its forcing mechanism lives in this class's load.
+    // gate: FormCompletionPass + the deterministic-fill branch in ApeAgent.checkInput()
+    public static final boolean formCompletionEnabled = Config.getBoolean("ape.formCompletionEnabled", true);
+    // gate: the [APE-STEP] per-step telemetry line + per-action timing
+    public static final boolean stepTelemetryEnabled = Config.getBoolean("ape.stepTelemetryEnabled", true);
+    // gate: inclusion of the fork menuAction in State.getActions() (field stays constructed/non-null)
+    public static final boolean modelMenuEnabled = Config.getBoolean("ape.modelMenuEnabled", true);
+    // gate: the priority tiebreak in State.greedyPickLeastVisited() (false = upstream array-order ties)
+    public static final boolean leastVisitedPriorityTiebreak = Config.getBoolean("ape.leastVisitedPriorityTiebreak", true);
+    // gate: the three GUITreeBuilder perception enhancements (WebView-prune count, AndroidX
+    // actionability, ViewPager scrollable); false = upstream perception (inherits the WebView over-prune)
+    public static final boolean treeEnhancementsEnabled = Config.getBoolean("ape.treeEnhancementsEnabled", true);
+    // gate: ActivityBudgetTracker instantiation + the budget check in SataAgent.selectNewActionNonnull()
+    public static final boolean activityBudgetEnabled = Config.getBoolean("ape.activityBudgetEnabled", true);
+    // kill-switch: when true, Config forces every RV-defining flag to its off/inert value (task 5.3).
+    public static final boolean apePureMode = Config.getBoolean("ape.apePureMode", false);
+
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
         if (configFile.exists()) {

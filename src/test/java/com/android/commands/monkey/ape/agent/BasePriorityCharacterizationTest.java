@@ -1,8 +1,12 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import org.junit.Test;
@@ -64,13 +68,27 @@ public class BasePriorityCharacterizationTest {
         return state;
     }
 
-    /** A SataAgent with no MopData (all scoring passes off) and a real, empty coverage tracker. */
+    /**
+     * A SataAgent with no MopData (all MOP passes off) and a real, empty coverage tracker. The Unsafe
+     * allocation skips the constructor, so the scoring pipeline is wired here the same way the
+     * constructor does: a MopData-less context yields a Coverage+FormCompletion pipeline that no-ops on
+     * the non-target actions this test uses, leaving the base priorities intact.
+     */
     private static SataAgent bareAgent(State newState) throws Exception {
-        SataAgent agent = allocate(SataAgent.class);
+        final SataAgent agent = allocate(SataAgent.class);
         setField(agent, "newState", newState);
         setField(agent, "timestamp", 1);
-        setField(agent, "_coverageTracker", new UICoverageTracker());
-        // _mopData is left null -> the MOP-widget/menu-gateway/WTG/frontier passes never run.
+        final UICoverageTracker tracker = new UICoverageTracker();
+        setField(agent, "_coverageTracker", tracker);
+        ScoringContext ctx = new ScoringContext() {
+            @Override public MopData getMopData() { return null; }
+            @Override public UICoverageTracker getCoverageTracker() { return tracker; }
+            @Override public Graph getGraph() { return null; }
+            @Override public int getTimestamp() { return 1; }
+            @Override public boolean menuPickEligible(String activity) { return true; }
+        };
+        setField(agent, "scoringContext", ctx);
+        setField(agent, "scoringPipeline", ScoringPipeline.fromConfig(null, ctx));
         return agent;
     }
 

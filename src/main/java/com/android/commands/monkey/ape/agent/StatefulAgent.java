@@ -75,6 +75,8 @@ import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
+import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.tree.GUITreeWidgetDiffer;
@@ -137,6 +139,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     private final UICoverageTracker _coverageTracker;
     private final ActivityBudgetTracker _budgetTracker;
 
+    // rv-scoring-pipeline: the RV scoring path, extracted from adjustActionsByGUITree() into an
+    // ordered set of passes assembled once from Config. The context is the seam through which the
+    // passes read this agent's collaborators (live), so a pass carries no run state (INV-ARCH-02/05).
+    private final ScoringContext scoringContext;
+    private final ScoringPipeline scoringPipeline;
+
     // LLM integration fields
     protected LlmRouter _llmRouter;
     private final SystemBroadcastCatalog _broadcastCatalog;
@@ -168,6 +176,19 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this._budgetTracker = new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget);
         this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
         this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
+        // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
+        // and assemble the pipeline once, now that _mopData/_coverageTracker/graph/timestamp are set.
+        // fromConfig emits the [APE-ARCH] passes=[...] startup line. Pass isEnabled() reads only
+        // getMopData() here (run-fixed) — never menuPickEligible — so no subclass field is touched
+        // before the subclass constructor runs.
+        this.scoringContext = new ScoringContext() {
+            @Override public MopData getMopData() { return StatefulAgent.this.getMopData(); }
+            @Override public UICoverageTracker getCoverageTracker() { return StatefulAgent.this.getCoverageTracker(); }
+            @Override public Graph getGraph() { return StatefulAgent.this.getGraph(); }
+            @Override public int getTimestamp() { return StatefulAgent.this.getTimestamp(); }
+            @Override public boolean menuPickEligible(String activity) { return StatefulAgent.this.menuPickEligible(activity); }
+        };
+        this.scoringPipeline = ScoringPipeline.fromConfig(null, this.scoringContext);
     }
 
     protected MopData getMopData() {
@@ -1031,7 +1052,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
      * Mirrors {@code MopScorer.scoreWtg}'s resource-id match but keys on unvisited-ness instead of
      * MOP-reachability (INV-WTG-06). Testable without the Graph via the visited-target set.
      */
-    static int frontierBoost(String shortId, java.util.List<MopData.WtgTransition> transitions,
+    public static int frontierBoost(String shortId, java.util.List<MopData.WtgTransition> transitions,
             Set<String> visitedTargets, int weight) {
         if (weight <= 0 || shortId == null || shortId.isEmpty() || transitions == null) {
             return 0;
@@ -1391,7 +1412,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     protected void adjustActionsByGUITree() {
         // Rect displayBounds = ape.getDisplayBounds();
         for (ModelAction action : newState.getActions()) {
-            action.resetBoosts();
             int basePriority = getActionBasePriority(action.getType()) << 3;
             action.setPriority(basePriority);
             if (!action.requireTarget()) {
@@ -1445,187 +1465,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             }
             action.setPriority(priority);
         }
-        // MOP guidance pass — runs only when mopDataPath is set
-        if (_mopData != null) {
-            String activity = newState.getActivity();
-            int boostedCount = 0;
-            int totalTarget = 0;
-            int maxBoost = 0;
-            int containmentBoostedCount = 0;
-            for (ModelAction action : newState.getActions()) {
-                if (!action.requireTarget() || !action.isValid()) continue;
-                if (!action.isResolvedAt(timestamp)) continue;
-                totalTarget++;
-                GUITreeNode node = action.getResolvedNode();
-                if (node == null) continue;
-                boolean[] containmentHit = new boolean[]{false};
-                int boost = mopBoostWithContainment(
-                        activity, node, MopScorer.eventTypeOf(action), containmentHit);
-                if (boost > 0) {
-                    action.setPriority(action.getPriority() + boost);
-                    action.setMopBoost(boost);
-                    boostedCount++;
-                    if (containmentHit[0]) containmentBoostedCount++;
-                    if (boost > maxBoost) maxBoost = boost;
-                }
-            }
-            Logger.iformat(
-                    "[APE-RV] MOP boost: state=%s#%s, boosted=%d/%d, maxBoost=%d, containment=%d",
-                    activity, newState.getStateKey(), boostedCount, totalTarget, maxBoost,
-                    containmentBoostedCount);
-            // gh13 T1.2: OPTIONSMENU gateway boost — make the agent open the menu that leads to MOP.
-            // back-menu-pick-cap: gate the +menuBoost by menuPickEligible so a MENU whose (activity,
-            // MODEL_MENU) key is capped stops re-dominating the roulette (base agent: always eligible;
-            // SataAgent: cap check). No setPriority/setMenuBoost when the gate is closed.
-            int menuBoost = menuPickEligible(activity) ? MopScorer.scoreOpenMenu(activity, _mopData) : 0;
-            if (menuBoost > 0) {
-                for (ModelAction action : newState.getActions()) {
-                    if (action.getType() == ActionType.MODEL_MENU) {
-                        action.setPriority(action.getPriority() + menuBoost);
-                        action.setMenuBoost(menuBoost);
-                        Logger.iformat("[APE-RV] menu boost: state=%s#%s, +%d on MODEL_MENU",
-                                activity, newState.getStateKey(), menuBoost);
-                    }
-                }
-            }
-        }
-        // WTG scoring pass — boost widgets leading to MOP-reachable activities
-        if (_mopData != null && _mopData.hasWtgData()) {
-            String activity = newState.getActivity();
-            int wtgBoostedCount = 0;
-            int wtgTotalTarget = 0;
-            int wtgMaxBoost = 0;
-            // activity-frontier Lever A: own transitions lookup (scoreWtg's int return hides the
-            // target and only fires when MOP-reachable). Precompute which transition targets are
-            // already visited so the frontier decision is a pure set lookup (INV-WTG-06).
-            List<MopData.WtgTransition> transitions = _mopData.getWtgTransitions(activity);
-            Set<String> visitedTargets = new HashSet<>();
-            if (Config.frontierBoostWeight > 0) {
-                for (MopData.WtgTransition t : transitions) {
-                    if (getGraph().getActivityNode(t.targetActivity) != null) {
-                        visitedTargets.add(t.targetActivity);
-                    }
-                }
-            }
-            int frontierBoostedCount = 0;
-            int frontierMaxBoost = 0;
-            for (ModelAction action : newState.getActions()) {
-                if (!action.requireTarget() || !action.isValid()) continue;
-                if (!action.isResolvedAt(timestamp)) continue;
-                wtgTotalTarget++;
-                GUITreeNode node = action.getResolvedNode();
-                if (node == null) continue;
-                String shortId = MopData.extractShortId(node.getResourceID());
-                int boost = MopScorer.scoreWtg(activity, shortId, _mopData);
-                if (boost > 0) {
-                    action.setPriority(action.getPriority() + boost);
-                    action.setWtgBoost(boost);
-                    wtgBoostedCount++;
-                    if (boost > wtgMaxBoost) wtgMaxBoost = boost;
-                }
-                // activity-frontier Lever A: reward a widget whose WTG transition targets an
-                // as-yet-unvisited activity, independent of MOP-reachability. setPriority is the
-                // steering mechanism (wtgBoost is telemetry-only); the wtgBoost accumulation is
-                // read-modify-write so it stacks with the MOP-reach boost above (INV-WTG-06/07).
-                int fBoost = frontierBoost(shortId, transitions, visitedTargets, Config.frontierBoostWeight);
-                if (fBoost > 0) {
-                    action.setPriority(action.getPriority() + fBoost);
-                    action.setWtgBoost(action.getWtgBoost() + fBoost);
-                    frontierBoostedCount++;
-                    if (fBoost > frontierMaxBoost) frontierMaxBoost = fBoost;
-                }
-            }
-            if (wtgBoostedCount > 0) {
-                Logger.iformat("[APE-RV] WTG boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
-                        activity, newState.getStateKey(), wtgBoostedCount, wtgTotalTarget, wtgMaxBoost);
-            }
-            if (frontierBoostedCount > 0) {
-                Logger.iformat("[APE-RV] Frontier boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
-                        activity, newState.getStateKey(), frontierBoostedCount, wtgTotalTarget, frontierMaxBoost);
-            }
-        }
-        // Coverage boost pass — per-action boost for widgets untested ANYWHERE in the current
-        // Activity (activity-scoped novelty, coverage-boost-activity-scope), decaying with per-state
-        // visits (state-scoped decay, deliberately kept so it still protects against dwelling on one
-        // complex screen). The activity-scoped membership survives NamingFactory fragmentation and
-        // state eviction, so a fragment split no longer re-arms the boost for already-exercised
-        // widgets (INV-COV-09).
-        if (Config.coverageBoostWeight > 0) {
-            int covBoostedCount = 0;
-            int covTotalTarget = 0;
-            float coverageGap = _coverageTracker.getCoverageGap(newState);
-            int stateVisits = newState.getVisitedCount();
-            int decayedWeight = Config.coverageBoostWeight / (1 + stateVisits / 5);
-            for (ModelAction action : newState.getActions()) {
-                if (!action.requireTarget() || !action.isValid()) continue;
-                if (!action.isResolvedAt(timestamp)) continue;
-                covTotalTarget++;
-                String widgetId = UICoverageTracker.widgetId(action);
-                boolean interacted =
-                        _coverageTracker.hasActivityInteraction(newState.getActivity(), widgetId);
-                if (!interacted && decayedWeight > 0) {
-                    action.setPriority(action.getPriority() + decayedWeight);
-                    action.setCoverageBoost(decayedWeight);
-                    covBoostedCount++;
-                }
-            }
-            if (covBoostedCount > 0) {
-                Logger.iformat("[APE-RV] Coverage boost: state=%s#%s, boosted=%d/%d, gap=%.2f",
-                        newState.getActivity(), newState.getStateKey(), covBoostedCount, covTotalTarget, coverageGap);
-            }
-        }
-        // Form-completion pass — when the state carries ≥1 unfilled EditText, raise the priority
-        // of every unfilled field and of a single submit candidate so the form is filled then
-        // submitted. No-op (no boost, no log) on states with no unfilled EditText (INV-FORM-01).
-        if (FormCompletion.hasUnfilledEditText(newState, timestamp)) {
-            int fields = 0;
-            for (ModelAction action : newState.getActions()) {
-                if (FormCompletion.isUnfilledEditText(action, timestamp)) {
-                    action.setPriority(action.getPriority() + FormCompletion.W_FILL);
-                    action.setFormBoost(FormCompletion.W_FILL);
-                    fields++;
-                }
-            }
-            ModelAction submit = FormCompletion.selectSubmitCandidate(newState, timestamp);
-            String submitId = "none";
-            if (submit != null) {
-                submit.setPriority(submit.getPriority() + FormCompletion.W_SUBMIT);
-                // Accumulate: the submit candidate may itself be an unfilled EditText already
-                // boosted by W_FILL above; don't clobber that provenance (the priority added both).
-                submit.setFormBoost(submit.getFormBoost() + FormCompletion.W_SUBMIT);
-                submitId = submit.getTarget() != null ? submit.getTarget().toString() : submit.toString();
-            }
-            Logger.iformat("[APE-RV] FORM boost: state=%s#%s, fields=%d, submit=%s",
-                    newState.getActivity(), newState.getStateKey(), fields, submitId);
-        }
-    }
-
-    /**
-     * MOP boost for an action's node, reconciling parent/child widget granularity
-     * (B3, INV-MOP): static analysis may flag a container resource id while the
-     * runtime resolves a child id, or vice versa. Scores the node's own short id
-     * plus the ids of its ancestors (≤ 2 levels up) and descendants (≤ 2 levels
-     * down) via the existing {@link MopScorer#score}, returning the maximum boost.
-     * The depth bound guards against a single MOP child over-boosting a large
-     * container. {@code containmentHit[0]} is set true when the winning boost came
-     * from an ancestor/descendant rather than the exact id (hit-rate telemetry).
-     */
-    private int mopBoostWithContainment(String activity, GUITreeNode node,
-                                        String eventType, boolean[] containmentHit) {
-        // Walk the containment neighborhood in the canonical order (self, ancestors
-        // ≤2 up, descendants ≤2 down) shared with the typed-input path (INV-MOP-23,
-        // design D3). The node's own short id is index 0; every subsequent id that
-        // strictly improves the boost is an ancestor/descendant hit.
-        java.util.List<String> ids = MopScorer.containmentShortIds(node);
-        int best = MopScorer.score(activity, ids.get(0), _mopData, eventType);
-        for (int i = 1; i < ids.size(); i++) {
-            int b = MopScorer.score(activity, ids.get(i), _mopData, eventType);
-            if (b > best) {
-                best = b;
-                containmentHit[0] = true;
-            }
-        }
-        return best;
+        // rv-scoring-pipeline (INV-ARCH-05): every RV scoring term is now a ScoringPass in the
+        // pipeline assembled once from Config (MopWidget → MenuGateway → WTG → Frontier → Coverage →
+        // FormCompletion). apply() clears provenance then runs the enabled passes; an empty pipeline
+        // (pure arm) is a strict no-op, leaving the upstream base priorities above untouched.
+        scoringPipeline.apply(newState, newState.getActions().toArray(new ModelAction[0]), scoringContext);
     }
 
     boolean isTopLeftClick(ModelAction action, Rect displayBounds) {
