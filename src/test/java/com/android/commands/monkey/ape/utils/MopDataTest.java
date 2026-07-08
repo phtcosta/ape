@@ -965,6 +965,34 @@ public class MopDataTest {
                 d.activityHasMopOptionsMenu("Src"));
     }
 
+    // -------------------------------------------------------------------------
+    // F′ seam: isWidgetlessSubstrate() — pure sum over windows[].widgets (INV-MOP-28)
+    // -------------------------------------------------------------------------
+
+    /** 3.1: a window carrying at least one widget → not a widgetless substrate. */
+    @Test
+    public void widgetlessSubstrateFalseWhenAWidgetPresent() throws Exception {
+        String win = "{\"id\":1,\"name\":\"Scr\",\"widgets\":["
+                + "{\"idName\":\"btn\",\"type\":\"android.widget.Button\"}]}";
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
+        assertFalse(d.isWidgetlessSubstrate());
+    }
+
+    /** 3.1: a window with an empty widgets[] → widgetless substrate (0-widget fixture). */
+    @Test
+    public void widgetlessSubstrateTrueWhenWindowHasNoWidgets() throws Exception {
+        String win = "{\"id\":1,\"name\":\"Scr\",\"widgets\":[]}";
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
+        assertTrue(d.isWidgetlessSubstrate());
+    }
+
+    /** 3.1: no windows at all → widgetless substrate (empty windows[]). */
+    @Test
+    public void widgetlessSubstrateTrueWhenNoWindows() throws Exception {
+        MopData d = MopData.load(writeTempJson(synthetic("", "", "", "")), null, null);
+        assertTrue(d.isWidgetlessSubstrate());
+    }
+
     private static String synthetic(String reachElem, String winElems, String transElems, String compObj) {
         StringBuilder sb = new StringBuilder("{\"package\":\"C\",\"mainActivity\":\"C\",\"complete\":true");
         sb.append(",\"reachability\":[").append(reachElem).append("]");

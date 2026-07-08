@@ -61,6 +61,32 @@ public class LlmRouterTest {
     }
 
     // -------------------------------------------------------------------------
+    // INV-RTR-09 (mop-reach-strategies 3.3): llmPercentageNoSubstrate is loaded and
+    // exposed only — no routing decision consumes it in this change. Clamp/default are
+    // pinned in ConfigTest 1.4; here we pin the "no consumer" half two ways.
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void llmPercentageNoSubstrate_isExposedButNotConsumedByRouting() throws Exception {
+        // Exposed with the -1 sentinel (F′ seam; no consumer wired yet). Clamp/defaults are
+        // pinned in ConfigTest 1.4.
+        assertEquals(-1.0,
+                com.android.commands.monkey.ape.utils.Config.llmPercentageNoSubstrate, 1e-9);
+
+        // No consumer: shouldRouteRandom fires purely on Config.llmPercentage, never on the
+        // no-substrate override. Pinned structurally — the override is not referenced anywhere
+        // in LlmRouter's source, so a future wiring must be a deliberate spec change, not a
+        // silent edit (INV-RTR-09).
+        java.io.File src = new java.io.File(
+                "src/main/java/com/android/commands/monkey/ape/llm/LlmRouter.java");
+        assertTrue("LlmRouter source not found at " + src.getAbsolutePath(), src.exists());
+        String body = new String(java.nio.file.Files.readAllBytes(src.toPath()),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertFalse("llmPercentageNoSubstrate must have no consumer in LlmRouter (INV-RTR-09)",
+                body.contains("llmPercentageNoSubstrate"));
+    }
+
+    // -------------------------------------------------------------------------
     // screenshot_failed counter split (task §5.5 / llm-routing spec)
     //
     // The increment itself lives in selectAction()'s screenshot-null branch,

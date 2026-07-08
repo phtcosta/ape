@@ -944,6 +944,22 @@ public class MopData {
         return Collections.unmodifiableList(transitions);
     }
 
+    /**
+     * True when no parsed window carries any widget — a widget-less substrate (e.g. a
+     * Compose/canvas UI where static analysis found no addressable widgets, so widget-level
+     * MOP guidance has nothing to bind to). Pure function of the parsed {@code windows[].widgets}
+     * counts; reads nothing else and affects no scoring, routing, or load outcome (INV-MOP-28).
+     * No consumer yet.
+     */
+    public boolean isWidgetlessSubstrate() {
+        for (Window w : windows) {
+            if (!w.widgets.isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** Returns the MOP flags / metadata for a widget, or null if no match. */
     public Widget getWidget(String activity, String shortId) {
         Map<String, Widget> widgets = widgetData.get(activity);

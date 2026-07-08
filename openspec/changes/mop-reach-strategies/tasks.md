@@ -30,9 +30,9 @@
 
 ## 3. F′ seams (TDD)
 
-- [ ] 3.1 Test-first: `MopData.isWidgetlessSubstrate()` — 0-widget fixture → true, ≥1-widget fixture → false, empty `windows[]` → true (INV-MOP-28)
-- [ ] 3.2 Implement `isWidgetlessSubstrate()` as a pure sum over `windows[].widgets`; no consumer
-- [ ] 3.3 Test-first: `Config.llmPercentageNoSubstrate` load — default `-1` unclamped; `1.5` → `1.0`; `-0.2` (a real negative, not the sentinel) behaviour documented (INV-RTR-09). Assert `LlmRouter`/`shouldRouteRandom` unchanged (no consumer)
+- [x] 3.1 Test-first: `MopData.isWidgetlessSubstrate()` — 0-widget fixture → true, ≥1-widget fixture → false, empty `windows[]` → true (INV-MOP-28). `MopDataTest` +3 (`widgetlessSubstrate{FalseWhenAWidgetPresent,TrueWhenWindowHasNoWidgets,TrueWhenNoWindows}`)
+- [x] 3.2 Implement `isWidgetlessSubstrate()` as a pure sum over `windows[].widgets` (short-circuit on first non-empty); no consumer
+- [x] 3.3 `Config.llmPercentageNoSubstrate` load (default `-1` unclamped; `1.5` → `1.0`; `-0.2` → `-1` sentinel) is pinned in `ConfigTest` 1.4. Added the "no consumer" half in `LlmRouterTest.llmPercentageNoSubstrate_isExposedButNotConsumedByRouting`: exposed `-1` sentinel + structural guard that `LlmRouter` source never references the flag, so a future wiring must be a deliberate spec change (INV-RTR-09)
 
 ## 4. B — MopFrontierPass (TDD; after rv-scoring-pipeline)
 
