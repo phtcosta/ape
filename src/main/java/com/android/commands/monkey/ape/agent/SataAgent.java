@@ -670,10 +670,51 @@ public class SataAgent extends StatefulAgent {
     }
 
     /**
+     * Framework/tooling class-name prefixes that are never genuine app screens. Debug-build
+     * manifest merging injects these as exported components of the app package (Compose preview,
+     * abstract framework activities, leakcanary, test scaffolds), so they pass the eligibility
+     * conjunction; the class namespace is the discriminator (app code is never authored here).
+     * A fixed correctness filter, not a tunable — no Config flag (INV-CT-10). cmpft4: 76% of 114
+     * launches hit these.
+     */
+    private static final String[] FRAMEWORK_ACTIVITY_PREFIXES = {
+            "android.", "androidx.", "com.google.android.", "kotlin.", "kotlinx.",
+            "junit.", "org.junit.", "leakcanary.",
+    };
+
+    /**
+     * INV-MOP-33: the Nav MOP-tiebreak decision line, or {@code null} when density did not decide
+     * (all-equal random fallback). Emitted only from the path-selection site; never alters which
+     * path is chosen. Pure.
+     */
+    static String navMopTiebreakLog(int winningDensity, int pathCount, boolean densityDecided) {
+        if (!densityDecided) {
+            return null;
+        }
+        return String.format("[APE-RV] Nav MOP tiebreak: density=%d paths=%d",
+                winningDensity, pathCount);
+    }
+
+    /** Whether {@code className} starts with any {@link #FRAMEWORK_ACTIVITY_PREFIXES} entry
+     * (prefix match, never substring). */
+    private static boolean isFrameworkActivity(String className) {
+        if (className == null) {
+            return false;
+        }
+        for (String prefix : FRAMEWORK_ACTIVITY_PREFIXES) {
+            if (className.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Round-robin eligibility walk. {@code requireMop} null = MOP membership ignored (the plain
      * activity-frontier walk); {@code Boolean.TRUE}/{@code FALSE} restricts to candidates whose
-     * className is / is not in {@code mopActivities}. Eligibility (exported, no permission gate, not
-     * main, unvisited) is identical in all three modes — only the group filter changes. Pure.
+     * className is / is not in {@code mopActivities}. Eligibility (not framework/tooling-namespaced,
+     * exported, no permission gate, not main, unvisited) is identical in all three modes — only the
+     * group filter changes. Pure.
      */
     private static ComponentInfo firstEligible(List<? extends ComponentInfo> activities,
             Set<String> visitedActivities, String mainActivity, int rrIndex,
@@ -685,6 +726,9 @@ public class SataAgent extends StatefulAgent {
         for (int i = 0; i < n; i++) {
             int idx = (((rrIndex + i) % n) + n) % n; // safe modulo for any rrIndex
             ComponentInfo c = activities.get(idx);
+            if (isFrameworkActivity(c.className)) {
+                continue;
+            }
             if (requireMop != null && mopActivities.contains(c.className) != requireMop.booleanValue()) {
                 continue;
             }
@@ -1322,6 +1366,12 @@ public class SataAgent extends StatefulAgent {
                     boolean allEqual = selectedPaths.stream()
                             .allMatch(p -> MopScorer.stateMopDensity(p.getLastState(), getMopData(), getTimestamp()) == finalDensity);
                     path = allEqual ? RandomHelper.randomPick(selectedPaths) : best;
+                    // INV-MOP-33: log only when density actually decided the path (not the
+                    // all-equal random fallback). Never alters the selection above.
+                    String tiebreakLog = navMopTiebreakLog(bestDensity, selectedPaths.size(), !allEqual);
+                    if (tiebreakLog != null) {
+                        Logger.iprintln(tiebreakLog);
+                    }
                 } else {
                     path = RandomHelper.randomPick(selectedPaths);
                 }

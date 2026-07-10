@@ -272,8 +272,10 @@ public class MopData {
             // A′ (INV-MOP-27): widen mopActivities to the 3-source union when the flag is on. Runs
             // before the OPTIONSMENU precompute (which reads mopActivities) so the wider set feeds
             // every downstream consumer. Seam takes the flag as a param (static-final wall).
+            int preAugmentActivities = mopActivities.size();
             augmentActivitiesFromSources(mopActivities, activities, reachability,
                     Config.mopActivitySourceComponents);
+            int augmentedActivities = mopActivities.size() - preAugmentActivities;
 
             // Precompute OPTIONSMENU gateway set (T1.2, D13) — needs WTG + mopActivities.
             Set<String> menuGateways = precomputeMopOptionsMenus(
@@ -311,10 +313,12 @@ public class MopData {
             int[] joinDiag = computeHandlerJoinDiagnostics(windows, bySignature, lambdaReachByClass);
             Logger.iformat("[APE-MOP-DATA] status=loaded package=%s windows=%d widgets=%d"
                     + " flagged=%d droppedNoId=%d transitions=%d"
-                    + " handlersUnmatched=%d syntheticLambda=%d recovered=%d",
+                    + " handlersUnmatched=%d syntheticLambda=%d recovered=%d"
+                    + " mopActivities=%d mopActsAugmented=%d",
                     packageName, windows.size(), countWidgets(widgetData), countFlagged(widgetData),
                     data.droppedFlaggedNoId, transitions.size(),
-                    joinDiag[0], joinDiag[1], joinDiag[2]);
+                    joinDiag[0], joinDiag[1], joinDiag[2],
+                    mopActivities.size(), augmentedActivities);
             return data;
             } catch (JSONException e) {
                 Logger.wprintln("MopData: malformed JSON structure at " + path + ": " + e.getMessage());

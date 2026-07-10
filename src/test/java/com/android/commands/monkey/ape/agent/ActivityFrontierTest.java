@@ -243,6 +243,91 @@ public class ActivityFrontierTest {
         assertEquals("com.x.Plain", off.className); // first in list order, MOP ignored
     }
 
+    // ---- mop-activity-consumers 2.1: framework/tooling denylist (INV-CT-06/10) ------
+    // Framework/tooling activities (Compose preview, abstract ComponentActivity, leakcanary,
+    // test scaffolds) are legitimate exported components of the app package in debug builds,
+    // so they pass the exported/permission/main/visited conjunction; the class-namespace
+    // prefix is the discriminator. cmpft4: 76% of 114 launches hit this garbage.
+
+    /** 2.1(a): the Compose preview tooling activity is skipped for a genuine app activity. */
+    @Test
+    public void testCandidateSkipsComposePreviewTooling() {
+        List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
+                activity("androidx.compose.ui.tooling.PreviewActivity", true, false, null),
+                activity("com.x.HistoryActivity", true, false, null)));
+        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                acts, new HashSet<String>(), "com.x.Main", 0, null);
+        assertNotNull(c);
+        assertEquals("com.x.HistoryActivity", c.className);
+    }
+
+    /** 2.1(b): the abstract framework ComponentActivity is skipped. */
+    @Test
+    public void testCandidateSkipsAbstractComponentActivity() {
+        List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
+                activity("androidx.activity.ComponentActivity", true, false, null),
+                activity("com.x.RealActivity", true, false, null)));
+        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                acts, new HashSet<String>(), "com.x.Main", 0, null);
+        assertNotNull(c);
+        assertEquals("com.x.RealActivity", c.className);
+    }
+
+    /** 2.1(c): a list of only denylisted candidates returns null (falls through to SATA). */
+    @Test
+    public void testCandidateAllDenylistedReturnsNull() {
+        List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
+                activity("androidx.activity.ComponentActivity", true, false, null),
+                activity("leakcanary.internal.activity.LeakActivity", true, false, null)));
+        assertNull(SataAgent.selectTriggerCandidate(
+                acts, new HashSet<String>(), "com.x.Main", 0, null));
+    }
+
+    /** 2.1(d): prefix match, not substring — an app class whose package merely contains
+     * "androidx" stays eligible. */
+    @Test
+    public void testCandidatePrefixNotSubstring() {
+        List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
+                activity("com.foo.androidxutils.MainActivity", true, false, null)));
+        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                acts, new HashSet<String>(), "com.x.Main", 0, null);
+        assertNotNull(c);
+        assertEquals("com.foo.androidxutils.MainActivity", c.className);
+    }
+
+    /** 2.1(e): triggerMopFirst two-group ordering unaffected for eligible candidates — the
+     * denylist filters a denylisted MOP-member out of the MOP-first group without disturbing
+     * the group ordering. */
+    @Test
+    public void testDenylistAppliesWithinMopFirstOrdering() {
+        List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
+                activity("androidx.compose.ui.tooling.PreviewActivity", true, false, null),
+                activity("com.x.Plain", true, false, null),
+                activity("com.x.Crypto", true, false, null)));
+        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                acts, new HashSet<String>(), "com.x.Main", 0,
+                mopSet("androidx.compose.ui.tooling.PreviewActivity", "com.x.Crypto"));
+        assertNotNull(c);
+        assertEquals("com.x.Crypto", c.className); // denylisted MOP-member skipped, MOP-first still wins
+    }
+
+    // ---- mop-activity-consumers 3.3: Nav MOP tiebreak decision log (INV-MOP-33) -----
+    // The log fires only on the decisive branch (density actually chose the path); the
+    // all-equal random fallback stays silent so the per-refill line never floods traces.
+
+    /** 3.3: decisive branch → exactly the formatted line. */
+    @Test
+    public void testNavTiebreakLogDecisiveBranchFormatsLine() {
+        assertEquals("[APE-RV] Nav MOP tiebreak: density=2 paths=3",
+                SataAgent.navMopTiebreakLog(2, 3, true));
+    }
+
+    /** 3.3: all-equal fallback → null (no line). */
+    @Test
+    public void testNavTiebreakLogAllEqualReturnsNull() {
+        assertNull(SataAgent.navMopTiebreakLog(0, 3, false));
+    }
+
     @Test
     public void testMopFirstEligibilityUnchanged() {
         // A MOP-reaching activity that is non-exported stays ineligible; ordering never widens

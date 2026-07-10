@@ -4,6 +4,7 @@ import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
+import com.android.commands.monkey.ape.tree.GUITreeNode;
 
 import org.junit.Test;
 
@@ -26,12 +27,11 @@ import static org.junit.Assert.*;
  *
  * Uses MopData.forTest() to construct test instances without android.util.JsonReader.
  *
- * <p>{@link MopScorer#stateMopDensity} is exercised only for its data-null and
- * {@code activityHasMop}-false early-outs (INV-MOP-24), which return before any widget
- * resolution. The flagged-vs-total widget count needs actions resolved to live
- * {@code GUITreeNode}s (via {@code resolveAt}/{@code getResolvedNode}), which require an
- * Android runtime; that path is device-validated per {@code docs/20260622_investigacao_mop.md}
- * §7.5, mirroring how {@code FormCompletionTest} gates its node-dependent scenarios.
+ * <p>{@link MopScorer#stateMopDensity} is exercised for its data-null and
+ * {@code activityHasMop}-false early-outs (INV-MOP-24) and for the activity-substrate floor
+ * plus flagged-widget count (INV-MOP-24 amended): {@code resolvedStateOnActivity} injects
+ * resolved {@code GUITreeNode}s into each action via the same Unsafe seam {@code stateOnActivity}
+ * uses, so the short-id → {@code getWidget} resolution runs without an Android runtime.
  */
 public class MopScorerTest {
 
@@ -438,6 +438,110 @@ public class MopScorerTest {
                 Collections.singletonMap("flagged", Boolean.TRUE));
         State denseNonMop = stateOnActivity("com.example.PlainActivity", 10);
         assertEquals(0, MopScorer.stateMopDensity(denseNonMop, data, 1));
+    }
+
+    // -------------------------------------------------------------------------
+    // mop-activity-consumers 1.1 — activity-substrate floor: 1 + <flagged count>.
+    // These drive the flagged-count path at the JVM level by injecting resolved
+    // GUITreeNodes (resolvedNode + resovledTimestamp) into each action, the same
+    // Unsafe seam stateOnActivity already uses — so getResolvedNode → extractShortId
+    // → getWidget runs without an Android device.
+    // -------------------------------------------------------------------------
+
+    /**
+     * State on {@code activity} whose actions each resolve (at timestamp 1) to a GUITreeNode
+     * carrying resource id {@code com.example:id/<shortId>}. Reuses the Unsafe allocation of
+     * {@link #stateOnActivity} but additionally populates the resolve fields so the density
+     * walk exercises the real short-id → widget lookup.
+     */
+    private static State resolvedStateOnActivity(String activity, String... shortIds) throws Exception {
+        Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+        Field theUnsafe = unsafeClass.getDeclaredField("theUnsafe");
+        theUnsafe.setAccessible(true);
+        Object unsafe = theUnsafe.get(null);
+        Method allocate = unsafeClass.getMethod("allocateInstance", Class.class);
+
+        StateKey key = (StateKey) allocate.invoke(unsafe, StateKey.class);
+        Field activityField = StateKey.class.getDeclaredField("activity");
+        activityField.setAccessible(true);
+        activityField.set(key, activity);
+
+        State state = (State) allocate.invoke(unsafe, State.class);
+        Field stateKeyField = State.class.getDeclaredField("stateKey");
+        stateKeyField.setAccessible(true);
+        stateKeyField.set(state, key);
+
+        Field resolvedNodeField = ModelAction.class.getDeclaredField("resolvedNode");
+        resolvedNodeField.setAccessible(true);
+        Field tsField = ModelAction.class.getDeclaredField("resovledTimestamp");
+        tsField.setAccessible(true);
+
+        ModelAction[] actions = new ModelAction[shortIds.length];
+        for (int i = 0; i < shortIds.length; i++) {
+            ModelAction a = new ModelAction(null, ActionType.MODEL_CLICK);
+            a.setValid(true);
+            GUITreeNode node = new GUITreeNode(null);
+            node.setResourceID("com.example:id/" + shortIds[i]);
+            resolvedNodeField.set(a, node);
+            tsField.setInt(a, 1);
+            actions[i] = a;
+        }
+        Field actionsField = State.class.getDeclaredField("actions");
+        actionsField.setAccessible(true);
+        actionsField.set(state, actions);
+        return state;
+    }
+
+    /** Widget map for the density tests: {@code flagged} directMop, {@code plain} unflagged. */
+    private static MopData densityData(String activity) {
+        Map<String, Boolean> ids = new HashMap<>();
+        ids.put("flagged", Boolean.TRUE);
+        ids.put("plain", Boolean.FALSE);
+        return buildWidgetData(activity, ids);
+    }
+
+    /** 1.1(a): A′-only activity (MOP-bearing, zero flagged widgets resolve) → floor 1. */
+    @Test
+    public void testStateMopDensityActivityFloorNoFlaggedWidgets() throws Exception {
+        MopData data = densityData("com.example.MopActivity");
+        State aPrimeOnly = resolvedStateOnActivity(
+                "com.example.MopActivity", "plain", "plain", "plain");
+        assertEquals(1, MopScorer.stateMopDensity(aPrimeOnly, data, 1));
+    }
+
+    /** 1.1(b): 2 flagged widgets on a MOP activity → 1 + 2 = 3. */
+    @Test
+    public void testStateMopDensityFloorPlusFlaggedCount() throws Exception {
+        MopData data = densityData("com.example.MopActivity");
+        State st = resolvedStateOnActivity(
+                "com.example.MopActivity", "flagged", "plain", "flagged");
+        assertEquals(3, MopScorer.stateMopDensity(st, data, 1));
+    }
+
+    /** 1.1(c): non-MOP activity → 0 via the early-out (no widget resolution), even if a
+     * flagged id would resolve. */
+    @Test
+    public void testStateMopDensityNonMopActivityStaysZero() throws Exception {
+        MopData data = densityData("com.example.MopActivity");
+        State nonMop = resolvedStateOnActivity(
+                "com.example.PlainActivity", "flagged", "flagged");
+        assertEquals(0, MopScorer.stateMopDensity(nonMop, data, 1));
+    }
+
+    /** 1.1(d): ordering guard — widget-flagged (2) > A′-only floor (1) > non-MOP (0). */
+    @Test
+    public void testStateMopDensityOrderingWidgetAboveFloorAboveZero() throws Exception {
+        MopData data = densityData("com.example.MopActivity");
+        int widget = MopScorer.stateMopDensity(
+                resolvedStateOnActivity("com.example.MopActivity", "flagged"), data, 1);
+        int aPrime = MopScorer.stateMopDensity(
+                resolvedStateOnActivity("com.example.MopActivity", "plain"), data, 1);
+        int nonMop = MopScorer.stateMopDensity(
+                resolvedStateOnActivity("com.example.PlainActivity", "flagged"), data, 1);
+        assertEquals(2, widget);
+        assertEquals(1, aPrime);
+        assertEquals(0, nonMop);
+        assertTrue(widget > aPrime && aPrime > nonMop);
     }
 
     // -------------------------------------------------------------------------

@@ -122,12 +122,20 @@ public class MopScorer {
     }
 
     /**
-     * Widget-level MOP density (INV-MOP-24): counts actions whose RESOLVED widget is
-     * MOP-flagged — direct- or transitive-MOP on the action's own event type — rather than
-     * every target-requiring action on a MOP-bearing activity. Used as a tiebreaker in
-     * ABA / trivial-activity exploration. {@code timestamp} selects the GUITree the actions
-     * were resolved against; resolution mirrors {@link #score} (short id → {@code getWidget}
-     * → {@code isDirectMop}/{@code isTransitiveMop}). Pure: no mutation, no logging.
+     * MOP-bearing-state density with an activity-substrate floor (INV-MOP-24): returns
+     * {@code 0} when the state's activity is not MOP-bearing (cheap early-out, no widget
+     * resolution); otherwise {@code 1 + count}, where {@code count} counts only actions whose
+     * RESOLVED widget is MOP-flagged (direct- or transitive-MOP on the action's own event type),
+     * resolved exactly as {@link #score} does (short id → {@code getWidget} →
+     * {@code isDirectMop}/{@code isTransitiveMop}).
+     *
+     * <p>The {@code +1} floor lets an A′-rescued activity — MOP-bearing via component/lambda
+     * reachability, carrying no widget-level flag — rank above a non-MOP activity ({@code 1 > 0})
+     * in the SATA navigation tiebreaks, while any widget-flagged state still ranks strictly above
+     * an activity-floor-only state ({@code 1 + count > 1} for {@code count ≥ 1}). It is a
+     * cross-state ranking signal only; {@link #score} stays widget-discriminative (no per-candidate
+     * activity fallback). {@code timestamp} selects the GUITree the actions were resolved against.
+     * Pure: no mutation, no logging.
      *
      * @param data loaded MOP data (returns 0 if null)
      */
@@ -161,7 +169,7 @@ public class MopScorer {
                 count++;
             }
         }
-        return count;
+        return 1 + count;
     }
 
     /**
