@@ -54,9 +54,14 @@ Precondition: `mop-reach-strategies` archived (D5 archive ordering).
       single call site, inside `firstEligible`).
 - [x] 4.3 `openspec validate mop-activity-consumers --strict` passes; tasks checked off.
 
-## 5. Device smoke (deferred — cmpft5 gate; requires emulator, user authorization)
+## 5. Device smoke (superseded — cmpft5 Gate 0)
 
-- [ ] 5.1 One MOP-arm run on cryptoapp: `[APE-MOP-DATA]` line shows
-      `mopActivities`/`mopActsAugmented` (flag on: augmented > 0); no `[APE-RV] Triggering
-      activity:` line with an `androidx.`/framework-prefixed class; at least one
-      `Nav MOP tiebreak` line when paths diverge in density.
+- [x] 5.1 SUPERSEDED by cmpft5 Gate 0 (2026-07-11,
+      `rvsec/rv-android/docs/20260711_relatorio_gate0_cmpft5.md`). The original criterion — "a live A′
+      consumer differentiating the arms" — was answered NEGATIVELY by Gate 0 a+b under the launcher-OFF
+      design: the nav tiebreak fired 0/6 arm-runs and `scoreWtg` produced identical boosted sets in
+      3/3 smoke apps. That null (design cannot test H1) is the motivating evidence for the follow-on
+      change `activity-trigger-dose` (launcher ON in both arms). Re-running this smoke would only
+      re-confirm a design already known to be inert; the observability code (mopActivities/
+      mopActsAugmented counters, framework denylist, Nav MOP tiebreak log) is unit-covered (Groups 1–4,
+      602 tests) and carries forward into the launcher-ON cmpft5 Gate 0 rerun.
