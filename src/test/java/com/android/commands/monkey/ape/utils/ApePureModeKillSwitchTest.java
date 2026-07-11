@@ -151,4 +151,18 @@ public class ApePureModeKillSwitchTest {
         overlap.retainAll(UPSTREAM_ALLOWLIST);
         assertTrue("Field(s) classified as both RV and upstream: " + overlap, overlap.isEmpty());
     }
+
+    // ---------------------------------------------------------------------------
+    // activity-trigger-dose 1.2 — the two new launcher sub-params are exempt
+    // (inert when activityTriggerEnabled is forced false), each with the standard
+    // launcher reason. Complements the reflective completeness guard above by
+    // pinning the bucket and reason text (INV-ARCH-06).
+    // ---------------------------------------------------------------------------
+    @Test
+    public void activityTriggerDoseFlagsAreExemptLauncherSubParams() {
+        Map<String, String> exempt = Config.rvExemptReasons();
+        String expected = "launcher sub-param; inert when activityTriggerEnabled is forced false";
+        assertEquals(expected, exempt.get("activityTriggerStagnationStep"));
+        assertEquals(expected, exempt.get("activityTriggerMaxPerRun"));
+    }
 }

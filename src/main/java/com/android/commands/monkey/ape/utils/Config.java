@@ -167,6 +167,19 @@ public class Config {
     // eligible activities ahead of non-MOP ones (each group still round-robin). Default false =
     // round-robin unchanged. Non-final: toggled by unit tests at runtime.
     public static boolean triggerMopFirst = Config.getBoolean("ape.triggerMopFirst", false);
+    // activity-trigger-dose: configurable firing cadence for the stagnation activity launcher
+    // (Lever B). shouldTriggerAtStagnation fires when graphStableCounter == this step. Default 50
+    // is byte-identical to the pre-change gate (graphStableRestartThreshold / 2 with the default
+    // threshold 100), preserving the frozen gh43 arms (INV-CT-11). Because graphStableCounter resets
+    // to 0 on graph growth and on every launch, exact-equality on this step yields periodic launches
+    // under sustained stagnation. A value <= 0 clamps to 50 at load (a 0 step would fire every step).
+    public static final int activityTriggerStagnationStep =
+            clampActivityTriggerStagnationStep(Config.getInteger("ape.activityTriggerStagnationStep", 50));
+    // activity-trigger-dose: per-run cap on EVENT_TRIGGER_ACTIVITY launches (INV-CT-12). Default 0 =
+    // unlimited. Guards against launch-storms in apps whose graph never grows. A negative value clamps
+    // to 0 (unlimited) at load.
+    public static final int activityTriggerMaxPerRun =
+            clampActivityTriggerMaxPerRun(Config.getInteger("ape.activityTriggerMaxPerRun", 0));
     // mop-target-revisit-cap: max deterministic MOP short-circuit picks per
     // (widget XPath, action type, activity) key per run. <= 0 = unlimited (restores the
     // uncapped mop-discriminative-boost behavior). The boost still participates in the
@@ -297,6 +310,27 @@ public class Config {
         return Math.min(1.0, raw);
     }
 
+    // activity-trigger-dose 1.3: clamp for activityTriggerStagnationStep. A value <= 0 would make the
+    // launcher fire at counter 0 (every step); it clamps to the default 50 (logged). Extracted so
+    // ConfigTest can exercise the clamp despite the frozen static-final field.
+    static int clampActivityTriggerStagnationStep(int raw) {
+        if (raw <= 0) {
+            Logger.println("[APE-RV] activityTriggerStagnationStep=" + raw + " <= 0; clamped to default 50");
+            return 50;
+        }
+        return raw;
+    }
+
+    // activity-trigger-dose 1.3: clamp for activityTriggerMaxPerRun. A negative cap is meaningless as a
+    // launch budget; it clamps to 0 (unlimited, logged). 0 is a valid value (unlimited) and passes through.
+    static int clampActivityTriggerMaxPerRun(int raw) {
+        if (raw < 0) {
+            Logger.println("[APE-RV] activityTriggerMaxPerRun=" + raw + " < 0; clamped to 0 (unlimited)");
+            return 0;
+        }
+        return raw;
+    }
+
     static Map<String, String> rvForcedOffValues() {
         Map<String, String> m = new LinkedHashMap<>();
         for (String k : new String[] {
@@ -332,6 +366,8 @@ public class Config {
         m.put("minEpsilon", "epsilon bound; inert when dynamicEpsilon is forced false");
         m.put("activityBaseBudget", "budget sub-param; inert when activityBudgetEnabled is forced false (no tracker)");
         m.put("activityBudgetPerWidget", "budget sub-param; inert when activityBudgetEnabled is forced false");
+        m.put("activityTriggerStagnationStep", "launcher sub-param; inert when activityTriggerEnabled is forced false");
+        m.put("activityTriggerMaxPerRun", "launcher sub-param; inert when activityTriggerEnabled is forced false");
         m.put("coverageMaxStates", "coverage-tracker memory bound; inert to selection when coverageBoostWeight is forced 0");
         m.put("llmModel", "LLM sampling param; inert when llmOnNewState/Stagnation forced false and llmPercentage 0");
         m.put("llmPromptVariant", "LLM sampling param; inert when the LLM masters are forced off");

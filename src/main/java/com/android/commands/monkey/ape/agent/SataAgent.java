@@ -391,7 +391,11 @@ public class SataAgent extends StatefulAgent {
                 return result;
             }
         }
-        // LLM stagnation hook (single-shot at midpoint)
+        // LLM stagnation hook (single-shot at midpoint). Keeps its own fixed
+        // graphStableRestartThreshold / 2 point on purpose: activity-trigger-dose made the LAUNCHER's
+        // firing step configurable (Config.activityTriggerStagnationStep), so with a step != 50 the two
+        // points decouple; at step == 50 with the LLM enabled the LLM hook still runs first and takes
+        // precedence (the launcher block is below). cmpft5 runs the LLM OFF, so there is no interaction.
         if (actionBufferSize() == 0 && newState.getActions().size() > 2
                 && graphStableCounter == graphStableRestartThreshold / 2
                 && _llmRouter != null && _llmRouter.shouldRouteStagnation(graphStableCounter)) {
@@ -418,7 +422,8 @@ public class SataAgent extends StatefulAgent {
         // enabled LLM hook above takes precedence). A first-class EVENT_TRIGGER_ACTIVITY step —
         // model-visible, attributed Component in resolveNewAction, no graph edge (INV-CT-05/06/07).
         if (shouldTriggerAtStagnation(Config.activityTriggerEnabled, getMopData() != null,
-                graphStableCounter, graphStableRestartThreshold)) {
+                graphStableCounter, Config.activityTriggerStagnationStep,
+                _activityTriggerLaunchCount, Config.activityTriggerMaxPerRun)) {
             Set<String> visited = new HashSet<>();
             for (ActivityNode an : getGraph().getActivityNodes()) {
                 visited.add(an.activity);
@@ -429,6 +434,7 @@ public class SataAgent extends StatefulAgent {
             _triggerRoundRobinIndex++;
             if (candidate != null) {
                 graphStableCounter = 0;
+                _activityTriggerLaunchCount++; // budget consumed only on an actual launch (INV-CT-12)
                 Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);
                 // Package captured from MopData (never from the class name — INV-CT-04).
                 return new ActivityTriggerAction(getMopData().getPackageName(),
@@ -630,15 +636,26 @@ public class SataAgent extends StatefulAgent {
     // across stagnation episodes so repeated launches walk the frontier (INV-CT-06).
     private int _triggerRoundRobinIndex = 0;
 
+    // activity-trigger-dose: count of EVENT_TRIGGER_ACTIVITY actions actually returned this run.
+    // Feeds the shouldTriggerAtStagnation per-run cap (Config.activityTriggerMaxPerRun). Incremented
+    // ONLY where the ActivityTriggerAction is returned (candidate != null branch) — a firing whose
+    // candidate scan comes up empty consumes no budget (INV-CT-12).
+    private int _activityTriggerLaunchCount = 0;
+
     /**
-     * activity-frontier gate seam (pure, INV-CT-05/08). The stagnation launcher fires only when it
-     * is enabled, MopData is loaded, and the graph-stable counter is exactly at the mid-threshold
-     * escalation point (equality, not {@code >=}, so it fires once per episode). Off entirely when
-     * disabled or no MopData.
+     * activity-frontier / activity-trigger-dose gate seam (pure, INV-CT-05/08/11/12). The stagnation
+     * launcher fires only when it is enabled, MopData is loaded, the graph-stable counter is exactly at
+     * the configured {@code stagnationStep} (equality, not {@code >=}, so it fires once per episode —
+     * {@code graphStableCounter} resets to 0 on graph growth and on every launch), and the per-run
+     * launch budget is not exhausted ({@code maxPerRun == 0} means unlimited, else fire only while
+     * {@code launchesSoFar < maxPerRun}). The default step 50 == the pre-change {@code
+     * graphStableRestartThreshold / 2} point under the default threshold 100 (INV-CT-11). Off entirely
+     * when disabled or no MopData.
      */
     static boolean shouldTriggerAtStagnation(boolean enabled, boolean hasMopData,
-            int graphStableCounter, int graphStableRestartThreshold) {
-        return enabled && hasMopData && graphStableCounter == graphStableRestartThreshold / 2;
+            int graphStableCounter, int stagnationStep, int launchesSoFar, int maxPerRun) {
+        return enabled && hasMopData && graphStableCounter == stagnationStep
+                && (maxPerRun == 0 || launchesSoFar < maxPerRun);
     }
 
     /**

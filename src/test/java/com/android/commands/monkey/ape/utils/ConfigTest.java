@@ -213,4 +213,57 @@ public class ConfigTest {
     public void testClampLlmPercentageNoSubstrate_inRangeUnchanged() {
         assertEquals(0.5, Config.clampLlmPercentageNoSubstrate(0.5), 1e-9);
     }
+
+    // ---------------------------------------------------------------------------
+    // activity-trigger-dose 1.1: activityTriggerStagnationStep — configurable
+    // firing cadence for the stagnation activity launcher. Default 50 is
+    // byte-identical to the pre-change gate (graphStableRestartThreshold/2 with
+    // the default threshold 100), so frozen arms are preserved (INV-CT-11). The
+    // field is static final (default asserted here); the clamp seam is tested via
+    // the extracted helper (a value <= 0 would fire every step at counter 0).
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testActivityTriggerStagnationStep_defaultIs50() {
+        assertEquals(50, Config.activityTriggerStagnationStep);
+    }
+
+    @Test
+    public void testClampActivityTriggerStagnationStep_inRangeUnchanged() {
+        assertEquals(10, Config.clampActivityTriggerStagnationStep(10));
+    }
+
+    @Test
+    public void testClampActivityTriggerStagnationStep_zeroClampsToDefault() {
+        assertEquals(50, Config.clampActivityTriggerStagnationStep(0));
+    }
+
+    @Test
+    public void testClampActivityTriggerStagnationStep_negativeClampsToDefault() {
+        assertEquals(50, Config.clampActivityTriggerStagnationStep(-7));
+    }
+
+    // ---------------------------------------------------------------------------
+    // activity-trigger-dose 1.1: activityTriggerMaxPerRun — per-run launch cap.
+    // Default 0 = unlimited (INV-CT-12). A negative value is an operator typo and
+    // clamps to 0 (unlimited) at load.
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testActivityTriggerMaxPerRun_defaultIsZero() {
+        assertEquals(0, Config.activityTriggerMaxPerRun);
+    }
+
+    @Test
+    public void testClampActivityTriggerMaxPerRun_positiveUnchanged() {
+        assertEquals(8, Config.clampActivityTriggerMaxPerRun(8));
+    }
+
+    @Test
+    public void testClampActivityTriggerMaxPerRun_zeroUnchanged() {
+        assertEquals(0, Config.clampActivityTriggerMaxPerRun(0));
+    }
+
+    @Test
+    public void testClampActivityTriggerMaxPerRun_negativeClampsToZero() {
+        assertEquals(0, Config.clampActivityTriggerMaxPerRun(-3));
+    }
 }

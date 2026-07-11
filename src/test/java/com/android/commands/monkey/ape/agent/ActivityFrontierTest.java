@@ -103,24 +103,74 @@ public class ActivityFrontierTest {
                 StatefulAgent.nonModelDecisionSource(ActionType.EVENT_ACTIVATE));
     }
 
-    // ---- Lever B: stagnation gate predicate (task 4.3, INV-CT-05/08) ---------
+    // ---- Lever B: stagnation gate predicate ----------------------------------
+    // activity-trigger-dose: 6-arg form shouldTriggerAtStagnation(enabled, hasMopData,
+    // graphStableCounter, stagnationStep, launchesSoFar, maxPerRun). Fires iff enabled && hasMopData
+    // && counter == step && (maxPerRun == 0 || launchesSoFar < maxPerRun). INV-CT-05/08/11/12.
 
     @Test
     public void testGateFiresOnlyAtEqualityPoint() {
-        int threshold = 200; // mid = 100
-        assertTrue(SataAgent.shouldTriggerAtStagnation(true, true, 100, threshold));
-        assertFalse("below mid", SataAgent.shouldTriggerAtStagnation(true, true, 99, threshold));
-        assertFalse("above mid (>= would wrongly fire)",
-                SataAgent.shouldTriggerAtStagnation(true, true, 101, threshold));
+        // fires exactly at counter == step, never below or above (>= would wrongly re-fire mid-episode)
+        assertTrue(SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 0, 0));
+        assertFalse("below step", SataAgent.shouldTriggerAtStagnation(true, true, 9, 10, 0, 0));
+        assertFalse("above step (>= would wrongly fire)",
+                SataAgent.shouldTriggerAtStagnation(true, true, 11, 10, 0, 0));
+        // same shape at the default step 50
+        assertTrue(SataAgent.shouldTriggerAtStagnation(true, true, 50, 50, 0, 0));
+        assertFalse(SataAgent.shouldTriggerAtStagnation(true, true, 49, 50, 0, 0));
     }
 
     @Test
     public void testGateClosedWhenDisabledOrNoMopData() {
-        int threshold = 200;
         assertFalse("disabled flag → never",
-                SataAgent.shouldTriggerAtStagnation(false, true, 100, threshold));
+                SataAgent.shouldTriggerAtStagnation(false, true, 50, 50, 0, 0));
         assertFalse("no MopData → never",
-                SataAgent.shouldTriggerAtStagnation(true, false, 100, threshold));
+                SataAgent.shouldTriggerAtStagnation(true, false, 50, 50, 0, 0));
+    }
+
+    @Test
+    public void testDefaultStep50ReproducesPreChangeGate() {
+        // INV-CT-11: default step 50 == the pre-change gate graphStableRestartThreshold/2 (threshold
+        // 100 → fired at counter == 50). Byte-identical firing point; frozen gh43 arms preserved.
+        assertTrue(SataAgent.shouldTriggerAtStagnation(true, true, 50, 50, 0, 0));
+        assertFalse("old gate did not fire at counter 100",
+                SataAgent.shouldTriggerAtStagnation(true, true, 100, 50, 0, 0));
+    }
+
+    @Test
+    public void testCapBlocksAfterBudgetExhausted() {
+        // INV-CT-12: cap=2 fires while launchesSoFar < 2, blocked at >= 2
+        assertTrue("0 launches", SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 0, 2));
+        assertTrue("1 launch", SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 1, 2));
+        assertFalse("2 launches — budget exhausted",
+                SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 2, 2));
+        assertFalse("3 launches — still blocked",
+                SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 3, 2));
+    }
+
+    @Test
+    public void testCapZeroMeansUnlimited() {
+        // INV-CT-12: cap=0 (default) → never blocks, however many launches have occurred
+        assertTrue(SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 10, 0));
+        assertTrue(SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 999, 0));
+    }
+
+    @Test
+    public void testEmptyCandidateScanDoesNotConsumeBudget() {
+        // Delta scenario "empty candidate scan does not consume budget": with cap=1 and no launches
+        // yet, the gate fires; but if selectTriggerCandidate finds nothing (all visited), no launch
+        // is returned, so launchesSoFar stays 0 and the gate still fires at the next firing point.
+        // The increment lives in the candidate != null branch of the call site (verified on device),
+        // so this composition models the budget-preservation intent at the pure seams.
+        assertTrue("gate fires with 0 launches, cap 1",
+                SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 0, 1));
+        List<ComponentInfo> allVisited = new ArrayList<ComponentInfo>(Arrays.asList(
+                activity("com.x.Seen", true, false, null)));
+        Set<String> visited = new HashSet<>(Arrays.asList("com.x.Seen"));
+        assertNull("no candidate → no launch → no budget spent",
+                SataAgent.selectTriggerCandidate(allVisited, visited, "com.x.Main", 0, null));
+        assertTrue("launchesSoFar unchanged (still 0) → gate still fires",
+                SataAgent.shouldTriggerAtStagnation(true, true, 10, 10, 0, 1));
     }
 
     // ---- Lever B: selectTriggerCandidate (task 4.1, INV-CT-06) ---------------
