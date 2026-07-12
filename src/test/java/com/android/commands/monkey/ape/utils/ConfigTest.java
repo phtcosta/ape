@@ -172,15 +172,6 @@ public class ConfigTest {
     }
 
     // ---------------------------------------------------------------------------
-    // mop-reach-strategies 1.3: triggerMopFirst — E-mín MOP-first launch ordering
-    // in selectTriggerCandidate. Default false = round-robin unchanged.
-    // ---------------------------------------------------------------------------
-    @Test
-    public void testTriggerMopFirst_defaultIsFalse() {
-        assertFalse(Config.triggerMopFirst);
-    }
-
-    // ---------------------------------------------------------------------------
     // mop-reach-strategies 1.4: llmPercentageNoSubstrate — F′ LLM-routing override
     // used when the substrate is widgetless. Default -1 sentinel = "no override"
     // (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt

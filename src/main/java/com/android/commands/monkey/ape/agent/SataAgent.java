@@ -392,10 +392,10 @@ public class SataAgent extends StatefulAgent {
             }
         }
         // LLM stagnation hook (single-shot at midpoint). Keeps its own fixed
-        // graphStableRestartThreshold / 2 point on purpose: activity-trigger-dose made the LAUNCHER's
-        // firing step configurable (Config.activityTriggerStagnationStep), so with a step != 50 the two
-        // points decouple; at step == 50 with the LLM enabled the LLM hook still runs first and takes
-        // precedence (the launcher block is below). cmpft5 runs the LLM OFF, so there is no interaction.
+        // graphStableRestartThreshold / 2 point on purpose: mop-census-launcher moved the LAUNCHER
+        // off graphStableCounter entirely (it now fires on a dedicated cadence counter), so the two
+        // mechanisms no longer share any firing point. cmpft5 runs the LLM OFF, so there is no
+        // interaction; an enabled LLM hook here still runs before the launcher block below.
         if (actionBufferSize() == 0 && newState.getActions().size() > 2
                 && graphStableCounter == graphStableRestartThreshold / 2
                 && _llmRouter != null && _llmRouter.shouldRouteStagnation(graphStableCounter)) {
@@ -417,23 +417,29 @@ public class SataAgent extends StatefulAgent {
                 return result;
             }
         }
-        // activity-frontier (Lever B): stagnation-triggered activity launcher. Fires once per
-        // stagnation episode, at the same escalation point the LLM stagnation hook uses (so an
-        // enabled LLM hook above takes precedence). A first-class EVENT_TRIGGER_ACTIVITY step —
-        // model-visible, attributed Component in resolveNewAction, no graph edge (INV-CT-05/06/07).
-        if (shouldTriggerAtStagnation(Config.activityTriggerEnabled, getMopData() != null,
-                graphStableCounter, Config.activityTriggerStagnationStep,
+        // mop-census-launcher (Lever B): cadence-based MOP-activity launcher. Fires every
+        // Config.activityTriggerStagnationStep passes through this block (a dedicated per-pass
+        // counter, decoupled from graphStableCounter), launching the next unvisited activity from
+        // the arm's MOP census. A first-class EVENT_TRIGGER_ACTIVITY step — model-visible,
+        // attributed Component in resolveNewAction, no graph edge (INV-CT-05/06/07). Evaluated after
+        // the LLM hooks, so an enabled LLM hook at a shared step takes precedence.
+        _stepsSinceLauncherFiring++;
+        if (shouldFireLauncher(Config.activityTriggerEnabled, getMopData() != null,
+                _stepsSinceLauncherFiring, Config.activityTriggerStagnationStep,
                 _activityTriggerLaunchCount, Config.activityTriggerMaxPerRun)) {
+            // Reset at the firing point regardless of candidate outcome (keeps firing periodic and
+            // avoids per-step rescans once the census is exhausted). The launch BUDGET, in contrast,
+            // is consumed only on an actual launch below (INV-CT-12).
+            _stepsSinceLauncherFiring = 0;
             Set<String> visited = new HashSet<>();
             for (ActivityNode an : getGraph().getActivityNodes()) {
                 visited.add(an.activity);
             }
             ComponentInfo candidate = selectTriggerCandidate(getMopData().getActivities(),
                     visited, getMopData().getMainActivity(), _triggerRoundRobinIndex,
-                    Config.triggerMopFirst ? getMopData().getMopActivities() : null);
+                    getMopData().getMopActivities());
             _triggerRoundRobinIndex++;
             if (candidate != null) {
-                graphStableCounter = 0;
                 _activityTriggerLaunchCount++; // budget consumed only on an actual launch (INV-CT-12)
                 Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);
                 // Package captured from MopData (never from the class name — INV-CT-04).
@@ -636,63 +642,77 @@ public class SataAgent extends StatefulAgent {
     // across stagnation episodes so repeated launches walk the frontier (INV-CT-06).
     private int _triggerRoundRobinIndex = 0;
 
-    // activity-trigger-dose: count of EVENT_TRIGGER_ACTIVITY actions actually returned this run.
-    // Feeds the shouldTriggerAtStagnation per-run cap (Config.activityTriggerMaxPerRun). Incremented
-    // ONLY where the ActivityTriggerAction is returned (candidate != null branch) — a firing whose
+    // mop-census-launcher: count of EVENT_TRIGGER_ACTIVITY actions actually returned this run.
+    // Feeds the shouldFireLauncher per-run cap (Config.activityTriggerMaxPerRun). Incremented ONLY
+    // where the ActivityTriggerAction is returned (candidate != null branch) — a firing whose
     // candidate scan comes up empty consumes no budget (INV-CT-12).
     private int _activityTriggerLaunchCount = 0;
 
+    // mop-census-launcher: dedicated per-pass launcher step counter, incremented once each time
+    // selectNewActionNonnull reaches the launcher block and reset to 0 at every firing point
+    // (regardless of candidate outcome). Decoupled from graphStableCounter, so firing is periodic in
+    // selection steps and does not depend on graph growth (INV-CT-05).
+    private int _stepsSinceLauncherFiring = 0;
+
     /**
-     * activity-frontier / activity-trigger-dose gate seam (pure, INV-CT-05/08/11/12). The stagnation
-     * launcher fires only when it is enabled, MopData is loaded, the graph-stable counter is exactly at
-     * the configured {@code stagnationStep} (equality, not {@code >=}, so it fires once per episode —
-     * {@code graphStableCounter} resets to 0 on graph growth and on every launch), and the per-run
-     * launch budget is not exhausted ({@code maxPerRun == 0} means unlimited, else fire only while
-     * {@code launchesSoFar < maxPerRun}). The default step 50 == the pre-change {@code
-     * graphStableRestartThreshold / 2} point under the default threshold 100 (INV-CT-11). Off entirely
-     * when disabled or no MopData.
+     * mop-census-launcher cadence gate seam (pure, INV-CT-05/08/12). The launcher fires only when it
+     * is enabled, MopData is loaded, the dedicated per-pass counter is exactly at the configured
+     * {@code cadence} (equality, not {@code >=}: the caller resets the counter to 0 at each firing
+     * point, so it never overshoots while firing is active), and the per-run launch budget is not
+     * exhausted ({@code maxPerRun == 0} means unlimited, else fire only while
+     * {@code launchesSoFar < maxPerRun}). Decoupled from {@code graphStableCounter} — periodic in
+     * selection steps, independent of graph growth. Off entirely when disabled or no MopData.
      */
-    static boolean shouldTriggerAtStagnation(boolean enabled, boolean hasMopData,
-            int graphStableCounter, int stagnationStep, int launchesSoFar, int maxPerRun) {
-        return enabled && hasMopData && graphStableCounter == stagnationStep
+    static boolean shouldFireLauncher(boolean enabled, boolean hasMopData,
+            int stepsSinceFiring, int cadence, int launchesSoFar, int maxPerRun) {
+        return enabled && hasMopData && stepsSinceFiring == cadence
                 && (maxPerRun == 0 || launchesSoFar < maxPerRun);
     }
 
     /**
-     * activity-frontier candidate seam (pure). Walks {@code activities} starting at {@code rrIndex}
-     * (wrapping once) and returns the first satisfying, at call time, ALL of: exported,
-     * no permission gate ({@code permission == null}), not the main activity (by {@code isMain} flag
-     * or by name equal to {@code mainActivity}), and currently unvisited ({@code className} not in
-     * {@code visitedActivities}). Null when none qualifies. The caller owns the index increment.
-     *
-     * <p>E-mín (INV-CT-09): when {@code mopActivities} is non-null, the eligible MOP-reaching group
-     * (className in {@code mopActivities}) is walked first (round-robin from {@code rrIndex}); only
-     * when it yields nothing does the non-MOP group get its round-robin turn. When {@code
-     * mopActivities} is null the two groups collapse into the single eligibility walk, byte-identical
-     * to {@code activity-frontier} (MOP membership not consulted). MOP membership is the
-     * reachability-augmented {@code MopData.activityHasMop} truth (INV-MOP-27), NOT the
-     * component-level {@code ComponentInfo.reachesTarget} field, which false-negatives
-     * lambda-triggered activities. Ordering never widens eligibility.
+     * mop-census-launcher candidate seam (pure, INV-CT-06/10). Round-robin walk over
+     * {@code activities} from {@code rrIndex} (wrapping once), returning the first that satisfies, at
+     * call time, ALL of: a member of the arm's MOP census ({@code className} in {@code mopActivities}),
+     * not framework/tooling-namespaced, no permission gate ({@code permission == null}), not the main
+     * activity (by {@code isMain} flag or by name equal to {@code mainActivity}), and currently
+     * unvisited ({@code className} not in {@code visitedActivities}). Exported status is NOT consulted
+     * — the dispatch path ({@code IActivityManager.startActivity} from uid 2000) launches non-exported
+     * activities. There is no non-census fallback: a null/empty census, or no eligible census member,
+     * yields null. The census is the reachability-augmented {@code MopData.activityHasMop} truth
+     * (INV-MOP-27), NOT the component-level {@code ComponentInfo.reachesTarget} field, which
+     * false-negatives lambda-triggered activities. The caller owns the index increment.
      */
     static ComponentInfo selectTriggerCandidate(List<? extends ComponentInfo> activities,
             Set<String> visitedActivities, String mainActivity, int rrIndex, Set<String> mopActivities) {
-        if (mopActivities == null) {
-            return firstEligible(activities, visitedActivities, mainActivity, rrIndex, null, null);
+        if (activities == null || activities.isEmpty() || mopActivities == null) {
+            return null;
         }
-        ComponentInfo mop = firstEligible(activities, visitedActivities, mainActivity, rrIndex,
-                mopActivities, Boolean.TRUE);
-        return mop != null ? mop
-                : firstEligible(activities, visitedActivities, mainActivity, rrIndex,
-                        mopActivities, Boolean.FALSE);
+        int n = activities.size();
+        for (int i = 0; i < n; i++) {
+            int idx = (((rrIndex + i) % n) + n) % n; // safe modulo for any rrIndex
+            ComponentInfo c = activities.get(idx);
+            if (!mopActivities.contains(c.className)) {
+                continue; // census-only: never launch outside the arm's MOP census (no fallback)
+            }
+            if (isFrameworkActivity(c.className)) {
+                continue;
+            }
+            if (c.permission == null && !c.isMain
+                    && !c.className.equals(mainActivity)
+                    && !visitedActivities.contains(c.className)) {
+                return c;
+            }
+        }
+        return null;
     }
 
     /**
-     * Framework/tooling class-name prefixes that are never genuine app screens. Debug-build
-     * manifest merging injects these as exported components of the app package (Compose preview,
-     * abstract framework activities, leakcanary, test scaffolds), so they pass the eligibility
-     * conjunction; the class namespace is the discriminator (app code is never authored here).
-     * A fixed correctness filter, not a tunable — no Config flag (INV-CT-10). cmpft4: 76% of 114
-     * launches hit these.
+     * Framework/tooling class-name prefixes that are never genuine app screens (Compose preview,
+     * abstract framework activities, leakcanary, test scaffolds). Debug-build manifest merging pulls
+     * these into the app package and over-approximated reachability can pull them into the MOP
+     * census, so they otherwise pass the eligibility conjunction; the class namespace is the
+     * discriminator (app code is never authored here). A fixed correctness filter, not a tunable —
+     * no Config flag (INV-CT-10). cmpft4: 76% of 114 launches hit these.
      */
     private static final String[] FRAMEWORK_ACTIVITY_PREFIXES = {
             "android.", "androidx.", "com.google.android.", "kotlin.", "kotlinx.",
@@ -726,37 +746,6 @@ public class SataAgent extends StatefulAgent {
         return false;
     }
 
-    /**
-     * Round-robin eligibility walk. {@code requireMop} null = MOP membership ignored (the plain
-     * activity-frontier walk); {@code Boolean.TRUE}/{@code FALSE} restricts to candidates whose
-     * className is / is not in {@code mopActivities}. Eligibility (not framework/tooling-namespaced,
-     * exported, no permission gate, not main, unvisited) is identical in all three modes — only the
-     * group filter changes. Pure.
-     */
-    private static ComponentInfo firstEligible(List<? extends ComponentInfo> activities,
-            Set<String> visitedActivities, String mainActivity, int rrIndex,
-            Set<String> mopActivities, Boolean requireMop) {
-        if (activities == null || activities.isEmpty()) {
-            return null;
-        }
-        int n = activities.size();
-        for (int i = 0; i < n; i++) {
-            int idx = (((rrIndex + i) % n) + n) % n; // safe modulo for any rrIndex
-            ComponentInfo c = activities.get(idx);
-            if (isFrameworkActivity(c.className)) {
-                continue;
-            }
-            if (requireMop != null && mopActivities.contains(c.className) != requireMop.booleanValue()) {
-                continue;
-            }
-            if (c.exported && c.permission == null && !c.isMain
-                    && !c.className.equals(mainActivity)
-                    && !visitedActivities.contains(c.className)) {
-                return c;
-            }
-        }
-        return null;
-    }
 
     /**
      * activity-frontier deep-link seam (pure). Returns {@code scheme + "://" + host + path} built

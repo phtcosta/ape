@@ -163,16 +163,13 @@ public class Config {
     // stagnation-bounded, manifest-filtered, once-per-episode EVENT_TRIGGER_ACTIVITY launcher.
     // Fair-test obligation: non-MOP baseline arms MUST set this false (and frontierBoostWeight=0).
     public static boolean activityTriggerEnabled = Config.getBoolean("ape.activityTriggerEnabled", true);
-    // mop-reach-strategies E-mín (INV-CT-09): when true, selectTriggerCandidate orders MOP-reachable
-    // eligible activities ahead of non-MOP ones (each group still round-robin). Default false =
-    // round-robin unchanged. Non-final: toggled by unit tests at runtime.
-    public static boolean triggerMopFirst = Config.getBoolean("ape.triggerMopFirst", false);
-    // activity-trigger-dose: configurable firing cadence for the stagnation activity launcher
-    // (Lever B). shouldTriggerAtStagnation fires when graphStableCounter == this step. Default 50
-    // is byte-identical to the pre-change gate (graphStableRestartThreshold / 2 with the default
-    // threshold 100), preserving the frozen gh43 arms (INV-CT-11). Because graphStableCounter resets
-    // to 0 on graph growth and on every launch, exact-equality on this step yields periodic launches
-    // under sustained stagnation. A value <= 0 clamps to 50 at load (a 0 step would fire every step).
+    // mop-census-launcher: launcher firing CADENCE in selection steps — the launcher fires every
+    // this-many passes through its block (shouldFireLauncher on a dedicated per-step counter),
+    // decoupled from graphStableCounter. Default 50. A value <= 0 clamps to 50 at load.
+    // The property name (ape.activityTriggerStagnationStep) is deliberately KEPT even though the
+    // mechanism is no longer stagnation-gated: renaming it would require editing the rv-android
+    // tool.py @k=v mapping, which is out of scope for this change (same wire-name-vs-semantics
+    // boundary pattern as reachesTarget/MOP, gh13 D7). Read sites treat it purely as a cadence.
     public static final int activityTriggerStagnationStep =
             clampActivityTriggerStagnationStep(Config.getInteger("ape.activityTriggerStagnationStep", 50));
     // activity-trigger-dose: per-run cap on EVENT_TRIGGER_ACTIVITY launches (INV-CT-12). Default 0 =
@@ -338,7 +335,7 @@ public class Config {
                 "ape.leastVisitedPriorityTiebreak", "ape.treeEnhancementsEnabled", "ape.activityBudgetEnabled",
                 "ape.dynamicEpsilon", "ape.heuristicInput", "ape.fuzzInputTyped",
                 "ape.foreignActivityGuard", "ape.treePackageGuard", "ape.activityTriggerEnabled",
-                "ape.mopActivitySourceComponents", "ape.triggerMopFirst",
+                "ape.mopActivitySourceComponents",
                 "ape.llmOnNewState", "ape.llmOnStagnation" }) {
             m.put(k, "false");
         }
