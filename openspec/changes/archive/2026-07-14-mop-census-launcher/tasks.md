@@ -43,10 +43,19 @@
       deleting the E-mín two-group / INV-CT-11 / triggerMopFirst cases — LOC net-negative)
 - [x] 3.2 `openspec validate mop-census-launcher --strict` passes (also `--specs`: 19/19)
 - [x] 3.3 Run `/sdd-verify ape` (PASS: 609 tests; lint skipped — no linter for java)
-- [ ] 3.4 Device smoke (cmpft5 Gate 0 v4, experiment session): rebuild
+- [x] 3.4 Device smoke (cmpft5 Gate 0 v4, experiment session): rebuild
       `mvn install -Drvsec_home=...`, record jar md5, bind-mount; arms
       `activity_trigger_enabled=true, activity_trigger_stagnation_step=30, activity_trigger_max_per_run=8`,
       contrast `mop_activity_source_components` — gate: dose > 0 (`[APE-RV] Triggering activity:`)
       in BOTH arms including one large app (speakthat-class), AND the launched sets differ between
       arms in ≥1 app, AND zero denylisted launches; post-launch MOP events counted from the trace
       (not assumed from `onCreate`)
+      → **PASSOU** (Gate 0 v4, jar md5 `ba845d2e` bind-mounted; evidência:
+      `rvsec/rv-android/docs/20260711_cmpft5.md` §7.4). Dose>0 nos 6 arm-runs incl. speakthat
+      (activity 8 / widget 4); launched-sets diferem nos 3 apps; zero denylist; monitor JavaMOP
+      vivo ponta-a-ponta (freeotp/activity → MacSpec em TokenCodeUtil.getHOTP); `mopActsAugmented>0`
+      só no tratamento. Validação de desfecho pelo **run completo cmpft5** (1314/1314 COMPLETED,
+      219 APKs × 2 braços × 3 reps): **H1 APOIADA** no estrato A′-delta pré-registrado (n=185),
+      `cov_mop` sata_mop_activity > sata_mop_widget — p=9,643×10⁻⁸ (Wilcoxon signed-rank),
+      rank-biserial=+0,473 [IC95% 0,32; 0,62], diff mediana pareada +1,01 p.p.; laudo detalhado:
+      `rvsec/rv-android/docs/20260714_analise_detalhada_cmpft5.md`
