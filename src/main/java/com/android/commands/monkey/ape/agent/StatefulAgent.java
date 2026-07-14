@@ -75,11 +75,14 @@ import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
+import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.tree.GUITreeWidgetDiffer;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
@@ -136,6 +139,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     private final UICoverageTracker _coverageTracker;
     private final ActivityBudgetTracker _budgetTracker;
 
+    // rv-scoring-pipeline: the RV scoring path, extracted from adjustActionsByGUITree() into an
+    // ordered set of passes assembled once from Config. The context is the seam through which the
+    // passes read this agent's collaborators (live), so a pass carries no run state (INV-ARCH-02/05).
+    private final ScoringContext scoringContext;
+    private final ScoringPipeline scoringPipeline;
+
     // LLM integration fields
     protected LlmRouter _llmRouter;
     private final SystemBroadcastCatalog _broadcastCatalog;
@@ -159,19 +168,66 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         graph.addListener(this);
         this.model = new Model(graph);
         this.timestamp = graph.getTimestamp();
-        this._mopData = MopData.load(Config.mopDataPath);
+        ComponentName mainApp = ape.getMainApp();
+        this._mopData = requireMopArm(
+                MopData.load(Config.mopDataPath, mainApp.getPackageName(), mainApp.getClassName()),
+                Config.mopDataPath);
         this._coverageTracker = new UICoverageTracker();
-        this._budgetTracker = new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget);
+        // rv-scoring-pipeline (activityBudgetEnabled): the activity budget is a fork addition; upstream
+        // has none. Off -> no tracker is built and the budget check is skipped (INV-ARCH-01).
+        this._budgetTracker = Config.activityBudgetEnabled
+                ? new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget)
+                : null;
         this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
         this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
+        // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
+        // and assemble the pipeline once, now that _mopData/_coverageTracker/graph/timestamp are set.
+        // fromConfig emits the [APE-ARCH] passes=[...] startup line. Pass isEnabled() reads only
+        // getMopData() here (run-fixed) — never menuPickEligible — so no subclass field is touched
+        // before the subclass constructor runs.
+        this.scoringContext = new ScoringContext() {
+            @Override public MopData getMopData() { return StatefulAgent.this.getMopData(); }
+            @Override public UICoverageTracker getCoverageTracker() { return StatefulAgent.this.getCoverageTracker(); }
+            @Override public Graph getGraph() { return StatefulAgent.this.getGraph(); }
+            @Override public int getTimestamp() { return StatefulAgent.this.getTimestamp(); }
+            @Override public boolean menuPickEligible(String activity) { return StatefulAgent.this.menuPickEligible(activity); }
+        };
+        this.scoringPipeline = ScoringPipeline.fromConfig(null, this.scoringContext);
     }
 
     protected MopData getMopData() {
         return _mopData;
     }
 
+    /**
+     * INV-MOP-22: a run with {@code ape.mopDataPath} set SHALL either have MOP data or abort —
+     * it SHALL never silently run as pure SATA and mislabel the arm (the failure class that
+     * invalidated the earlier build-skew round). Returns {@code loaded} unchanged when the path
+     * is unset (MOP disabled) or the data loaded; throws when the path is set but load failed.
+     */
+    static MopData requireMopArm(MopData loaded, String path) {
+        if (loaded == null && path != null) {
+            throw new StopTestingException("MOP arm cannot arm: ape.mopDataPath is set (" + path
+                    + ") but MopData.load returned null; aborting rather than running as pure SATA"
+                    + " and mislabeling the arm (INV-MOP-22)");
+        }
+        return loaded;
+    }
+
     protected UICoverageTracker getCoverageTracker() {
         return _coverageTracker;
+    }
+
+    /**
+     * The form-completion context for the current state: true when {@code currentState} carries at
+     * least one unfilled {@code EditText}. Read by {@link ApeAgent#checkInput} to fill
+     * deterministically (bypassing the inputRate toss). {@code checkInput} runs after
+     * {@code moveForward} has promoted {@code newState} to {@code currentState} and nulled
+     * {@code newState}, so this reads {@code currentState} (INV-FORM-07).
+     */
+    @Override
+    protected boolean inFormCompletionContext() {
+        return currentState != null && FormCompletion.hasUnfilledEditText(currentState, timestamp);
     }
 
     protected ActivityBudgetTracker getBudgetTracker() {
@@ -542,7 +598,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 GUITreeBuilder.release(removed);
                 model.release(removed);
             }
-            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= 10) {
+            // idle-timeout-cap: break threshold derives from the same flag as the
+            // getRootInActiveWindowSlow ceiling (÷1000), so lowering the ceiling keeps
+            // this "window stuck animating" break firing (INV-EXPL-25). Default 10s.
+            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= Config.maxIdleTimeoutMs / 1000) {
                 break;
             }
         }
@@ -603,7 +662,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                     Logger.iprintln("Checking trivial new state: NOT top naming equivalent.");
                 }
             }
-            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= 10) {
+            // idle-timeout-cap: same "window stuck animating" break as refreshNewState, over the same
+            // getRootInActiveWindowSlow duration — derived from the same flag (÷1000) so the ceiling
+            // and both retry-loop breaks stay coupled (INV-EXPL-25). Default 10s. This loop also has
+            // retry/early-exit paths, but the break must not diverge from the ceiling by construction.
+            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= Config.maxIdleTimeoutMs / 1000) {
                 break;
             }
         }
@@ -664,7 +727,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         for (ModelAction a : newState.getActions()) {
             if (a.requireTarget()) widgetCount++;
         }
-        _budgetTracker.registerActivity(activity, widgetCount);
+        if (_budgetTracker != null) {
+            _budgetTracker.registerActivity(activity, widgetCount);
+        }
 
         Action action = resolveNewAction();
         if (action.isModelAction()) {
@@ -986,17 +1051,49 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
     }
 
+    /**
+     * activity-frontier Lever A (pure). Returns {@code weight} when {@code shortId} matches the
+     * {@code widgetName} of some WTG transition whose {@code targetActivity} is NOT in
+     * {@code visitedTargets}; 0 otherwise (or when {@code weight <= 0} / {@code shortId} is empty).
+     * Mirrors {@code MopScorer.scoreWtg}'s resource-id match but keys on unvisited-ness instead of
+     * MOP-reachability (INV-WTG-06). Testable without the Graph via the visited-target set.
+     */
+    public static int frontierBoost(String shortId, java.util.List<MopData.WtgTransition> transitions,
+            Set<String> visitedTargets, int weight) {
+        if (weight <= 0 || shortId == null || shortId.isEmpty() || transitions == null) {
+            return 0;
+        }
+        for (MopData.WtgTransition t : transitions) {
+            if (shortId.equals(t.widgetName) && !visitedTargets.contains(t.targetActivity)) {
+                return weight;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * activity-frontier (INV-CT-07): the decision source for a non-model action's {@code [APE-STEP]}
+     * line. {@code EVENT_TRIGGER_ACTIVITY} (the stagnation launcher) is a {@code Component} decision;
+     * every other non-model action stays on the {@code SATA} chain that produced it. Pure.
+     */
+    static ModelAction.DecisionSource nonModelDecisionSource(ActionType type) {
+        return type == ActionType.EVENT_TRIGGER_ACTIVITY
+                ? ModelAction.DecisionSource.Component
+                : ModelAction.DecisionSource.SATA;
+    }
+
     private static final String[] PROVIDER_OPERATIONS = {"query", "insert", "update"};
 
     /**
      * gh13 T1.4+T1.5: build the round-robin trigger candidates from MOP data. Package-visible
      * and side-effect-free so it can be unit-tested without the Android runtime.
      *
-     * Rules (INV-MOP-15): skip components with reachesTarget=false; skip activities unless
-     * Config.activityTriggerEnabled; skip non-exported activities. Each surviving component
-     * yields one tuple per (intentFilter × action); a component with no filters but non-empty
-     * targetMethods yields one component-name-only tuple (filter=null, action=null). Each
-     * reachable provider with non-null authorities yields three operation tuples.
+     * Rules (INV-MOP-15): the probabilistic tuple pool holds only BroadcastReceivers and Services
+     * (ContentProviders keep their separate provider path; activities are handled exclusively by
+     * the stagnation launcher — EVENT_TRIGGER_ACTIVITY, decision_source=Component — and never enter
+     * this pool). Skip components with reachesTarget=false. Each surviving component yields one
+     * tuple per (intentFilter × action); a component with no filters but non-empty targetMethods
+     * yields one component-name-only tuple (filter=null, action=null).
      */
     static java.util.List<TriggerTuple> buildTriggerTuples(MopData data) {
         java.util.List<TriggerTuple> tuples = new java.util.ArrayList<>();
@@ -1004,12 +1101,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         java.util.List<ComponentInfo> candidates = new java.util.ArrayList<>();
         candidates.addAll(data.getReceivers());
         candidates.addAll(data.getServices());
-        if (Config.activityTriggerEnabled) {
-            candidates.addAll(data.getActivities());
-        }
         for (ComponentInfo c : candidates) {
             if (!c.reachesTarget) continue;
-            if ("activity".equals(c.componentType) && !c.exported) continue;
             boolean emitted = false;
             for (ComponentInfo.IntentFilter f : c.intentFilters) {
                 for (String action : f.actions) {
@@ -1086,10 +1179,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     private boolean dispatchTrigger(TriggerTuple t) {
         ComponentInfo c = t.component;
-        int lastDot = c.className.lastIndexOf('.');
-        String packageName = lastDot > 0 ? c.className.substring(0, lastDot) : c.className;
         Intent intent = new Intent();
-        intent.setComponent(new ComponentName(packageName, c.className));
+        intent.setComponent(new ComponentName(_mopData.getPackageName(), c.className));
         if (t.action != null) {
             intent.setAction(t.action);
         }
@@ -1108,9 +1199,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             return AndroidDevice.sendBroadcast(intent);
         } else if (c instanceof ComponentInfo.ServiceInfo) {
             return AndroidDevice.startService(intent);
-        } else if (c instanceof ComponentInfo.ActivityInfo) {
-            return AndroidDevice.startActivity(intent);
         }
+        // activity-frontier: the tuple pool no longer carries ActivityInfo (activities are launched
+        // only by the stagnation launcher's own startActivity path). Providers use dispatchProvider.
         return false;
     }
 
@@ -1193,7 +1284,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         // gh9: record interaction and budget iteration before shifting state pointers
         if (newAction != null && newState != null) {
             _coverageTracker.recordInteraction(newState, newAction);
-            _budgetTracker.recordIteration(newState.getActivity());
+            if (_budgetTracker != null) {
+                _budgetTracker.recordIteration(newState.getActivity());
+            }
         }
         doMoveForward();
     }
@@ -1263,20 +1356,35 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             newGUITreeAction = newAction.getResolvedGUITreeAction();
             Utils.assertNotNull(newGUITreeAction);
             // A-5: one decision-attribution line per finally-selected action (INV-SEL-04).
-            Logger.iformat(
-                    "[APE-STEP] step=%d activity=%s state=%s action=%s decision_source=%s "
-                    + "priority=%d mop=%d wtg=%d coverage=%d menu=%d",
-                    getTimestamp(), newState.getActivity(), newState.getStateKey(), newAction,
-                    newAction.getDecisionSource().name(), newAction.getPriority(),
-                    newAction.getMopBoost(), newAction.getWtgBoost(),
-                    newAction.getCoverageBoost(), newAction.getMenuBoost());
+            // clock is the device wall clock (epoch millis) at emission — enables offline
+            // temporal joins with externally collected artifacts without any APE<->logcat
+            // coupling; step is the exploration step counter, a separate quantity.
+            // rv-scoring-pipeline (stepTelemetryEnabled): the [APE-STEP] line is fork telemetry, not
+            // upstream. The decision_source provenance is still set during selection; only the emission
+            // is gated, so the pure arm produces zero [APE-STEP] lines (INV-ARCH-01).
+            if (Config.stepTelemetryEnabled) {
+                Logger.iformat(
+                        "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
+                        + "priority=%d mop=%d wtg=%d coverage=%d menu=%d form=%d",
+                        getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
+                        newState.getStateKey(), newAction,
+                        newAction.getDecisionSource().name(), newAction.getPriority(),
+                        newAction.getMopBoost(), newAction.getWtgBoost(),
+                        newAction.getCoverageBoost(), newAction.getMenuBoost(),
+                        newAction.getFormBoost());
+            }
             return newAction;
         } else {
-            // Non-model actions (e.g. event-level) carry no per-mechanism boosts; still
-            // attributed to the SATA chain that produced them (INV-SEL-04).
-            Logger.iformat("[APE-STEP] step=%d activity=%s state=%s action=%s decision_source=%s",
-                    getTimestamp(), newState.getActivity(), newState.getStateKey(), action,
-                    ModelAction.DecisionSource.SATA.name());
+            // Non-model actions (e.g. event-level) carry no per-mechanism boosts. The decision
+            // source is derived from the action's type: the stagnation launcher
+            // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
+            // action stays on the SATA chain that produced it (INV-SEL-04). clock as above.
+            if (Config.stepTelemetryEnabled) {
+                Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s",
+                        getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
+                        newState.getStateKey(), action,
+                        nonModelDecisionSource(action.getType()).name());
+            }
             return action;
         }
     }
@@ -1306,10 +1414,19 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
     }
 
+    /**
+     * back-menu-pick-cap hook: whether the gh13 OPTIONSMENU gateway boost may still be applied on
+     * {@code activity}. The base agent is always eligible (no cap state); {@code SataAgent} overrides
+     * this with a cap check over its per-(activity, MODEL_MENU) pick count. Consulted in the menu-boost
+     * pass of {@link #adjustActionsByGUITree()}.
+     */
+    protected boolean menuPickEligible(String activity) {
+        return true;
+    }
+
     protected void adjustActionsByGUITree() {
         // Rect displayBounds = ape.getDisplayBounds();
         for (ModelAction action : newState.getActions()) {
-            action.resetBoosts();
             int basePriority = getActionBasePriority(action.getType()) << 3;
             action.setPriority(basePriority);
             if (!action.requireTarget()) {
@@ -1363,146 +1480,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             }
             action.setPriority(priority);
         }
-        // MOP guidance pass — runs only when mopDataPath is set
-        if (_mopData != null) {
-            String activity = newState.getActivity();
-            int boostedCount = 0;
-            int totalTarget = 0;
-            int maxBoost = 0;
-            int containmentBoostedCount = 0;
-            for (ModelAction action : newState.getActions()) {
-                if (!action.requireTarget() || !action.isValid()) continue;
-                if (!action.isResolvedAt(timestamp)) continue;
-                totalTarget++;
-                GUITreeNode node = action.getResolvedNode();
-                if (node == null) continue;
-                boolean[] containmentHit = new boolean[]{false};
-                int boost = mopBoostWithContainment(
-                        activity, node, MopScorer.eventTypeOf(action), containmentHit);
-                if (boost > 0) {
-                    action.setPriority(action.getPriority() + boost);
-                    action.setMopBoost(boost);
-                    boostedCount++;
-                    if (containmentHit[0]) containmentBoostedCount++;
-                    if (boost > maxBoost) maxBoost = boost;
-                }
-            }
-            Logger.iformat(
-                    "[APE-RV] MOP boost: state=%s#%s, boosted=%d/%d, maxBoost=%d, containment=%d",
-                    activity, newState.getStateKey(), boostedCount, totalTarget, maxBoost,
-                    containmentBoostedCount);
-            // gh13 T1.2: OPTIONSMENU gateway boost — make the agent open the menu that leads to MOP.
-            int menuBoost = MopScorer.scoreOpenMenu(activity, _mopData);
-            if (menuBoost > 0) {
-                for (ModelAction action : newState.getActions()) {
-                    if (action.getType() == ActionType.MODEL_MENU) {
-                        action.setPriority(action.getPriority() + menuBoost);
-                        action.setMenuBoost(menuBoost);
-                        Logger.iformat("[APE-RV] menu boost: state=%s#%s, +%d on MODEL_MENU",
-                                activity, newState.getStateKey(), menuBoost);
-                    }
-                }
-            }
-        }
-        // WTG scoring pass — boost widgets leading to MOP-reachable activities
-        if (_mopData != null && _mopData.hasWtgData()) {
-            String activity = newState.getActivity();
-            int wtgBoostedCount = 0;
-            int wtgTotalTarget = 0;
-            int wtgMaxBoost = 0;
-            for (ModelAction action : newState.getActions()) {
-                if (!action.requireTarget() || !action.isValid()) continue;
-                if (!action.isResolvedAt(timestamp)) continue;
-                wtgTotalTarget++;
-                GUITreeNode node = action.getResolvedNode();
-                if (node == null) continue;
-                String shortId = MopData.extractShortId(node.getResourceID());
-                int boost = MopScorer.scoreWtg(activity, shortId, _mopData);
-                if (boost > 0) {
-                    action.setPriority(action.getPriority() + boost);
-                    action.setWtgBoost(boost);
-                    wtgBoostedCount++;
-                    if (boost > wtgMaxBoost) wtgMaxBoost = boost;
-                }
-            }
-            if (wtgBoostedCount > 0) {
-                Logger.iformat("[APE-RV] WTG boost: state=%s#%s, boosted=%d/%d, maxBoost=%d",
-                        activity, newState.getStateKey(), wtgBoostedCount, wtgTotalTarget, wtgMaxBoost);
-            }
-        }
-        // Coverage boost pass — per-action boost for untested widgets, decays with state visits
-        if (Config.coverageBoostWeight > 0) {
-            int covBoostedCount = 0;
-            int covTotalTarget = 0;
-            float coverageGap = _coverageTracker.getCoverageGap(newState);
-            int stateVisits = newState.getVisitedCount();
-            int decayedWeight = Config.coverageBoostWeight / (1 + stateVisits / 5);
-            for (ModelAction action : newState.getActions()) {
-                if (!action.requireTarget() || !action.isValid()) continue;
-                if (!action.isResolvedAt(timestamp)) continue;
-                covTotalTarget++;
-                String widgetId = UICoverageTracker.widgetId(action);
-                int count = _coverageTracker.getInteractionCount(newState, widgetId);
-                if (count == 0 && decayedWeight > 0) {
-                    action.setPriority(action.getPriority() + decayedWeight);
-                    action.setCoverageBoost(decayedWeight);
-                    covBoostedCount++;
-                }
-            }
-            if (covBoostedCount > 0) {
-                Logger.iformat("[APE-RV] Coverage boost: state=%s#%s, boosted=%d/%d, gap=%.2f",
-                        newState.getActivity(), newState.getStateKey(), covBoostedCount, covTotalTarget, coverageGap);
-            }
-        }
-    }
-
-    /**
-     * MOP boost for an action's node, reconciling parent/child widget granularity
-     * (B3, INV-MOP): static analysis may flag a container resource id while the
-     * runtime resolves a child id, or vice versa. Scores the node's own short id
-     * plus the ids of its ancestors (≤ 2 levels up) and descendants (≤ 2 levels
-     * down) via the existing {@link MopScorer#score}, returning the maximum boost.
-     * The depth bound guards against a single MOP child over-boosting a large
-     * container. {@code containmentHit[0]} is set true when the winning boost came
-     * from an ancestor/descendant rather than the exact id (hit-rate telemetry).
-     */
-    private int mopBoostWithContainment(String activity, GUITreeNode node,
-                                        String eventType, boolean[] containmentHit) {
-        int best = MopScorer.score(
-                activity, MopData.extractShortId(node.getResourceID()), _mopData, eventType);
-        // Ancestors, up to 2 levels up.
-        GUITreeNode ancestor = node.getParent();
-        for (int depth = 1; depth <= 2 && ancestor != null; depth++) {
-            int b = MopScorer.score(
-                    activity, MopData.extractShortId(ancestor.getResourceID()), _mopData, eventType);
-            if (b > best) {
-                best = b;
-                containmentHit[0] = true;
-            }
-            ancestor = ancestor.getParent();
-        }
-        // Descendants, up to 2 levels down (children and grandchildren).
-        java.util.Iterator<GUITreeNode> children = node.getChildren();
-        while (children.hasNext()) {
-            GUITreeNode child = children.next();
-            int cb = MopScorer.score(
-                    activity, MopData.extractShortId(child.getResourceID()), _mopData, eventType);
-            if (cb > best) {
-                best = cb;
-                containmentHit[0] = true;
-            }
-            java.util.Iterator<GUITreeNode> grandchildren = child.getChildren();
-            while (grandchildren.hasNext()) {
-                GUITreeNode grandchild = grandchildren.next();
-                int gb = MopScorer.score(
-                        activity, MopData.extractShortId(grandchild.getResourceID()), _mopData, eventType);
-                if (gb > best) {
-                    best = gb;
-                    containmentHit[0] = true;
-                }
-            }
-        }
-        return best;
+        // rv-scoring-pipeline (INV-ARCH-05): every RV scoring term is now a ScoringPass in the
+        // pipeline assembled once from Config (MopWidget → MenuGateway → WTG → Frontier → Coverage →
+        // FormCompletion). apply() clears provenance then runs the enabled passes; an empty pipeline
+        // (pure arm) is a strict no-op, leaving the upstream base priorities above untouched.
+        scoringPipeline.apply(newState, newState.getActions().toArray(new ModelAction[0]), scoringContext);
     }
 
     boolean isTopLeftClick(ModelAction action, Rect displayBounds) {

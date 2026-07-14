@@ -62,8 +62,9 @@ The coverage boost is **per-action**, not uniform. Each action receives a boost 
 - **INV-COV-04**: `widgetId(action)` SHALL return a non-null, non-empty string for any non-null `ModelAction`.
 - **INV-COV-05**: `stateData` SHALL be bounded. When the bound is reached, the tracker SHALL evict entries but SHALL preserve the per-Activity rollup so that already-counted coverage is not zeroed mid-run.
 - **INV-COV-06**: The coverage key for a target action SHALL incorporate the action type, so two distinct action types on the same target widget are tracked as distinct coverage elements.
+- **INV-COV-07**: The coverage dump SHALL be read-only and SHALL run at most once per tracked state at teardown (with an optional additional emission at LRU eviction for that state). It SHALL NOT alter `stateData`, `activityRollup`, registered-widget sets, or any interaction count; `getTotalElements()` and `getTotalInteractions()` SHALL be invariant across the dump.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: UICoverageTracker — Widget Registration
 
@@ -155,13 +156,13 @@ Coverage reporting SHALL aggregate per Activity, collapsing the `naming`-level f
 
 ### Requirement: Coverage Boost in Action Scoring — Per-Action
 
-`StatefulAgent.adjustActionsByGUITree()` SHALL include a coverage boost pass after the WTG scoring pass. For each valid, target-requiring, resolved action, the boost SHALL be computed per-action based on whether the specific widget has been tested:
+`StatefulAgent.adjustActionsByGUITree()` SHALL include a coverage boost pass after the WTG scoring pass. For each valid, target-requiring, resolved action, the boost SHALL be computed per-action based on whether the specific widget has been tested anywhere in the current Activity:
 
 ```
-widgetId = action.getTarget().toXPath()
-interactionCount = _coverageTracker.getInteractionCount(currentState, widgetId)
-stateVisits = currentState.getVisitedCount()
-if (interactionCount == 0) {
+widgetId = UICoverageTracker.widgetId(action)
+interacted = _coverageTracker.hasActivityInteraction(newState.getActivity(), widgetId)
+stateVisits = newState.getVisitedCount()
+if (!interacted) {
     boost = Config.coverageBoostWeight / (1 + stateVisits / 5)
 } else {
     boost = 0
@@ -169,25 +170,29 @@ if (interactionCount == 0) {
 action.setPriority(action.getPriority() + boost)
 ```
 
-This ensures untested widgets receive the full boost while already-tested widgets receive zero, creating a differential that steers the agent toward unexplored interactions.
+This ensures widgets untested anywhere in the Activity receive the boost while widgets already tested — in this abstract state or any sibling fragment of the same Activity — receive zero. The differential therefore survives NamingFactory refinement: a fragment split does not re-arm the boost for already-exercised widgets.
 
 #### Scenario: Untested widget in new state receives full boost
-- **WHEN** widget has interactionCount=0, state visitedCount=0, `Config.coverageBoostWeight`=100
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=0, `Config.coverageBoostWeight`=100
 - **THEN** boost = 100 / (1 + 0/5) = 100
 
+#### Scenario: Widget tested in a sibling fragment receives no boost
+- **WHEN** widget X was interacted with in fragment S1 of `MainActivity`, and the agent now scores actions in fragment S2 of `MainActivity` where X is registered but locally untested
+- **THEN** X's boost in S2 SHALL be 0
+
 #### Scenario: Untested widget in visited state receives decayed boost
-- **WHEN** widget has interactionCount=0, state visitedCount=10, `Config.coverageBoostWeight`=100
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=10, `Config.coverageBoostWeight`=100
 - **THEN** boost = 100 / (1 + 10/5) = 100 / 3 = 33
 
 #### Scenario: Untested widget in heavily visited state receives minimal boost
-- **WHEN** widget has interactionCount=0, state visitedCount=25, `Config.coverageBoostWeight`=100
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=25, `Config.coverageBoostWeight`=100
 - **THEN** boost = 100 / (1 + 25/5) = 100 / 6 = 16
 
 #### Scenario: Tested widget receives no boost regardless of state visits
-- **WHEN** widget has interactionCount=3
+- **WHEN** widget has been interacted somewhere in the Activity (`hasActivityInteraction`=true)
 - **THEN** boost = 0 (regardless of stateVisits)
 
-**Rationale**: Without decay, the coverage boost traps the agent in complex states with many widgets (e.g., SettingsActivity with 27 widgets). E2E testing on 20 APKs showed simplenotes regressing -12.56pp because the agent spent all time in SettingsActivity exploring color pickers instead of visiting other activities. The decay formula `weight / (1 + stateVisits / 5)` provides full boost on first visit and diminishes to ~16% after 25 visits, allowing the agent to explore elsewhere.
+**Rationale**: Without decay, the coverage boost traps the agent in complex states with many widgets (e.g., SettingsActivity with 27 widgets). E2E testing on 20 APKs showed simplenotes regressing -12.56pp because the agent spent all time in SettingsActivity exploring color pickers instead of visiting other activities. The decay formula `weight / (1 + stateVisits / 5)` provides full boost on first visit and diminishes to ~16% after 25 visits, allowing the agent to explore elsewhere. The decay is deliberately kept state-scoped while the novelty test is activity-scoped: decay protects against dwelling, novelty must survive fragmentation.
 
 #### Scenario: Coverage boost disabled
 - **WHEN** `Config.coverageBoostWeight` is 0
@@ -208,3 +213,102 @@ This ensures untested widgets receive the full boost while already-tested widget
 #### Scenario: Default value
 - **WHEN** `ape.coverageBoostWeight` is not set in properties
 - **THEN** `Config.coverageBoostWeight` SHALL be 100
+
+---
+
+### Requirement: UICoverageTracker — Coverage Dump
+
+`UICoverageTracker` SHALL expose a read-only dump method that emits, at agent teardown, one `[APE-RV] UICOV` line per tracked state. The line SHALL report the per-state widget-level coverage already held in `stateData`, plus a `mopReach` flag indicating whether the state's Activity gates a MOP target. The dump exists so that per-screen exploration completeness — invisible in the trace today — becomes observable at the end of a run.
+
+The dump SHALL be invoked from the agent teardown path (`SataAgent.tearDown()`, `SataAgent.java:234`, which holds `_coverageTracker` and `_mopData` via `StatefulAgent`). The `mopReach` value SHALL be computed at the call site as `_mopData != null && _mopData.activityHasMop(state.getActivity())` (`MopData.java:649`), because `UICoverageTracker` does not hold a `MopData` reference; the value SHALL be supplied to the dump (e.g. via a predicate over `State`).
+
+For each tracked state the line format SHALL be:
+
+```
+[APE-RV] UICOV state=<stateKey> discovered=<W> interacted=<D> gap=<1-D/W> byType=MODEL_CLICK:a/b,MODEL_LONG_CLICK:c/d mopReach=<0|1>
+```
+
+where `discovered` (`W`) is the count of registered widgets for the state, `interacted` (`D`) is the count of distinct registered widgets whose interaction count is greater than 0, `gap` is `1 - D/W` (or `1.0` when `W == 0`), and `mopReach` is `1` when the supplied predicate returns true for the state and `0` otherwise. `byType` is a per-action-type breakdown of `interacted/discovered`, where the type label is the `TYPE` segment of each element key — the `ActionType.name()` value (`MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_*`, …), parsed as the substring after the last `|` or the whole key when no `|` is present (the `widgetId()` convention, `UICoverageTracker.java:215`). The breakdown distinguishes **action types**, not widget classes: there is no `Edit` or `Button` action type — a clicked `EditText` and a clicked `Button` are both `MODEL_CLICK`. Only types actually registered for the state appear; the order follows `ActionType` declaration order.
+
+The dump SHALL be read-only: it SHALL NOT register widgets, record interactions, evict entries, or mutate `stateData`, `activityRollup`, or any interaction count. It MAY additionally emit one line for a state at the moment that state is evicted from the bounded `stateData` (LRU eviction), so that states evicted before teardown are still reported once.
+
+#### Scenario: State with partial coverage emits one line
+- **WHEN** at teardown a tracked state `MainActivity` has 10 registered widgets and 3 distinct interacted widgets
+- **THEN** exactly one `[APE-RV] UICOV` line SHALL be emitted for that state
+- **AND** it SHALL report `discovered=10 interacted=3 gap=0.7`
+
+#### Scenario: Fully unexplored state reports gap 1.0
+- **WHEN** a tracked state has 8 registered widgets and 0 interactions
+- **THEN** its `[APE-RV] UICOV` line SHALL report `discovered=8 interacted=0 gap=1.0`
+
+#### Scenario: byType breakdown reflects per-action-type coverage
+- **WHEN** a state registered 3 `MODEL_CLICK` actions (2 interacted) and 1 `MODEL_LONG_CLICK` action (0 interacted)
+- **THEN** the line SHALL include `byType=MODEL_CLICK:2/3,MODEL_LONG_CLICK:0/1`
+
+#### Scenario: mopReach reflects activityHasMop
+- **WHEN** the supplied predicate returns true for the state's Activity (i.e. `_mopData != null && _mopData.activityHasMop(activity)`)
+- **THEN** the line SHALL report `mopReach=1`
+- **AND** when `_mopData` is null or the Activity gates no MOP target the line SHALL report `mopReach=0`
+
+#### Scenario: One line per tracked state at teardown
+- **WHEN** `stateData` holds 5 tracked states at teardown
+- **THEN** the dump SHALL emit exactly 5 `[APE-RV] UICOV` lines, one per tracked state
+
+#### Scenario: Dump does not alter counts
+- **WHEN** the dump runs at teardown
+- **THEN** `getTotalElements()` and `getTotalInteractions()` SHALL return the same values immediately before and immediately after the dump
+
+---
+
+### Requirement: UICoverageTracker — Activity-Scoped Interaction Membership
+
+`UICoverageTracker` SHALL expose `hasActivityInteraction(activity, widgetId)` returning whether the widget key has been interacted with at least once anywhere in the Activity. The lookup SHALL be O(1) — a `Set` membership test, with no `stateData` scan and no rollup consultation: `recordInteraction` SHALL add the widget key to a cumulative `activity → {widgetId}` set keyed by the state's Activity, and this update SHALL occur before the unregistered-state early return (or in both branches) so first-touch interactions on not-yet-registered states are captured. The set is a superset of any interaction later folded into the eviction rollup, so the read needs no rollup consultation.
+
+- **INV-COV-09**: `hasActivityInteraction(a, w)` SHALL be monotonic within a run (never reset, not subject to state eviction) and SHALL be true from the first `recordInteraction` of `w` in any fragment of Activity `a` onward. Consequently the coverage boost SHALL never re-fire for a widget already interacted anywhere in `a` — including after NamingFactory refinement mints sibling fragments and after state eviction followed by revisit (which resets per-state counts).
+
+#### Scenario: interaction visible across fragments
+- **WHEN** widget X is interacted with in fragment state S1 of `MainActivity`
+- **THEN** `hasActivityInteraction("MainActivity", X)` SHALL be true
+- **AND** it SHALL remain true after S1 is LRU-evicted
+
+#### Scenario: unknown widget
+- **WHEN** widget Y was never interacted with anywhere in `MainActivity`
+- **THEN** `hasActivityInteraction("MainActivity", Y)` SHALL be false
+
+---
+
+### Requirement: UICoverageTracker — Per-Activity Coverage Dump
+
+The teardown dump SHALL additionally emit one `[APE-RV] UICOV-ACT` line per Activity that has at least one tracked fragment (live `stateData` entry or eviction-rollup entry). The `UICOV-ACT` lines SHALL be emitted in lexicographic activity-name order (the grouped activity keys sorted before emission) so the output is deterministic across runs. The aggregation SHALL be the one "Per-Activity coverage aggregation for reporting" defines: the union of the Activity's fragments' widget keys, with each widget's interaction count taken as the maximum across fragments and rollup (`mergeMax`). The line format SHALL be:
+
+```
+[APE-RV] UICOV-ACT activity=<activity> discovered=<W> interacted=<D> gap=<1-D/W> byType=<TYPE:d/w,...> liveStates=<liveFragmentCount>
+```
+
+where `discovered`/`interacted`/`gap`/`byType` follow the per-state `UICOV` line conventions (same key/type-segment parsing, `Locale.ROOT` gap formatting) computed over the aggregated map, and `liveStates` is the number of live (non-evicted) fragments of that Activity grouped into the line at teardown. Activities present only in the eviction rollup report `liveStates=0`; the historical fold count is not tracked (by design, `activityRollup` stores only per-widget maxima). The per-state `UICOV` lines SHALL remain unchanged and SHALL be emitted alongside.
+
+The aggregated dump SHALL be read-only: no registration, recording, eviction, or mutation of `stateData`, `activityRollup`, or interaction counts (same constraint as the per-state dump, INV-COV-07).
+
+- **INV-COV-08**: For every Activity line, `discovered` SHALL equal the size of the union of widget keys across that Activity's live fragments and its rollup entry, and `interacted` SHALL equal the number of keys in that union whose merged (`mergeMax`) count is greater than 0.
+
+#### Scenario: fragments collapse into one activity line
+- **WHEN** `MainActivity` fragmented into 3 states registering the same 10 widget keys, with widget X interacted only in fragment 2
+- **THEN** exactly one `UICOV-ACT activity=MainActivity` line SHALL be emitted
+- **AND** it SHALL report `discovered=10` (union, not 30) with X counted as interacted
+
+#### Scenario: evicted fragments still counted
+- **WHEN** a fragment of `SettingsActivity` was LRU-evicted mid-run (its counts folded into `activityRollup`) and one live fragment remains
+- **THEN** the `UICOV-ACT` line for `SettingsActivity` SHALL aggregate the rollup and the live fragment
+
+#### Scenario: per-state lines unchanged
+- **WHEN** the teardown dump runs
+- **THEN** every per-state `[APE-RV] UICOV` line SHALL be emitted exactly as specified by the coverage-dump requirement, in addition to the `UICOV-ACT` lines
+
+#### Scenario: rollup-only activity reports liveStates=0
+- **WHEN** every fragment of `LoginActivity` was LRU-evicted mid-run (all its counts folded into `activityRollup`) and no live fragment remains at teardown
+- **THEN** exactly one `UICOV-ACT activity=LoginActivity` line SHALL be emitted, sourced purely from the rollup
+- **AND** it SHALL report `liveStates=0`
+
+#### Scenario: activity lines emitted in deterministic order
+- **WHEN** the teardown dump aggregates multiple Activities
+- **THEN** the `UICOV-ACT` lines SHALL be emitted in lexicographic activity-name order, identical across runs with the same tracked data

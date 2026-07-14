@@ -170,7 +170,12 @@ public class ApeFuzzer {
         int height = displayBounds.bottom;
         int count = RandomHelper.nextInt(10);
         int index = 0;
-        PointF[] points = new PointF[4 + count << 1];
+        // Exactly 6 + 2*count entries are written below:
+        //   1 (first action down) + 2 (initial pointer pair)
+        //   + 2*(count+1) (walk loop, i = 0..count inclusive) + 1 (final action up).
+        // The old `new PointF[4 + count << 1]` parsed as (4+count)<<1 = 8+2*count,
+        // leaving two trailing nulls that reached the constructor.
+        PointF[] points = new PointF[6 + (count << 1)];
         PointF p1 = randomPoint(width, height);
         points[index++] = p1; // first action down
 
@@ -189,6 +194,7 @@ public class ApeFuzzer {
         }
         p1 = randomWalk(width, height, p1, v1);
         points[index++] = p1;
+        events.add(new ApePinchOrZoomEvent(points));
     }
 
     private static void generateDragEvent(List<ApeEvent> events) {

@@ -30,7 +30,7 @@ public class ComponentInfoTest {
         String comp = "{\"receivers\":[{\"className\":\"p.R\",\"isMain\":false,\"exported\":true," +
                 "\"reachesTarget\":true,\"targetMethods\":[\"<p.R: void onReceive()>\"]," +
                 "\"intentFilters\":[{\"actions\":[\"a1\"],\"categories\":[]}]}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         ComponentInfo.ReceiverInfo r = d.getReceivers().get(0);
         assertEquals("p.R", r.className);
         assertEquals("receiver", r.componentType);
@@ -47,7 +47,7 @@ public class ComponentInfoTest {
         String comp = "{\"activities\":[{\"className\":\"p.A\",\"exported\":true,\"reachesTarget\":true," +
                 "\"intentFilters\":[{\"actions\":[\"android.intent.action.MAIN\"]," +
                 "\"categories\":[\"android.intent.category.LAUNCHER\"]}]}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         ComponentInfo.ActivityInfo a = d.getActivities().get(0);
         assertEquals(1, a.intentFilters.size());
         assertEquals("android.intent.action.MAIN", a.intentFilters.get(0).actions.get(0));
@@ -59,7 +59,7 @@ public class ComponentInfoTest {
     public void testProviderAuthoritiesCaptured() throws Exception {
         String comp = "{\"providers\":[{\"className\":\"p.Prov\",\"authorities\":\"p.auth\"," +
                 "\"reachesTarget\":true}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         ComponentInfo.ProviderInfo p = d.getProviders().get(0);
         assertEquals("p.Prov", p.className);
         assertEquals("p.auth", p.authorities);
@@ -70,7 +70,7 @@ public class ComponentInfoTest {
     @Test
     public void testComponentReachesTargetReadFromJson() throws Exception {
         String comp = "{\"receivers\":[{\"className\":\"p.R\",\"reachesTarget\":false}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         assertFalse("reachesTarget read from JSON, not hardcoded",
                 d.getReceivers().get(0).reachesTarget);
     }
@@ -104,7 +104,7 @@ public class ComponentInfoTest {
     public void testComponentTypeDerivedFromJsonDictKey() throws Exception {
         String comp = "{\"activities\":[{\"className\":\"p.A\",\"reachesTarget\":true}]," +
                 "\"receivers\":[{\"className\":\"p.R\",\"reachesTarget\":true}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         assertEquals("activity", d.getActivities().get(0).componentType);
         assertEquals("receiver", d.getReceivers().get(0).componentType);
     }
@@ -121,7 +121,7 @@ public class ComponentInfoTest {
                 "{\"className\":\"p.Guarded\",\"exported\":true,\"reachesTarget\":true," +
                 "\"permission\":\"p.PERM_X\"}," +
                 "{\"className\":\"p.Open\",\"exported\":true,\"reachesTarget\":true}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         ComponentInfo.ActivityInfo guarded = d.getActivities().get(0);
         ComponentInfo.ActivityInfo open = d.getActivities().get(1);
         assertEquals("p.PERM_X", guarded.permission);
@@ -139,7 +139,7 @@ public class ComponentInfoTest {
                 "\"data\":{\"schemes\":[\"https\",\"myapp\"],\"hosts\":[\"example.com\"]," +
                 "\"ports\":[\"443\"],\"paths\":[\"/exact\"],\"pathPrefixes\":[\"/items\"]," +
                 "\"pathPatterns\":[\"/x/.*\"],\"mimeTypes\":[\"image/*\"]}}]}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         ComponentInfo.IntentFilter f = d.getActivities().get(0).intentFilters.get(0);
         assertEquals(Arrays.asList("https", "myapp"), f.data.schemes);
         assertEquals(Arrays.asList("example.com"), f.data.hosts);
@@ -156,7 +156,7 @@ public class ComponentInfoTest {
     public void testIntentFilterWithoutDataBlockDefaultsEmpty() throws Exception {
         String comp = "{\"activities\":[{\"className\":\"p.A\",\"exported\":true,\"reachesTarget\":true," +
                 "\"intentFilters\":[{\"actions\":[\"android.intent.action.MAIN\"],\"categories\":[]}]}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         ComponentInfo.IntentFilter f = d.getActivities().get(0).intentFilters.get(0);
         assertNotNull("data never null", f.data);
         assertTrue(f.data.schemes.isEmpty());
@@ -170,7 +170,7 @@ public class ComponentInfoTest {
         String comp = "{\"providers\":[{\"className\":\"p.Prov\",\"authorities\":\"p.auth\"," +
                 "\"reachesTarget\":true,\"permission\":\"p.P\"," +
                 "\"readPermission\":\"p.R\",\"writePermission\":\"p.W\"}]}";
-        MopData d = MopData.load(writeTempJson(comp));
+        MopData d = MopData.load(writeTempJson(comp), null, null);
         ComponentInfo.ProviderInfo p = d.getProviders().get(0);
         assertEquals("p.P", p.permission);
         assertEquals("p.R", p.readPermission);
@@ -182,7 +182,7 @@ public class ComponentInfoTest {
     public void testRealFixtureD15FieldsPresent() throws Exception {
         java.net.URL url = ComponentInfoTest.class.getResource("/cryptoapp.apk.gh60-fresh.json");
         assertNotNull("fixture on classpath", url);
-        MopData d = MopData.load(new File(url.toURI()).getAbsolutePath());
+        MopData d = MopData.load(new File(url.toURI()).getAbsolutePath(), null, null);
         assertNotNull(d);
         ComponentInfo.ActivityInfo main = null;
         for (ComponentInfo.ActivityInfo a : d.getActivities()) {

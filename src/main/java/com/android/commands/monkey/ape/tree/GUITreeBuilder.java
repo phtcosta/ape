@@ -22,6 +22,7 @@ import static com.android.commands.monkey.ape.utils.Config.excludeEmptyChild;
 import static com.android.commands.monkey.ape.utils.Config.excludeInvisibleNode;
 import static com.android.commands.monkey.ape.utils.Config.ignoreWebViewThreshold;
 import static com.android.commands.monkey.ape.utils.Config.patchGUITree;
+import static com.android.commands.monkey.ape.utils.Config.treeEnhancementsEnabled;
 
 import java.io.File;
 import java.util.Collections;
@@ -462,7 +463,14 @@ public class GUITreeBuilder {
     }
 
     protected boolean checkAndRemoveWebView(GUITreeNode node) {
-        int countNodesWithAction = node.getDescendantCount(); // count(node, actionNodeFilter);
+        // INV-TREE-11: threshold over actionable descendants only, per the long-standing
+        // comment. Counting every descendant made virtually all real WebViews exceed the
+        // bar on non-actionable content nodes and get discarded unexplored.
+        // rv-scoring-pipeline (treeEnhancementsEnabled): off -> upstream over-prune (count every
+        // descendant), so the pure arm inherits upstream WebView perception (INV-ARCH-01).
+        int countNodesWithAction = treeEnhancementsEnabled
+                ? countActionableDescendants(node)
+                : node.getDescendantCount();
         if (countNodesWithAction > ignoreWebViewThreshold) {
             Logger.iformat("Too many nodes in WebView (%d > %d), remove the WebView.", countNodesWithAction,
                     ignoreWebViewThreshold);
@@ -470,6 +478,26 @@ public class GUITreeBuilder {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Counts the descendants of {@code node} that carry a GUI action (clickable,
+     * checkable, scrollable or long-clickable) — the same actionability predicate the
+     * naming/action layer uses (see {@code ActionPatchNamer}). Excludes {@code node}
+     * itself. This is the "actionable descendants" metric named in the
+     * {@code checkAndRemoveWebView} comment (INV-TREE-11).
+     */
+    protected static int countActionableDescendants(GUITreeNode node) {
+        int count = 0;
+        for (Iterator<GUITreeNode> it = node.getChildren(); it.hasNext();) {
+            GUITreeNode child = it.next();
+            if (child.isClickable() || child.isCheckable() || child.isScrollable()
+                    || child.isLongClickable()) {
+                count++;
+            }
+            count += countActionableDescendants(child);
+        }
+        return count;
     }
 
     protected GUITreeNode buildNodeFromXml(Document document) {
@@ -595,6 +623,7 @@ public class GUITreeBuilder {
         node.setLongClickable(info.isLongClickable());
         node.setScrollable(info.isScrollable());
         node.setFocusable(info.isFocusable());
+        node.setIsPassword(info.isPassword());
 
         node.setFocused(info.isFocused());
 

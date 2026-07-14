@@ -56,9 +56,7 @@ The two modes target different exploration bottlenecks:
 - **INV-RTR-08**: `Config.llmPercentage` SHALL be clamped to the closed interval `[0.0, 1.0]` at load time. A configured value `< 0` SHALL become `0.0`; a value `> 1` SHALL become `1.0`.
 
 ---
-
-## ADDED Requirements
-
+## Requirements
 ### Requirement: LlmRouter Lifecycle
 
 `LlmRouter` SHALL be constructed in `StatefulAgent`'s constructor when `Config.llmUrl` is non-null. The constructor SHALL create and wire all infrastructure components:
@@ -157,7 +155,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 ### Requirement: Action Selection Pipeline
 
-`LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` returns `ModelAction` or `null`. Pipeline:
+`LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` SHALL return `ModelAction` or `null`. Pipeline:
 
 1. `totalCalls++` — counts this attempt regardless of outcome (per INV-RTR-07).
 2. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → `breaker.recordFailure()`, log `[APE-RV] LLM screenshot capture failed, skipping LLM step`, return null. A persistent null-capture condition therefore opens the breaker and halts retries for the recovery window.
@@ -308,9 +306,11 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 **Aggregate summary** (printed at `StatefulAgent.tearDown()`):
 ```
-[APE-RV] LLM Summary: calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> matched=<N> no_match=<N> null=<N> breaker_trips=<N>
+[APE-RV] LLM Summary: calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> matched=<N> no_match=<N> null=<N> screenshot_failed=<N> breaker_trips=<N>
 [APE-RV] Decision ratio: LLM=<N>/<total> (<pct>%), SATA=<N>/<total> (<pct>%)
 ```
+
+`screenshot_failed` counts the routing attempts abandoned because `ScreenshotCapture` returned null (e.g. FLAG_SECURE windows). It SHALL be maintained as its own counter, separate from the aggregate `null` count (which also covers HTTP, parse, and mapping failures), so per-app degradation of the LLM arm to SATA is countable post-hoc from the summary line alone. Screenshot failures still count toward `null` as today (the step yields no action) — `screenshot_failed` attributes the cause.
 
 #### Scenario: Successful action logged
 
@@ -326,6 +326,11 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 - **WHEN** `shouldRouteStagnation(150)` is called with `graphStableRestartThreshold = 200`
 - **THEN** a log entry SHALL be emitted: `[APE-RV] LLM mode=stagnation, state=MainActivity#abc123`
+
+#### Scenario: Screenshot failures counted separately
+
+- **WHEN** a run ends after 5 LLM routing attempts of which 3 were abandoned at screenshot capture (secure window) and 1 failed at parse
+- **THEN** the summary line SHALL report `null=4 screenshot_failed=3`
 
 ---
 
@@ -384,3 +389,27 @@ When the random hook fires and LLM returns a non-null action, the telemetry mode
 #### Scenario: In-range value unchanged
 - **WHEN** `ape.properties` sets `ape.llmPercentage=0.7`
 - **THEN** `Config.llmPercentage` SHALL be `0.7`
+
+### Requirement: Config — llmPercentageNoSubstrate seam
+
+`Config.llmPercentageNoSubstrate` (double) SHALL be declared in `Config.java` and loaded via `ape.llmPercentageNoSubstrate`, default `-1`. The value `-1` is a sentinel meaning "inherit `Config.llmPercentage`" — it does NOT mean a routing percentage of −1. The flag SHALL be registered in the `apePureMode` RV-flag registry (INV-ARCH-06 of `scoring-pipeline`) as an **exempt** RV flag — consistent with the other LLM sampling params (`llmModel`, `llmPromptVariant`, `llmTemperature`, …), whose off-value shape does not fit the boolean/weight buckets. It is inert in the `ape_pure` arm regardless of its value because `apePureMode` forces the LLM masters off (`llmOnNewState`/`llmOnStagnation → false`, `llmPercentage → 0`) and leaves `llmUrl` unset.
+
+- The `-1` sentinel SHALL be exempt from the `[0.0, 1.0]` clamp applied to `llmPercentage` (INV-RTR-08): clamping would collapse the sentinel to `0.0`. When the configured value is `-1`, it SHALL pass through unclamped.
+- When the configured value is `>= 0`, it SHALL be clamped to `[0.0, 1.0]` exactly like `llmPercentage`.
+
+This change adds NO consumer of `llmPercentageNoSubstrate`. `LlmRouter`, `shouldRouteRandom()`, the routing predicates, and all telemetry SHALL be unchanged; routing SHALL continue to use `Config.llmPercentage` unconditionally. The seam exists so round-2 adaptive routing (F′) can, without a protocol change, read `isWidgetlessSubstrate()` at load and substitute this percentage for widgetless apps.
+
+- **INV-RTR-09**: In this change `llmPercentageNoSubstrate` SHALL have no effect on any routing decision; it SHALL be loaded and exposed only. Its `-1` default SHALL pass through the clamp unchanged; a configured value `>= 0` SHALL be clamped to `[0.0, 1.0]`.
+
+#### Scenario: default sentinel not clamped
+- **WHEN** `ape.properties` does not set `ape.llmPercentageNoSubstrate`
+- **THEN** `Config.llmPercentageNoSubstrate` SHALL equal `-1` (not clamped to `0.0`)
+
+#### Scenario: configured value clamped
+- **WHEN** `ape.properties` sets `ape.llmPercentageNoSubstrate=1.5`
+- **THEN** `Config.llmPercentageNoSubstrate` SHALL be `1.0`
+
+#### Scenario: no routing behaviour change
+- **WHEN** `ape.llmPercentageNoSubstrate=0.7` and an app is widgetless
+- **THEN** `shouldRouteRandom()` SHALL still use `Config.llmPercentage` (unchanged); the no-substrate value SHALL NOT be consumed
+

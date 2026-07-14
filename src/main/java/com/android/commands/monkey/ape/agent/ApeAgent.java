@@ -49,6 +49,7 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.TypedInputGenerator;
 import com.android.commands.monkey.ape.utils.InputValueGenerator;
 import com.android.commands.monkey.ape.utils.Logger;
@@ -186,12 +187,24 @@ public abstract class ApeAgent implements Agent {
         if (action.requireTarget()) {
             GUITreeNode node = ((ModelAction) action).getResolvedNode();
             if (node.isEditText() && node.getInputText() == null) {
-                if (RandomHelper.toss(inputRate)) {
+                // In a form-completion context fill deterministically so every field of a form
+                // gets text; otherwise keep the legacy probabilistic gate for non-form screens
+                // (INV-FORM-03 / INV-INP-04). The toss is short-circuited when in context.
+                if (inFormCompletionContext() || RandomHelper.toss(inputRate)) {
                     node.setInputText(generateInputText(node));
                 }
             }
         }
         return action;
+    }
+
+    /**
+     * Overridden by {@link StatefulAgent}: true when the current state carries at least one
+     * unfilled {@code EditText} (the form-completion context). The base agent has no state model,
+     * so it returns false and {@link #checkInput} keeps the legacy {@code inputRate} toss.
+     */
+    protected boolean inFormCompletionContext() {
+        return false;
     }
 
     /**
@@ -205,9 +218,14 @@ public abstract class ApeAgent implements Agent {
             MopData md = getMopData();
             if (md != null) {
                 String activity = ape.getTopActivityClassName();
-                MopData.Widget w = md.getWidget(activity, MopData.extractShortId(node.getResourceID()));
-                if (w != null && (notEmpty(w.inputType) || notEmpty(w.hint))) {
-                    return TypedInputGenerator.generateForType(w.inputType, w.hint, RandomHelper.getRandom());
+                // INV-MOP-23: resolve the static widget via the same ±2-level containment
+                // policy as the MOP scoring pass (design D3), not an exact-id-only lookup.
+                // The node's own short id is tried first (list order guarantees this).
+                for (String shortId : MopScorer.containmentShortIds(node)) {
+                    MopData.Widget w = md.getWidget(activity, shortId);
+                    if (w != null && (notEmpty(w.inputType) || notEmpty(w.hint))) {
+                        return TypedInputGenerator.generateForType(w.inputType, w.hint, RandomHelper.getRandom());
+                    }
                 }
             }
         }

@@ -18,8 +18,11 @@ package com.android.commands.monkey.ape.utils;
 import java.io.File;
 import java.io.FileInputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 public class Config {
@@ -30,6 +33,14 @@ public class Config {
         configurations = new Properties(System.getProperties());
         loadConfiguration("/data/local/tmp/ape.properties");
         loadConfiguration("/sdcard/ape.properties");
+        // rv-scoring-pipeline (task 5.3, INV-ARCH-06): the apePureMode kill-switch runs here — before the
+        // field initializers below read any value — so forcing the RV flags into `configurations` makes
+        // every getBoolean/getInteger below read the off/inert value. The fields stay public static final
+        // and no read site is apePureMode-aware. Read the raw property (the apePureMode field does not
+        // exist yet at this point in class init).
+        if (Boolean.parseBoolean(configurations.getProperty("ape.apePureMode"))) {
+            forceApePureModeInto(configurations);
+        }
     }
 
     /**
@@ -37,8 +48,8 @@ public class Config {
      */
     public static final boolean takeScreenshot = Config.getBoolean("ape.takeScreenshot", true);
     public static final boolean takeScreenshotForNewState = Config.getBoolean("ape.takeScreenshotForNewState", false);
-    public static final boolean takeScreenshotForEveryStep = Config.getBoolean("ape.takeScreenshotForEveryStep", true);
-    public static final boolean saveGUITreeToXmlEveryStep = Config.getBoolean("ape.saveGUITreeToXmlEveryStep", true);
+    public static final boolean takeScreenshotForEveryStep = Config.getBoolean("ape.takeScreenshotForEveryStep", false);
+    public static final boolean saveGUITreeToXmlEveryStep = Config.getBoolean("ape.saveGUITreeToXmlEveryStep", false);
 
     public static final int throttleForUnvisitedAction = Config.getInteger("ape.throttleForUnvisitedAction", 200);
     public static final int throttleForActivityTransition = Config.getInteger("ape.throttleForActivityTransition", 500);
@@ -90,6 +101,10 @@ public class Config {
     public static final int flushImagesThreshold = Config.getInteger("ape.flushImagesThreshold", 10);
     public static final int imageWriterCount = Config.getInteger("ape.imageWriterCount", 3);
     public static final long defaultGUIThrottle = Config.getLong("ape.defaultGUIThrottle", 200L);
+    // idle-timeout-cap: global timeout (ms) of the getRootInActiveWindowSlow idle wait
+    // and (÷1000) the refreshNewState "window stuck animating" break threshold. Default
+    // 10000 == the former `1000 * 10` literal; 10000/1000 == 10 == the former `>= 10`.
+    public static final long maxIdleTimeoutMs = Config.getLong("ape.maxIdleTimeoutMs", 10000L);
     public static final long swipeDuration = Config.getLong("ape.swipeDuration", 200);
     public static final double fuzzingRate = Config.getDouble("ape.fuzzingRate", 0.02D);
     public static final long refectchInfoWaitingInterval = Config.getLong("ape.refectchInfoWaitingInterval", 50);
@@ -127,7 +142,6 @@ public class Config {
     // Defaults chosen so MOP strongly dominates exploration toward monitored operations.
     public static final int mopWeightDirect = Config.getInteger("ape.mopWeightDirect", 500);
     public static final int mopWeightTransitive = Config.getInteger("ape.mopWeightTransitive", 300);
-    public static final int mopWeightActivity = Config.getInteger("ape.mopWeightActivity", 100);
 
     // gh13: OPTIONSMENU-aware menu-open boost (T1.2). Default 250 — between
     // mopWeightWtg (200) and mopWeightTransitive (300).
@@ -137,8 +151,43 @@ public class Config {
     public static boolean fuzzInputTyped = Config.getBoolean("ape.fuzzInputTyped", true);
     // gh13: package/mainActivity sanity check (T1.7). true ⇒ mismatch rejects MopData.load (CI gate).
     public static boolean mopStrictPackageMatch = Config.getBoolean("ape.mopStrictPackageMatch", false);
-    // gh13: activity component triggering (T1.4). Default OFF — gh11 sandwichroulette -45pp evidence.
-    public static boolean activityTriggerEnabled = Config.getBoolean("ape.activityTriggerEnabled", false);
+    // mop-reach-strategies A′ (INV-MOP-27): when true, mopActivities is the UNION of the widget-derived
+    // source, components.activities[].reachesTarget, AND every reachability[] activity-class with ≥1
+    // reachesTarget method (the lambda-call-graph-gap-immune source; the component field alone false-
+    // negatives lambda-triggered activities — cryptoapp evidence). Default false = widget-only, byte-
+    // identical to pre-change. Arm axis: sata_mop_widget (false) vs sata_mop_activity (true).
+    public static final boolean mopActivitySourceComponents = Config.getBoolean("ape.mopActivitySourceComponents", false);
+    // mop-fairtest: activity-frontier — gate for the stagnation activity launcher (Lever B).
+    // Default true. Repurposed from the deleted gh11 probabilistic activity-trigger branch (that
+    // path, which the -45pp evidence measured, no longer exists). This flag now gates only the
+    // stagnation-bounded, manifest-filtered, once-per-episode EVENT_TRIGGER_ACTIVITY launcher.
+    // Fair-test obligation: non-MOP baseline arms MUST set this false (and frontierBoostWeight=0).
+    public static boolean activityTriggerEnabled = Config.getBoolean("ape.activityTriggerEnabled", true);
+    // mop-census-launcher: launcher firing CADENCE in selection steps — the launcher fires every
+    // this-many passes through its block (shouldFireLauncher on a dedicated per-step counter),
+    // decoupled from graphStableCounter. Default 50. A value <= 0 clamps to 50 at load.
+    // The property name (ape.activityTriggerStagnationStep) is deliberately KEPT even though the
+    // mechanism is no longer stagnation-gated: renaming it would require editing the rv-android
+    // tool.py @k=v mapping, which is out of scope for this change (same wire-name-vs-semantics
+    // boundary pattern as reachesTarget/MOP, gh13 D7). Read sites treat it purely as a cadence.
+    public static final int activityTriggerStagnationStep =
+            clampActivityTriggerStagnationStep(Config.getInteger("ape.activityTriggerStagnationStep", 50));
+    // activity-trigger-dose: per-run cap on EVENT_TRIGGER_ACTIVITY launches (INV-CT-12). Default 0 =
+    // unlimited. Guards against launch-storms in apps whose graph never grows. A negative value clamps
+    // to 0 (unlimited) at load.
+    public static final int activityTriggerMaxPerRun =
+            clampActivityTriggerMaxPerRun(Config.getInteger("ape.activityTriggerMaxPerRun", 0));
+    // mop-target-revisit-cap: max deterministic MOP short-circuit picks per
+    // (widget XPath, action type, activity) key per run. <= 0 = unlimited (restores the
+    // uncapped mop-discriminative-boost behavior). The boost still participates in the
+    // priority roulette once the deterministic override is exhausted (INV-SEL-MOP-04/05).
+    public static final int mopTargetPickCap = Config.getInteger("ape.mopTargetPickCap", 3);
+
+    // mop-fairtest: back-menu-pick-cap — bounds discretionary MODEL_BACK/MODEL_MENU picks per
+    // (activity, type) across NamingFactory-minted sibling states. <= 0 = unlimited (restores the
+    // pre-cap behavior). Navigation-essential BACK sites (backToActivity/backtrack/handleNullAction)
+    // are never capped; only the discretionary EARLY_STAGE + epsilon-greedy picks (INV-SEL-NAV-01..05).
+    public static final int backMenuPickCap = Config.getInteger("ape.backMenuPickCap", 3);
 
     // LLM integration — configurable via ape.properties.
     // llmUrl=null disables LLM calls entirely (safe default when no LLM server is present).
@@ -155,6 +204,13 @@ public class Config {
     public static final double llmPercentage =
             Math.max(0.0, Math.min(1.0, Config.getDouble("ape.llmPercentage", 0.02)));
     public static final String llmPromptVariant = Config.get("ape.llmPromptVariant", "ape_current");
+    // mop-reach-strategies F′ (INV-RTR-09): LLM random-routing probability to use when the current
+    // screen is a widgetless substrate (MopData.isWidgetlessSubstrate). Default -1 sentinel = "no
+    // override" (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt from the
+    // [0,1] clamp; a >=0 value is clamped to [0,1]; any real negative collapses to the sentinel. Seam
+    // only — no consumer yet (the router wiring is a later round).
+    public static final double llmPercentageNoSubstrate =
+            clampLlmPercentageNoSubstrate(Config.getDouble("ape.llmPercentageNoSubstrate", -1.0));
 
     // gh9-exploration-refactor: UI coverage, activity budget, WTG, dynamic epsilon, heuristic input.
     public static final int coverageBoostWeight = Config.getInteger("ape.coverageBoostWeight", 100);
@@ -165,6 +221,16 @@ public class Config {
     public static final int activityBaseBudget = Config.getInteger("ape.activityBaseBudget", 50);
     public static final int activityBudgetPerWidget = Config.getInteger("ape.activityBudgetPerWidget", 5);
     public static final int mopWeightWtg = Config.getInteger("ape.mopWeightWtg", 200);
+    // mop-fairtest: activity-frontier (Lever A) — priority added in the WTG scoring pass to actions
+    // whose WTG transition targets a currently-unvisited activity (Graph.getActivityNode == null),
+    // independent of MOP-reachability. Default 200; 0 = off. Stacks additively with mopWeightWtg.
+    // Fair-test obligation: non-MOP baseline arms MUST set this 0 (and activityTriggerEnabled=false).
+    public static final int frontierBoostWeight = Config.getInteger("ape.frontierBoostWeight", 200);
+    // mop-reach-strategies B (INV-MFP-01/02/03): MOP-conditioned frontier boost added by MopFrontierPass
+    // to actions whose WTG transition targets an unvisited MOP-reachable activity. Default 0 = off (the
+    // widget arm does not use it; byte-identical when 0). Stacks additively with frontierBoostWeight/
+    // mopWeightWtg in wtgBoost. Non-final: toggled by unit tests at runtime.
+    public static int mopFrontierWeight = Config.getInteger("ape.mopFrontierWeight", 0);
     public static final boolean dynamicEpsilon = Config.getBoolean("ape.dynamicEpsilon", true);
     public static final double maxEpsilon = Config.getDouble("ape.maxEpsilon", 0.15);
     public static final double minEpsilon = Config.getDouble("ape.minEpsilon", 0.02);
@@ -177,6 +243,37 @@ public class Config {
     // independent experiment variables (INV-CT-01).
     public static final double componentPercentage = Config.getDouble("ape.componentPercentage", 0.0);
 
+    // mop-fairtest: foreign-activity-guard — deflect screens whose top activity is a
+    // foreign package (launcher/installer leak) with one raw BACK instead of modeling
+    // them. Default true (guard active); false restores the pre-guard modeling path.
+    public static final boolean foreignActivityGuard = Config.getBoolean("ape.foreignActivityGuard", true);
+
+    // mop-fairtest: tree-package-guard — when topComp is in-package but the accessibility
+    // tree is owned by another package (relaunch race: AM reports MainActivity while the
+    // launcher tree is still painted), refetch within the existing loop instead of modeling
+    // the mismatched pair; fail-open on exhaustion. Default true; false restores old path.
+    public static final boolean treePackageGuard = Config.getBoolean("ape.treePackageGuard", true);
+
+    // rv-scoring-pipeline: parity flags (INV-ARCH-07). Each gates a previously-flagless fork behavior
+    // so an "APE-pure" arm is expressible. Every default preserves current aperv behavior — with none
+    // of these keys set, selection is identical to pre-change aperv. The apePureMode kill-switch
+    // (task 5.3) forces the six behavior gates off; its forcing mechanism lives in this class's load.
+    // gate: FormCompletionPass + the deterministic-fill branch in ApeAgent.checkInput()
+    public static final boolean formCompletionEnabled = Config.getBoolean("ape.formCompletionEnabled", true);
+    // gate: the [APE-STEP] per-step telemetry line + per-action timing
+    public static final boolean stepTelemetryEnabled = Config.getBoolean("ape.stepTelemetryEnabled", true);
+    // gate: inclusion of the fork menuAction in State.getActions() (field stays constructed/non-null)
+    public static final boolean modelMenuEnabled = Config.getBoolean("ape.modelMenuEnabled", true);
+    // gate: the priority tiebreak in State.greedyPickLeastVisited() (false = upstream array-order ties)
+    public static final boolean leastVisitedPriorityTiebreak = Config.getBoolean("ape.leastVisitedPriorityTiebreak", true);
+    // gate: the three GUITreeBuilder perception enhancements (WebView-prune count, AndroidX
+    // actionability, ViewPager scrollable); false = upstream perception (inherits the WebView over-prune)
+    public static final boolean treeEnhancementsEnabled = Config.getBoolean("ape.treeEnhancementsEnabled", true);
+    // gate: ActivityBudgetTracker instantiation + the budget check in SataAgent.selectNewActionNonnull()
+    public static final boolean activityBudgetEnabled = Config.getBoolean("ape.activityBudgetEnabled", true);
+    // kill-switch: when true, Config forces every RV-defining flag to its off/inert value (task 5.3).
+    public static final boolean apePureMode = Config.getBoolean("ape.apePureMode", false);
+
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
         if (configFile.exists()) {
@@ -186,6 +283,113 @@ public class Config {
                 e.printStackTrace();
                 throw new RuntimeException("Fail to load the configuration file at " + configFile);
             }
+        }
+    }
+
+    // rv-scoring-pipeline (task 5.2, INV-ARCH-06): the RV-flag registry — the single source consulted by
+    // both the apePureMode forcing (forceApePureModeInto) and the completeness guard test. Every field
+    // that APE-RV adds over upstream APE (@8f51b99) is classified into exactly one of three buckets:
+    //   rvForcedOffValues() — flags forced to an off/inert value (booleans->false, weights/caps->0,
+    //                         RV-activated thresholds->upstream-inert), reproducing upstream selection;
+    //   rvUnsetKeys()       — input-path flags cleared to null (forcing a value would misfire);
+    //   rvExemptReasons()   — RV flags left untouched because they are inert once their master gate is
+    //                         forced off (or arm-neutral), each with the reason it need not be forced.
+    // Methods (not static-final fields) because this class's static block forces flags BEFORE the field
+    // initializers run; a field-based registry would still be null at that point.
+
+    // mop-reach-strategies 1.4 (INV-RTR-09): clamp for llmPercentageNoSubstrate. The -1 sentinel means
+    // "no override"; any real negative collapses to it; a >=0 value is clamped to [0,1] like llmPercentage.
+    // Extracted so ConfigTest can exercise the clamp despite the frozen static-final field.
+    static double clampLlmPercentageNoSubstrate(double raw) {
+        if (raw < 0.0) {
+            return -1.0;
+        }
+        return Math.min(1.0, raw);
+    }
+
+    // activity-trigger-dose 1.3: clamp for activityTriggerStagnationStep. A value <= 0 would make the
+    // launcher fire at counter 0 (every step); it clamps to the default 50 (logged). Extracted so
+    // ConfigTest can exercise the clamp despite the frozen static-final field.
+    static int clampActivityTriggerStagnationStep(int raw) {
+        if (raw <= 0) {
+            Logger.println("[APE-RV] activityTriggerStagnationStep=" + raw + " <= 0; clamped to default 50");
+            return 50;
+        }
+        return raw;
+    }
+
+    // activity-trigger-dose 1.3: clamp for activityTriggerMaxPerRun. A negative cap is meaningless as a
+    // launch budget; it clamps to 0 (unlimited, logged). 0 is a valid value (unlimited) and passes through.
+    static int clampActivityTriggerMaxPerRun(int raw) {
+        if (raw < 0) {
+            Logger.println("[APE-RV] activityTriggerMaxPerRun=" + raw + " < 0; clamped to 0 (unlimited)");
+            return 0;
+        }
+        return raw;
+    }
+
+    static Map<String, String> rvForcedOffValues() {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (String k : new String[] {
+                "ape.formCompletionEnabled", "ape.stepTelemetryEnabled", "ape.modelMenuEnabled",
+                "ape.leastVisitedPriorityTiebreak", "ape.treeEnhancementsEnabled", "ape.activityBudgetEnabled",
+                "ape.dynamicEpsilon", "ape.heuristicInput", "ape.fuzzInputTyped",
+                "ape.foreignActivityGuard", "ape.treePackageGuard", "ape.activityTriggerEnabled",
+                "ape.mopActivitySourceComponents",
+                "ape.llmOnNewState", "ape.llmOnStagnation" }) {
+            m.put(k, "false");
+        }
+        for (String k : new String[] {
+                "ape.coverageBoostWeight", "ape.frontierBoostWeight", "ape.mopFrontierWeight",
+                "ape.mopWeightDirect", "ape.mopWeightTransitive", "ape.mopWeightOpenMenu", "ape.mopWeightWtg",
+                "ape.componentPercentage", "ape.llmPercentage", "ape.backMenuPickCap", "ape.mopTargetPickCap" }) {
+            m.put(k, "0");
+        }
+        // upstream-inert value: upstream APE (@8f51b99) defaults activityStableRestartThreshold to MAX_VALUE
+        // (feature off); the fork lowered it to 200. Forcing it back to MAX_VALUE restores upstream.
+        m.put("ape.activityStableRestartThreshold", Integer.toString(Integer.MAX_VALUE));
+        return m;
+    }
+
+    static List<String> rvUnsetKeys() {
+        // mopDataPath: forcing a non-null path collides with INV-MOP-22 (a set-but-unloadable path aborts);
+        // the pure arm needs it null (MOP off). llmUrl: null == LLM disabled. Both are cleared, not set.
+        return Arrays.asList("ape.mopDataPath", "ape.llmUrl");
+    }
+
+    static Map<String, String> rvExemptReasons() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("maxEpsilon", "epsilon bound; inert when dynamicEpsilon is forced false (fixed defaultEpsilon)");
+        m.put("minEpsilon", "epsilon bound; inert when dynamicEpsilon is forced false");
+        m.put("activityBaseBudget", "budget sub-param; inert when activityBudgetEnabled is forced false (no tracker)");
+        m.put("activityBudgetPerWidget", "budget sub-param; inert when activityBudgetEnabled is forced false");
+        m.put("activityTriggerStagnationStep", "launcher sub-param; inert when activityTriggerEnabled is forced false");
+        m.put("activityTriggerMaxPerRun", "launcher sub-param; inert when activityTriggerEnabled is forced false");
+        m.put("coverageMaxStates", "coverage-tracker memory bound; inert to selection when coverageBoostWeight is forced 0");
+        m.put("llmModel", "LLM sampling param; inert when llmOnNewState/Stagnation forced false and llmPercentage 0");
+        m.put("llmPromptVariant", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmPercentageNoSubstrate", "LLM routing override; inert when the LLM masters are forced off and llmPercentage 0");
+        m.put("llmTemperature", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmTimeoutMs", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmTopK", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("llmTopP", "LLM sampling param; inert when the LLM masters are forced off");
+        m.put("maxIdleTimeoutMs", "arm-neutral idle ceiling; default 10000 == the upstream literal (gh74)");
+        m.put("mopStrictPackageMatch", "MOP load-validation gate; inert when mopDataPath is unset (MopData null)");
+        m.put("apePureMode", "the kill-switch selector itself (not self-forced)");
+        return m;
+    }
+
+    // rv-scoring-pipeline (task 5.3): apply the apePureMode kill-switch to a Properties. Extracted so the
+    // completeness guard test can exercise the forcing on a throwaway Properties despite the frozen
+    // static-final fields. Logs one [APE-ARCH] line per overwritten flag (INV-ARCH-06 side-effect).
+    static void forceApePureModeInto(Properties p) {
+        for (Map.Entry<String, String> e : rvForcedOffValues().entrySet()) {
+            p.setProperty(e.getKey(), e.getValue());
+            Logger.println("[APE-ARCH] apePureMode forced " + e.getKey() + "=" + e.getValue());
+        }
+        for (String k : rvUnsetKeys()) {
+            p.remove(k);
+            Logger.println("[APE-ARCH] apePureMode forced " + k + "=<unset>");
         }
     }
 

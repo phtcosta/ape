@@ -5,6 +5,8 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -13,9 +15,8 @@ import java.util.List;
  * Weights are read from Config (configurable via ape.properties):
  *   directMop              → Config.mopWeightDirect     (default 500)
  *   transitiveMop (only)   → Config.mopWeightTransitive (default 300)
- *   activityHasMop (no widget match) → Config.mopWeightActivity (default 100)
  *   OPTIONSMENU gateway    → Config.mopWeightOpenMenu   (default 250)
- *   no match               → 0
+ *   no match               → 0 (discriminative-only; no activity-level fallback)
  */
 public class MopScorer {
 
@@ -45,13 +46,43 @@ public class MopScorer {
             if (w.isTransitiveMop(candidateEventType)) {
                 return Config.mopWeightTransitive;
             }
-            // resolved-but-unflagged widget: fall through to the activity-level
-            // fallback rather than short-circuiting to 0 (INV-MOP-07).
         }
-        if (data.activityHasMop(activity)) {
-            return Config.mopWeightActivity;
-        }
+        // Discriminative-only: a null or resolved-but-unflagged widget carries no MOP
+        // information and scores 0, even on a MOP-bearing activity. The removed +100
+        // activity fallback shifted every candidate equally and could not re-rank them;
+        // activityHasMop survives only as a predicate for WTG scoring and stateMopDensity.
         return 0;
+    }
+
+    /**
+     * Ordered containment candidate short ids for a node (INV-MOP-23, design D3):
+     * the node's own short id first, then ancestors (≤ 2 levels up via
+     * {@code getParent}), then descendants (≤ 2 levels down: children then
+     * grandchildren) — each mapped through {@link MopData#extractShortId}. This is
+     * the exact set {@code StatefulAgent.mopBoostWithContainment} walks; both the MOP
+     * boost pass and the typed-input widget resolution consume it so their matching
+     * rules cannot diverge. Pure: no mutation, no logging.
+     */
+    public static List<String> containmentShortIds(GUITreeNode node) {
+        List<String> ids = new ArrayList<>();
+        ids.add(MopData.extractShortId(node.getResourceID()));
+        // Ancestors, up to 2 levels up.
+        GUITreeNode ancestor = node.getParent();
+        for (int depth = 1; depth <= 2 && ancestor != null; depth++) {
+            ids.add(MopData.extractShortId(ancestor.getResourceID()));
+            ancestor = ancestor.getParent();
+        }
+        // Descendants, up to 2 levels down (children then grandchildren).
+        Iterator<GUITreeNode> children = node.getChildren();
+        while (children.hasNext()) {
+            GUITreeNode child = children.next();
+            ids.add(MopData.extractShortId(child.getResourceID()));
+            Iterator<GUITreeNode> grandchildren = child.getChildren();
+            while (grandchildren.hasNext()) {
+                ids.add(MopData.extractShortId(grandchildren.next().getResourceID()));
+            }
+        }
+        return ids;
     }
 
     /**
@@ -91,12 +122,24 @@ public class MopScorer {
     }
 
     /**
-     * Counts target-requiring, valid actions in a state whose activity has MOP-reachable
-     * widgets. Used as a tiebreaker in ABA / trivial-activity exploration.
+     * MOP-bearing-state density with an activity-substrate floor (INV-MOP-24): returns
+     * {@code 0} when the state's activity is not MOP-bearing (cheap early-out, no widget
+     * resolution); otherwise {@code 1 + count}, where {@code count} counts only actions whose
+     * RESOLVED widget is MOP-flagged (direct- or transitive-MOP on the action's own event type),
+     * resolved exactly as {@link #score} does (short id → {@code getWidget} →
+     * {@code isDirectMop}/{@code isTransitiveMop}).
+     *
+     * <p>The {@code +1} floor lets an A′-rescued activity — MOP-bearing via component/lambda
+     * reachability, carrying no widget-level flag — rank above a non-MOP activity ({@code 1 > 0})
+     * in the SATA navigation tiebreaks, while any widget-flagged state still ranks strictly above
+     * an activity-floor-only state ({@code 1 + count > 1} for {@code count ≥ 1}). It is a
+     * cross-state ranking signal only; {@link #score} stays widget-discriminative (no per-candidate
+     * activity fallback). {@code timestamp} selects the GUITree the actions were resolved against.
+     * Pure: no mutation, no logging.
      *
      * @param data loaded MOP data (returns 0 if null)
      */
-    public static int stateMopDensity(State state, MopData data) {
+    public static int stateMopDensity(State state, MopData data, int timestamp) {
         if (data == null) {
             return 0;
         }
@@ -106,11 +149,27 @@ public class MopScorer {
         }
         int count = 0;
         for (ModelAction action : state.getActions()) {
-            if (action.requireTarget() && action.isValid()) {
+            if (!action.requireTarget() || !action.isValid()) {
+                continue;
+            }
+            if (!action.isResolvedAt(timestamp)) {
+                continue;
+            }
+            GUITreeNode node = action.getResolvedNode();
+            if (node == null) {
+                continue;
+            }
+            MopData.Widget w = data.getWidget(
+                    activity, MopData.extractShortId(node.getResourceID()));
+            if (w == null) {
+                continue;
+            }
+            String eventType = eventTypeOf(action);
+            if (w.isDirectMop(eventType) || w.isTransitiveMop(eventType)) {
                 count++;
             }
         }
-        return count;
+        return 1 + count;
     }
 
     /**

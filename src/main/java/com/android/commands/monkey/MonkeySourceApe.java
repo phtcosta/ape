@@ -19,10 +19,13 @@ package com.android.commands.monkey;
 import static com.android.commands.monkey.ape.utils.Config.defaultGUIThrottle;
 import static com.android.commands.monkey.ape.utils.Config.doFuzzing;
 import static com.android.commands.monkey.ape.utils.Config.fuzzingRate;
+import static com.android.commands.monkey.ape.utils.Config.foreignActivityGuard;
 import static com.android.commands.monkey.ape.utils.Config.imageWriterCount;
+import static com.android.commands.monkey.ape.utils.Config.maxIdleTimeoutMs;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoCount;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoWaitingInterval;
 import static com.android.commands.monkey.ape.utils.Config.swipeDuration;
+import static com.android.commands.monkey.ape.utils.Config.treePackageGuard;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -30,20 +33,25 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.TimeoutException;
 
 import com.android.commands.monkey.ape.Agent;
 import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.ForeignActivityGuard;
 import com.android.commands.monkey.ape.ImageWriterQueue;
 import com.android.commands.monkey.ape.StopTestingException;
+import com.android.commands.monkey.ape.TreePackageGuard;
 import com.android.commands.monkey.ape.agent.ApeAgent;
 import com.android.commands.monkey.ape.agent.ReplayAgent;
 import com.android.commands.monkey.ape.events.ApeEvent;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StartAction;
@@ -57,12 +65,14 @@ import android.app.ActivityManager.RunningTaskInfo;
 import android.app.UiAutomation;
 import android.app.UiAutomationConnection;
 import android.content.ComponentName;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManagerGlobal;
 import android.os.Build;
+import android.net.Uri;
 import android.os.HandlerThread;
 import android.os.RemoteException;
 import android.os.SystemClock;
@@ -121,6 +131,14 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     int nullInfoCounter = 0;
     int lostFocusedCounter = 0;
+
+    // foreign-activity-guard: once-per-package log throttle for guard deflections
+    // (add() returns true on first). The pure decision + whitelist live in the
+    // dependency-free ForeignActivityGuard so they are JVM-testable.
+    private final Set<String> deflectedPackages = new HashSet<>();
+
+    // tree-package-guard: once-per-(top->tree)-pair log throttle for refetch deflections.
+    private final Set<String> mismatchPairs = new HashSet<>();
 
     /**
      * UiAutomation client and connection
@@ -331,6 +349,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     private boolean waitForActivity;
 
+    /** INV-EXPL-15: consecutive checkAppActivity cycles spent waiting for the expected package. */
+    private int waitForActivityCycles;
+
     private boolean clearPackageOnGeneratingActivity;
 
     private int lastStartTimestamp = -1;
@@ -357,8 +378,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
     protected void generateClickEventAt(Rect nodeRect, long waitTime, ClickPoint clickPoint) {
         Rect bounds = getVisibleBounds(nodeRect);
         if (bounds == null) {
-            Logger.wprintln("Error to fetch bounds.");
-            bounds = AndroidDevice.getDisplayBounds();
+            // INV-EXPL-19: the node's bounds do not intersect the visible screen. Drop the
+            // action rather than substituting the display bounds and clicking its centre
+            // (that delivered an unrelated click the model credited to this action).
+            Logger.wformat("[APE-RV] off-screen action dropped: %s", nodeRect);
+            return;
         }
 
         PointF p1;
@@ -401,7 +425,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
         if (!bounds.contains((int) p1.x, (int) p1.y)) {
             // throw new RuntimeException("Bug");
+            // INV-EXPL-19: click point fell outside the resolved bounds; emit no event.
             Logger.wformat("Invalid bounds: %s", bounds);
+            Logger.wformat("[APE-RV] off-screen action dropped: %s", nodeRect);
             return;
         }
         long downAt = SystemClock.uptimeMillis();
@@ -469,7 +495,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     public AccessibilityNodeInfo getRootInActiveWindowSlow() {
         try {
-            mUiAutomation.waitForIdle(1000, 1000 * 10);
+            mUiAutomation.waitForIdle(1000, maxIdleTimeoutMs);
         } catch (TimeoutException e) {
             e.printStackTrace();
         }
@@ -765,7 +791,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
     }
 
     /**
-     * generate a random event based on mFactor
+     * Fetch the current screen, ask the agent for an action, and enqueue its events.
+     * The foreign-activity-guard deflects an out-of-package top activity with one raw
+     * BACK before {@code updateState}, so foreign screens are never modeled.
      */
     protected void generateEvents() {
         if (hasEvent()) {
@@ -780,12 +808,55 @@ public class MonkeySourceApe implements MonkeyEventSource {
         while (repeat-- > 0) {
             topComp = this.getTopActivityComponentName();
             info = getRootInActiveWindow();
-            // this two operations may not be the same
+            // These two fetches come from independent subsystems (ActivityManager vs the
+            // accessibility bridge) and may disagree during a relaunch; the tree-package-guard
+            // below cross-checks their packages before modeling the pair.
             if (info == null) {
                 sleep(refectchInfoWaitingInterval);
                 continue;
             }
             if (info != null) {
+                // foreign-activity-guard: a screen that turned foreign between
+                // checkAppActivity and this fresh topComp fetch (launcher/installer leak)
+                // is deflected with one raw BACK and never modeled — closing the TOCTOU
+                // window at the modeling boundary (INV-EXPL-20). Whitelist packages and a
+                // null topComp bypass the guard. The BACK is raw (not an [APE-STEP]): it is
+                // not counted as a step and is invisible to the BACK/MENU pick cap.
+                if (foreignActivityGuard && topComp != null) {
+                    String pkg = topComp.getPackageName();
+                    boolean accepts = MonkeyUtils.getPackageFilter().isPackageValid(pkg);
+                    if (!ForeignActivityGuard.shouldModel(pkg, accepts,
+                            ForeignActivityGuard.SYSTEM_INTERACTION_PACKAGES)) {
+                        if (deflectedPackages.add(pkg)) {
+                            Logger.iformat("[APE-RV] Foreign activity: pkg=%s -> BACK", pkg);
+                        }
+                        generateKeyBackEvent();
+                        generateThrottleEvent(mThrottle);
+                        return; // no updateState, no modeling
+                    }
+                }
+                // tree-package-guard: topComp is in-package (or whitelisted/null) here, but
+                // the accessibility tree can still be owned by another package during a
+                // relaunch race (AM reports MainActivity while the launcher tree is painted).
+                // On a foreign-tree mismatch, refetch within THIS loop while retries remain
+                // (repeat > 0); on exhaustion (repeat == 0) fall through and model the pair
+                // (fail-open — a `continue` on the last iteration would wrongly exit to NOP).
+                if (treePackageGuard && topComp != null) {
+                    String topPkg = topComp.getPackageName();
+                    CharSequence tp = info.getPackageName();
+                    String treePkg = tp == null ? null : tp.toString();
+                    if (TreePackageGuard.shouldRefetch(topPkg, treePkg,
+                            ForeignActivityGuard.SYSTEM_INTERACTION_PACKAGES)) {
+                        if (mismatchPairs.add(topPkg + "->" + treePkg)) {
+                            Logger.iformat("[APE-RV] Tree/package mismatch: top=%s tree=%s -> refetch",
+                                    topPkg, treePkg);
+                        }
+                        if (repeat > 0) {
+                            continue; // re-fetch topComp+info on the next loop iteration
+                        }
+                        // retries exhausted -> fail-open: fall through and model as today
+                    }
+                }
                 nullInfoCounter = 0;
                 action = mAgent.updateState(topComp, info);
                 if (action == null) {
@@ -842,6 +913,9 @@ public class MonkeySourceApe implements MonkeyEventSource {
         case EVENT_ACTIVATE:
             generateActivateEvent();
             break;
+        case EVENT_TRIGGER_ACTIVITY:
+            generateActivityTriggerEvent((ActivityTriggerAction) action);
+            break;
         case MODEL_BACK:
             generateKeyBackEvent();
             break;
@@ -867,6 +941,31 @@ public class MonkeySourceApe implements MonkeyEventSource {
             break;
         default:
             throw new RuntimeException("Should not reach here");
+        }
+    }
+
+    /**
+     * activity-frontier (Lever B) dispatch — launch the stagnation-selected activity. Uses an
+     * ACTION_VIEW deep-link intent when the manifest provided a URI, otherwise an explicit-component
+     * intent {@code ComponentName(action.getPackageName(), action.getClassName())} (the package
+     * originates from {@code MopData.getPackageName()}, never the class name — INV-CT-04).
+     * FLAG_ACTIVITY_NEW_TASK is added by {@code AndroidDevice.startActivity}. Failures are logged
+     * WARNING and the run continues (existing startActivity error contract).
+     */
+    private void generateActivityTriggerEvent(ActivityTriggerAction action) {
+        Intent intent = new Intent();
+        String deepLink = action.getDeepLinkUri();
+        if (deepLink != null) {
+            intent.setAction(Intent.ACTION_VIEW);
+            intent.setData(Uri.parse(deepLink));
+            intent.setPackage(action.getPackageName());
+        } else {
+            intent.setComponent(new ComponentName(action.getPackageName(), action.getClassName()));
+        }
+        boolean ok = AndroidDevice.startActivity(intent);
+        if (!ok) {
+            Logger.wformat("[APE-RV] Triggering activity failed: %s/%s",
+                    action.getPackageName(), action.getClassName());
         }
     }
 
@@ -897,20 +996,6 @@ public class MonkeySourceApe implements MonkeyEventSource {
         long throttle = mThrottle + action.getThrottle();
         generateThrottleEvent(throttle);
         endLogAction(action);
-    }
-
-    protected boolean checkPackage(ComponentName topComp, AccessibilityNodeInfo info) {
-        String packageName = topComp.getPackageName();
-        String infoPkg = info.getPackageName().toString();
-        if (!infoPkg.equals(packageName)) {
-            Logger.wformat("Different packages: top(%s) v.s. info(%s).", packageName, infoPkg);
-            return false;
-        }
-        if (!MonkeyUtils.getPackageFilter().checkEnteringPackage(packageName)) {
-            Logger.format("Disallowed package: %s", packageName);
-            return false;
-        }
-        return true;
     }
 
     public void clearPackage(String packageName) {
@@ -1124,6 +1209,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
     }
 
 
+    /** The primary app under test (first configured main app); used for the MOP package/mainActivity sanity check. */
+    public ComponentName getMainApp() {
+        return mMainApps.get(0);
+    }
+
     public ComponentName randomlyPickMainApp() {
         int total = mMainApps.size();
         int index = mRandom.nextInt(total);
@@ -1178,6 +1268,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
         String pkg = cn.getPackageName();
         boolean allow = MonkeyUtils.getPackageFilter().isPackageValid(pkg);
         if (allow) {
+            this.waitForActivityCycles = 0; // expected package is in the foreground
             if (this.waitForActivity) {
                 Logger.iformat("Expected activity package [%s] is loaded...", pkg);
                 // needed.
@@ -1188,6 +1279,17 @@ public class MonkeySourceApe implements MonkeyEventSource {
             return;
         }
         if (this.waitForActivity) {
+            // INV-EXPL-15: bound the wait. If the expected package never foregrounds, this branch
+            // would otherwise throttle 100ms forever and wedge the run; relaunch after 100 cycles.
+            if (++this.waitForActivityCycles > 100) {
+                Logger.iprintln("[APE-RV] waitForActivity exceeded 100 cycles, relaunching");
+                this.waitForActivity = false;
+                this.waitForActivityFromClean = false;
+                this.waitForActivityCycles = 0;
+                clearEvent();
+                startRandomMainApp();
+                return;
+            }
             Logger.iprintln("We are still waiting for activity loading. Let's wait for another 100ms...");
             generateThrottleEvent(100);
             return;

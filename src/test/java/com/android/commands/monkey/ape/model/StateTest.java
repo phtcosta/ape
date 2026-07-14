@@ -228,4 +228,62 @@ public class StateTest {
 
         assertSame(a1, state.greedyPickLeastVisited(excludeFirst));
     }
+
+    /**
+     * form-completion #1 D-7.2 guard (extended INV-FORM-06): the excluded submit candidate is
+     * skipped even when it is the least-visited action, so the next-least-visited non-excluded
+     * action wins; a null exclusion leaves behavior unchanged.
+     */
+    @Test
+    public void testExcludedActionSkippedEvenIfLeastVisited() throws Exception {
+        State state = createState(new ModelAction[0]);
+        ModelAction submit = createAction(state, 100, 0);   // least visited — would win unguarded
+        ModelAction field = createAction(state, 32, 3);
+
+        Field actionsField = State.class.getDeclaredField("actions");
+        actionsField.setAccessible(true);
+        actionsField.set(state, new ModelAction[]{submit, field});
+
+        assertSame("excluded submit skipped despite lowest visitedCount",
+                field, state.greedyPickLeastVisited(ALL, submit));
+        assertSame("null exclusion → unchanged least-visited behavior",
+                submit, state.greedyPickLeastVisited(ALL, null));
+    }
+
+    // -----------------------------------------------------------------------
+    // rv-scoring-pipeline task 4.2: leastVisitedPriorityTiebreak seam.
+    // The static final gate cannot be flipped in-JVM, so the OFF branch (upstream
+    // array-order ties) is asserted through the pure beatsLeastVisited seam; the
+    // wired ON path is covered by the greedyPickLeastVisited tests above and the
+    // OFF wiring by the device smoke (task 7.6).
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testBeatsLeastVisited_fewerVisitsAlwaysWins() {
+        // vc below the incumbent minValue wins regardless of tiebreak flag or priority.
+        assertTrue(State.beatsLeastVisited(2, 1, 5, 999, true));
+        assertTrue(State.beatsLeastVisited(2, 1, 5, 999, false));
+    }
+
+    @Test
+    public void testBeatsLeastVisited_tieBrokenByPriorityOnlyWhenTiebreakOn() {
+        // Equal vc, strictly higher priority: RV tiebreak takes it, upstream keeps the incumbent.
+        assertTrue("tiebreak on: higher priority wins the tie",
+                State.beatsLeastVisited(3, 500, 3, 100, true));
+        assertFalse("tiebreak off: incumbent keeps the slot (upstream array-order)",
+                State.beatsLeastVisited(3, 500, 3, 100, false));
+    }
+
+    @Test
+    public void testBeatsLeastVisited_higherVisitsNeverWins() {
+        assertFalse(State.beatsLeastVisited(6, 999, 5, 0, true));
+        assertFalse(State.beatsLeastVisited(6, 999, 5, 0, false));
+    }
+
+    @Test
+    public void testBeatsLeastVisited_equalPriorityTieKeepsIncumbent() {
+        // Equal vc and equal priority: incumbent keeps the slot under both settings (strict >).
+        assertFalse(State.beatsLeastVisited(3, 100, 3, 100, true));
+        assertFalse(State.beatsLeastVisited(3, 100, 3, 100, false));
+    }
 }

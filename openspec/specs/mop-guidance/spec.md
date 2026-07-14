@@ -10,7 +10,7 @@ The JSON contains `windows[]`, `reachability[]`, `transitions[]`, and `component
 ## Requirements
 ### Requirement: MopData — Static Analysis JSON Loader
 
-`MopData.load(String path)` and `MopData.load(String path, String expectedPackage, String expectedMainActivity)` SHALL parse the post-gh57+gh60 static analysis JSON file and build a complete typed model:
+`MopData.load(String path, String expectedPackage, String expectedMainActivity)` SHALL parse the post-gh57+gh60 static analysis JSON file and build a complete typed model:
 
 1. **Top-level scalars**: `getPackageName()`, `getMainActivity()`, `isComplete()`.
 2. **Reachability**: `getReachability()` returns immutable `List<ReachabilityClass>` with full per-class (`className`, `componentType`, `isMain`, `methods`) and per-method (`name`, `signature`, `reachable`, `reachesTarget`, `directlyReachesTarget`) fields.
@@ -25,9 +25,15 @@ The JSON contains `windows[]`, `reachability[]`, `transitions[]`, and `component
 
 Cross-referencing for widgets matches `windows[i].widgets[j].listeners[k].handler` against `reachability[m].methods[n].signature`. Per-event-type maps are populated by grouping listeners by `eventType` during the cross-reference pass; aggregate `directMop`/`transitiveMop` are the OR across all event types (backward compat). When `Listener.handlerReachesTarget` is non-null, the producer value takes precedence over the cross-reference (INV-MOP-12).
 
+The widget map is keyed by base activity name and short widget resource ID. When two or more widgets within the same base activity resolve to the same short id, the map SHALL retain the widget with the strongest MOP flag — `directMop` ranks above `transitiveMop`, which ranks above unflagged — and SHALL NOT overwrite an already-stored flagged widget with an unflagged widget (INV-MOP-19). This replaces the prior last-write-wins behavior, under which an unflagged sibling could overwrite a flagged widget and silently demote its `+mopWeightDirect`/`+mopWeightTransitive` boost.
+
+Widgets whose short id is empty SHALL NOT be stored in the map (INV-MOP-20). Because `extractShortId(GUITreeNode.getResourceID())` returns `""` for any runtime node without a resource id, an empty-string map key IS reachable at runtime — but storing id-less widgets under it would collapse every id-less widget of an activity into one colliding bucket, so the correct behavior is to drop id-less widgets at load rather than store them. The number of MOP-flagged widgets dropped for lacking a resource id SHALL be counted during parsing and logged once per load (a single `[APE-RV] MopData` line). Matching such widgets by class/text/bounds is out of scope.
+
+The single-argument `MopData.load(path)` overload is removed (owned by the "MopData — Package / MainActivity Sanity Check" requirement); the three-argument form is the sole loader entry point.
+
 Unknown JSON keys are ignored for forward compatibility (INV-MOP-11); the parser reads the file once into an `org.json` DOM (design D21).
 
-[The full set of MopData scenarios from the prior version of this spec is preserved; new scenarios appended below.]
+[The full set of MopData scenarios from the base spec — real cryptoapp fixture typed-field load, gh60-D15 component trigger-surface fields, target-key regression, widget metadata, package/mainActivity sanity check (warn-only and strict), OPTIONSMENU gateway cases, per-event-type maps, multiple-listener idempotence, complete-but-empty JSON, file missing, null path, malformed JSON, unknown future fields — is preserved unchanged; the widget-collision and empty-id scenarios below are appended by this change.]
 
 #### Scenario: Real cryptoapp fixture loads every typed field
 - **WHEN** `MopData.load()` is called on `src/test/resources/cryptoapp.apk.gh60-fresh.json`
@@ -111,20 +117,34 @@ Unknown JSON keys are ignored for forward compatibility (INV-MOP-11); the parser
 
 [Other existing scenarios — post-gh60 target keys, sentinel paths, widget metadata captures, transition events, implicit events, component fields, file missing, null path, malformed JSON, unknown future fields — preserved from prior version. Scenarios about recursive `items[]` and depth cap are REMOVED — gh60 does not emit nested widgets.]
 
+#### Scenario: Duplicate short id — strongest MOP flag retained
+- **WHEN** one base activity contains two widgets with short id `"submit"`, the first with `directMop=true` and the second (a later window/fragment) unflagged
+- **THEN** `getWidget(activity, "submit")` SHALL return the `directMop=true` widget
+- **AND** the unflagged widget SHALL NOT overwrite it
+
+#### Scenario: Duplicate short id — unflagged does not displace flagged regardless of order
+- **WHEN** the unflagged widget with short id `"submit"` is parsed first and the `directMop=true` widget second
+- **THEN** `getWidget(activity, "submit")` SHALL return the `directMop=true` widget (stronger flag wins on order-independent comparison)
+
+#### Scenario: Empty short id not bucketed
+- **WHEN** a base activity contains a widget whose `idName` is the empty string and which is MOP-flagged
+- **THEN** the widget map for that activity SHALL NOT contain an entry under the empty-string key
+- **AND** the per-load flagged-no-id drop count SHALL be incremented by one
+- **AND** `activityHasMop(activity)` SHALL still return `true` (the activity-level association is unaffected)
+
 ---
 
 ### Requirement: MopScorer — Priority Boost
 
-`MopScorer.score(String activity, String shortId, MopData data)` SHALL return an integer priority boost according to the following scale. The boost is additive: it is added to the existing `ModelAction.priority`, never replacing it.
+`MopScorer.score(String activity, String shortId, MopData data, String eventType)` SHALL return an integer priority boost according to the following scale. The boost is additive: it is added to the existing `ModelAction.priority`, never replacing it. (The `eventType` parameter selects the per-event-type MOP flag and is unchanged by this change.)
 
 | Condition | Boost |
 |-----------|-------|
 | `data.getWidget(activity, shortId).directMop == true` | `+mopWeightDirect` (500) |
 | `data.getWidget(activity, shortId).transitiveMop == true` (and not direct) | `+mopWeightTransitive` (300) |
-| widget is `null` OR resolves with all MOP flags false, AND `data.activityHasMop(activity) == true` | `+mopWeightActivity` (100) |
-| no widget MOP flag AND `data.activityHasMop(activity) == false` | `0` |
+| widget is `null` OR resolves with all MOP flags false | `0` |
 
-The activity-level fallback SHALL be evaluated **after** the widget flags and SHALL be reachable for a resolved-but-unflagged widget (B4 fix at `MopScorer.java:48` vs `:50-51`). The early `return 0` for a resolved-but-unflagged widget is removed.
+The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged widget and a null widget — including on a MOP-bearing activity — both score `0`. This removes the prior `+mopWeightActivity` (100) fallback, which was applied uniformly to every target widget on a MOP-bearing activity and therefore could not re-rank candidates. The previously-required `INV-MOP-07` (which mandated that fallback) is obsolete and removed; `MopData.activityHasMop(activity)` remains as a predicate consumed by WTG scoring and `stateMopDensity`, but is no longer a branch of `MopScorer.score`.
 
 #### Scenario: Direct MOP-reachable widget
 - **WHEN** `data.getWidget(...)` returns flags `{directMop=true, transitiveMop=true}`
@@ -134,15 +154,14 @@ The activity-level fallback SHALL be evaluated **after** the widget flags and SH
 - **WHEN** `data.getWidget(...)` returns flags `{directMop=false, transitiveMop=true}`
 - **THEN** the returned boost SHALL be `mopWeightTransitive` (300)
 
-#### Scenario: Resolved-but-unflagged widget falls back to activity
+#### Scenario: Resolved-but-unflagged widget scores zero
 - **WHEN** `data.getWidget(activity, shortId)` returns a non-null widget with `directMop=false` AND `transitiveMop=false`
 - **AND** `data.activityHasMop(activity)` returns `true`
-- **THEN** the returned boost SHALL be `mopWeightActivity` (100)
-- **AND** the scorer SHALL NOT return `0` before the activity check
+- **THEN** the returned boost SHALL be `0`
 
-#### Scenario: Widget null falls back to activity
+#### Scenario: Widget null scores zero
 - **WHEN** `data.getWidget(activity, shortId)` returns `null` AND `data.activityHasMop(activity)` returns `true`
-- **THEN** the returned boost SHALL be `mopWeightActivity` (100)
+- **THEN** the returned boost SHALL be `0`
 
 #### Scenario: No match
 - **WHEN** the widget carries no MOP flag AND the activity has no MOP association
@@ -164,7 +183,7 @@ The reconciliation requires access to the GUI node, which `MopScorer.score()` do
 #### Scenario: Depth bound respected
 - **WHEN** a MOP-flagged ancestor exists only at depth 3
 - **THEN** the reconciliation SHALL NOT match it (bound is depth ≤ 2)
-- **AND** the scorer SHALL fall through to the activity-level check or `0`
+- **AND** the scorer SHALL fall through to `0` (the activity-level fallback is removed by this change)
 
 ---
 
@@ -189,9 +208,8 @@ The scorer SHALL normalize `eventType` tokens to a single canonical form before 
 |-----|------|---------|-------------|
 | `ape.mopWeightDirect` | int | `500` | Boost for direct MOP-reachable widget |
 | `ape.mopWeightTransitive` | int | `300` | Boost for transitive MOP-reachable widget |
-| `ape.mopWeightActivity` | int | `100` | Boost for activity-level MOP fallback |
 
-These weights are configurable via `ape.properties` but the hardcoded defaults SHALL be 500/300/100 (v1 values).
+These weights are configurable via `ape.properties` but the hardcoded defaults SHALL be 500/300. `Config.mopWeightActivity` SHALL NOT exist — the activity-level fallback it parameterised is removed (see "MopScorer — Priority Boost").
 
 #### Scenario: Flag absent
 - **WHEN** `ape.properties` does not contain `ape.mopDataPath`
@@ -203,17 +221,14 @@ These weights are configurable via `ape.properties` but the hardcoded defaults S
 - **THEN** `Config.mopDataPath` SHALL equal `"/data/local/tmp/static_analysis.json"`
 
 #### Scenario: Default MOP weights
-
 - **WHEN** `ape.properties` does not contain any `ape.mopWeight*` keys
 - **THEN** `Config.mopWeightDirect` SHALL equal `500`
 - **AND** `Config.mopWeightTransitive` SHALL equal `300`
-- **AND** `Config.mopWeightActivity` SHALL equal `100`
 
 #### Scenario: Custom MOP weights override
-
 - **WHEN** `ape.properties` contains `ape.mopWeightDirect=200`
 - **THEN** `Config.mopWeightDirect` SHALL equal `200`
-- **AND** `Config.mopWeightTransitive` and `Config.mopWeightActivity` SHALL retain their defaults (`300` and `100`)
+- **AND** `Config.mopWeightTransitive` SHALL retain its default (`300`)
 
 ### Requirement: WTG Scoring Pass in adjustActionsByGUITree
 
@@ -287,7 +302,7 @@ The existing `[DM]` / `[M]` markers stay event-type-agnostic in v1 (D16). Revisi
 
 `MopScorer.scoreOpenMenu(String activity, MopData data)` SHALL return `Config.mopWeightOpenMenu` (default 250) when `data.activityHasMopOptionsMenu(activity)` is `true`, else `0`. The lookup SHALL be O(1) over the precomputed `activitiesWithMopOptionsMenu` set (INV-MOP-13).
 
-`StatefulAgent`'s action-priority pass SHALL apply this boost to the `MODEL_MENU` action of the current state when `_mopData != null`.
+`StatefulAgent`'s action-priority pass SHALL apply this boost to the `MODEL_MENU` action of the current state when `_mopData != null` AND the activity's MENU pick key is still eligible under `ape.backMenuPickCap`. Eligibility is consulted through the protected hook `StatefulAgent.menuPickEligible(activity)` — base implementation returns `true` (RandomAgent/ReplayAgent unchanged); `SataAgent` overrides it with the cap check over its discretionary pick counts. When the hook returns `false`, the pass SHALL NOT modify the MENU action's priority and SHALL NOT set its `menuBoost`.
 
 #### Scenario: Boost applied when OPTIONSMENU has MOP widget
 - **WHEN** `data.activityHasMopOptionsMenu("com.x.A")==true` AND `MopScorer.scoreOpenMenu("com.x.A", data)` is called
@@ -298,11 +313,13 @@ The existing `[DM]` / `[M]` markers stay event-type-agnostic in v1 (D16). Revisi
 - **THEN** `MopScorer.scoreOpenMenu("com.x.B", data)` SHALL return `0`
 
 #### Scenario: Action-priority pass boosts MODEL_MENU when activity has MOP options menu
-- **WHEN** `StatefulAgent`'s action-priority pass runs on a state whose activity is in `activitiesWithMopOptionsMenu`
+- **WHEN** `StatefulAgent`'s action-priority pass runs on a state whose activity is in `activitiesWithMopOptionsMenu` AND `menuPickEligible(activity)` returns `true`
 - **THEN** the `MODEL_MENU` action's priority SHALL be incremented by `Config.mopWeightOpenMenu`
 - **AND** a `Logger.iformat` line SHALL summarize the boost
 
----
+#### Scenario: Boost suppressed once the MENU key is capped
+- **WHEN** the activity's MENU pick key has reached `ape.backMenuPickCap` (so `menuPickEligible(activity)` returns `false`) AND the action-priority pass runs on a state of that activity
+- **THEN** the `MODEL_MENU` action's priority SHALL NOT be incremented and its `menuBoost` SHALL remain 0
 
 ### Requirement: MopScorer — Event-Type-Aware Reachability Scoring
 
@@ -453,7 +470,7 @@ For each invocation:
 
 `MopData.load(String path, String expectedPackage, String expectedMainActivity)` SHALL compare the parsed `package` / `mainActivity` against the optional expected values. When `expectedPackage` non-null and not equal to the parsed value, OR `expectedMainActivity` non-null and not equal to the parsed value, a `WARN` log line naming both pairs SHALL be emitted. When `Config.mopStrictPackageMatch=true` and either comparison mismatches, `MopData.load` SHALL return `null`. Default behavior (`mopStrictPackageMatch=false`) is warn-only — the parsed `MopData` is still returned.
 
-The single-argument `MopData.load(path)` SHALL delegate to `load(path, null, null)` (no sanity check).
+The production call site (`StatefulAgent` constructor) SHALL pass the runtime package name and main activity of the app under test, making the sanity check reachable in production. The single-argument `MopData.load(path)` overload is deleted (P3): it delegated `load(path, null, null)`, which silently bypassed the check, and it has no remaining callers.
 
 #### Scenario: Default warn-only on mismatch
 - **WHEN** `Config.mopStrictPackageMatch=false` AND `MopData.load(path, "x.y.z.OTHER", null)` is called on a JSON with `package="x.y.z"`
@@ -470,9 +487,273 @@ The single-argument `MopData.load(path)` SHALL delegate to `load(path, null, nul
 - **THEN** no sanity-check WARN log SHALL be emitted (regardless of `mopStrictPackageMatch`)
 - **AND** the parsed `MopData` SHALL be returned
 
-#### Scenario: Single-argument load delegates
-- **WHEN** `MopData.load(path)` is called
-- **THEN** the behavior SHALL be identical to `MopData.load(path, null, null)`
+#### Scenario: Production call site passes runtime identity
+- **WHEN** `StatefulAgent` loads MOP data for an app whose runtime package is `br.unb.cic.cryptoapp`
+- **THEN** it SHALL call `MopData.load(Config.mopDataPath, "br.unb.cic.cryptoapp", <mainActivity>)`
+- **AND** a JSON produced for a different APK SHALL trigger the sanity-check WARN (and rejection under `mopStrictPackageMatch=true`)
+
+---
+
+### Requirement: MopData — Load Status Line and Fail-Fast
+
+`MopData.load` SHALL emit exactly one `[APE-MOP-DATA]` status line per invocation, on both outcomes:
+
+- success: `[APE-MOP-DATA] status=loaded package=<pkg> windows=<n> widgets=<n> flagged=<n> droppedNoId=<n> transitions=<n>`
+- failure: `[APE-MOP-DATA] status=rejected reason=<file-missing|parse-error|incomplete|package-mismatch|...>`
+
+The line goes to the standard `Logger` output (the `.trace` stream). It SHALL NOT be written to logcat: the rv-platform logcat parser owns that channel and foreign lines are forbidden.
+
+When `Config.mopDataPath` is set and `MopData.load` returns `null`, `StatefulAgent` SHALL abort the run (throw `StopTestingException`) instead of continuing as pure SATA. An operator who sets `ape.mopDataPath` has declared the run a MOP-arm run; silently executing it as `sata` mislabels the arm — the failure class that invalidated the earlier build-skew experiment round. When `Config.mopDataPath` is unset, behavior is unchanged (MOP scoring disabled, no status line required beyond the absence of a load).
+
+#### Scenario: successful load emits counters
+- **WHEN** `MopData.load` parses a complete JSON with 5 windows, 51 widgets, 12 flagged, 3 dropped for missing ids, and 35 transitions
+- **THEN** one `[APE-MOP-DATA] status=loaded ...` line SHALL be emitted carrying those counters
+
+#### Scenario: rejected load names the reason
+- **WHEN** the JSON at `mopDataPath` lacks `complete=true`
+- **THEN** one `[APE-MOP-DATA] status=rejected reason=incomplete` line SHALL be emitted
+- **AND** `load` SHALL return `null`
+
+#### Scenario: fail-fast when the MOP arm cannot arm
+- **WHEN** `ape.mopDataPath` is set and `MopData.load` returns `null`
+- **THEN** `StatefulAgent` SHALL throw `StopTestingException` during setup
+- **AND** the run SHALL NOT proceed as pure SATA
+
+#### Scenario: unset path keeps SATA behavior
+- **WHEN** `ape.mopDataPath` is not set
+- **THEN** `_mopData` SHALL be `null` and exploration SHALL proceed with MOP scoring disabled, as today
+
+---
+
+### Requirement: Typed-Input Widget Resolution via Containment
+
+When `ApeAgent.generateInputText` resolves the static-analysis widget for an `EditText` (to read its `inputType`/`hint` for type-aware generation), the lookup SHALL apply the same parent/child containment-reconciliation policy used by the MOP scoring pass (±2-level ancestor/descendant id probe, as specified in "Parent/child widget granularity reconciliation"): the node's own short id is tried first, then the containment walk. Exact-id-only lookup misses whenever static analysis flags a container id while runtime resolves a child id (or vice versa) — the granularity mismatch that motivated containment in the scorer — so typed generation rarely activated and most inputs fell back to the legacy generator. When no widget resolves (or `inputType`/`hint` are empty), the existing fallback to the legacy generator is unchanged.
+
+#### Scenario: child id resolves the container's typed metadata
+- **WHEN** the static JSON flags widget `login_form` with `inputType="textEmailAddress"` and the runtime EditText resolves to child id `login_form_field`, one containment level below
+- **THEN** `generateInputText` SHALL resolve the `login_form` widget via the containment walk
+- **AND** the generated value SHALL be email-shaped
+
+#### Scenario: no static widget still falls back
+- **WHEN** neither the node's id nor its containment neighborhood matches a static widget
+- **THEN** the legacy generator SHALL be used, as before
+
+---
+
+### Requirement: MopScorer — MOP-Flagged State Density
+
+`MopScorer.stateMopDensity(State, MopData, int timestamp)` (`MopScorer.java:101`) SHALL return `0` when the state's activity does not satisfy `activityHasMop(activity)` (cheap early-out, no widget resolution). Otherwise it SHALL return `1 + count`, where `count` counts only actions whose resolved widget is MOP-flagged: for each valid, target-requiring action, resolve the node's short id, look up the widget (same resolution as `score`), and count it when `isDirectMop(eventType)` or `isTransitiveMop(eventType)` holds.
+
+The `+1` term is the **activity-substrate floor**: a state on a MOP-bearing activity that carries no MOP-flagged widget (the A′-contributed case — activities whose MOP reach flows through lambdas or component-level evidence, invisible at widget granularity) SHALL rank above a state on a non-MOP activity (`1 > 0`) in the SATA navigation tiebreaks, while any widget-flagged state still ranks strictly above an activity-floor-only state (`1 + count > 1` for `count ≥ 1`). Comparisons between two widget-flagged states are unchanged (both shift by +1). The floor is a cross-state ranking signal only; it SHALL NOT feed any per-candidate boost (`MopScorer.score` remains widget-discriminative — the removed uniform `+mopWeightActivity` fallback stays removed).
+
+The method gains an `int timestamp` parameter (previously 2-arg `stateMopDensity(State, MopData)`); `int` matches the codebase-wide timestamp type (`ModelAction.isResolvedAt(int)`, `Agent.getTimestamp():int`) and is required for the per-action `getWidget` resolution. All five call sites (`SataAgent.java:707, 719, 957, 960, 969`) SHALL pass the current GUITree timestamp via `getTimestamp()`.
+
+Previously the method gated on `activityHasMop` and then counted **every** valid targeted action — a widget-count proxy, not a MOP density. Its consumers (`SataAgent` ABA and trivial-activity navigation tiebreakers, `SataAgent.java:702,714,952-964`) therefore steered exploration toward widget-dense screens inside MOP activities rather than toward the screens actually carrying MOP-flagged widgets, diluting the navigation signal the mechanism exists to provide.
+
+#### Scenario: MOP-flagged widgets counted above the floor, unflagged ignored
+- **WHEN** a state in a MOP activity has 10 valid targeted actions of which 2 resolve to MOP-flagged widgets
+- **THEN** `stateMopDensity` SHALL return 3 (floor 1 + count 2)
+
+#### Scenario: A′-only activity ranks above non-MOP activity
+- **WHEN** state A is on an activity with `activityHasMop==true` contributed solely by the A′ component/reachability sources (zero MOP-flagged widgets resolve), and state B is on an activity with `activityHasMop==false`
+- **THEN** `stateMopDensity(A) == 1` and `stateMopDensity(B) == 0` (navigation tiebreak prefers A)
+
+#### Scenario: widget evidence outranks activity-floor-only evidence
+- **WHEN** state A has exactly 1 MOP-flagged resolved action and state B is on a MOP activity with none
+- **THEN** `stateMopDensity(A) == 2` and `stateMopDensity(B) == 1` (widget-flagged state preferred)
+
+#### Scenario: dense non-MOP screen scores below sparse MOP screen
+- **WHEN** state A has 12 valid actions, none MOP-flagged, on a non-MOP activity, and state B has 3 valid actions, one MOP-flagged, in a MOP activity
+- **THEN** `stateMopDensity(A) == 0` and `stateMopDensity(B) == 2` (navigation tiebreak prefers B)
+
+#### Scenario: non-MOP activity unchanged
+- **WHEN** the state's activity has no MOP-reachable methods
+- **THEN** `stateMopDensity` SHALL return 0 without resolving any widget
+
+---
+
+### Requirement: MopData — Activity-Substrate Counters on the Load Line
+
+The `[APE-MOP-DATA] status=loaded …` line emitted by `MopData.load` SHALL additionally report the activity-level MOP substrate: `mopActivities=<n>` — the final size of the `mopActivities` set (after Pass-2 widget derivation, DIALOG re-keying, and A′ augmentation) — and `mopActsAugmented=<m>` — the number of entries contributed by `augmentActivitiesFromSources` beyond the set as it stood before augmentation. With `Config.mopActivitySourceComponents=false`, `m` SHALL be `0`. These fields are diagnostic only and SHALL NOT alter any scoring, routing, or load outcome.
+
+#### Scenario: flag off reports zero augmentation
+- **WHEN** `Config.mopActivitySourceComponents=false` and the widget-derived set has 3 activities
+- **THEN** the `status=loaded` line SHALL include `mopActivities=3 mopActsAugmented=0`
+
+#### Scenario: flag on reports the A′ contribution
+- **WHEN** `Config.mopActivitySourceComponents=true` and the A′ sources add 2 activities beyond the 3 widget-derived ones
+- **THEN** the `status=loaded` line SHALL include `mopActivities=5 mopActsAugmented=2`
+
+---
+
+### Requirement: Navigation MOP-Tiebreak Decision Log
+
+When the SATA trivial-activity path selection chooses among multiple shortest paths and the `stateMopDensity` comparison is decisive (densities not all equal — the non-random branch), the agent SHALL log exactly one line: `[APE-RV] Nav MOP tiebreak: density=<d> paths=<n>`, where `<d>` is the winning path's target-state density and `<n>` the number of candidate paths. When all densities are equal (random fallback) or `MopData` is null, no line SHALL be logged. The per-step cold-state/cold-activity density comparisons SHALL NOT log (they run inside a candidate loop; logging there would flood the trace).
+
+#### Scenario: decisive density logs once
+- **WHEN** 3 candidate paths have target densities 0, 0, 2
+- **THEN** the path with density 2 SHALL be chosen and one `[APE-RV] Nav MOP tiebreak: density=2 paths=3` line SHALL be logged
+
+#### Scenario: all-equal densities stay silent
+- **WHEN** all candidate paths have equal target density
+- **THEN** the path SHALL be chosen by the existing random fallback and no tiebreak line SHALL be logged
+
+---
+
+### Requirement: MopData — DIALOG Window Re-Keying to Host Activity
+
+`MopData.load` SHALL re-key DIALOG-type windows to their host activity after transitions are parsed and before the OPTIONSMENU-gateway precompute: for each window with `type=="DIALOG"`, find an incoming transition whose target is that window, take `baseActivity(source.name)` as the host, and merge the dialog's already-parsed widget entries into `widgetData[host]` using the same strongest-flag-wins collision policy (`mopRank`) as Pass 2. The dialog-class key entry SHALL be removed after a successful merge (the widgets move, they are not copied), so widget counts are not inflated. When a merged widget is MOP-flagged, `host` SHALL be added to `mopActivities` so that `activityHasMop(host)` stays consistent with the merged widget map (INV-MOP-25). DIALOG windows with no incoming transition remain keyed as-is (unreachable); their count SHALL be reported on a dedicated `[APE-RV]` diagnostic line, separate from the `[APE-MOP-DATA]` load status line (whose field set is fixed by the "MopData — Load Status Line and Fail-Fast" requirement).
+
+Verified motivation: a DIALOG window's `name` is the dialog class (e.g. `android.app.AlertDialog`), which `baseActivity` leaves untouched and which never equals `newState.getActivity()` at runtime — so every widget-level MOP flag on a dialog widget was structurally unreachable for scoring (corpus estimate: ~86 flagged widgets across 5 of 169 apps). The WTG `transitions` already present in the same JSON carry the activity→dialog edges needed to recover the host, so the fix is consumer-side with no producer change.
+
+#### Scenario: dialog widgets resolvable via host activity
+- **WHEN** the JSON has window `{name: "android.app.AlertDialog", type: "DIALOG"}` with a flagged widget `btn_confirm`, and a transition whose source is `"com.example.MainActivity"` and target is that dialog window
+- **THEN** `getWidget("com.example.MainActivity", "btn_confirm")` SHALL return the flagged widget
+
+#### Scenario: collision on re-key keeps the strongest flag
+- **WHEN** the host activity already holds a widget with the same `idName` and a weaker MOP rank than the dialog's widget
+- **THEN** the dialog's widget SHALL win (same `mopRank` policy as Pass 2, INV-MOP-19)
+
+#### Scenario: dialog-only host promoted to MOP activity
+- **WHEN** an activity has no flagged widget of its own but a reachable DIALOG merges a flagged widget into it
+- **THEN** `activityHasMop(host)` SHALL return `true` after load
+- **AND** `getWidget(dialogClass, ...)` SHALL return `null` — the widgets moved to the host, and the dialog class is not a runtime activity key for the widget map
+
+#### Scenario: re-keyed widgets moved, not copied
+- **WHEN** a DIALOG window is re-keyed to its host activity
+- **THEN** the dialog-class key SHALL be absent from the **widget map** after load (the widgets are moved, not duplicated)
+
+#### Scenario: dialog-class MOP-activity entry retained for gateway detection
+- **WHEN** a DIALOG window's own base activity (the dialog class) was added to `mopActivities` in Pass 2 (`:330`) and a WTG click edge targets that dialog window
+- **THEN** the dialog class SHALL remain in `mopActivities` after the re-key, so the OPTIONSMENU-gateway precompute (condition 2, which tests `mopActivities.contains(targetActivity)`) still recognizes the source activity's menu as a gateway
+- **AND** the move-not-copy removal SHALL apply to the widget map only, never to `mopActivities`
+
+#### Scenario: orphan dialog left as-is
+- **WHEN** a DIALOG window has no incoming transition in the JSON
+- **THEN** its widgets SHALL remain under the dialog-class key (unreachable)
+- **AND** the orphan count SHALL be reported on a dedicated `[APE-RV]` line, not on the `[APE-MOP-DATA]` load status line
+
+---
+
+### Requirement: Load memory safety
+
+`MopData.readFile` SHALL allocate the read buffer once, sized from `File.length()`, and decode in a single `new String(bytes, UTF_8)` — it SHALL NOT grow a `StringBuilder` incrementally over the file.
+
+Before reading, `MopData.load` SHALL reject the file when its size times a parse-footprint factor (code constant, sized for the org.json DOM) exceeds a budget derived from the process's maximum heap (`Runtime.getRuntime().maxMemory()`). The comparison SHALL be computed without multiplication overflow (e.g. `fileSize > budget / factor`) **and with both operands in the same binary unit (bytes)**. The file size operand SHALL be `File.length()` in bytes and the budget operand SHALL be derived from `maxMemory()` in bytes; neither operand SHALL be converted through decimal-MB (10^6) while the other uses binary units (2^20). This unit consistency is required so that a file whose true byte size is below the heap-derived budget is NOT falsely rejected as too-large (G-2). This property already holds in the implementation (the comparison has been byte-vs-byte since `mop-data-load-oom`); the change adds only a regression-guard test pinning the byte boundary. (Note: a genuinely large JSON such as redreader's 48.3 MiB may still be rejected — that is a real heap-budget decision, `48.3 MiB × factor` vs the device `maxMemory()`, not a unit artifact.) A static max-heap budget — rather than a live free-plus-unallocated reading — makes the reject decision a pure function of file size for a given device config, so a borderline file cannot flip pass/reject across runs with GC state. When the budget is exceeded, `load` SHALL emit `[APE-MOP-DATA] status=rejected reason=too-large size=<bytes> budget=<bytes>` (both fields in bytes, the same unit as the comparison) and return null without reading the file.
+
+If `OutOfMemoryError` is nonetheless thrown anywhere in the load body — read, sentinel check, `JSONObject` construction, typed parsing, or `MopData` construction — a single outer catch SHALL contain it: `load` releases its local references, emits `[APE-MOP-DATA] status=rejected reason=oom`, and returns null. The Error SHALL NOT propagate (INV-MOP-26). The null return flows into the existing `requireMopArm` contract: with `ape.mopDataPath` set, the run fails fast via `StopTestingException` (INV-MOP-22). This is a deterministic, diagnosable fail-fast, not a graceful stop — the throw occurs at agent-construction time, so it propagates to Monkey's generic `catch (Throwable)` ("Internal error", exit 1) rather than the graceful `getNextEvent` stop path; the status line emitted first is what makes the run excludable/annotatable by analysis pipelines.
+
+- **INV-MOP-26**: `MopData.load` SHALL NOT propagate `OutOfMemoryError` to its caller, from any phase of the load body; every failure path emits exactly one `[APE-MOP-DATA] status=rejected` line and returns null. (`IOException`/`JSONException` are already contained by the existing inner catches per INV-MOP-01; INV-MOP-26 does not widen coverage to all throwables.)
+- **INV-MOP-29**: The too-large pre-read comparison SHALL express the file-size and budget operands in the same binary unit (bytes); a file whose byte size is below the heap-derived budget SHALL NOT be rejected as too-large, and the `size=`/`budget=` fields on the reject line SHALL report the same unit used in the comparison.
+
+#### Scenario: oversized file rejected before read
+- **WHEN** the JSON at `ape.mopDataPath` is 50 MB and the available heap budget is below the parse footprint for 50 MB
+- **THEN** `load` SHALL return null without reading the file
+- **AND** exactly one `[APE-MOP-DATA] status=rejected reason=too-large` line SHALL be emitted
+- **AND** the subsequent `requireMopArm` SHALL throw `StopTestingException` (INV-MOP-22)
+
+#### Scenario: file below budget not falsely rejected (G-2)
+- **WHEN** the JSON's true size is 48.3 MiB and the heap-derived budget (both operands in bytes) exceeds `48.3 MiB × factor`
+- **THEN** `load` SHALL NOT emit `status=rejected reason=too-large`
+- **AND** `load` SHALL proceed to read and parse the file
+
+#### Scenario: OOM during parse is contained
+- **WHEN** the budget check passes but any phase of the load body (`JSONObject` construction, typed parsing, or `MopData` construction) exhausts the heap
+- **THEN** the single outer catch SHALL contain the `OutOfMemoryError` and `load` SHALL return null
+- **AND** emit `[APE-MOP-DATA] status=rejected reason=oom`
+
+#### Scenario: normal file unaffected
+- **WHEN** the JSON is 2 MB and the budget check passes
+- **THEN** `load` SHALL parse and return `MopData` exactly as before, emitting `status=loaded`
+
+### Requirement: MopData — Activity-Level MOP Source from Components (A′)
+
+`MopData.load` SHALL support an alternative source for the `mopActivities` set (which backs `activityHasMop(activity)`), gated by `Config.mopActivitySourceComponents` (default `false`):
+
+- When `Config.mopActivitySourceComponents == false` (default), `mopActivities` SHALL be populated exactly as today — from the base activities of MOP-flagged widgets (plus the existing Pass-2/DIALOG-rekey contributions). Behaviour SHALL be byte-identical to the pre-change loader.
+- When `Config.mopActivitySourceComponents == true`, `mopActivities` SHALL be the **union** of THREE sources: (1) the widget-derived source (today); (2) the base class name of every `components.activities[]` entry whose JSON `reachesTarget` field is `true`; and (3) the class name of every `reachability[]` entry whose `componentType == "activity"` that has **at least one method with `reachesTarget == true`**. The union SHALL be additive: an activity present via any source SHALL remain present regardless of the others; no widget-derived entry is ever removed.
+
+  **Source (3) is required, not redundant with (2)** (evidence: `test-apks/cryptoapp.apk.json`, device-verified 2026-07-08). `components.activities[].reachesTarget` is computed from the activity's entry points through the producer's call graph, which does NOT traverse D8-desugared lambda/callback edges; so an activity whose UI genuinely triggers a MOP API through a lambda handler is a **false negative** at the component level. In cryptoapp all 4 activities report `components.activities[].reachesTarget=false`, yet `reachability[]` correctly marks `CryptographyActivity` with 13 `reachesTarget=true` methods (`executeOperation`→`Cipher`…), `CipherActivity` 2, `MessageDigestActivity` 1. Source (3) — "the activity's class contains MOP-reaching code" — is the only source that is immune to the lambda call-graph gap and is therefore the robust substrate for `activityHasMop`. Sources (1) and (2) are kept in the union for recall on apps where they do fire.
+
+The read of the JSON `reachesTarget` fields (on `components.activities[]` and on `reachability[].methods[]`) is confined to the JSON-parsing boundary (`Target` vocabulary on the JSON side); the values populate `mopActivities` (`MOP` vocabulary on the Java side), preserving the `MopData` javadoc naming boundary (gh13 D7). The scorer arithmetic SHALL NOT change — this requirement widens only the extent of the `activityHasMop` predicate.
+
+`Config.mopActivitySourceComponents` SHALL be declared in `Config.java` and loaded via `ape.mopActivitySourceComponents`, default `false`, and SHALL be registered in the `apePureMode` RV-flag registry (INV-ARCH-06 of `scoring-pipeline`), forced to `false` when `apePureMode=true`.
+
+- **INV-MOP-27**: `activityHasMop(activity)` SHALL return `true` for an activity contributed by a component-level or reachability-level source **only** when `Config.mopActivitySourceComponents == true` AND EITHER that activity's `ComponentInfo.reachesTarget == true` OR its `reachability[]` class (`componentType=="activity"`) has ≥1 method with `reachesTarget == true`. With the flag `false`, both non-widget sources SHALL contribute nothing and the `mopActivities` set SHALL equal the pre-change widget-derived set exactly.
+
+#### Scenario: component-level activity added under the flag
+- **WHEN** `Config.mopActivitySourceComponents=true` AND a `components.activities[]` entry `com.x.CryptoActivity` has `reachesTarget=true` and carries no MOP-flagged widget
+- **THEN** after load `activityHasMop("com.x.CryptoActivity")` SHALL return `true`
+
+#### Scenario: flag off preserves widget-only source
+- **WHEN** `Config.mopActivitySourceComponents=false` AND the same `com.x.CryptoActivity` has `reachesTarget=true` but no MOP-flagged widget
+- **THEN** `activityHasMop("com.x.CryptoActivity")` SHALL return `false` (component-level source contributes nothing)
+
+#### Scenario: union preserves widget-derived entries
+- **WHEN** `Config.mopActivitySourceComponents=true` AND activity `com.x.A` is MOP via a flagged widget but its `ComponentInfo.reachesTarget=false`
+- **THEN** `activityHasMop("com.x.A")` SHALL remain `true` (widget-derived entry not removed by the component source)
+
+#### Scenario: non-reaching component not added
+- **WHEN** `Config.mopActivitySourceComponents=true` AND `com.x.Plain` has `reachesTarget=false`, no flagged widget, and no `reachability[]` method reaching a target
+- **THEN** `activityHasMop("com.x.Plain")` SHALL return `false`
+
+#### Scenario: reachability-method source flags a lambda-gapped activity (source 3)
+- **WHEN** `Config.mopActivitySourceComponents=true` AND activity `com.x.CryptoActivity` has `components.activities[].reachesTarget=false` and no MOP-flagged widget, BUT its `reachability[]` class (`componentType="activity"`) has ≥1 method with `reachesTarget=true`
+- **THEN** `activityHasMop("com.x.CryptoActivity")` SHALL return `true` (source 3 — immune to the component-level lambda call-graph gap)
+
+---
+
+### Requirement: MopData — Widget MOP Flag Recovery for Desugared-Lambda Handlers (FIX 2)
+
+When the exact handler join in `MopData.deriveWidgetMopFlags` misses for a listener whose `handler` class matches the D8 synthetic-lambda pattern `<ENCLOSING$$ExternalSyntheticLambda<digits>: ...>`, `MopData` SHALL fall back to the **enclosing class** `ENCLOSING`: if `ENCLOSING` has any `reachability[]` method named `lambda$…` (a javac-desugared lambda body) with `reachesTarget==true`, the listener SHALL be treated as `transitiveMop` (and `directMop` when that lambda method's `directlyReachesTarget==true`). The exact-match path SHALL be unchanged; recovery only adds flags the exact match would have missed. The recovery SHALL be a pure consumer-side read of data already present in the same JSON (no producer/GATOR re-run) and SHALL be active only when MOP data is loaded (`mopDataPath` set), so the standalone `aperv` default and `apePureMode` are unaffected.
+
+Context: today the join is an exact signature match (`bySignature.get(l.handler)`), which silently drops any handler whose signature does not string-match a reachability method. The dominant miss is the **D8-desugared lambda listener**: a widget's runtime `onClick` handler is the synthetic wrapper class `<X$$ExternalSyntheticLambdaN: void onClick(...)>`, whose reachability entry carries `reachesTarget=false` because the producer call graph does not traverse the wrapper→`lambda$…` delegation, while the underlying `<X: void lambda$…$K$X(...)>` method (which the wrapper calls) IS marked `reachesTarget=true`. On `cryptoapp.apk.json` this drops the Execute button — the single widget that triggers all crypto — so only 2 of 7 handlers join (`flagged=2`).
+
+- **INV-MOP-30**: a widget whose only listener handler is a D8 synthetic-lambda wrapper (`X$$ExternalSyntheticLambdaN`) SHALL be flagged `transitiveMop` iff its enclosing class `X` has a `lambda$…` reachability method with `reachesTarget==true`; recovery SHALL NOT flag a widget whose enclosing class has no reaching lambda method (no blanket enclosing-class over-flag beyond the lambda-method evidence).
+
+#### Scenario: desugared-lambda handler recovered
+- **WHEN** a widget's only listener handler is `<com.x.CryptoActivity$$ExternalSyntheticLambda0: void onClick(android.view.View)>` (reachability `reachesTarget=false`) AND `com.x.CryptoActivity` has a reachability method `<com.x.CryptoActivity: void lambda$setup$0$CryptoActivity(android.view.View)>` with `reachesTarget=true`
+- **THEN** after load the widget SHALL be `transitiveMop==true` and its base activity SHALL be in `mopActivities`
+
+#### Scenario: exact match still wins unchanged
+- **WHEN** a widget handler signature exactly matches a `reachesTarget=true` reachability method
+- **THEN** the widget SHALL be flagged exactly as before (recovery path not consulted)
+
+#### Scenario: no reaching lambda → not recovered
+- **WHEN** a widget's handler is `<com.x.Plain$$ExternalSyntheticLambda0: void onClick(...)>` AND `com.x.Plain` has no `lambda$…` method with `reachesTarget=true`
+- **THEN** the widget SHALL NOT be flagged by the recovery path
+
+---
+
+### Requirement: MopData — Handler-Join Diagnostics on the Load Line (FIX 3)
+
+To make a silent widget→MOP join collapse observable, the `[APE-MOP-DATA] status=loaded …` line emitted by `MopData.load` SHALL additionally report the join outcome: the count of distinct widget listener handlers that did **not** join a `reachesTarget` method by exact match (`handlersUnmatched`), how many of those were D8 synthetic-lambda handlers (`syntheticLambda`), and how many of those were recovered by the FIX-2 enclosing-class fallback (`recovered`). These fields are diagnostic only and SHALL NOT alter any scoring, routing, or load outcome.
+
+- **INV-MOP-31**: the `handlersUnmatched`/`syntheticLambda`/`recovered` fields SHALL be pure counters over the parse; their presence or values SHALL NOT change `mopActivities`, widget flags, or the loaded/rejected decision.
+
+#### Scenario: diagnostics surface a lambda-gapped join
+- **WHEN** a JSON has widget handlers of which some are unmatched D8 synthetic lambdas and FIX 2 recovers a subset
+- **THEN** the `status=loaded` line SHALL include `handlersUnmatched=<n> syntheticLambda=<m> recovered=<k>` with `k ≤ m ≤ n`
+
+---
+
+### Requirement: MopData — Widgetless-Substrate Classifier (F′ seam)
+
+`MopData.isWidgetlessSubstrate()` SHALL return `true` when the sum of `getWindows().get(i).getWidgets().size()` over all parsed windows is `0`, and `false` otherwise. This identifies apps (Compose-pure, GL, games — 65/219 in the corpus) for which no widget/WTG/frontier steering substrate exists. The predicate is a pure read over already-parsed data; it has **no consumer** in this change (round-2 adaptive LLM routing will read it). `LlmRouter` and all routing behaviour SHALL be unchanged.
+
+- **INV-MOP-28**: `isWidgetlessSubstrate()` SHALL be a pure function of the parsed `windows[].widgets` counts and SHALL NOT alter any scoring, routing, or load outcome.
+
+#### Scenario: zero-widget substrate detected
+- **WHEN** the JSON has windows but every window's `widgets` list is empty
+- **THEN** `isWidgetlessSubstrate()` SHALL return `true`
+
+#### Scenario: any widget present
+- **WHEN** at least one window carries one or more widgets
+- **THEN** `isWidgetlessSubstrate()` SHALL return `false`
+
+#### Scenario: complete-but-empty JSON
+- **WHEN** the JSON is `complete:true` with an empty `windows[]`
+- **THEN** `isWidgetlessSubstrate()` SHALL return `true` (empty sum is 0) and no exception SHALL be thrown
 
 ## Invariants
 
@@ -482,8 +763,16 @@ The single-argument `MopData.load(path)` SHALL delegate to `load(path, null, nul
 - **INV-MOP-04**: When `Config.mopDataPath` is `null`, the MOP scoring pass SHALL be skipped entirely. The `sata` variant's behaviour SHALL be identical with and without `MopData.java` present in the JAR.
 - **INV-MOP-05**: The WTG scoring pass SHALL execute AFTER the existing MOP scoring pass in `adjustActionsByGUITree()`. Pass order: base priority -> unvisited bonus -> state transition bonus -> MOP boost -> WTG boost -> coverage boost.
 - **INV-MOP-06**: `MopScorer.scoreWtg()` SHALL return 0 when `MopData` is null, when WTG data is absent, when the widget has no matching WTG transition, or when `Config.mopWeightWtg` is 0.
-- **INV-MOP-07**: The activity-level fallback (`+mopWeightActivity`) SHALL be reachable both when widget resolution returns `null` AND when it returns a widget whose MOP flags are all false. A resolved-but-unflagged widget SHALL NOT short-circuit to `0` before the activity check.
 - **INV-MOP-08**: `eventType` comparison in the scorer SHALL be normalization-invariant: a producer `snake_case` token and the consumer `camelCase` token for the same event SHALL compare equal.
+- **INV-MOP-21**: Every `MopData.load` invocation SHALL emit exactly one `[APE-MOP-DATA]` status line, never to logcat.
+- **INV-MOP-22**: A run with `ape.mopDataPath` set SHALL either have non-null `_mopData` or abort; it SHALL never run as pure SATA.
+- **INV-MOP-23**: Static-widget resolution for typed input SHALL use the same containment policy as MOP boost resolution; the two paths SHALL NOT diverge in matching rules.
+- **INV-MOP-24**: above the `+1` activity-substrate floor, `stateMopDensity` SHALL count only MOP-flagged resolved widgets; it SHALL never reduce to a total action count, and the floor SHALL be exactly `1` (never proportional to action count or widget count).
+- **INV-MOP-32**: `mopActivities`/`mopActsAugmented` SHALL be pure counters over the load; their presence or values SHALL NOT change widget flags, the `mopActivities` set itself, or the loaded/rejected decision.
+- **INV-MOP-33**: the tiebreak log SHALL be emitted only from the path-selection site and only on the decisive branch; it SHALL NOT alter which path is selected.
+- **INV-MOP-19**: On a `shortId` collision within a base activity, the widget map SHALL retain the strongest MOP flag (direct > transitive > unflagged); an unflagged widget SHALL never overwrite a flagged one; the outcome is order-independent.
+- **INV-MOP-20**: Widgets with an empty `idName` SHALL NOT be stored; the count of MOP-flagged widgets dropped for lacking a resource id SHALL be logged once per load.
+- **INV-MOP-25**: After load, every DIALOG window reachable via a WTG transition SHALL have its widgets queryable under the host activity's key (subject to the standard collision policy) and removed from the dialog-class **widget-map** key; when a merged widget is flagged, `activityHasMop(host)` SHALL reflect it. The move-not-copy removal applies to the widget map only — the dialog class's Pass-2 `mopActivities` entry SHALL be retained so the OPTIONSMENU-gateway precompute (condition 2) still fires for activities that navigate into a MOP-bearing dialog. Orphan (unreachable) DIALOG windows are counted on a dedicated `[APE-RV]` diagnostic line, never on the `[APE-MOP-DATA]` status line.
 
 ---
 
@@ -499,6 +788,9 @@ The single-argument `MopData.load(path)` SHALL delegate to `load(path, null, nul
 
 ### Side-Effects
 - None beyond the in-memory priority adjustments on `ModelAction` objects
+- **[Trace]**: `[APE-MOP-DATA] status=rejected reason=too-large size=<bytes> budget=<bytes>` — file exceeds the parse budget (pre-read).
+- **[Trace]**: `[APE-MOP-DATA] status=rejected reason=oom` — read/parse ran out of memory despite the guard (backstop).
 
 ### Error
 - No exceptions propagate from `MopData` or `MopScorer` to callers
+- Never propagates `OutOfMemoryError` or `IOException` to the caller; all failures return null after emitting exactly one status line (INV-MOP-21).

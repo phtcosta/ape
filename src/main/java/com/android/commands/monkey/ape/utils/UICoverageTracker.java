@@ -15,13 +15,18 @@
  */
 package com.android.commands.monkey.ape.utils;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
+import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 
@@ -65,6 +70,14 @@ public class UICoverageTracker {
 
     /** Per-Activity coverage folded in from evicted states (Activity → widgetId → count). */
     private final Map<String, Map<String, Integer>> activityRollup = new HashMap<>();
+
+    /**
+     * Cumulative activity-scoped interaction membership (Activity → set of interacted widget IDs).
+     * Written on every {@link #recordInteraction} regardless of the per-state branch, never
+     * evicted, so it is a superset of {@code activityRollup} and drives the coverage boost's
+     * novelty test across NamingFactory fragments and state eviction (INV-COV-09).
+     */
+    private final Map<String, Set<String>> activityInteracted = new HashMap<>();
 
     /** Total unique widgets registered across all live states (telemetry). */
     private int totalElements;
@@ -139,6 +152,18 @@ public class UICoverageTracker {
         String widgetId = widgetId(action);
         if (widgetId == null || widgetId.isEmpty()) {
             return;
+        }
+        // Activity-scoped cumulative membership (coverage-boost-activity-scope): record before the
+        // per-state branches so first-touch interactions on not-yet-registered states are captured
+        // too. Never evicted → survives NamingFactory fragmentation and LRU eviction (INV-COV-09).
+        String activity = state.getActivity();
+        if (activity != null) {
+            Set<String> interacted = activityInteracted.get(activity);
+            if (interacted == null) {
+                interacted = new HashSet<>();
+                activityInteracted.put(activity, interacted);
+            }
+            interacted.add(widgetId);
         }
         Map<String, Integer> data = stateData.get(state);
         if (data == null) {
@@ -224,6 +249,22 @@ public class UICoverageTracker {
         return action.getType().name();
     }
 
+    /**
+     * Whether {@code widgetId} has been interacted with at least once anywhere in {@code activity}.
+     * O(1) {@link Set} membership over the cumulative {@link #activityInteracted} map — no
+     * {@code stateData} scan, no rollup consultation. Monotonic within a run: true from the first
+     * {@code recordInteraction} of the widget in any fragment of the Activity onward, unaffected by
+     * state eviction (INV-COV-09). Null activity/widget → false. Drives the coverage boost's
+     * novelty test so a fragment split does not re-arm the boost for already-exercised widgets.
+     */
+    public boolean hasActivityInteraction(String activity, String widgetId) {
+        if (activity == null || widgetId == null) {
+            return false;
+        }
+        Set<String> interacted = activityInteracted.get(activity);
+        return interacted != null && interacted.contains(widgetId);
+    }
+
     /** Fold an evicted state's interaction counts into its Activity's rollup (INV-COV-05). */
     private void foldIntoRollup(State state, Map<String, Integer> data) {
         if (state == null || data == null) {
@@ -284,6 +325,189 @@ public class UICoverageTracker {
             }
         }
         return 1.0f - ((float) interacted / agg.size());
+    }
+
+    /**
+     * Emits one read-only {@code [APE-RV] UICOV} line per tracked state, so per-screen
+     * exploration completeness — invisible in the trace during a run — becomes observable
+     * at teardown. Each line reports the per-state widget coverage already held in
+     * {@code stateData} plus a {@code mopReach} flag supplied by the caller.
+     *
+     * <p>The dump is strictly read-only: it iterates {@code stateData} without get/put, so it
+     * neither reorders the access-ordered map nor triggers LRU eviction, and it mutates no
+     * count (INV-COV-07). {@code getTotalElements()}/{@code getTotalInteractions()} are
+     * invariant across the call.
+     *
+     * @param mopReach predicate over each tracked {@link State}; printed as {@code mopReach=1|0}.
+     *                 Supplied by the caller because the tracker holds no {@code MopData}
+     *                 reference. May be null (treated as always-false).
+     */
+    public void dump(Predicate<State> mopReach) {
+        for (Map.Entry<State, Map<String, Integer>> entry : stateData.entrySet()) {
+            State state = entry.getKey();
+            if (state == null) {
+                continue;
+            }
+            Logger.format("%s", formatCoverageLine(state, entry.getValue(), mopReach));
+        }
+        dumpActivities();
+    }
+
+    /**
+     * Emits one read-only {@code [APE-RV] UICOV-ACT} line per Activity, aggregating its naming
+     * fragments the way the per-Activity reporting requirement defines: the union of the
+     * Activity's fragments' widget keys, each widget's interaction count taken as the max across
+     * live fragments and the eviction rollup ({@code mergeMax}). Per-state {@code UICOV} lines
+     * overstate the true per-screen gap under refinement (the same physical widget re-registers as
+     * untested in every sibling fragment); this line is the honest per-screen number.
+     *
+     * <p>Single pass over {@code stateData} (O(S)), seeded from {@code activityRollup} so
+     * evicted-only Activities still appear. Lines are emitted in lexicographic activity-name order
+     * for deterministic output. Strictly read-only (INV-COV-07): iterates {@code entrySet} without
+     * get/put, so the access-ordered {@code stateData} is neither reordered nor evicted, and no
+     * count is mutated.
+     */
+    private void dumpActivities() {
+        Map<String, Map<String, Integer>> byActivity = new HashMap<>();
+        Map<String, Integer> liveFragments = new HashMap<>();
+        // Seed from the rollup first so Activities with no live fragment still emit a line.
+        for (Map.Entry<String, Map<String, Integer>> re : activityRollup.entrySet()) {
+            byActivity.put(re.getKey(), new HashMap<>(re.getValue()));
+            liveFragments.put(re.getKey(), 0);
+        }
+        // Merge live fragments (single pass; entrySet iteration does not reorder the LRU map).
+        for (Map.Entry<State, Map<String, Integer>> se : stateData.entrySet()) {
+            State s = se.getKey();
+            if (s == null) {
+                continue;
+            }
+            String activity = s.getActivity();
+            if (activity == null) {
+                continue;
+            }
+            Map<String, Integer> agg = byActivity.get(activity);
+            if (agg == null) {
+                agg = new HashMap<>();
+                byActivity.put(activity, agg);
+            }
+            for (Map.Entry<String, Integer> e : se.getValue().entrySet()) {
+                mergeMax(agg, e.getKey(), e.getValue());
+            }
+            Integer live = liveFragments.get(activity);
+            liveFragments.put(activity, (live != null ? live : 0) + 1);
+        }
+        List<String> activities = new ArrayList<>(byActivity.keySet());
+        Collections.sort(activities);
+        for (String activity : activities) {
+            Logger.format("%s", formatActivityLine(activity, byActivity.get(activity),
+                    liveFragments.getOrDefault(activity, 0)));
+        }
+    }
+
+    /**
+     * Builds the {@code [APE-RV] UICOV-ACT} line for one Activity. Package-visible and pure (no I/O,
+     * no mutation), mirroring {@link #formatCoverageLine} so the format is host-testable without an
+     * Android runtime. {@code discovered}/{@code interacted}/{@code gap}/{@code byType} follow the
+     * per-state conventions over the aggregated map; {@code liveStates} is the number of live
+     * (non-evicted) fragments grouped into this line (0 for rollup-only Activities).
+     */
+    String formatActivityLine(String activity, Map<String, Integer> merged, int liveFragments) {
+        int discovered = (merged != null) ? merged.size() : 0;
+        int interacted = 0;
+        Map<String, int[]> byType = new HashMap<>(); // type -> [interacted, discovered]
+        if (merged != null) {
+            for (Map.Entry<String, Integer> e : merged.entrySet()) {
+                boolean hit = e.getValue() != null && e.getValue() > 0;
+                if (hit) {
+                    interacted++;
+                }
+                String type = typeSegment(e.getKey());
+                int[] agg = byType.get(type);
+                if (agg == null) {
+                    agg = new int[2];
+                    byType.put(type, agg);
+                }
+                agg[1]++;
+                if (hit) {
+                    agg[0]++;
+                }
+            }
+        }
+        float gap = discovered == 0 ? 1.0f : 1.0f - ((float) interacted / discovered);
+        return String.format(Locale.ROOT,
+                "[APE-RV] UICOV-ACT activity=%s discovered=%d interacted=%d gap=%.1f byType=%s liveStates=%d",
+                activity, discovered, interacted, gap, formatByType(byType), liveFragments);
+    }
+
+    /**
+     * Builds the {@code [APE-RV] UICOV} line for one state. Package-visible and pure (no I/O,
+     * no mutation) so the format is host-testable without an Android runtime.
+     *
+     * <p>{@code discovered} (W) is the count of registered widgets, {@code interacted} (D) the
+     * count of those with a positive interaction count, {@code gap} is {@code 1 - D/W}
+     * ({@code 1.0} when {@code W == 0}). {@code byType} breaks D/W down by action type — the
+     * {@code TYPE} segment of each {@code "<xpath>|<TYPE>"} / {@code "<TYPE>"} key (the
+     * {@link #widgetId(ModelAction)} convention) — ordered by {@link ActionType} declaration
+     * order. The gap is formatted with {@code Locale.ROOT} so it always parses as {@code 0.7}
+     * (never a locale-specific {@code 0,7}); the raw integer W/D carry full precision.
+     */
+    String formatCoverageLine(State state, Map<String, Integer> data, Predicate<State> mopReach) {
+        int discovered = (data != null) ? data.size() : 0;
+        int interacted = 0;
+        Map<String, int[]> byType = new HashMap<>(); // type -> [interacted, discovered]
+        if (data != null) {
+            for (Map.Entry<String, Integer> e : data.entrySet()) {
+                boolean hit = e.getValue() != null && e.getValue() > 0;
+                if (hit) {
+                    interacted++;
+                }
+                String type = typeSegment(e.getKey());
+                int[] agg = byType.get(type);
+                if (agg == null) {
+                    agg = new int[2];
+                    byType.put(type, agg);
+                }
+                agg[1]++;
+                if (hit) {
+                    agg[0]++;
+                }
+            }
+        }
+        float gap = discovered == 0 ? 1.0f : 1.0f - ((float) interacted / discovered);
+        int mopReachFlag = (mopReach != null && mopReach.test(state)) ? 1 : 0;
+        return String.format(Locale.ROOT,
+                "[APE-RV] UICOV state=%s discovered=%d interacted=%d gap=%.1f byType=%s mopReach=%d",
+                state.getStateKey(), discovered, interacted, gap, formatByType(byType), mopReachFlag);
+    }
+
+    /** The {@code TYPE} segment of a widget key: substring after the last {@code |}, or the whole key. */
+    private static String typeSegment(String widgetId) {
+        int bar = widgetId.lastIndexOf('|');
+        return bar >= 0 ? widgetId.substring(bar + 1) : widgetId;
+    }
+
+    /** Joins the per-action-type {@code TYPE:interacted/discovered} pairs in ActionType declaration order. */
+    private static String formatByType(Map<String, int[]> byType) {
+        List<String> keys = new ArrayList<>(byType.keySet());
+        keys.sort((a, b) -> Integer.compare(actionTypeOrdinal(a), actionTypeOrdinal(b)));
+        StringBuilder sb = new StringBuilder();
+        for (String k : keys) {
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            int[] agg = byType.get(k);
+            sb.append(k).append(':').append(agg[0]).append('/').append(agg[1]);
+        }
+        return sb.toString();
+    }
+
+    /** Declaration-order rank of an action-type name; unknown segments sort last. */
+    private static int actionTypeOrdinal(String name) {
+        try {
+            return ActionType.valueOf(name).ordinal();
+        } catch (IllegalArgumentException e) {
+            return Integer.MAX_VALUE;
+        }
     }
 
     /** Returns total unique widgets registered across all states (telemetry). */

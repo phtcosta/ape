@@ -56,7 +56,70 @@ public class LlmRouterTest {
         assertEquals(0, router.getMatchedCount());
         assertEquals(0, router.getNoMatchCount());
         assertEquals(0, router.getNullCount());
+        assertEquals(0, router.getScreenshotFailedCount());
         assertEquals(0, router.getBreakerTrips());
+    }
+
+    // -------------------------------------------------------------------------
+    // INV-RTR-09 (mop-reach-strategies 3.3): llmPercentageNoSubstrate is loaded and
+    // exposed only — no routing decision consumes it in this change. Clamp/default are
+    // pinned in ConfigTest 1.4; here we pin the "no consumer" half two ways.
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void llmPercentageNoSubstrate_isExposedButNotConsumedByRouting() throws Exception {
+        // Exposed with the -1 sentinel (F′ seam; no consumer wired yet). Clamp/defaults are
+        // pinned in ConfigTest 1.4.
+        assertEquals(-1.0,
+                com.android.commands.monkey.ape.utils.Config.llmPercentageNoSubstrate, 1e-9);
+
+        // No consumer: shouldRouteRandom fires purely on Config.llmPercentage, never on the
+        // no-substrate override. Pinned structurally — the override is not referenced anywhere
+        // in LlmRouter's source, so a future wiring must be a deliberate spec change, not a
+        // silent edit (INV-RTR-09).
+        java.io.File src = new java.io.File(
+                "src/main/java/com/android/commands/monkey/ape/llm/LlmRouter.java");
+        assertTrue("LlmRouter source not found at " + src.getAbsolutePath(), src.exists());
+        String body = new String(java.nio.file.Files.readAllBytes(src.toPath()),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertFalse("llmPercentageNoSubstrate must have no consumer in LlmRouter (INV-RTR-09)",
+                body.contains("llmPercentageNoSubstrate"));
+    }
+
+    // -------------------------------------------------------------------------
+    // screenshot_failed counter split (task §5.5 / llm-routing spec)
+    //
+    // The increment itself lives in selectAction()'s screenshot-null branch,
+    // which loads AndroidDevice (getDisplayBounds) and is device-gated — the same
+    // reason the A-6 breaker behavior is not unit-tested here (see the note at the
+    // bottom of this class). We therefore verify the counter split at the two JVM
+    // seams that ARE observable without a device: the accessor default and the
+    // summary-line format.
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void screenshotFailedCount_defaultsToZero() {
+        LlmRouter router = new LlmRouter(new java.util.Random(42));
+        assertEquals("screenshot_failed counter starts at 0", 0, router.getScreenshotFailedCount());
+    }
+
+    @Test
+    public void printSummary_includesScreenshotFailedField_separateFromNull() {
+        LlmRouter router = new LlmRouter(new java.util.Random(42));
+        java.io.PrintStream originalOut = System.out;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        try {
+            System.setOut(new java.io.PrintStream(captured, true));
+            router.printSummary();
+        } finally {
+            System.setOut(originalOut);
+        }
+        String out = captured.toString();
+        // The summary line reports screenshot_failed as its own field, adjacent to null.
+        assertTrue("summary must expose screenshot_failed field, got: " + out,
+                out.contains("screenshot_failed=0"));
+        assertTrue("summary must still expose the aggregate null field, got: " + out,
+                out.contains("null=0"));
     }
 
     // -------------------------------------------------------------------------

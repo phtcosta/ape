@@ -5,9 +5,10 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -56,7 +57,6 @@ import java.util.Set;
 public class MopData {
 
     private static final String TAG = "MopData";
-    private static final String OPTIONS_MENU_SUFFIX = "#OptionsMenu";
 
     private final String packageName;
     private final String mainActivity;
@@ -81,6 +81,12 @@ public class MopData {
 
     /** Activities whose OPTIONSMENU is a MOP gateway (T1.2, D13). */
     private final Set<String> activitiesWithMopOptionsMenu;
+
+    /**
+     * Count of MOP-flagged widgets dropped during parsing for having no resource id
+     * (INV-MOP-20). Observability only — set once after parsing, logged on load.
+     */
+    private int droppedFlaggedNoId;
 
     private MopData(String packageName, String mainActivity, boolean complete,
                     List<ReachabilityClass> reachability,
@@ -144,10 +150,21 @@ public class MopData {
     // Loading
     // -------------------------------------------------------------------------
 
-    /** Load MOP data from a static-analysis JSON file (no package sanity check). */
-    public static MopData load(String path) {
-        return load(path, null, null);
-    }
+    /**
+     * Empirical, conservative footprint multiplier for the whole-file org.json parse
+     * (≈1× file bytes + ~2× String chars + ~3× DOM). Not a derivation — the single measured
+     * datapoint (redreader 50.6 MB OOM at ~201 MB heap) was dominated by the StringBuilder-doubling
+     * spike this change removes. A code constant, not a flag (P1: no gratuitous tuning knobs);
+     * recalibrate from the status-line size/budget telemetry if a loadable file is ever rejected.
+     */
+    private static final int PARSE_FOOTPRINT_FACTOR = 6;
+
+    /**
+     * Whole-file parse budget: the process's maximum heap. Static (read once) so the reject
+     * decision is a pure function of file size for a given device heap config, rather than flipping
+     * pass/reject across runs with live-heap/GC state at the margin.
+     */
+    private static final long PARSE_BUDGET_BYTES = Runtime.getRuntime().maxMemory();
 
     /**
      * Load MOP data from a static-analysis JSON file.
@@ -159,49 +176,90 @@ public class MopData {
      *         sentinel absent or false / strict-mode package mismatch
      */
     public static MopData load(String path, String expectedPackage, String expectedMainActivity) {
+        return load(path, expectedPackage, expectedMainActivity, PARSE_BUDGET_BYTES);
+    }
+
+    /**
+     * Package-visible test seam: {@code load} with an explicit parse budget so the JVM suite can
+     * drive the too-large guard deterministically. The public entry passes {@link #PARSE_BUDGET_BYTES}.
+     */
+    static MopData load(String path, String expectedPackage, String expectedMainActivity,
+            long budgetBytes) {
         if (path == null) {
             return null;
         }
-        JSONObject root;
+        // Single OUTER catch around the ENTIRE load body — the budget guard, read, sentinel check,
+        // JSONObject construction, all typed parsing, and MopData construction. Any OutOfMemoryError
+        // from any phase is converted into the same reject-and-null contract every other failure
+        // uses, so it never escapes into the StatefulAgent constructor (INV-MOP-26). Scoped to
+        // OutOfMemoryError only — IOException/JSONException stay handled by the inner catches below.
         try {
-            // The Android-bundled org.json only offers JSONTokener(String), so read fully first.
-            root = new JSONObject(new JSONTokener(readFile(path)));
-        } catch (IOException e) {
-            Logger.wprintln("MopData: failed to read " + path + ": " + e.getMessage());
-            return null;
-        } catch (JSONException e) {
-            Logger.wprintln("MopData: malformed JSON at " + path + ": " + e.getMessage());
-            return null;
-        }
+            // Pre-read budget guard: reject files whose parse footprint (~FACTOR× the file size for
+            // the org.json DOM) cannot fit the process heap, before allocating anything. Division
+            // avoids the overflow of `fileSize * FACTOR`. File.length() is 0 for unreadable paths →
+            // guard passes and the existing IOException path handles it.
+            long fileSize = new File(path).length();
+            if (fileSize > budgetBytes / PARSE_FOOTPRINT_FACTOR) {
+                Logger.iformat("[APE-MOP-DATA] status=rejected reason=too-large size=%d budget=%d",
+                        fileSize, budgetBytes);
+                return null;
+            }
+            JSONObject root;
+            try {
+                // The Android-bundled org.json only offers JSONTokener(String), so read fully first.
+                root = new JSONObject(new JSONTokener(readFile(path)));
+            } catch (IOException e) {
+                Logger.wprintln("MopData: failed to read " + path + ": " + e.getMessage());
+                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=file-missing");
+                return null;
+            } catch (JSONException e) {
+                Logger.wprintln("MopData: malformed JSON at " + path + ": " + e.getMessage());
+                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=parse-error");
+                return null;
+            }
 
-        // Sentinel (INV-MOP-09) — position-independent single key read (D5/D21).
-        if (!root.optBoolean("complete", false)) {
-            Logger.wprintln("MopData: '\"complete\": true' sentinel absent or false at " + path
-                    + " — treating as no MOP data (truncated analysis)");
-            return null;
-        }
+            // Sentinel (INV-MOP-09) — position-independent single key read (D5/D21).
+            if (!root.optBoolean("complete", false)) {
+                Logger.wprintln("MopData: '\"complete\": true' sentinel absent or false at " + path
+                        + " — treating as no MOP data (truncated analysis)");
+                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=incomplete");
+                return null;
+            }
 
-        try {
-            String packageName = optStringOrNull(root, "package");
+            try {
+                String packageName = optStringOrNull(root, "package");
             String mainActivity = optStringOrNull(root, "mainActivity");
 
-            // Pass 1: reachability[] → typed list + bySignature index.
+            // Pass 1: reachability[] → typed list + bySignature index + FIX-2 lambda index.
             Map<String, boolean[]> bySignature = new HashMap<>();
+            Map<String, boolean[]> lambdaReachByClass = new HashMap<>();
             List<ReachabilityClass> reachability =
-                    parseReachability(root.optJSONArray("reachability"), bySignature);
+                    parseReachability(root.optJSONArray("reachability"), bySignature, lambdaReachByClass);
 
-            // Pass 2: windows[] → typed windows + widgetData + derived MOP flags.
+            // Pass 2: windows[] → typed windows + widgetData + derived MOP flags (with FIX-2 recovery).
             List<Window> windows = new ArrayList<>();
             Map<Integer, Window> windowsById = new HashMap<>();
             Map<String, Map<String, Widget>> widgetData = new HashMap<>();
             Set<String> mopActivities = new HashSet<>();
-            parseWindows(root.optJSONArray("windows"), bySignature,
-                    windows, windowsById, widgetData, mopActivities);
+            int[] droppedFlaggedNoId = new int[1];
+            parseWindows(root.optJSONArray("windows"), bySignature, lambdaReachByClass,
+                    windows, windowsById, widgetData, mopActivities, droppedFlaggedNoId);
 
             // Pass 3: transitions[] → typed transitions + click-only WTG view.
             Map<String, List<WtgTransition>> wtgTransitions = new HashMap<>();
             List<Transition> transitions =
                     parseTransitions(root.optJSONArray("transitions"), windowsById, wtgTransitions);
+
+            // Pass 3.5: re-key DIALOG windows to their host activity (INV-MOP-25, D5/D6).
+            // Runs after transitions (needs the activity→dialog edges) and before the
+            // OPTIONSMENU precompute + status line, which both read mopActivities/widgetData.
+            int[] orphanDialogs = new int[1];
+            rekeyDialogsToHost(windows, transitions, windowsById, widgetData,
+                    mopActivities, orphanDialogs);
+            if (orphanDialogs[0] > 0) {
+                Logger.iprintln("[APE-RV] MopData: " + orphanDialogs[0]
+                        + " orphan DIALOG windows (no incoming transition)");
+            }
 
             // Pass 4: components{} → typed component lists.
             List<ComponentInfo.ReceiverInfo> receivers = new ArrayList<>();
@@ -211,6 +269,14 @@ public class MopData {
             parseComponents(root.optJSONObject("components"),
                     receivers, services, activities, providers);
 
+            // A′ (INV-MOP-27): widen mopActivities to the 3-source union when the flag is on. Runs
+            // before the OPTIONSMENU precompute (which reads mopActivities) so the wider set feeds
+            // every downstream consumer. Seam takes the flag as a param (static-final wall).
+            int preAugmentActivities = mopActivities.size();
+            augmentActivitiesFromSources(mopActivities, activities, reachability,
+                    Config.mopActivitySourceComponents);
+            int augmentedActivities = mopActivities.size() - preAugmentActivities;
+
             // Precompute OPTIONSMENU gateway set (T1.2, D13) — needs WTG + mopActivities.
             Set<String> menuGateways = precomputeMopOptionsMenus(
                     windows, wtgTransitions, mopActivities);
@@ -219,6 +285,11 @@ public class MopData {
                     reachability, windows, windowsById, widgetData, mopActivities,
                     wtgTransitions, transitions, receivers, services, activities, providers,
                     menuGateways);
+            data.droppedFlaggedNoId = droppedFlaggedNoId[0];
+            if (data.droppedFlaggedNoId > 0) {
+                Logger.iprintln("[APE-RV] MopData: dropped " + data.droppedFlaggedNoId
+                        + " flagged widgets with no resource id");
+            }
 
             // Sanity check (T1.7).
             boolean mismatch = false;
@@ -234,17 +305,31 @@ public class MopData {
             }
             if (mismatch && Config.mopStrictPackageMatch) {
                 Logger.wprintln("MopData: strict package match enabled — rejecting " + path);
+                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=package-mismatch");
                 return null;
             }
 
-            Logger.iprintln("MopData: loaded " + countWidgets(widgetData) + " widgets, "
-                    + reachability.size() + " reachability classes, "
-                    + transitions.size() + " transitions, "
-                    + (receivers.size() + services.size() + activities.size() + providers.size())
-                    + " components, " + menuGateways.size() + " MOP option-menus from " + path);
+            // FIX 3 (INV-MOP-31): diagnostics on the handler→MOP join, so a silent collapse is visible.
+            int[] joinDiag = computeHandlerJoinDiagnostics(windows, bySignature, lambdaReachByClass);
+            Logger.iformat("[APE-MOP-DATA] status=loaded package=%s windows=%d widgets=%d"
+                    + " flagged=%d droppedNoId=%d transitions=%d"
+                    + " handlersUnmatched=%d syntheticLambda=%d recovered=%d"
+                    + " mopActivities=%d mopActsAugmented=%d",
+                    packageName, windows.size(), countWidgets(widgetData), countFlagged(widgetData),
+                    data.droppedFlaggedNoId, transitions.size(),
+                    joinDiag[0], joinDiag[1], joinDiag[2],
+                    mopActivities.size(), augmentedActivities);
             return data;
-        } catch (JSONException e) {
-            Logger.wprintln("MopData: malformed JSON structure at " + path + ": " + e.getMessage());
+            } catch (JSONException e) {
+                Logger.wprintln("MopData: malformed JSON structure at " + path + ": " + e.getMessage());
+                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=parse-error");
+                return null;
+            }
+        } catch (OutOfMemoryError oom) {
+            // The try-scoped locals (root, the parsed maps/lists, data) are already unreachable
+            // here, so returning null lets the GC reclaim them. Emit the reject status line so the
+            // run is excludable/annotatable by the analysis pipeline (INV-MOP-21/26).
+            Logger.iprintln("[APE-MOP-DATA] status=rejected reason=oom");
             return null;
         }
     }
@@ -254,7 +339,8 @@ public class MopData {
     // -------------------------------------------------------------------------
 
     private static List<ReachabilityClass> parseReachability(JSONArray arr,
-                                                             Map<String, boolean[]> bySignature)
+                                                             Map<String, boolean[]> bySignature,
+                                                             Map<String, boolean[]> lambdaReachByClass)
             throws JSONException {
         List<ReachabilityClass> classes = new ArrayList<>();
         if (arr == null) return classes;
@@ -281,6 +367,20 @@ public class MopData {
                         bySignature.put(m.signature,
                                 new boolean[]{m.directlyReachesTarget, m.reachesTarget});
                     }
+                    // FIX 2 (INV-MOP-30): index the enclosing class of any reaching javac-desugared
+                    // lambda body (name "lambda$…"), so a widget's D8 synthetic-lambda wrapper handler
+                    // (X$$ExternalSyntheticLambdaN) — which the producer call graph marks reachesTarget=
+                    // false — can be recovered from X's reaching lambda methods. boolean[]{direct, any}.
+                    if (rc.className != null && m.name != null && m.name.startsWith("lambda$")
+                            && (m.reachesTarget || m.directlyReachesTarget)) {
+                        boolean[] agg = lambdaReachByClass.get(rc.className);
+                        if (agg == null) {
+                            agg = new boolean[]{false, false};
+                            lambdaReachByClass.put(rc.className, agg);
+                        }
+                        agg[0] |= m.directlyReachesTarget;
+                        agg[1] |= m.reachesTarget || m.directlyReachesTarget;
+                    }
                 }
             }
             classes.add(rc);
@@ -288,17 +388,32 @@ public class MopData {
         return classes;
     }
 
+    /** Matches a D8 desugared-lambda wrapper class handler and captures the enclosing class (FIX 2). */
+    private static final java.util.regex.Pattern SYNTH_LAMBDA =
+            java.util.regex.Pattern.compile("^<(.+?)\\$\\$ExternalSyntheticLambda\\d+:");
+
+    /** Enclosing class of a D8 synthetic-lambda handler signature, or null when it is not one. */
+    static String syntheticLambdaEnclosingClass(String handler) {
+        if (handler == null) {
+            return null;
+        }
+        java.util.regex.Matcher mt = SYNTH_LAMBDA.matcher(handler);
+        return mt.find() ? mt.group(1) : null;
+    }
+
     // -------------------------------------------------------------------------
     // Pass 2: windows[] + widgets (flat, no recursion — D3)
     // -------------------------------------------------------------------------
 
     private static void parseWindows(JSONArray arr, Map<String, boolean[]> bySignature,
+                                     Map<String, boolean[]> lambdaReachByClass,
                                      List<Window> windows, Map<Integer, Window> windowsById,
                                      Map<String, Map<String, Widget>> widgetData,
-                                     Set<String> mopActivities) throws JSONException {
+                                     Set<String> mopActivities, int[] droppedFlaggedNoId)
+            throws JSONException {
         if (arr == null) return;
         for (int i = 0; i < arr.length(); i++) {
-            Window w = parseWindow(arr.getJSONObject(i), bySignature);
+            Window w = parseWindow(arr.getJSONObject(i), bySignature, lambdaReachByClass);
             windows.add(w);
             if (w.id >= 0) {
                 windowsById.put(w.id, w);
@@ -311,17 +426,43 @@ public class MopData {
                 widgetData.put(activity, widgets);
             }
             for (Widget wd : w.widgets) {
-                if (wd.idName != null) {
-                    widgets.put(wd.idName, wd);
-                }
-                if (wd.directMop || wd.transitiveMop) {
+                boolean flagged = wd.directMop || wd.transitiveMop;
+                // A flagged widget marks the activity even when it has no resource id,
+                // so activityHasMop stays correct.
+                if (flagged) {
                     mopActivities.add(activity);
+                }
+                if (wd.idName == null || wd.idName.isEmpty()) {
+                    // Empty/absent short id: extractShortId does yield "" for id-less nodes at
+                    // runtime, so the "" bucket is reachable — but a single "" key would collapse
+                    // every id-less widget onto one entry, overwriting siblings and surfacing an
+                    // arbitrary one. Drop rather than store so the loss is explicit, not hidden as
+                    // noise (INV-MOP-20).
+                    if (flagged) {
+                        droppedFlaggedNoId[0]++;
+                    }
+                    continue;
+                }
+                // On shortId collision keep the strongest MOP flag (direct > transitive >
+                // unflagged); a tie keeps the resident, so this is order-independent and an
+                // unflagged sibling never overwrites a flagged widget (INV-MOP-19).
+                Widget resident = widgets.get(wd.idName);
+                if (resident == null || mopRank(wd) > mopRank(resident)) {
+                    widgets.put(wd.idName, wd);
                 }
             }
         }
     }
 
-    private static Window parseWindow(JSONObject wo, Map<String, boolean[]> bySignature)
+    /** MOP-flag strength used for collision resolution: 2=direct, 1=transitive, 0=unflagged. */
+    private static int mopRank(Widget w) {
+        if (w.directMop) return 2;
+        if (w.transitiveMop) return 1;
+        return 0;
+    }
+
+    private static Window parseWindow(JSONObject wo, Map<String, boolean[]> bySignature,
+                                      Map<String, boolean[]> lambdaReachByClass)
             throws JSONException {
         Window w = new Window();
         w.id = wo.optInt("id", -1);
@@ -331,13 +472,14 @@ public class MopData {
         JSONArray widgets = wo.optJSONArray("widgets");
         if (widgets != null) {
             for (int i = 0; i < widgets.length(); i++) {
-                w.widgets.add(parseWidget(widgets.getJSONObject(i), bySignature));
+                w.widgets.add(parseWidget(widgets.getJSONObject(i), bySignature, lambdaReachByClass));
             }
         }
         return w;
     }
 
-    private static Widget parseWidget(JSONObject wo, Map<String, boolean[]> bySignature)
+    private static Widget parseWidget(JSONObject wo, Map<String, boolean[]> bySignature,
+                                      Map<String, boolean[]> lambdaReachByClass)
             throws JSONException {
         Widget w = new Widget();
         w.id = wo.optInt("id", -1);
@@ -362,7 +504,7 @@ public class MopData {
                 w.listeners.add(parseListener(listeners.getJSONObject(i)));
             }
         }
-        deriveWidgetMopFlags(w, bySignature);
+        deriveWidgetMopFlags(w, bySignature, lambdaReachByClass);
         return w;
     }
 
@@ -381,7 +523,8 @@ public class MopData {
      * (INV-MOP-17, D18). Producer-supplied handlerReachesTarget wins over the
      * local cross-reference when present (INV-MOP-12, D8).
      */
-    private static void deriveWidgetMopFlags(Widget w, Map<String, boolean[]> bySignature) {
+    private static void deriveWidgetMopFlags(Widget w, Map<String, boolean[]> bySignature,
+                                             Map<String, boolean[]> lambdaReachByClass) {
         for (Listener l : w.listeners) {
             boolean direct;
             boolean transitive;
@@ -390,6 +533,15 @@ public class MopData {
                 transitive = Boolean.TRUE.equals(l.handlerReachesTarget) || direct;
             } else {
                 boolean[] flags = l.handler != null ? bySignature.get(l.handler) : null;
+                if (flags == null && l.handler != null) {
+                    // FIX 2 (INV-MOP-30): exact join missed. If the handler is a D8 synthetic-lambda
+                    // wrapper (X$$ExternalSyntheticLambdaN), recover the flag from X's reaching
+                    // javac lambda methods — the same JSON already carries them (no GATOR re-run).
+                    String encl = syntheticLambdaEnclosingClass(l.handler);
+                    if (encl != null) {
+                        flags = lambdaReachByClass.get(encl);
+                    }
+                }
                 direct = flags != null && flags[0];
                 transitive = flags != null && flags[1];
             }
@@ -403,6 +555,87 @@ public class MopData {
     private static void orInto(Map<String, Boolean> map, String key, boolean value) {
         Boolean prev = map.get(key);
         map.put(key, (prev != null && prev) || value);
+    }
+
+    /**
+     * A′ (INV-MOP-27): widen {@code mopActivities} to the 3-source union when {@code enabled}.
+     * Source 1 (widget-derived) is already in {@code mopActivities} on entry. When enabled, adds
+     * source 2 — every {@code components.activities[]} with {@code reachesTarget=true} — and source 3
+     * — every {@code reachability[]} class with {@code componentType=="activity"} that has ≥1
+     * {@code reachesTarget} method. Source 3 is the lambda-call-graph-gap-immune substrate: the
+     * component-level flag false-negatives lambda-triggered activities (cryptoapp: all activities
+     * {@code components.reachesTarget=false} yet {@code CryptographyActivity} has 13 reaching methods).
+     * When {@code enabled==false} the set is left exactly as the widget-derived source (byte-identical).
+     * Package-private seam so a test can drive the flag past the {@code static final} wall.
+     */
+    static void augmentActivitiesFromSources(Set<String> mopActivities,
+                                             List<ComponentInfo.ActivityInfo> activities,
+                                             List<ReachabilityClass> reachability,
+                                             boolean enabled) {
+        if (!enabled) {
+            return;
+        }
+        if (activities != null) {
+            for (ComponentInfo.ActivityInfo a : activities) {
+                if (a != null && a.reachesTarget && a.className != null) {
+                    mopActivities.add(baseActivity(a.className));
+                }
+            }
+        }
+        if (reachability != null) {
+            for (ReachabilityClass rc : reachability) {
+                if (rc == null || rc.className == null || !"activity".equals(rc.componentType)) {
+                    continue;
+                }
+                for (ReachabilityMethod m : rc.methods) {
+                    if (m.reachesTarget || m.directlyReachesTarget) {
+                        mopActivities.add(baseActivity(rc.className));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * FIX 3 (INV-MOP-31): pure diagnostic counters over the widget→MOP handler join. Returns
+     * {@code [handlersUnmatched, syntheticLambda, recovered]} over the set of DISTINCT listener
+     * handler signatures: {@code handlersUnmatched} = handlers with no exact {@code bySignature}
+     * match; {@code syntheticLambda} = of those, D8 {@code $$ExternalSyntheticLambda} wrappers;
+     * {@code recovered} = of those, ones whose enclosing class has a reaching lambda (FIX 2 would
+     * flag). Never alters any parsed state; {@code recovered ≤ syntheticLambda ≤ handlersUnmatched}.
+     */
+    private static int[] computeHandlerJoinDiagnostics(List<Window> windows,
+                                                       Map<String, boolean[]> bySignature,
+                                                       Map<String, boolean[]> lambdaReachByClass) {
+        Set<String> handlers = new HashSet<>();
+        for (Window w : windows) {
+            for (Widget wd : w.widgets) {
+                for (Listener l : wd.listeners) {
+                    if (l.handler != null) {
+                        handlers.add(l.handler);
+                    }
+                }
+            }
+        }
+        int unmatched = 0;
+        int synthetic = 0;
+        int recovered = 0;
+        for (String h : handlers) {
+            if (bySignature.containsKey(h)) {
+                continue;
+            }
+            unmatched++;
+            String encl = syntheticLambdaEnclosingClass(h);
+            if (encl != null) {
+                synthetic++;
+                boolean[] agg = lambdaReachByClass.get(encl);
+                if (agg != null && agg[1]) {
+                    recovered++;
+                }
+            }
+        }
+        return new int[]{unmatched, synthetic, recovered};
     }
 
     /**
@@ -457,23 +690,29 @@ public class MopData {
             }
             transitions.add(t);
 
-            // Click-only convenience view keyed by source window name (INV-WTG-01/03).
+            // Click-only convenience view keyed by base SOURCE activity, with the base
+            // TARGET activity stored on each WtgTransition (INV-WTG-04). Both consumers —
+            // the runtime WTG pass and scoreWtg — query/test by base activity, so menu- and
+            // fragment-sourced edges (e.g. MainActivity#OptionsMenu) must collapse to the
+            // base; otherwise they are stored under a key no consumer ever queries.
             Window source = windowsById.get(t.sourceId);
             Window target = windowsById.get(t.targetId);
             if (source == null || target == null || source.name == null || target.name == null) {
                 continue;
             }
+            String sourceActivity = baseActivity(source.name);
+            String targetActivity = baseActivity(target.name);
             for (TransitionEvent e : t.events) {
                 if ("click".equals(e.type)) {
-                    List<WtgTransition> list = wtgTransitions.get(source.name);
+                    List<WtgTransition> list = wtgTransitions.get(sourceActivity);
                     if (list == null) {
                         list = new ArrayList<>();
-                        wtgTransitions.put(source.name, list);
+                        wtgTransitions.put(sourceActivity, list);
                     }
                     list.add(new WtgTransition(
                             e.widgetName != null ? e.widgetName : "",
                             e.widgetClass != null ? e.widgetClass : "",
-                            target.name));
+                            targetActivity));
                 }
             }
         }
@@ -582,8 +821,7 @@ public class MopData {
         Set<String> result = new HashSet<>();
         for (Window w : windows) {
             if (w.name == null || !"OPTIONSMENU".equals(w.type)) continue;
-            int idx = w.name.indexOf(OPTIONS_MENU_SUFFIX);
-            String activity = idx >= 0 ? w.name.substring(0, idx) : w.name;
+            String activity = baseActivity(w.name);   // shared helper (removes the ad hoc suffix strip)
             boolean qualifies = false;
             // Condition 1: a widget in the menu itself reaches MOP.
             for (Widget wd : w.widgets) {
@@ -592,9 +830,14 @@ public class MopData {
                     break;
                 }
             }
-            // Condition 2 (gateway): a menu item navigates (WTG) to a MOP activity.
+            // Condition 2 (gateway): a click edge from this base activity navigates (WTG)
+            // to a MOP activity. wtgTransitions is now keyed by base activity (INV-WTG-04),
+            // so query the base `activity`, not the "#OptionsMenu" window name, which is no
+            // longer a key (INV-WTG-05, D3a). This widens the test from "a menu item reaches
+            // MOP" to "any base-activity click edge reaches MOP" — a deliberate over-
+            // approximation that never misses a real gateway.
             if (!qualifies) {
-                List<WtgTransition> outgoing = wtgTransitions.get(w.name);
+                List<WtgTransition> outgoing = wtgTransitions.get(activity);
                 if (outgoing != null) {
                     for (WtgTransition t : outgoing) {
                         if (mopActivities.contains(t.targetActivity)) {
@@ -609,6 +852,73 @@ public class MopData {
             }
         }
         return result;
+    }
+
+    // -------------------------------------------------------------------------
+    // Pass 3.5: DIALOG re-keying to host activity (INV-MOP-25)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Re-key DIALOG windows to their host activity (D5/D6). A DIALOG window's name is the
+     * dialog class (e.g. {@code android.app.AlertDialog}), which never equals
+     * {@code newState.getActivity()} at runtime, so its already-parsed widgets are
+     * unreachable for scoring. The activity→dialog edge in {@code transitions[]} recovers
+     * the host: merge {@code widgetData[dialogClass]} into {@code widgetData[host]} under
+     * the {@code mopRank} collision policy, move the widget-map key (not copy) so counts do
+     * not inflate (A2), and promote host to {@code mopActivities} on a flagged merge (D6).
+     * The dialog class's own Pass-2 {@code mopActivities} entry is retained — WTG edges into
+     * the dialog are keyed by it and the OPTIONSMENU-gateway precompute tests
+     * {@code mopActivities.contains(targetActivity)}, so dropping it would silently disable
+     * that detection (A6). Orphan dialogs (no incoming transition) keep their key and are
+     * counted for the caller's {@code [APE-RV]} diagnostic line.
+     */
+    private static void rekeyDialogsToHost(
+            List<Window> windows, List<Transition> transitions,
+            Map<Integer, Window> windowsById,
+            Map<String, Map<String, Widget>> widgetData,
+            Set<String> mopActivities, int[] orphanDialogs) {
+        for (Window w : windows) {
+            if (w.name == null || !"DIALOG".equals(w.type)) continue;
+            String host = null;
+            if (w.id >= 0) {
+                for (Transition t : transitions) {
+                    if (t.targetId != w.id) continue;
+                    Window source = windowsById.get(t.sourceId);
+                    if (source != null && source.name != null) {
+                        host = baseActivity(source.name);   // first incoming edge wins (A3)
+                        break;
+                    }
+                }
+            }
+            if (host == null) {
+                orphanDialogs[0]++;   // unreachable dialog — keep the dialog-class key as-is
+                continue;
+            }
+            String dialogClass = baseActivity(w.name);
+            if (dialogClass.equals(host)) continue;   // already keyed under the host
+            Map<String, Widget> dialogWidgets = widgetData.get(dialogClass);
+            if (dialogWidgets == null) continue;      // no stored widgets (all empty-id dropped)
+            Map<String, Widget> hostWidgets = widgetData.get(host);
+            if (hostWidgets == null) {
+                hostWidgets = new LinkedHashMap<>();
+                widgetData.put(host, hostWidgets);
+            }
+            boolean flaggedMerged = false;
+            for (Map.Entry<String, Widget> e : dialogWidgets.entrySet()) {
+                Widget wd = e.getValue();
+                Widget resident = hostWidgets.get(e.getKey());
+                if (resident == null || mopRank(wd) > mopRank(resident)) {
+                    hostWidgets.put(e.getKey(), wd);
+                }
+                if (wd.directMop || wd.transitiveMop) {
+                    flaggedMerged = true;
+                }
+            }
+            widgetData.remove(dialogClass);           // move, not copy — widget map only (A2)
+            if (flaggedMerged) {
+                mopActivities.add(host);              // D6; dialogClass entry retained (A6)
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -638,6 +948,22 @@ public class MopData {
         return Collections.unmodifiableList(transitions);
     }
 
+    /**
+     * True when no parsed window carries any widget — a widget-less substrate (e.g. a
+     * Compose/canvas UI where static analysis found no addressable widgets, so widget-level
+     * MOP guidance has nothing to bind to). Pure function of the parsed {@code windows[].widgets}
+     * counts; reads nothing else and affects no scoring, routing, or load outcome (INV-MOP-28).
+     * No consumer yet.
+     */
+    public boolean isWidgetlessSubstrate() {
+        for (Window w : windows) {
+            if (!w.widgets.isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** Returns the MOP flags / metadata for a widget, or null if no match. */
     public Widget getWidget(String activity, String shortId) {
         Map<String, Widget> widgets = widgetData.get(activity);
@@ -650,6 +976,21 @@ public class MopData {
         return mopActivities.contains(activity);
     }
 
+    /**
+     * The reachability-augmented MOP activity set (INV-MOP-27) — the membership E-mín's
+     * {@code selectTriggerCandidate} orders by. Backed by the live set (not a copy); callers read
+     * only. Distinct from the per-activity {@link #activityHasMop} query so the pure launcher seam
+     * can take it as a parameter.
+     */
+    public Set<String> getMopActivities() {
+        return mopActivities;
+    }
+
+    /** Count of MOP-flagged widgets dropped during parsing for lacking a resource id (INV-MOP-20). */
+    public int getDroppedFlaggedNoId() {
+        return droppedFlaggedNoId;
+    }
+
     /** True if the activity's OPTIONSMENU is a MOP gateway (T1.2, D13). */
     public boolean activityHasMopOptionsMenu(String activity) {
         return activitiesWithMopOptionsMenu.contains(activity);
@@ -660,9 +1001,10 @@ public class MopData {
     }
 
     /**
-     * Click transitions originating from the given window/activity name.
+     * Click transitions originating from the given base activity.
      *
-     * @param activityName source window name (may include the "#OptionsMenu" suffix)
+     * @param activityName base source activity (the view is keyed by base activity, with any
+     *                     "#OptionsMenu"/fragment suffix stripped — INV-WTG-04)
      */
     public List<WtgTransition> getWtgTransitions(String activityName) {
         List<WtgTransition> list = wtgTransitions.get(activityName);
@@ -696,16 +1038,30 @@ public class MopData {
     // Helpers
     // -------------------------------------------------------------------------
 
+    /**
+     * Reads the whole file into a single, pre-sized {@code byte[]} and decodes it once as UTF-8.
+     * The old incremental {@code StringBuilder} doubled its backing array as it grew, spiking the
+     * transient footprint to ~4× the file size — the direct cause of the redreader OOM. A file
+     * larger than {@code Integer.MAX_VALUE} cannot be array-backed and is rejected (in practice the
+     * {@code load} budget guard rejects far smaller files first). Whole-file read is mandatory: the
+     * Android-bundled org.json only offers {@code JSONTokener(String)}.
+     */
     private static String readFile(String path) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        char[] buf = new char[8192];
-        try (InputStreamReader in = new InputStreamReader(new FileInputStream(path), "UTF-8")) {
+        File f = new File(path);
+        long length = f.length();
+        if (length > Integer.MAX_VALUE) {
+            throw new IOException("file too large to read into memory: " + length + " bytes");
+        }
+        byte[] bytes = new byte[(int) length];
+        int off = 0;
+        try (FileInputStream in = new FileInputStream(f)) {
             int n;
-            while ((n = in.read(buf)) != -1) {
-                sb.append(buf, 0, n);
+            while (off < bytes.length && (n = in.read(bytes, off, bytes.length - off)) != -1) {
+                off += n;
             }
         }
-        return sb.toString();
+        // If the file shrank between length() and the read, decode only what was actually read.
+        return new String(bytes, 0, off, StandardCharsets.UTF_8);
     }
 
     private static String optStringOrNull(JSONObject o, String key) {
@@ -738,6 +1094,18 @@ public class MopData {
         int count = 0;
         for (Map<String, Widget> m : widgetData.values()) {
             count += m.size();
+        }
+        return count;
+    }
+
+    private static int countFlagged(Map<String, Map<String, Widget>> widgetData) {
+        int count = 0;
+        for (Map<String, Widget> m : widgetData.values()) {
+            for (Widget w : m.values()) {
+                if (w.directMop || w.transitiveMop) {
+                    count++;
+                }
+            }
         }
         return count;
     }

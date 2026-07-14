@@ -51,16 +51,20 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-02**: `ActionType.MODEL_BACK.requireTarget()` and `ActionType.MODEL_MENU.requireTarget()` SHALL both return `false`. Neither `MODEL_BACK` nor `MODEL_MENU` requires a widget target; both map directly to Android key events.
 - **INV-EXPL-03**: The serialised exploration graph file (`sataModel.obj`) MUST contain a Java-serialised `Model` object, not a bare `Graph`. `StatefulAgent.saveGraph()` writes `oos.writeObject(model)`, where `model` is the `Model` instance (which in turn owns the `Graph`).
 - **INV-EXPL-04**: `ActionType.MODEL_CLICK.requireTarget()`, `MODEL_LONG_CLICK.requireTarget()`, `MODEL_SCROLL_BOTTOM_UP.requireTarget()`, `MODEL_SCROLL_TOP_DOWN.requireTarget()`, `MODEL_SCROLL_LEFT_RIGHT.requireTarget()`, and `MODEL_SCROLL_RIGHT_LEFT.requireTarget()` SHALL each return `true`.
-- **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_MENU`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`).
-- **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point.
+- **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_MENU`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`, `EVENT_TRIGGER_ACTIVITY`).
+- **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point. (Unchanged by `rv-scoring-pipeline`: `Config.modelMenuEnabled` gates only whether the `menuAction` is added to the State's action *set* — the field itself stays non-null in every arm, including `ape_pure`, so this invariant holds verbatim.)
 - **INV-EXPL-13**: `MODEL_MENU` SHALL be positioned in the `ActionType` enum after `MODEL_BACK` and before `MODEL_CLICK`. This placement ensures that `requireTarget()`'s ordinal range check (`MODEL_CLICK` through `MODEL_SCROLL_RIGHT_LEFT`) continues to correctly identify target-requiring actions without any change to the range boundaries.
 - **INV-EXPL-09**: When `SataAgent` triggers a forced app restart due to graph stability (i.e., `graphStableCounter` reaching `ape.graphStableRestartThreshold`), the `graphStableCounter` MUST be reset to zero immediately after the restart is initiated.
 - **INV-EXPL-10**: `RandomAgent` extends `StatefulAgent` and uses the same priority-weighted selection infrastructure. It does NOT implement a separate pure-random algorithm. The distinction from `SataAgent` is that `RandomAgent` uses `StatefulAgent`'s base priority assignment without SATA's directed graph navigation heuristics.
 - **INV-EXPL-11**: `StatefulAgent.adjustActionsByGUITree()` SHALL be called after base priority assignment and before the agent's selection step. Any priority modifications made by external components (e.g., MOP guidance in Phase 3) MUST be applied inside or after this method, not before it.
 - **INV-EXPL-12**: A `ModelAction` with a higher `priority` value SHALL be preferred over one with a lower `priority` value when `RandomHelper.randomPickWithPriority()` is used for selection within `StatefulAgent`.
-
+- **INV-EXPL-14**: Given identical `-s` seed, APK, and configuration, the sequence of `RandomHelper` draws SHALL be identical across runs.
+- **INV-EXPL-15**: No run SHALL spend more than 101 consecutive `checkAppActivity` iterations waiting for a foreground package without triggering a relaunch.
+- **INV-EXPL-16**: `tearDown()` SHALL run on every termination path of the exploration loop, normal or abnormal.
+- **INV-EXPL-17**: Per-step debug artifacts (PNG/XML) SHALL be written only when explicitly enabled via `ape.properties`.
+- **INV-EXPL-18**: Every fuzz gesture branch SHALL emit exactly one event per invocation.
+- **INV-EXPL-19**: No touch event SHALL ever be delivered to coordinates derived from bounds other than the resolved node's own bounds.
 ## Requirements
-
 ### Requirement: Strategy Selection
 
 The exploration strategy MUST be selected at process startup via the `--ape <strategy>` command-line argument passed to `Monkey`. The argument value is a case-sensitive string. The five legal values are `sata` (creates `SataAgent`), `ape` (creates `ApeAgent`), `bfs` (creates `StatefulAgent` with BFS queue discipline), `dfs` (creates `StatefulAgent` with DFS stack discipline), and `random` (creates `RandomAgent`). If the argument is absent or does not match any legal value, the implementation SHALL default to `sata`. The strategy object is constructed once and shared for the entire session; it MUST NOT be replaced or re-instantiated during a running session.
@@ -139,7 +143,7 @@ The full set of `MODEL_*` action types and their `requireTarget()` values are:
 | `MODEL_SCROLL_LEFT_RIGHT` | `true` | Swipe-right gesture (ViewPager tabs) |
 | `MODEL_SCROLL_RIGHT_LEFT` | `true` | Swipe-left gesture (ViewPager tabs) |
 
-Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`) SHALL have `isModelAction()` return `false` and are not used as graph edge labels.
+Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`, `EVENT_TRIGGER_ACTIVITY`) SHALL have `isModelAction()` return `false` and are not used as graph edge labels. `EVENT_TRIGGER_ACTIVITY` is the stagnation-triggered activity launch step (component-triggering spec): `requireTarget()` SHALL return `false` for it, and its event generation dispatches an activity-launch intent instead of a GUI gesture.
 
 #### Scenario: requireTarget() on BACK
 
@@ -166,11 +170,16 @@ Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT
 - **WHEN** `ActionType.EVENT_RESTART.isModelAction()` is called
 - **THEN** the return value SHALL be `false`
 
----
+#### Scenario: predicates on EVENT_TRIGGER_ACTIVITY
+
+- **WHEN** `ActionType.EVENT_TRIGGER_ACTIVITY.requireTarget()` and `ActionType.EVENT_TRIGGER_ACTIVITY.isModelAction()` are called
+- **THEN** both SHALL return `false`
 
 ### Requirement: OptionsMenu Systematic Exploration (MODEL_MENU)
 
-Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, ActionType.MODEL_MENU)`, initialised in the `State` constructor immediately after `backAction`. The field SHALL be exposed via `State.getMenuAction()`. This mirrors the `backAction` / `getBackAction()` pattern exactly.
+Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, ActionType.MODEL_MENU)`, initialised in the `State` constructor immediately after `backAction`. The field SHALL be exposed via `State.getMenuAction()` and SHALL be non-null for the life of the state. This mirrors the `backAction` / `getBackAction()` pattern exactly.
+
+Inclusion of the `menuAction` in the state's **selectable** action set is gated by `Config.modelMenuEnabled` (declared by the `scoring-pipeline` capability; default `true`). When `modelMenuEnabled` is `true` (default), the `menuAction` SHALL be included in the array returned by `State.getActions()`, exactly as before this change. When `modelMenuEnabled` is `false` (the `ape_pure` arm), the `menuAction` SHALL NOT be included in `State.getActions()` and the agent SHALL never select `MODEL_MENU`; the field SHALL still be constructed and returned by `State.getMenuAction()` (so `INV-EXPL-06` holds). This reproduces upstream APE, which has no model-level options-menu action.
 
 `MonkeySourceApe.generateEventsForActionInternal()` SHALL handle `MODEL_MENU` in its switch statement by calling `generateKeyMenuEvent()`. No target widget node is required or inspected.
 
@@ -179,7 +188,13 @@ Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, 
 #### Scenario: State constructor initialises menuAction
 - **WHEN** a new `State` is constructed for any `StateKey`
 - **THEN** `state.getMenuAction()` MUST return a non-null `ModelAction` whose `getType()` returns `ActionType.MODEL_MENU`
-- **AND** the `menuAction` MUST be included in the actions array returned by `state.getActions()`
+- **AND** when `Config.modelMenuEnabled` is `true` (default) the `menuAction` MUST be included in the actions array returned by `state.getActions()`
+
+#### Scenario: MODEL_MENU excluded from selection when modelMenuEnabled is false
+- **WHEN** `Config.modelMenuEnabled` is `false` and a new `State` is constructed
+- **THEN** `state.getMenuAction()` MUST still return a non-null `ModelAction` of type `MODEL_MENU`
+- **AND** `state.getActions()` MUST NOT contain the `menuAction`
+- **AND** the agent MUST never select `MODEL_MENU` for that state
 
 #### Scenario: MODEL_MENU event generation
 - **WHEN** `MonkeySourceApe.generateEventsForActionInternal()` is called with a `ModelAction` whose type is `MODEL_MENU`
@@ -190,29 +205,6 @@ Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, 
 - **WHEN** `MonkeySourceApe.validateResolvedAction()` is called with a `ModelAction` of type `MODEL_MENU`
 - **THEN** the method SHALL return `true`
 - **AND** no widget validator (`validateClickAction`, `validateScrollAction`) SHALL be invoked
-
----
-
-## SataAgent Action Selection Flow
-
-```mermaid
-flowchart TD
-    START([selectNewAction called]) --> BUFFER{actionBuffer\nnon-empty?}
-    BUFFER -->|yes| BUFFERED[return next buffered action\nclear if last]
-    BUFFER -->|no| STABLE{graphStableCounter\n≥ threshold?}
-    STABLE -->|yes| RESTART[trigger EVENT_RESTART\nreset counter]
-    STABLE -->|no| TRIVIAL[selectNewActionForTrivialActivity]
-    TRIVIAL -->|path found| PATH[return first step\nstore rest in buffer]
-    TRIVIAL -->|null| ABA[selectNewActionEarlyStageForABA]
-    ABA -->|path found| PATH
-    ABA -->|null| UNVISITED{current state has\nunvisited actions?}
-    UNVISITED -->|yes| BACK{backAction\nunvisited?}
-    BACK -->|yes| RET_BACK[return backAction]
-    BACK -->|no| MENU{menuAction\nunvisited?}
-    MENU -->|yes| RET_MENU[return menuAction]
-    MENU -->|no| WIDGET[return least-visited\nwidget action]
-    UNVISITED -->|no| GREEDY[epsilon-greedy over\nall valid actions\n95% least-visited\n5% random]
-```
 
 ### Requirement: SataAgent — Unvisited Action Priority
 
@@ -298,7 +290,7 @@ Beyond simple greedy unvisited-action selection, `SataAgent` uses multi-step gra
 
 ### Requirement: SataAgent — Trivial Activity Detection
 
-`SataAgent` identifies activities that are difficult to explore further as "trivial" and avoids spending excessive time in them. An activity is trivial when it has fewer states than `ape.trivialActivityRankThreshold` (default: `3`) OR when its visited rate is below a threshold relative to the median/mean visit count across all activities. When the current activity is non-trivial and a trivial activity has unvisited actions reachable via strong transitions, `SataAgent` SHOULD navigate to that trivial activity to exploit unexplored actions there.
+`SataAgent` SHALL identify activities that are difficult to explore further as "trivial" and SHALL avoid spending excessive time in them. An activity is trivial when it has fewer states than `ape.trivialActivityRankThreshold` (default: `3`) OR when its visited rate is below a threshold relative to the median/mean visit count across all activities. When the current activity is non-trivial and a trivial activity has unvisited actions reachable via strong transitions, `SataAgent` SHOULD navigate to that trivial activity to exploit unexplored actions there.
 
 #### Scenario: Current activity is trivial
 
@@ -335,7 +327,7 @@ Beyond simple greedy unvisited-action selection, `SataAgent` uses multi-step gra
 
 ### Requirement: StatefulAgent — Priority-Based Action Selection
 
-`StatefulAgent` and its subclasses use a `priority` integer field on each `ModelAction` to break ties and express preferences. Higher numeric priority means higher preference. The method `StatefulAgent.adjustActionsByGUITree()` is called after the base priority has been assigned and before the agent selects an action. This is the designated extension point where external components MAY call `ModelAction.setPriority(int)` to boost specific actions.
+`StatefulAgent` and its subclasses SHALL use a `priority` integer field on each `ModelAction` to break ties and express preferences. Higher numeric priority means higher preference. The method `StatefulAgent.adjustActionsByGUITree()` is called after the base priority has been assigned and before the agent selects an action. This is the designated extension point where external components MAY call `ModelAction.setPriority(int)` to boost specific actions.
 
 When `Config.mopDataPath` is non-null, `StatefulAgent` SHALL load `MopData` at construction time and apply MOP scoring in `adjustActionsByGUITree()` after the base priority loop. The MOP scoring pass SHALL only apply to actions where `action.requireTarget() == true` AND `action.isValid() == true`. The boost is additive: `action.setPriority(action.getPriority() + MopScorer.score(...))`. When `Config.mopDataPath` is null, the MOP scoring pass is skipped entirely and the method behaves identically to its pre-Phase-3 form.
 
@@ -362,7 +354,7 @@ The selection method `RandomHelper.randomPickWithPriority(List<ModelAction>)` MU
 
 ### Requirement: StatefulAgent — BFS and DFS Traversal Modes
 
-When the strategy is `bfs` or `dfs`, `MonkeySourceApe` creates a `StatefulAgent` configured with a BFS queue or DFS stack respectively. These modes do not use the ABA heuristic or epsilon-greedy selection of `SataAgent`; instead they traverse the state graph using classical breadth-first or depth-first order over unvisited states. Both modes still use the `Model` for state tracking and both apply `adjustActionsByGUITree()` for priority adjustments.
+When the strategy is `bfs` or `dfs`, `MonkeySourceApe` SHALL create a `StatefulAgent` configured with a BFS queue or DFS stack respectively. These modes do not use the ABA heuristic or epsilon-greedy selection of `SataAgent`; instead they traverse the state graph using classical breadth-first or depth-first order over unvisited states. Both modes still use the `Model` for state tracking and both apply `adjustActionsByGUITree()` for priority adjustments.
 
 #### Scenario: BFS strategy visits states level by level
 
@@ -381,7 +373,7 @@ When the strategy is `bfs` or `dfs`, `MonkeySourceApe` creates a `StatefulAgent`
 
 ### Requirement: Output Persistence on Termination
 
-On normal termination (when `StopTestingException` is caught), the exploration engine SHALL save graph artefacts to the output directory. The serialised graph (`sataModel.obj`) is written by `ObjectOutputStream` and contains the full in-memory `Graph` object. The Graphviz file (`sataGraph.dot`) is a DOT representation of every state and transition. The visualisation file (`sataGraph.vis.js`) is a vis.js JSON representation. All writes MUST complete before the process exits. If `ape.saveObjModel=false`, the `sataModel.obj` file SHALL NOT be written (default `true`). If `ape.saveDotGraph=false`, the `sataGraph.dot` file SHALL NOT be written (default `false`). If `ape.saveVisGraph=false`, the `sataGraph.vis.js` file SHALL NOT be written (default `true`).
+On termination — normal (when `StopTestingException` is caught) or abnormal (any other `Throwable` escaping the exploration loop) — the exploration engine SHALL save graph artefacts to the output directory. The `tearDown()` call chain (agent teardown, model serialisation, coverage dump, timeline) SHALL execute inside a `finally` block in `Monkey`, so an uncaught `RuntimeException` from the event loop still produces the run's outputs before the process exits. The serialised graph (`sataModel.obj`) is written by `ObjectOutputStream` and contains the full in-memory `Graph` object. The Graphviz file (`sataGraph.dot`) is a DOT representation of every state and transition. The visualisation file (`sataGraph.vis.js`) is a vis.js JSON representation. All writes MUST complete before the process exits. If `ape.saveObjModel=false`, the `sataModel.obj` file SHALL NOT be written (default `true`). If `ape.saveDotGraph=false`, the `sataGraph.dot` file SHALL NOT be written (default `false`). If `ape.saveVisGraph=false`, the `sataGraph.vis.js` file SHALL NOT be written (default `true`).
 
 #### Scenario: Normal termination with defaults
 
@@ -398,6 +390,12 @@ On normal termination (when `StopTestingException` is caught), the exploration e
 - **AND** the session terminates normally
 - **THEN** `sataModel.obj` SHALL NOT be created or overwritten
 - **AND** `sataGraph.vis.js` SHALL still be written (independent flag)
+
+#### Scenario: abnormal termination still persists outputs
+
+- **WHEN** a `RuntimeException` escapes the exploration loop
+- **THEN** `tearDown()` SHALL still run (via `finally`) and write the enabled artefacts before the process exits
+- **AND** the exception SHALL still propagate (the run is reported as failed)
 
 ---
 
@@ -438,7 +436,7 @@ All numeric and boolean tuning parameters MUST be loaded from `ape.properties` a
 | `ape.saveDotGraph` | boolean | false | Save Graphviz DOT graph on termination |
 | `ape.saveVisGraph` | boolean | true | Save vis.js JSON visualisation on termination |
 | `ape.takeScreenshot` | boolean | true | Save screenshots |
-| `ape.saveGUITreeToXmlEveryStep` | boolean | true | Save GUITree XML per step |
+| `ape.saveGUITreeToXmlEveryStep` | boolean | false | Save GUITree XML per step (default flipped to `false` by this change — see "Per-Step Debug Artifact Defaults" / INV-EXPL-17) |
 | `ape.defaultGUIThrottle` | long (ms) | 200 | Delay between injected events |
 | `ape.trivialActivityRankThreshold` | int | 3 | Minimum activity count before trivial-activity logic activates |
 
@@ -734,11 +732,182 @@ When `Config.dynamicEpsilon` is `false`, the existing behavior SHALL be preserve
 
 ### Requirement: Config Flags for Dynamic Epsilon
 
+`Config` SHALL declare the following flags controlling coverage-adaptive epsilon, loaded from `ape.properties` at class-loading time:
+
 | Flag | Property Key | Type | Default | Description |
 |------|-------------|------|---------|-------------|
 | `dynamicEpsilon` | `ape.dynamicEpsilon` | boolean | `true` | Enable coverage-adaptive epsilon |
 | `maxEpsilon` | `ape.maxEpsilon` | double | `0.15` | Epsilon when coverage gap is 1.0 |
 | `minEpsilon` | `ape.minEpsilon` | double | `0.02` | Epsilon when coverage gap is 0.0 |
+
+#### Scenario: Dynamic epsilon flags default correctly
+- **WHEN** `ape.properties` sets none of `ape.dynamicEpsilon`, `ape.maxEpsilon`, or `ape.minEpsilon`
+- **THEN** `Config.dynamicEpsilon` SHALL default to `true`, `Config.maxEpsilon` to `0.15`, and `Config.minEpsilon` to `0.02`
+
+---
+
+### Requirement: Seeded Agent Decision Reproducibility
+
+All agent-decision randomness routed through `RandomHelper` (priority roulettes such as `randomPickWithPriority`, uniform picks, `toss`, and `ApeFuzzer` gesture generation) SHALL be driven by a `java.util.Random` seeded from the Monkey `-s` seed. `MonkeySourceApe` SHALL call `RandomHelper.seed(seed)` exactly once during construction, with the same seed value that initializes `Monkey.mRandom`. Two runs launched with the same `-s`, the same APK, and the same configuration SHALL produce the same sequence of `RandomHelper` draws. (Previously `RandomHelper` used `ThreadLocalRandom.current()`, which cannot be seeded; the `-s` flag governed only the small subset of decisions using `mRandom`, so no run was reproducible.)
+
+#### Scenario: identical seeds produce identical draw sequences
+- **WHEN** `RandomHelper.seed(42)` is called and a sequence of `randomPick`/`toss`/`nextInt` draws is recorded, then `RandomHelper.seed(42)` is called again
+- **THEN** repeating the same sequence of calls SHALL yield the same values in the same order
+
+#### Scenario: seed comes from the Monkey -s flag
+- **WHEN** the Monkey is launched with `-s 12345`
+- **THEN** `RandomHelper` SHALL be seeded with `12345` before the first agent decision
+
+---
+
+### Requirement: Bounded Foreground Wait
+
+When `waitForActivity` is active and the foreground package is not in the allowed set, `MonkeySourceApe.checkAppActivity()` throttles 100 ms and re-checks on the next `getNextEvent()`. This wait SHALL be bounded: a consecutive-iteration counter SHALL be maintained, and when it exceeds 100 iterations (~10 s) the engine SHALL log `[APE-RV] waitForActivity exceeded 100 cycles, relaunching`, clear the wait state, and relaunch the app under test via the existing restart path (`startRandomMainApp`). The counter SHALL reset whenever the allowed package reaches the foreground. (Previously there was no counter, timeout, or relaunch: an app that never returned to the foreground consumed the entire `--running-minutes` budget in 100 ms throttles, producing a run with zero actions.)
+
+#### Scenario: wedged app is relaunched
+- **WHEN** the foreground package remains disallowed for 101 consecutive `checkAppActivity` iterations with `waitForActivity` active
+- **THEN** the wait state SHALL be cleared
+- **AND** the app under test SHALL be relaunched
+- **AND** one `[APE-RV] waitForActivity exceeded 100 cycles, relaunching` line SHALL be emitted
+
+#### Scenario: normal wait resets the counter
+- **WHEN** the allowed package reaches the foreground after 5 wait iterations
+- **THEN** the counter SHALL reset to 0
+- **AND** no relaunch SHALL occur
+
+---
+
+### Requirement: Per-Step Debug Artifact Defaults
+
+`ape.takeScreenshotForEveryStep` and `ape.saveGUITreeToXmlEveryStep` SHALL default to `false`. Both are debug aids: the experiment pipeline consumes neither (coverage comes from logcat, the trace from stdout; the aperv-tool pulls no per-step PNG/XML), and the LLM path captures its own screenshots on demand via `ScreenshotCapture`, independent of these flags. Per-step PNG + XML writes are pure I/O overhead on the exploration loop (estimated 20-40% of step throughput on an emulator). Debug runs re-enable either flag via `ape.properties`.
+
+#### Scenario: defaults are off
+- **WHEN** `ape.properties` contains neither key
+- **THEN** `Config.takeScreenshotForEveryStep` SHALL be `false`
+- **AND** `Config.saveGUITreeToXmlEveryStep` SHALL be `false`
+- **AND** no per-step PNG or XML SHALL be written
+
+#### Scenario: debug re-enable
+- **WHEN** `ape.properties` contains `ape.saveGUITreeToXmlEveryStep=true`
+- **THEN** a `step-N.xml` SHALL be written each step, as before
+
+#### Scenario: LLM screenshots unaffected
+- **WHEN** `ape.takeScreenshotForEveryStep=false` and the LLM routes a step
+- **THEN** `ScreenshotCapture` SHALL still capture its on-demand screenshot for the prompt
+
+---
+
+### Requirement: Fuzz Gesture Emission
+
+Every branch of the fuzzer's default gesture switch (drag, pinch/zoom, click) SHALL append exactly one event to the output list. `generatePinchOrZoomEvent` SHALL end with `events.add(new ApePinchOrZoomEvent(points))` (previously the gesture was built and discarded — the `events` parameter was never used, so ~1/3 of default-branch fuzz iterations emitted nothing).
+
+Before appending, `generatePinchOrZoomEvent` SHALL size the `points` array to exactly the number of entries it writes and emit no `null` entry. The current allocation `new PointF[4 + count << 1]` evaluates by Java precedence to `(4 + count) << 1` = `8 + 2·count`, while only `6 + 2·count` entries are written — leaving two trailing `null` slots that the constructor would dereference. The `ApePinchOrZoomEvent` constructor SHALL validate the array length (reject arrays shorter than 6 entries — 1 count slot + 1 duration slot + 2 coordinates × (count+1) pointers with count ≥ 0 gives the minimum valid payload of 6) BEFORE dereferencing any element, so a malformed array is rejected rather than throwing `NullPointerException`.
+
+#### Scenario: pinch/zoom branch emits
+- **WHEN** the fuzzer's gesture switch selects the pinch/zoom branch
+- **THEN** exactly one `ApePinchOrZoomEvent` SHALL be appended to the event list
+- **AND** its points array SHALL have at least 6 entries
+
+#### Scenario: emitted points array has no null entries
+- **WHEN** the pinch/zoom branch builds its `points` array for any `count ≥ 0`
+- **THEN** the array passed to `ApePinchOrZoomEvent` SHALL have length equal to the number of written entries
+- **AND** it SHALL contain no `null` element and construction SHALL NOT throw `NullPointerException`
+
+#### Scenario: short payload rejected
+- **WHEN** an `ApePinchOrZoomEvent` is constructed with 5 points
+- **THEN** the constructor SHALL reject it before dereferencing any element
+
+---
+
+### Requirement: Off-Screen Action Handling
+
+When `generateClickEventAt` finds that the target node's bounds do not intersect the visible screen (`getVisibleBounds` returns null), it SHALL NOT emit any touch event and SHALL log one `[APE-RV] off-screen action dropped: <action>` line. It SHALL NOT substitute the display bounds and click the screen center: that behavior executed an unrelated click while the model credited the original action, creating false edges (260 occurrences measured across 17/1513 baseline runs). The invalid-bounds branch (`!bounds.contains(p)`) keeps its no-event behavior and gains the same log line. Visit/coverage crediting of the dropped action is unchanged in this change (the markVisited-before-event-generation reorder is a separate, deferred item); the log line makes the wasted-step frequency measurable.
+
+#### Scenario: off-screen node produces no event
+- **WHEN** a MODEL_CLICK resolves to a node whose bounds do not intersect the visible screen
+- **THEN** no touch event SHALL be enqueued
+- **AND** one `[APE-RV] off-screen action dropped` line SHALL be emitted
+- **AND** no click SHALL be delivered to the screen center
+
+#### Scenario: on-screen node unchanged
+- **WHEN** the node's bounds intersect the visible screen
+- **THEN** click generation SHALL be identical to the previous implementation
+
+### Requirement: Foreign-Activity Guard in Event Generation
+
+When `ape.foreignActivityGuard` is true and the freshly fetched top activity component is non-null, `generateEvents` SHALL evaluate the pure decision `shouldModel(pkg, filterAccepts, systemWhitelist)` before calling `mAgent.updateState`, where `pkg` is `topComp.getPackageName()`, `filterAccepts` is `MonkeyUtils.getPackageFilter().isPackageValid(pkg)` (the same predicate the active backstop `checkAppActivity` gates on), and `systemWhitelist` is the fixed set {`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`} (the Google-image package is required because the RVSec AVD runs a Google emulator image whose runtime-permission UI is `com.google.android.permissioncontroller`; the AOSP entry alone would never match). `com.android.systemui` is NOT whitelisted — `checkAppActivity` already treats it as invalid and restarts on it, so the guard SHALL BACK out of it. When the decision is negative, the source SHALL enqueue exactly one BACK key event plus the standard throttle and return without invoking `updateState` — the foreign screen SHALL NOT be abstracted into a `State`, SHALL NOT be registered in UI-coverage tracking, and SHALL NOT contribute actions.
+
+The decision SHALL be based exclusively on the component's package name (the task's applicationId), never on activity class-name prefixes. A null top component SHALL bypass the guard (existing START/ACTIVATE handling proceeds). A null package SHALL be treated as modelable (uncheckable — defer to the existing paths). With `ape.foreignActivityGuard` false, event generation SHALL be identical to the pre-guard specification.
+
+The first deflection of each distinct foreign package SHALL log `[APE-RV] Foreign activity: pkg=<pkg> -> BACK`; subsequent deflections of the same package SHALL NOT log (throttle — a persistent foreign screen must not spam the trace). The dead `checkPackage(ComponentName, AccessibilityNodeInfo)` helper SHALL be deleted (P3 — it has no callers and the guard supersedes its intent).
+
+- **INV-EXPL-20**: No `State` or UI-coverage registration SHALL ever originate from a screen whose package fails the guard decision.
+- **INV-EXPL-21**: Screens of the system-interaction whitelist packages SHALL NOT be backed out by the guard (the guard SHALL be a no-op for them). This is a guard-local guarantee only: it does not assert durable in-package modeling — `checkAppActivity`, which this change does not touch, may still restart over these packages on a later cycle.
+- **INV-EXPL-22**: The `ape.foreignActivityGuard` flag SHALL gate the entire guard block; with the flag false, event generation SHALL follow the pre-guard path (no BACK deflections, no guard log lines). This is a reasoning invariant over the flag placement, not a pure-seam matrix case — `shouldModel` has no flag parameter.
+
+#### Scenario: launcher screen deflected
+- **WHEN** the app under test is `com.example.app`, a click lands the device on `com.google.android.apps.nexuslauncher/.NexusLauncherActivity`, and `generateEvents` runs with the guard enabled
+- **THEN** one BACK key event SHALL be enqueued, `updateState` SHALL NOT be called, and (on first occurrence) the trace SHALL contain `[APE-RV] Foreign activity: pkg=com.google.android.apps.nexuslauncher -> BACK`
+
+#### Scenario: permission dialog not deflected by the guard
+- **WHEN** the top component's package is `com.google.android.permissioncontroller` or `com.android.permissioncontroller` (runtime permission dialog; the Google package is the one seen on the RVSec Google-image AVD)
+- **THEN** the guard SHALL be a no-op for that cycle and `updateState` SHALL proceed normally (a guard-local no-op — this does not guarantee the screen survives `checkAppActivity` on a later cycle)
+
+#### Scenario: divergent class namespace is not misflagged
+- **WHEN** the app under test has applicationId `info.metadude.android.fosdem.schedule` and the top component is `info.metadude.android.fosdem.schedule/nerd.tuxmobil.fahrplan.congress.MainActivity`
+- **THEN** the caller SHALL derive `pkg` from `topComp.getPackageName()` (the applicationId `info.metadude.android.fosdem.schedule`), never from the activity class prefix `nerd.tuxmobil.*`, so `filterAccepts` is true and the screen is modeled normally (a caller-level `getPackageName()` assertion, not a `shouldModel`-seam matrix case)
+
+#### Scenario: guard disabled
+- **WHEN** `ape.foreignActivityGuard=false` and a foreign screen reaches `generateEvents`
+- **THEN** the screen SHALL be modeled exactly as before this change (leak-and-restart behavior), with no guard log line
+
+### Requirement: Tree/Package Guard in Event Generation
+
+When `ape.treePackageGuard` is true and the freshly fetched top activity component is non-null, `generateEvents` SHALL evaluate the pure decision `shouldRefetch(topPkg, treePkg, systemWhitelist)` before calling `mAgent.updateState`, where `topPkg` is `topComp.getPackageName()`, `treePkg` is `info.getPackageName()` (the accessibility root's owning package, converted null-safely to a String), and `systemWhitelist` is the `SYSTEM_INTERACTION_PACKAGES` set defined by `foreign-activity-guard` ({`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`}). `shouldRefetch` SHALL return true (mismatch) only when `treePkg` is non-null, differs from `topPkg`, and is not in the whitelist.
+
+When `shouldRefetch` is true and at least one refetch iteration remains (`repeat > 0` inside the existing `while (repeat-- > 0)` loop), the source SHALL `continue` — re-fetching both `topComp` and `info` on the next loop iteration — and SHALL NOT invoke `updateState` on the current pair: the mismatched screen SHALL NOT be abstracted into a `State`, SHALL NOT be registered in UI-coverage tracking, and SHALL NOT be built into a `GUITree`. When `shouldRefetch` is true but the refetch iterations are exhausted (`repeat == 0`), the source SHALL fall through and model the pair exactly as today (fail-open) — the guard SHALL NOT deadlock capture on a persistent mismatch.
+
+The decision SHALL be based exclusively on package names (`topComp.getPackageName()` and `info.getPackageName()`), never on activity class-name prefixes. A null top component SHALL bypass the guard (existing null / START handling proceeds). A null tree package SHALL be treated as a match (uncheckable — defer to the existing paths, model normally). A tree owned by a whitelist package SHALL NOT be treated as a mismatch (a permission dialog legitimately owning the tree over the app is modeled, not re-fetched). With `ape.treePackageGuard` false, event generation SHALL be identical to the pre-guard specification.
+
+The first mismatch of each distinct `top→tree` package pair SHALL log `[APE-RV] Tree/package mismatch: top=<pkg> tree=<pkg> -> refetch`; subsequent mismatches of the same pair SHALL NOT log (throttle — a persistent mismatch across the refetch iterations must not spam the trace). The guard SHALL be inserted after `foreign-activity-guard`'s top-component foreign check and before `updateState`, and SHALL reuse that change's whitelist set rather than redefining it.
+
+- **INV-EXPL-26**: While at least one refetch iteration remains, no `State`, `GUITree`, or UI-coverage registration SHALL originate from a `(topComp, tree)` pair whose tree package fails the guard decision (mismatched and not whitelisted).
+- **INV-EXPL-27**: On refetch-iteration exhaustion the guard SHALL fail open — a still-mismatched pair SHALL be modeled exactly as the pre-guard path; the guard SHALL NOT prevent capture indefinitely. (Reasoning invariant over the loop-exhaustion branch, not a pure-seam matrix case — `shouldRefetch` does not see `repeat`.)
+- **INV-EXPL-28**: The `ape.treePackageGuard` flag SHALL gate the entire guard block; with the flag false, event generation SHALL follow the pre-guard path (no refetch `continue`, no guard log lines). (Reasoning invariant over the flag placement — `shouldRefetch` has no flag parameter.)
+
+#### Scenario: launcher tree under an in-package MainActivity is re-fetched
+- **WHEN** the app under test is `com.example.app`, `topComp` reports `com.example.app/.MainActivity` but the accessibility root's `getPackageName()` is `com.google.android.apps.nexuslauncher` (a relaunch frame not yet painted), the guard is enabled, and at least one refetch iteration remains
+- **THEN** `updateState` SHALL NOT be called on this pair, the loop SHALL `continue` to re-fetch both `topComp` and `info`, and (on first occurrence) the trace SHALL contain `[APE-RV] Tree/package mismatch: top=com.example.app tree=com.google.android.apps.nexuslauncher -> refetch`
+
+#### Scenario: whitelisted permission dialog tree is not a mismatch
+- **WHEN** `topComp` reports the app under test but the accessibility root's `getPackageName()` is `com.google.android.permissioncontroller` or `com.android.permissioncontroller` (a runtime-permission dialog legitimately owning the tree over the app)
+- **THEN** `shouldRefetch` SHALL return false, the guard SHALL NOT re-fetch, and `updateState` SHALL model the pair normally
+
+#### Scenario: persistent mismatch fails open on exhaustion
+- **WHEN** the tree package differs from `topComp`'s package on every refetch iteration and the last iteration is reached (`repeat == 0`)
+- **THEN** the guard SHALL NOT `continue` past loop exhaustion, and the pair SHALL be modeled via `updateState` exactly as the pre-guard behavior (fail-open — capture is not deadlocked)
+
+#### Scenario: guard disabled
+- **WHEN** `ape.treePackageGuard=false` and a `(topComp, tree)` pair with a foreign tree reaches `generateEvents`
+- **THEN** the pair SHALL be modeled exactly as before this change (unchecked pairing), with no refetch `continue` and no guard log line
+
+### Requirement: Parametrized Idle-Wait Ceiling in Slow Tree Capture
+
+The global timeout of the UiAutomation idle wait in `getRootInActiveWindowSlow` SHALL be `ape.maxIdleTimeoutMs` (default `10000` ms). The idle wait SHALL remain best-effort: on timeout, or with any flag value, the source SHALL still call `getRootInActiveWindow()` unconditionally and return the resulting tree — the wait SHALL NOT gate whether a tree is captured. The quiet-period argument of the idle wait (the first `waitForIdle` parameter, 1000 ms) SHALL NOT be changed by this flag.
+
+The "window stuck animating" break threshold of **both** slow-capture retry loops (`refreshNewState` and `checkAndRefreshNewState`, which compare the same `getRootInActiveWindowSlow` duration) SHALL be derived from the same flag as `maxIdleTimeoutMs / 1000` seconds, so that lowering the ceiling keeps the breaks firing. With `ape.maxIdleTimeoutMs` at its default `10000`, the idle-wait global timeout SHALL be `10000` ms and each break threshold SHALL be `10` seconds — byte-identical to the pre-change literals (`1000 * 10` and `>= 10`).
+
+- **INV-EXPL-23**: With `ape.maxIdleTimeoutMs` at its default `10000`, slow tree capture and both retry-loop breaks SHALL behave identically to the pre-change implementation (the global timeout is `10000` ms and the break threshold is `10` s).
+- **INV-EXPL-24**: The idle wait SHALL remain best-effort at every flag value — `getRootInActiveWindow()` SHALL be invoked unconditionally after the wait, so a tree SHALL always be captured regardless of the timeout.
+- **INV-EXPL-25**: Every "window stuck animating" retry-loop break threshold (in `refreshNewState` and `checkAndRefreshNewState`) SHALL be derived from `ape.maxIdleTimeoutMs` (as `maxIdleTimeoutMs / 1000` seconds), never from an independent literal, so the ceiling and the breaks cannot diverge.
+
+#### Scenario: default preserves current behavior
+- **WHEN** `ape.maxIdleTimeoutMs` is at its default `10000` and `getRootInActiveWindowSlow` runs
+- **THEN** the UiAutomation idle wait SHALL use a `10000` ms global timeout, both retry-loop breaks (`refreshNewState`, `checkAndRefreshNewState`) SHALL fire at `>= 10` seconds, and the observable behavior SHALL be identical to the pre-change implementation
+
+#### Scenario: lowered ceiling caps the wait and capture still proceeds
+- **WHEN** `ape.maxIdleTimeoutMs` is lowered (e.g. to `2000`) and a screen has not gone idle within that window
+- **THEN** the idle wait SHALL return after at most `2000` ms, `getRootInActiveWindow()` SHALL still be called and its tree returned (no capture is skipped), and both retry-loop breaks SHALL fire at `>= 2` seconds
 
 ## Invariants (Dynamic Epsilon)
 

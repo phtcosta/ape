@@ -18,6 +18,7 @@ package com.android.commands.monkey.ape.tree;
 import java.io.Serializable;
 import java.util.Iterator;
 
+import org.w3c.dom.DOMException;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
@@ -26,6 +27,7 @@ import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.NameManager;
 import com.android.commands.monkey.ape.naming.Namelet;
+import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.StringCache;
 
 import android.graphics.Bitmap;
@@ -197,7 +199,13 @@ public class GUITreeNode implements Serializable {
     }
 
     public boolean isEditText() {
-        return this.className.equals("android.widget.EditText");
+        // rv-scoring-pipeline (treeEnhancementsEnabled): the fork recognizes the broader EditText
+        // family (AutoComplete/ExtractEditText/...) via GUITreeBuilder.isEditText; off -> upstream's
+        // exact android.widget.EditText match, so the pure arm inherits upstream perception.
+        // Fully-qualified: this class imports android.graphics.Bitmap.Config as `Config`.
+        return com.android.commands.monkey.ape.utils.Config.treeEnhancementsEnabled
+                ? GUITreeBuilder.isEditText(getClassName())
+                : "android.widget.EditText".equals(getClassName());
     }
 
     public GUITreeNode getRoot() {
@@ -505,8 +513,11 @@ public class GUITreeNode implements Serializable {
         } else if (className.equals("android.widget.HorizontalScrollView")
                 || className.equals("android.support.v17.leanback.widget.HorizontalGridView")
                 || className.equals("android.support.v4.view.ViewPager")
-                || className.equals("androidx.viewpager.widget.ViewPager")
-                || className.equals("androidx.viewpager2.widget.ViewPager2")) {
+                // rv-scoring-pipeline (treeEnhancementsEnabled): AndroidX ViewPager scrollable
+                // detection is a fork enhancement; off -> upstream perception (support-lib only).
+                || (com.android.commands.monkey.ape.utils.Config.treeEnhancementsEnabled
+                        && (className.equals("androidx.viewpager.widget.ViewPager")
+                            || className.equals("androidx.viewpager2.widget.ViewPager2")))) {
             return "horizontal";
         }
         if (scrollable == 1) {
@@ -549,12 +560,25 @@ public class GUITreeNode implements Serializable {
     }
 
     public void clearChildren() {
+        // In-memory prune is unconditional. The DOM prune is best-effort: on device the Harmony
+        // DOM can reject a removeChild with DOMException on large WebView subtrees, and that must
+        // degrade to a logged partial prune, never abort the run (INV-TREE-12). Naming walks the
+        // DOM, so a residual child on the rejecting node re-enters naming as an under-pruned
+        // WebView — the same state handled below ape.ignoreWebViewThreshold.
         this.childCount = 0;
         this.children = null;
         if (this.domNode != null) {
-            NodeList childNodes = this.domNode.getChildNodes();
-            for (int i = 0; i < childNodes.getLength(); i++) {
-                this.domNode.removeChild(childNodes.item(i));
+            // NodeList is live: removing item(i) shifts the remaining nodes down, so a forward i++
+            // walk skips every other child (INV-TREE-10). Always remove the first child until the
+            // DOM element is empty. The catch sits OUTSIDE the loop: catching inside would re-fetch
+            // the same failing child every iteration and spin forever.
+            try {
+                NodeList childNodes = this.domNode.getChildNodes();
+                while (childNodes.getLength() > 0) {
+                    this.domNode.removeChild(childNodes.item(0));
+                }
+            } catch (DOMException e) {
+                Logger.wformat("[APE-RV] clearChildren DOM prune aborted: %s", e.getMessage());
             }
         }
     }

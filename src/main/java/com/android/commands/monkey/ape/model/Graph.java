@@ -118,6 +118,7 @@ public class Graph implements Serializable {
     private List<GUITreeTransition> treeTransitionHistory = new ArrayList<>(100);
 
     private boolean fireEvents;
+    private boolean rebuilding;
     private transient List<GraphListener> listeners;
     private int timestamp;
 
@@ -305,6 +306,17 @@ public class Graph implements Serializable {
 
     public void enableGraphEvents() {
         this.fireEvents = true;
+    }
+
+    /**
+     * INV-MODEL-11 (task 2.2): while {@link Model#rebuild()} replays the removed transitions,
+     * suppress {@link ActivityNode} re-marking. An activity's visit count is invariant under
+     * state re-abstraction and is preserved across {@code ActivityNode.removeState}, so it is
+     * already complete before replay; re-marking the (partial) replayed sources would double-count
+     * activities that also have non-replayed transitions, breaking rebuild idempotency.
+     */
+    void setRebuilding(boolean rebuilding) {
+        this.rebuilding = rebuilding;
     }
 
     private void fireNewStateEvents(State node) {
@@ -585,7 +597,9 @@ public class Graph implements Serializable {
 
     public void markVisited(State node, int timestamp) {
         node.visitedAt(timestamp);
-        markVisited(node.getActivity(), timestamp);
+        if (!rebuilding) {
+            markVisited(node.getActivity(), timestamp);
+        }
     }
 
     private void markVisited(StateTransition edge, int timestamp) {
@@ -1280,17 +1294,12 @@ public class Graph implements Serializable {
         } else {
             stateTransitionHistory.clear();
         }
+        // INV-MODEL-11 (task 2.1): only reconstruct the ordered history list. The former
+        // firstVisit/lastVisit writes assigned each field to its own getter value (no-ops), and
+        // `edge.visitedCount++` double-counted — markVisited(edge) during the transition re-add
+        // (Graph.addTransition) already counts every replayed edge exactly once.
         for (GUITreeTransition tt : this.treeTransitionHistory) {
             StateTransition edge = (StateTransition) tt.getCurrentStateTransition();
-            int fv = edge.getFirstVisitedTimestamp();
-            int lv = edge.getLastVisitedTimestamp();
-            if (fv == -1 || fv > tt.getTimestamp()) {
-                edge.firstVisitTimestamp = fv;
-            }
-            if (lv == -1 || lv < tt.getTimestamp()) {
-                edge.lastVisitTimestamp = lv;
-            }
-            edge.visitedCount++;
             stateTransitionHistory.add(edge);
         }
     }

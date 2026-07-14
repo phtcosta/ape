@@ -26,6 +26,7 @@ import java.util.Random;
 
 import com.android.commands.monkey.ape.ActionFilter;
 import com.android.commands.monkey.ape.agent.StatefulAgent;
+import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.NamerComparator;
 import com.android.commands.monkey.ape.naming.NamerFactory;
@@ -62,8 +63,14 @@ public class State extends GraphElement {
         }
         backAction = new ModelAction(this, ActionType.MODEL_BACK);
         c.add(backAction);
+        // rv-scoring-pipeline (modelMenuEnabled, INV-EXPL-06): the fork's unconditional MODEL_MENU
+        // action is not in upstream APE. The field is always constructed (getMenuAction() stays
+        // non-null) but it joins the selectable `actions` set only when the gate is on; with it off
+        // the state's action set matches upstream and the agent can never select MODEL_MENU.
         menuAction = new ModelAction(this, ActionType.MODEL_MENU);
-        c.add(menuAction);
+        if (Config.modelMenuEnabled) {
+            c.add(menuAction);
+        }
         actions = c.toArray(new ModelAction[c.size()]);
     }
 
@@ -122,21 +129,46 @@ public class State extends GraphElement {
     }
 
     public ModelAction greedyPickLeastVisited(ActionFilter filter) {
+        return greedyPickLeastVisited(filter, null);
+    }
+
+    /**
+     * As {@link #greedyPickLeastVisited(ActionFilter)}, but skips {@code excluded} when non-null —
+     * the form-submit guard (extended INV-FORM-06): the submit must not be picked by visit count
+     * while the form has unfilled EditTexts, since least-visited ignores the priority that steers
+     * fields ahead of the submit.
+     */
+    public ModelAction greedyPickLeastVisited(ActionFilter filter, ModelAction excluded) {
         ModelAction minAction = null;
         int minValue = Integer.MAX_VALUE;
         int maxPriority = Integer.MIN_VALUE;
         for (ModelAction action : actions) {
-            if (!filter.include(action)) {
+            if (action == excluded || !filter.include(action)) {
                 continue;
             }
             int vc = action.getVisitedCount();
-            if (vc < minValue || (vc == minValue && action.getPriority() > maxPriority)) {
+            if (beatsLeastVisited(vc, action.getPriority(), minValue, maxPriority,
+                    Config.leastVisitedPriorityTiebreak)) {
                 minValue = vc;
                 maxPriority = action.getPriority();
                 minAction = action;
             }
         }
         return minAction;
+    }
+
+    /**
+     * rv-scoring-pipeline (leastVisitedPriorityTiebreak, INV-SEL-01/02): whether an action with visit
+     * count {@code vc} and priority {@code p} beats the current best in {@link #greedyPickLeastVisited}.
+     * Fewer visits always wins. A visit-count tie is broken by higher priority ONLY when the RV
+     * tiebreak is on; with it off, upstream APE keeps the incumbent (ties resolved by array order).
+     * Extracted as a pure seam so both branches are unit-testable despite the {@code static final} gate.
+     */
+    static boolean beatsLeastVisited(int vc, int p, int minValue, int maxPriority, boolean tiebreak) {
+        if (vc < minValue) {
+            return true;
+        }
+        return tiebreak && vc == minValue && p > maxPriority;
     }
 
     public ModelAction randomlyPickAction(Random random, ActionFilter filter) {

@@ -237,6 +237,7 @@ public class Model implements Serializable {
         {
             long b = SystemClock.elapsedRealtimeNanos();
             graph.disableGraphEvents();
+            graph.setRebuilding(true);
             graph.setVerbose(false);
             version++;
             graph.setVersion(version);
@@ -272,6 +273,7 @@ public class Model implements Serializable {
                 graph.addTransition(source, action, target, tt);
             }
             graph.rebuildHistory();
+            graph.setRebuilding(false);
             graph.setVerbose(true);
             graph.enableGraphEvents();
             long e = SystemClock.elapsedRealtimeNanos();

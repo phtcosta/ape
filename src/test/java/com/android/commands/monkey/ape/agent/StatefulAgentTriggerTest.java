@@ -1,7 +1,7 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
 
 import org.junit.Test;
@@ -49,19 +49,18 @@ public class StatefulAgentTriggerTest {
         assertEquals(1, tuples.size());
     }
 
-    @Test // 19.2
-    public void testTriggerSkipsNonExportedActivities() {
-        boolean prev = Config.activityTriggerEnabled;
-        Config.activityTriggerEnabled = true;
-        try {
-            ComponentInfo.ActivityInfo nonExported = new ComponentInfo.ActivityInfo("p.A", false, false,
-                    Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
-                    true, Collections.<String>emptyList());
-            MopData d = data(null, null, Arrays.asList(nonExported), null);
-            assertTrue(StatefulAgent.buildTriggerTuples(d).isEmpty());
-        } finally {
-            Config.activityTriggerEnabled = prev;
-        }
+    @Test // 19.2 (activity-frontier): activities NEVER enter the probabilistic tuple pool,
+    // exported or not — the old activityTriggerEnabled branch is deleted; activities are launched
+    // only by the stagnation launcher (EVENT_TRIGGER_ACTIVITY).
+    public void testTriggerNeverIncludesActivities() {
+        ComponentInfo.ActivityInfo exported = new ComponentInfo.ActivityInfo("p.Exported", false, true,
+                Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
+                true, Collections.<String>emptyList());
+        ComponentInfo.ActivityInfo nonExported = new ComponentInfo.ActivityInfo("p.Hidden", false, false,
+                Arrays.asList(filter(Arrays.asList("b"), Collections.<String>emptyList())),
+                true, Collections.<String>emptyList());
+        MopData d = data(null, null, Arrays.asList(exported, nonExported), null);
+        assertTrue(StatefulAgent.buildTriggerTuples(d).isEmpty());
     }
 
     @Test // 19.3
@@ -105,8 +104,10 @@ public class StatefulAgentTriggerTest {
         assertTrue(line.contains("reachesTarget=true"));
     }
 
-    @Test // 19.6 — rollback guard (INV-MOP-15)
-    public void testActivityTriggerDisabledExcludesActivitiesFromTupleList() {
+    @Test // 19.6 (activity-frontier, INV-MOP-15): activities are excluded from the tuple pool
+    // unconditionally — Config.activityTriggerEnabled now gates ONLY the stagnation launcher, not
+    // buildTriggerTuples. Only the receiver survives; the activity never appears regardless of flag.
+    public void testActivityExcludedFromTupleListUnconditionally() {
         ComponentInfo.ActivityInfo act = new ComponentInfo.ActivityInfo("p.A", false, true,
                 Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
                 true, Collections.<String>emptyList());
@@ -115,21 +116,9 @@ public class StatefulAgentTriggerTest {
                 true, Collections.<String>emptyList());
         MopData d = data(Arrays.asList(rec), null, Arrays.asList(act), null);
 
-        boolean prev = Config.activityTriggerEnabled;
-        Config.activityTriggerEnabled = false;
-        try {
-            List<StatefulAgent.TriggerTuple> off = StatefulAgent.buildTriggerTuples(d);
-            assertEquals(1, off.size());
-            assertEquals("p.R", off.get(0).component.className);
-            Config.activityTriggerEnabled = true;
-            boolean hasActivity = false;
-            for (StatefulAgent.TriggerTuple t : StatefulAgent.buildTriggerTuples(d)) {
-                if ("p.A".equals(t.component.className)) hasActivity = true;
-            }
-            assertTrue("activity present when enabled", hasActivity);
-        } finally {
-            Config.activityTriggerEnabled = prev;
-        }
+        List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(d);
+        assertEquals(1, tuples.size());
+        assertEquals("p.R", tuples.get(0).component.className);
     }
 
     @Test // 19.7
@@ -169,5 +158,28 @@ public class StatefulAgentTriggerTest {
         String[] insert = StatefulAgent.buildContentCommand(tuples.get(1));
         assertEquals("insert", insert[1]);
         assertEquals("--bind", insert[4]);
+    }
+
+    // 5.4 — INV-MOP-22 fail-fast: mopDataPath set but load failed → abort, never run as pure SATA
+    @Test
+    public void testRequireMopArmThrowsWhenPathSetAndLoadFailed() {
+        try {
+            StatefulAgent.requireMopArm(null, "/data/local/tmp/ape.mop.json");
+            fail("expected StopTestingException when path is set and load returned null");
+        } catch (StopTestingException expected) {
+            // ok
+        }
+    }
+
+    @Test
+    public void testRequireMopArmPassesThroughWhenLoaded() {
+        MopData d = data(null, null, null, null);
+        assertSame(d, StatefulAgent.requireMopArm(d, "/data/local/tmp/ape.mop.json"));
+    }
+
+    @Test
+    public void testRequireMopArmNoThrowWhenPathUnset() {
+        // mopDataPath unset → MOP disabled, null is a valid outcome (SATA as today)
+        assertNull(StatefulAgent.requireMopArm(null, null));
     }
 }

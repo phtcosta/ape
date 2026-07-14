@@ -277,7 +277,7 @@ public class NamingFactory implements Serializable {
                 Logger.iformat("Already too many states %d in the activity %s.", an.getStates().size(), state.getActivity());
                 return Collections.emptyList();
             }
-            if (an.getStates().size() > maxGUITreesPerState) {
+            if (state.getGUITrees().size() > maxGUITreesPerState) {
                 Logger.iformat("Already too many GUI trees %d in the state %s.", state.getGUITrees().size(), state);
                 return Collections.emptyList();
             }
@@ -1177,7 +1177,7 @@ public class NamingFactory implements Serializable {
             Logger.iformat("Already too many states %d in the activity %s.", an.getStates().size(), state.getActivity());
             return model;
         }
-        if (an.getStates().size() > maxGUITreesPerState) {
+        if (state.getGUITrees().size() > maxGUITreesPerState) {
             Logger.iformat("Already too many GUI trees %d in the state %s.", state.getGUITrees().size(), state);
             return model;
         }

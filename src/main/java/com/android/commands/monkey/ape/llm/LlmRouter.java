@@ -64,6 +64,11 @@ public class LlmRouter {
     private int matchedCount    = 0;
     private int noMatchCount    = 0;
     private int nullCount       = 0;
+    // Sub-count of nullCount: attempts abandoned at screenshot capture (null capture,
+    // e.g. FLAG_SECURE windows). These still count toward nullCount (the step yields no
+    // action); screenshotFailedCount attributes the cause so per-app FLAG_SECURE
+    // degradation of the LLM arm to SATA is countable post-hoc from the summary line.
+    private int screenshotFailedCount = 0;
     private int breakerTrips    = 0;
 
     // -------------------------------------------------------------------------
@@ -249,7 +254,10 @@ public class LlmRouter {
                 breaker.recordFailure();
                 breakerTrips = breaker.getTripCount();
                 Logger.println("[APE-RV] LLM screenshot capture failed, skipping LLM step");
+                // Screenshot failure is a null outcome (counts toward nullCount) AND is
+                // attributed to its own counter so FLAG_SECURE degradation is countable.
                 nullCount++;
+                screenshotFailedCount++;
                 return null;
             }
 
@@ -572,6 +580,8 @@ public class LlmRouter {
      * Print a summary of all LLM calls made during this session.
      */
     public void printSummary() {
+        // Screenshot failures are already included in nullCount, so the decisions
+        // denominator is unchanged; screenshot_failed only attributes their cause.
         int decisions = matchedCount + noMatchCount + nullCount;
         double matchRate = decisions > 0 ? (matchedCount * 100.0 / decisions) : 0.0;
         Logger.println("[APE-RV] LLM Summary"
@@ -582,6 +592,7 @@ public class LlmRouter {
                 + " matched=" + matchedCount
                 + " no_match=" + noMatchCount
                 + " null=" + nullCount
+                + " screenshot_failed=" + screenshotFailedCount
                 + " breaker_trips=" + breakerTrips);
         Logger.println(String.format("[APE-RV] LLM Decision ratio: %.1f%% (%d/%d)",
                 matchRate, matchedCount, decisions));
@@ -602,6 +613,9 @@ public class LlmRouter {
 
     /** Number of null returns due to infrastructure failures. */
     public int getNullCount() { return nullCount; }
+
+    /** Number of null returns attributed to screenshot-capture failure (subset of {@link #getNullCount()}). */
+    public int getScreenshotFailedCount() { return screenshotFailedCount; }
 
     /** Number of circuit-breaker trips recorded by this router. */
     public int getBreakerTrips() { return breakerTrips; }
