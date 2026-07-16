@@ -118,6 +118,24 @@ public class Action extends GraphElement implements PriorityObject {
         return this.type == ActionType.MODEL_BACK;
     }
 
+    /**
+     * An ephemeral action is synthesized per decision and is never a member of
+     * {@code State.getActions()} (INV-MODEL-14). Membership — not the action type — is what makes an
+     * action a citizen of the model: it is what registers the action in the graph's action inventory
+     * ({@code Graph.addActions}) and what validates it ({@code StatefulAgent.validateNewAction}).
+     * An ephemeral action therefore has no unvisited/visited entry and no graph id, and it stays
+     * invalid, so no action filter admits it — it can be neither selected nor traversed in a path.
+     * It is dispatched once and recorded as an observational edge only.
+     *
+     * <p>Callers that assume registration must exempt it: {@code Graph.markVisited} (whose sanity
+     * check exists to catch genuinely unregistered actions) and
+     * {@code Model.resolveNonDeterministicTransitions} (naming refinement cannot explain an outcome
+     * driven by a raw coordinate or a non-deterministic surface).
+     */
+    public boolean isEphemeral() {
+        return this.type == ActionType.MODEL_LLM_TAP;
+    }
+
     public boolean isClick() {
         return type == ActionType.MODEL_CLICK;
     }

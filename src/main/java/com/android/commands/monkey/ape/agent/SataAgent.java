@@ -352,6 +352,43 @@ public class SataAgent extends StatefulAgent {
         return hasGreedyActionForward(state);
     }
 
+    /**
+     * Accept an LLM-routed action from any of the three LLM hooks (new-state / stagnation / random).
+     *
+     * <p>Labels the action {@code DecisionSource.LLM} and, for a synthesized off-tree
+     * {@link ActionType#MODEL_LLM_TAP} tap, resolves it against {@code newState} before returning it
+     * (llm-coordinate-tap, D7). The tap is {@code isModelAction()==true} but — unlike a matched
+     * widget action — is not a member of {@code newState.getActions()}, so it never passed through the
+     * per-state resolution pass; {@link #resolveNewAction()} would then read a null
+     * {@code GUITreeAction} and {@code assertNotNull} would throw. Resolving here via the targetless
+     * branch of {@link State#resolveAction} populates its {@code GUITreeAction} exactly as
+     * {@code MODEL_MENU} / {@code MODEL_BACK} are resolved. The {@code MODEL_LLM_TAP} guard is
+     * required: a matched widget action is already resolved and MUST NOT be re-resolved (re-resolution
+     * would re-pick its node).
+     */
+    private ModelAction acceptLlmResult(ModelAction result) {
+        result.setDecisionSource(ModelAction.DecisionSource.LLM);
+        if (requiresSynthesizedResolution(result)) {
+            newState.resolveAction(this, result, getThrottleForNewAction(newState, result));
+        }
+        return result;
+    }
+
+    /**
+     * True when an LLM-routed action must be resolved against the current state before dispatch
+     * (llm-coordinate-tap, D7). Only the synthesized off-tree tap ({@link ActionType#MODEL_LLM_TAP})
+     * needs it: the tap is {@code isModelAction()==true} yet absent from {@code State.actions}, so it
+     * never passed the per-state resolution pass and its {@code GUITreeAction} is null — which
+     * {@link #resolveNewAction()} would {@code assertNotNull} on. A matched widget action returned on
+     * the same path is already resolved and MUST NOT be re-resolved (that would re-pick its node), so
+     * this returns {@code false} for every widget/targetless type other than the synthesized tap. Pure
+     * static so the guard decision is unit-testable without a live State/graph (device-gated resolution
+     * is exercised by the tasks.md 6.3 smoke).
+     */
+    static boolean requiresSynthesizedResolution(ModelAction result) {
+        return result.getType() == ActionType.MODEL_LLM_TAP;
+    }
+
     protected Action selectNewActionNonnull() {
         {
             // Logging
@@ -387,8 +424,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "new-state");
             if (result != null) {
-                result.setDecisionSource(ModelAction.DecisionSource.LLM);
-                return result;
+                return acceptLlmResult(result);
             }
         }
         // LLM stagnation hook (single-shot at midpoint). Keeps its own fixed
@@ -402,9 +438,8 @@ public class SataAgent extends StatefulAgent {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "stagnation");
             if (result != null) {
-                result.setDecisionSource(ModelAction.DecisionSource.LLM);
                 graphStableCounter = 0;
-                return result;
+                return acceptLlmResult(result);
             }
         }
         // LLM random hook (probabilistic, fires with Config.llmPercentage probability)
@@ -413,8 +448,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "random");
             if (result != null) {
-                result.setDecisionSource(ModelAction.DecisionSource.LLM);
-                return result;
+                return acceptLlmResult(result);
             }
         }
         // mop-census-launcher (Lever B): cadence-based MOP-activity launcher. Fires every

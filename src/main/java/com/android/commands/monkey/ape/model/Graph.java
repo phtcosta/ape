@@ -577,6 +577,15 @@ public class Graph implements Serializable {
         if (!action.getType().isModelAction()) {
             return;
         }
+        if (action.isEphemeral()) {
+            // INV-MODEL-14: an ephemeral action is synthesized per decision and never a member of
+            // State.getActions(), so addActions never registered it and there is no inventory entry
+            // to move. The sanity checks below exist to catch a registered action gone missing, which
+            // does not apply here. The visit is still recorded on the action itself, as it would be
+            // for a registered one (both call sites mark it: selection, then edge recording).
+            action.visitedAt(timestamp);
+            return;
+        }
         if (action.isUnvisited()) {
             if (!this.unvisitedActions.remove(action)) {
                 throw new RuntimeException("sanity check failed, action should be added " + action);

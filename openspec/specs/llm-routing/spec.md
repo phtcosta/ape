@@ -48,7 +48,7 @@ The two modes target different exploration bottlenecks:
 
 - **INV-RTR-01**: `LlmRouter` SHALL only be instantiated when `Config.llmUrl` is non-null. When `Config.llmUrl` is null, `StatefulAgent` SHALL set its `_llmRouter` field to null and all LLM routing checks SHALL be skipped.
 - **INV-RTR-02**: `LlmRouter.selectAction()` SHALL never throw an exception to the caller. All failures SHALL result in a null return with a warning log.
-- **INV-RTR-03**: The returned `ModelAction` MUST be a member of the `actions` list passed as input (i.e., a valid action on the current state). When no matching action is found (dynamic element not in UIAutomator dump), `selectAction()` returns null and the LLM coordinates are logged for telemetry.
+- **INV-RTR-03**: The `ModelAction` returned by `selectAction()` MUST be either (a) a member of the input `actions` list — a widget action matched by coordinate — or (b) a synthesized `LlmTapAction` of type `MODEL_LLM_TAP` constructed for the off-tree case. In case (b) the action is intentionally NOT a member of `actions`; it is a targetless action carrying the LLM pixel coordinate, mirroring how `EVENT_TRIGGER_ACTIVITY` (activity-frontier) returns a synthesized action not drawn from the state's action set. When even the off-tree construction does not apply (degenerate coordinate, boundary reject, `type_text`, or `back` with no back action), `selectAction()` returns null and the LLM coordinates are logged for telemetry.
 - **INV-RTR-04**: LLM routing SHALL NOT modify `ModelAction.priority` values. LLM selects an action directly; it does not boost priorities. The MOP scoring pass runs independently before LLM routing.
 - **INV-RTR-05**: The 2 LLM modes are independent: disabling one mode SHALL NOT affect the other. Each mode is gated by its own Config flag.
 - **INV-RTR-06**: `LlmRouter.selectAction()` SHALL explicitly null out large intermediate objects (`pngBytes`, `base64Image`, `messages`) in a `finally` block to prevent memory pressure from accumulated screenshots.
@@ -164,12 +164,14 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 6. `SglangClient.chat(messages)` → `ChatResponse`. If IOException → `breaker.recordFailure()`, return null.
 7. `ToolCallParser.parse(response)` → `ParsedAction`. If null → `breaker.recordFailure()`, return null.
 8. `CoordinateNormalizer.normalize(parsedAction.x, parsedAction.y, deviceWidth, deviceHeight)` → pixel coords.
-9. `mapToModelAction(pixelX, pixelY, parsedAction.actionType, parsedAction.text, actions)` → ModelAction or null.
+9. `mapToModelAction(pixelX, pixelY, parsedAction.actionType, parsedAction.text, actions, state, deviceWidth, deviceHeight)` → matched widget `ModelAction`, synthesized `LlmTapAction`, or null.
 10. `breaker.recordSuccess()`.
-11. If ModelAction found → log `[APE-RV] LLM selected: <action>`, return the ModelAction.
-12. If no match → log `[APE-RV] LLM no match at (<pixelX>,<pixelY>), SATA fallback`, return null.
+11. Outcome classification and return:
+    - A **matched widget** `ModelAction` → `result=matched`, return it.
+    - A synthesized `LlmTapAction` (type `MODEL_LLM_TAP`, off-tree case) → `result=llm_tap`, increment `llmTapCount`, return it.
+    - `null` → `result=no_match`, return null (SATA fallback). The `no_match` telemetry SHALL carry `reason=degenerate` when the parsed coordinate is `(0,0)`, else `reason=boundary`.
 
-**type_text handling**: When `mapToModelAction` finds a matching input widget and `parsedAction.text` is non-null, `selectAction()` calls `match.getResolvedNode().setInputText(text)` before returning. The caller receives a ready-to-execute ModelAction.
+**type_text handling**: When `mapToModelAction` finds a matching input widget and `parsedAction.text` is non-null, `selectAction()` calls `match.getResolvedNode().setInputText(text)` before returning. The caller receives a ready-to-execute ModelAction. A `type_text` action that matches no input widget returns null (`no_match`) — it is NOT converted to an off-tree tap, because a raw coordinate has no node to receive the text.
 
 **Memory cleanup**: Steps 3-9 SHALL be wrapped in a `try-finally` block that nulls out `pngBytes`, `base64Image`, and `messages`.
 
@@ -181,14 +183,24 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 - **AND** the LLM returns `click` at normalized coordinates `(450, 300)`
 - **AND** the nearest ModelAction's GUITreeNode bounds contain the pixel coordinates
 - **THEN** that ModelAction SHALL be returned
+- **AND** the telemetry line SHALL carry `result=matched`
 - **AND** `breaker.recordSuccess()` SHALL be called
 
-#### Scenario: No matching ModelAction (dynamic element)
+#### Scenario: Off-tree element becomes a coordinate tap
 
-- **WHEN** the LLM pipeline succeeds but `mapToModelAction()` returns null
-- **THEN** `selectAction()` SHALL return null (SATA fallback)
-- **AND** a log SHALL be emitted: `[APE-RV] LLM no match at (pixelX,pixelY), SATA fallback`
-- **AND** `breaker.recordSuccess()` SHALL be called (LLM worked, just no match)
+- **WHEN** the LLM pipeline succeeds with a `click` at in-bounds pixel `(600, 900)` on a 1080x1794 device
+- **AND** `mapToModelAction()` finds no widget containing the point and none within Euclidean tolerance
+- **THEN** `selectAction()` SHALL return an `LlmTapAction` of type `MODEL_LLM_TAP` carrying `(600, 900)`
+- **AND** the telemetry line SHALL carry `result=llm_tap`
+- **AND** the `llmTapCount` summary counter SHALL be incremented
+- **AND** `breaker.recordSuccess()` SHALL be called
+
+#### Scenario: Degenerate coordinate stays no_match
+
+- **WHEN** the LLM returns `click` and the parsed coordinate is `(0, 0)`
+- **THEN** `mapToModelAction()` SHALL return null (boundary reject, `pixelY=0 < deviceHeight * 0.05`)
+- **AND** `selectAction()` SHALL return null
+- **AND** the telemetry line SHALL carry `result=no_match reason=degenerate`
 
 #### Scenario: Screenshot capture fails trips the breaker
 
@@ -208,9 +220,9 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 ### Requirement: Coordinate-to-ModelAction Mapping
 
-`LlmRouter.mapToModelAction(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions)` SHALL map LLM output coordinates to the nearest valid `ModelAction` in the current state.
+`LlmRouter.mapToModelAction(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions, State state, int deviceWidth, int deviceHeight)` SHALL map LLM output coordinates to a `ModelAction` for the current state, returning a matched widget action, a synthesized off-tree `LlmTapAction`, or null.
 
-**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * 0.05` (status bar) or `pixelY > deviceHeight * 0.94` (navigation bar), `mapToModelAction` SHALL return null and log `[APE-RV] LLM click in system UI, rejecting`. This prevents the LLM from clicking on system UI elements.
+**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * 0.05` (status bar, and any degenerate `(0,0)` emission) or `pixelY > deviceHeight * 0.94` (navigation bar), `mapToModelAction` SHALL return null and log the boundary reject. This prevents the LLM from tapping system UI, and no off-tree tap is synthesized for these coordinates.
 
 **Special action types**:
 - If `actionType` equals `"back"`, the state's `backAction` SHALL be returned directly without coordinate matching.
@@ -221,7 +233,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 **Euclidean distance (fallback matching)**: If no action's bounds contain the point, compute the Euclidean distance from `(pixelX, pixelY)` to the center of each valid action's resolved node bounds. Return the action with the minimum distance if that distance is within a proportional tolerance: `max(50, min(nodeWidth, nodeHeight) / 2)` pixels. This ensures larger widgets accept more coordinate imprecision.
 
-**No match (dynamic element)**: If no action's bounds contain the point AND no action is within Euclidean tolerance, `mapToModelAction` returns null. `selectAction()` logs the LLM coordinates for telemetry and returns null (SATA fallback). The LLM likely targeted a dynamic element (WebView content, custom view) invisible to UIAutomator — this data is available in telemetry for future analysis.
+**Off-tree coordinate tap (dynamic element)**: If no action's bounds contain the point AND no action is within Euclidean tolerance AND `actionType` is `"click"` or `"long_click"`, `mapToModelAction` SHALL return `new LlmTapAction(state, pixelX, pixelY, "long_click".equals(actionType))` — a targetless `MODEL_LLM_TAP` action carrying the LLM coordinate. Because the boundary reject runs first, a coordinate reaching this point is guaranteed in-bounds and non-degenerate. For any other `actionType` (e.g. `type_text`), `mapToModelAction` SHALL return null. This is the mechanism by which APE acts on elements invisible to UIAutomator (game canvas, custom view, Compose-without-semantics).
 
 #### Scenario: LLM says "back"
 
@@ -244,13 +256,25 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 - **AND** action B has bounds center at `(320, 240)`, node size 100x40, tolerance = max(50, 20) = 50px, distance ~14px
 - **THEN** action B SHALL be returned (within tolerance, closest)
 
-#### Scenario: No action within tolerance (dynamic element)
+#### Scenario: Off-tree click builds an LlmTapAction
 
-- **WHEN** `mapToModelAction(50, 50, "click", null, actions)` is called
-- **AND** the nearest action's bounds center is at `(300, 400)` (distance ~420px, well beyond any tolerance)
-- **THEN** `mapToModelAction` SHALL return `null`
-- **AND** `selectAction()` SHALL log `[APE-RV] LLM no match at (50,50), SATA fallback`
-- **AND** `selectAction()` SHALL return null (SATA takes over)
+- **WHEN** `mapToModelAction(600, 900, "click", null, actions, state, 1080, 1794)` is called
+- **AND** no action's bounds contain `(600, 900)`
+- **AND** the nearest action's bounds center is `(300, 400)` (distance ~583px, beyond any tolerance)
+- **THEN** `mapToModelAction` SHALL return a new `LlmTapAction` of type `MODEL_LLM_TAP` with `pixelX=600`, `pixelY=900`, `longClick=false`
+- **AND** the action's `requireTarget()` SHALL be `false` and `getTarget()` SHALL be `null`
+
+#### Scenario: Off-tree long_click builds a long-press tap
+
+- **WHEN** `mapToModelAction(600, 900, "long_click", null, actions, state, 1080, 1794)` is called
+- **AND** no widget contains the point and none is within tolerance
+- **THEN** `mapToModelAction` SHALL return an `LlmTapAction` with `longClick=true`
+
+#### Scenario: Off-tree type_text stays no_match
+
+- **WHEN** `mapToModelAction(600, 900, "type_text", "hello", actions, state, 1080, 1794)` is called
+- **AND** no input-capable widget contains or is near the point
+- **THEN** `mapToModelAction` SHALL return null (no off-tree tap is synthesized for text input)
 
 #### Scenario: type_text targets EditText
 
@@ -268,10 +292,11 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 #### Scenario: Boundary reject — status bar
 
-- **WHEN** `mapToModelAction(540, 50, "click", null, actions)` is called on a 1080x1920 device
+- **WHEN** `mapToModelAction(540, 50, "click", null, actions, state, 1080, 1920)` is called on a 1080x1920 device
 - **AND** `pixelY (50) < deviceHeight * 0.05 (96)`
 - **THEN** `mapToModelAction` SHALL return null
-- **AND** a log SHALL be emitted: `[APE-RV] LLM click in system UI, rejecting`
+- **AND** no `LlmTapAction` SHALL be constructed
+- **AND** the boundary reject SHALL be logged
 
 #### Scenario: Boundary reject — navigation bar
 
@@ -283,19 +308,25 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 ### Requirement: LLM Telemetry Logging
 
-`LlmRouter` SHALL log structured telemetry for each LLM routing decision using the `[APE-RV] LLM` prefix. The following events SHALL be logged:
+`LlmRouter` SHALL log structured per-decision telemetry on an `[APE-LLM-TEL]` line and an aggregate `[APE-RV] LLM Summary` line.
 
-**Per-call structured log** (parseable, follows `[RVTRACK:LLM]` pattern from rvsmart/rvagent):
-```
-[APE-RV] LLM iter=<N> mode=<mode> tokens_in=<N> tokens_out=<N> time_ms=<N> result=<result> [widget=<id>|coords=(<x>,<y>)]
-```
+**Per-decision structured log** (parseable, follows the `[RVTRACK:LLM]` pattern from rvsmart/rvagent):
 
 | Field | Values |
 |-------|--------|
-| `mode` | `new-state`, `stagnation` |
-| `result` | `model_action`, `no_match`, `null`, `timeout`, `breaker_open`, `parse_failed` |
+| `mode` | `new-state`, `stagnation`, `random` |
+| `result` | `matched`, `llm_tap`, `no_match` |
+| `reason` | emitted only on `no_match`, immediately after `result=`: `degenerate` (parsed coordinate `(0,0)`) or `boundary` (status/nav band) |
 | `tokens_in/out` | From `ChatResponse.usage.prompt_tokens` / `completion_tokens` (0 if unavailable) |
 | `time_ms` | Wall clock milliseconds for the full pipeline (screenshot → response) |
+
+| `result` | Meaning |
+|----------|---------|
+| `matched` | LLM coordinate resolved to a widget in the `GUITree` |
+| `llm_tap` | LLM coordinate matched no widget; an off-tree `MODEL_LLM_TAP` was synthesized and dispatched |
+| `no_match` | LLM coordinate was discarded; accompanied by `reason=degenerate` or `reason=boundary` |
+
+Routing attempts abandoned before the mapping step (null screenshot, HTTP/parse failure) do not emit an `[APE-LLM-TEL]` line; they are counted in the aggregate summary only.
 
 **Additional event logs:**
 
@@ -306,16 +337,30 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 **Aggregate summary** (printed at `StatefulAgent.tearDown()`):
 ```
-[APE-RV] LLM Summary: calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> avg_ms=<N> matched=<N> no_match=<N> null=<N> screenshot_failed=<N> breaker_trips=<N>
+[APE-RV] LLM Summary calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> matched=<N> llm_tap=<N> no_match=<N> null=<N> screenshot_failed=<N> breaker_trips=<N>
 [APE-RV] Decision ratio: LLM=<N>/<total> (<pct>%), SATA=<N>/<total> (<pct>%)
 ```
 
+`llmTapCount` (`llm_tap=<N>`) counts synthesized off-tree taps; it is maintained separately from `matched` and `no_match` so the off-tree effect is countable post-hoc from the summary line alone. `llmTapCount` SHALL be included in the `decisions` denominator used for the `[APE-RV] LLM Decision ratio` line — `decisions = matched + llm_tap + no_match + null` — so that the denominator is stable across the off-tree change (an event formerly counted under `no_match` is now counted under `llm_tap`, both inside `decisions`) and the reported ratio (`matched / decisions`) remains a widget-match rate comparable to pre-change runs.
+
 `screenshot_failed` counts the routing attempts abandoned because `ScreenshotCapture` returned null (e.g. FLAG_SECURE windows). It SHALL be maintained as its own counter, separate from the aggregate `null` count (which also covers HTTP, parse, and mapping failures), so per-app degradation of the LLM arm to SATA is countable post-hoc from the summary line alone. Screenshot failures still count toward `null` as today (the step yields no action) — `screenshot_failed` attributes the cause.
 
-#### Scenario: Successful action logged
+#### Scenario: Matched widget logged
 
-- **WHEN** `selectAction()` returns a non-null ModelAction of type `MODEL_CLICK` targeting widget `btn_encrypt`
-- **THEN** a log entry SHALL be emitted: `[APE-RV] LLM selected: MODEL_CLICK on btn_encrypt at (540, 960)`
+- **WHEN** `selectAction()` returns a widget `ModelAction` of type `MODEL_CLICK`
+- **THEN** the `[APE-LLM-TEL]` line SHALL carry `result=matched`
+
+#### Scenario: Off-tree tap logged
+
+- **WHEN** `selectAction()` returns an `LlmTapAction` at pixel `(600, 900)`
+- **THEN** the `[APE-LLM-TEL]` line SHALL carry `result=llm_tap`
+- **AND** the summary SHALL count it under `llm_tap=<N>`
+
+#### Scenario: no_match reason separated
+
+- **WHEN** one decision is discarded for a `(0,0)` coordinate and another for a `pixelY=1700` navigation-band coordinate on a 1794px-tall device
+- **THEN** the first `[APE-LLM-TEL]` line SHALL carry `result=no_match reason=degenerate`
+- **AND** the second SHALL carry `result=no_match reason=boundary`
 
 #### Scenario: Circuit breaker event logged
 

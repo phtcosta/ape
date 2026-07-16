@@ -4,6 +4,7 @@ import android.graphics.Rect;
 
 import com.android.commands.monkey.ape.AndroidDevice;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
@@ -62,6 +63,10 @@ public class LlmRouter {
     private int totalTokensOut  = 0;
     private long totalTimeMs    = 0L;
     private int matchedCount    = 0;
+    // Off-tree coordinate taps synthesized for the off-tree case (llm-coordinate-tap). Kept
+    // separate from matchedCount/noMatchCount so the off-tree effect is countable post-hoc; it
+    // joins the decisions denominator (an off-tree event formerly counted under no_match).
+    private int llmTapCount     = 0;
     private int noMatchCount    = 0;
     private int nullCount       = 0;
     // Sub-count of nullCount: attempts abandoned at screenshot capture (null capture,
@@ -353,7 +358,14 @@ public class LlmRouter {
 
             String resultTag;
             String matchedClass = "none";
-            if (match != null) {
+            String noMatchReason = null;
+            if (match instanceof LlmTapAction) {
+                // Off-tree coordinate tap (llm-coordinate-tap): the LLM coordinate matched no widget
+                // and was synthesized into a MODEL_LLM_TAP. Counted separately from matched/no_match
+                // so the off-tree effect is countable post-hoc; it joins the decisions denominator.
+                llmTapCount++;
+                resultTag = "llm_tap";
+            } else if (match != null) {
                 matchedCount++;
                 resultTag = "matched";
                 try {
@@ -378,6 +390,9 @@ public class LlmRouter {
             } else {
                 noMatchCount++;
                 resultTag = "no_match";
+                // Separate the two remaining no_match mechanisms: a (0,0) model emission
+                // (degenerate) vs a status/nav-band coordinate (boundary). Emitted only here.
+                noMatchReason = (parsed.getX() == 0 && parsed.getY() == 0) ? "degenerate" : "boundary";
             }
 
             // Enhanced telemetry line for experiment analysis
@@ -395,8 +410,11 @@ public class LlmRouter {
                     .append(" action=").append(parsed.getActionType())
                     .append(" qwen=(").append(parsed.getX()).append(",").append(parsed.getY()).append(")")
                     .append(" pixel=(").append(pixels[0]).append(",").append(pixels[1]).append(")")
-                    .append(" result=").append(resultTag)
-                    .append(" matched_class=").append(matchedClass)
+                    .append(" result=").append(resultTag);
+            if (noMatchReason != null) {
+                tel.append(" reason=").append(noMatchReason);
+            }
+            tel.append(" matched_class=").append(matchedClass)
                     .append(" nearest_class=").append(nearestClass)
                     .append(" nearest_dist=").append(String.format("%.1f", nearestDist))
                     .append(" widgets=").append(widgetCount)
@@ -557,7 +575,21 @@ public class LlmRouter {
             } catch (Exception ignored) { /* skip bad actions */ }
         }
 
-        return bestEuclidean;
+        if (bestEuclidean != null) {
+            return bestEuclidean;
+        }
+
+        // --- Off-tree coordinate tap (dynamic element) ---
+        // No widget contains the point and none is within Euclidean tolerance. The boundary reject
+        // ran first, so a coordinate reaching here is guaranteed in-bounds and non-degenerate. For a
+        // click/long_click, synthesize a targetless MODEL_LLM_TAP carrying the LLM coordinate so APE
+        // can act on elements invisible to UIAutomator (game canvas, custom view, Compose-without-
+        // semantics). type_text and any other type stay null — a raw coordinate has no node to
+        // receive text. (llm-coordinate-tap, D4)
+        if ("click".equals(actionType) || "long_click".equals(actionType)) {
+            return new LlmTapAction(state, pixelX, pixelY, "long_click".equals(actionType));
+        }
+        return null;
     }
 
     // -------------------------------------------------------------------------
@@ -582,7 +614,10 @@ public class LlmRouter {
     public void printSummary() {
         // Screenshot failures are already included in nullCount, so the decisions
         // denominator is unchanged; screenshot_failed only attributes their cause.
-        int decisions = matchedCount + noMatchCount + nullCount;
+        // llmTapCount is a completed mapping outcome and joins the denominator so it stays stable
+        // across this change (an off-tree event formerly counted under no_match is now llm_tap,
+        // both inside decisions); the numerator stays matchedCount (widget-match rate).
+        int decisions = matchedCount + llmTapCount + noMatchCount + nullCount;
         double matchRate = decisions > 0 ? (matchedCount * 100.0 / decisions) : 0.0;
         Logger.println("[APE-RV] LLM Summary"
                 + " calls=" + totalCalls
@@ -590,6 +625,7 @@ public class LlmRouter {
                 + " tokens_out=" + totalTokensOut
                 + " time_ms=" + totalTimeMs
                 + " matched=" + matchedCount
+                + " llm_tap=" + llmTapCount
                 + " no_match=" + noMatchCount
                 + " null=" + nullCount
                 + " screenshot_failed=" + screenshotFailedCount
@@ -607,6 +643,9 @@ public class LlmRouter {
 
     /** Number of successful action matches. */
     public int getMatchedCount() { return matchedCount; }
+
+    /** Number of synthesized off-tree coordinate taps (MODEL_LLM_TAP). */
+    public int getLlmTapCount() { return llmTapCount; }
 
     /** Number of times parsing / matching produced no result. */
     public int getNoMatchCount() { return noMatchCount; }

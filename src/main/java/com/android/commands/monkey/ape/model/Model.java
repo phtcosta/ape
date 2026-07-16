@@ -342,6 +342,13 @@ public class Model implements Serializable {
             if (edge.getAction().isBack()) {
                 return null; // back should be deterministic.
             }
+            if (edge.getAction().isEphemeral()) {
+                // INV-MODEL-14: an ephemeral action's outcome follows its own payload (a raw
+                // coordinate) or a non-deterministic surface such as a game canvas. No naming
+                // refinement can separate those, so refining here would rebuild the model chasing a
+                // difference no abstraction expresses.
+                return null;
+            }
             int version = this.version;
             long begin = SystemClock.elapsedRealtimeNanos();
             namingManager.resolveNonDeterminism(this, edge);

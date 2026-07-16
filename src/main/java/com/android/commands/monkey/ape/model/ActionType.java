@@ -40,6 +40,12 @@ public enum ActionType {
     // a model action can be used as a label of an edge in the model.
     MODEL_BACK,
     MODEL_MENU, // MENU key press; no widget target
+    // LLM coordinate tap on an off-tree element (game canvas, Compose-without-semantics, custom
+    // view). Placed between MODEL_MENU and MODEL_CLICK on purpose (INV-MODEL-12): requireTarget()
+    // and isModelAction() are ordinal-range checks over the MODEL_* block, so this slot yields
+    // isModelAction()=true (it labels a StateTransition edge) and requireTarget()=false (it carries
+    // a raw pixel coordinate, not a resolved GUITreeNode) — mirroring the MODEL_MENU/MODEL_BACK slot.
+    MODEL_LLM_TAP,
     MODEL_CLICK,
     MODEL_LONG_CLICK,
     MODEL_SCROLL_TOP_DOWN,

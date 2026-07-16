@@ -53,6 +53,7 @@ import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.FuzzAction;
+import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StartAction;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -932,6 +933,15 @@ public class MonkeySourceApe implements MonkeyEventSource {
             break;
         case MODEL_LONG_CLICK:
             generateClickEventAt(action.getResolvedNode().getBoundsInScreen(), LONG_CLICK_WAIT_TIME);
+            break;
+        case MODEL_LLM_TAP:
+            // llm-coordinate-tap (D5): off-tree tap at a raw LLM pixel coordinate. No resolved node
+            // exists (the element is absent from the GUITree), so dispatch a zero-size Rect at the
+            // coordinate — its center is (x, y) — through the same ApeClickEvent path as MODEL_CLICK.
+            LlmTapAction tap = (LlmTapAction) action;
+            Rect tapRect = new Rect(tap.getPixelX(), tap.getPixelY(), tap.getPixelX(), tap.getPixelY());
+            generateClickEventAt(tapRect, tap.isLongClick() ? LONG_CLICK_WAIT_TIME : CLICK_WAIT_TIME,
+                    ClickPoint.CENTER);
             break;
         case MODEL_SCROLL_BOTTOM_UP:
         case MODEL_SCROLL_TOP_DOWN:
