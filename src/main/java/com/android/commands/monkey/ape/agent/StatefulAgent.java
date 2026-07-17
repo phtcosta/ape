@@ -1641,15 +1641,31 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
     }
 
+    /**
+     * INV-EXPL-29: runs one teardown step in isolation. A step that throws costs only its own
+     * artifact — the later steps still run, and the exception never escapes to replace the
+     * exception that ended the exploration loop.
+     */
+    private void safeStep(String label, Runnable step) {
+        try {
+            step.run();
+        } catch (Throwable t) {
+            Logger.wformat("[APE-RV] tearDown step failed: %s (%s)", label, t);
+            t.printStackTrace();
+        }
+    }
+
     public void tearDown() {
-        if (_llmRouter != null) _llmRouter.printSummary();
-        super.tearDown();
-        saveGraph();
-        saveActionHistory();
-        actionCounters.print();
-        getGraph().printActivityNodes();
-        model.getNamingManager().dump();
-        model.printCounters();
+        safeStep("llmSummary", () -> {
+            if (_llmRouter != null) _llmRouter.printSummary();
+        });
+        safeStep("superTearDown", super::tearDown);
+        safeStep("saveGraph", this::saveGraph);
+        safeStep("saveActionHistory", this::saveActionHistory);
+        safeStep("actionCounters", () -> actionCounters.print());
+        safeStep("activityNodes", () -> getGraph().printActivityNodes());
+        safeStep("namingDump", () -> model.getNamingManager().dump());
+        safeStep("modelCounters", () -> model.printCounters());
     }
 
     public List<ActionRecord> getActionHistory() {

@@ -218,16 +218,34 @@ public class MonkeySourceApe implements MonkeyEventSource {
         mHandlerThread.quit();
     }
 
-    public void tearDown() {
-        this.disconnect();
-        this.mAgent.tearDown();
-        for (ImageWriterQueue writer : mImageWriters) {
-            writer.tearDown();
+    /**
+     * INV-EXPL-29: runs one teardown step in isolation, so a step that throws (e.g.
+     * {@link #disconnect()} on an already-disconnected handler) never skips the agent teardown
+     * that persists the model, and never replaces the exception that ended the loop.
+     */
+    private void safeStep(String label, Runnable step) {
+        try {
+            step.run();
+        } catch (Throwable t) {
+            Logger.wformat("[APE-RV] tearDown step failed: %s (%s)", label, t);
+            t.printStackTrace();
         }
-        this.mEventProduceLogger.close();
-        this.mEventConsumeLogger.close();
-        File visOutput = new File(getOutputDirectory(), "sataTimeline.vis.js");
-        ApeRRFormatter.toVisTimeline(mEventProduceLoggerFile, visOutput);
+    }
+
+    public void tearDown() {
+        safeStep("disconnect", this::disconnect);
+        safeStep("agentTearDown", () -> this.mAgent.tearDown());
+        safeStep("imageWriters", () -> {
+            for (ImageWriterQueue writer : mImageWriters) {
+                writer.tearDown();
+            }
+        });
+        safeStep("eventProduceLogger", () -> this.mEventProduceLogger.close());
+        safeStep("eventConsumeLogger", () -> this.mEventConsumeLogger.close());
+        safeStep("visTimeline", () -> {
+            File visOutput = new File(getOutputDirectory(), "sataTimeline.vis.js");
+            ApeRRFormatter.toVisTimeline(mEventProduceLoggerFile, visOutput);
+        });
     }
 
     public MonkeySourceApe(Random random,

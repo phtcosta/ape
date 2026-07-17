@@ -492,14 +492,17 @@ public class Naming implements Serializable {
             Document document = tree.getDocument();
             results = namingInternal(document, updateNodeName);
             treeToNamingResult.put(tree, results);
+            // INV-EXPL-16: the result log stays on the success path. In a finally it reads
+            // results.getNameSize() with results still null whenever namingInternal threw, and the
+            // NPE would replace the original exception.
+            long end = SystemClock.elapsedRealtimeNanos();
+            Logger.dformat("Create %d names for %d nodes in %d ms for tree %s by %s [Update node name: %s].",
+                    results.getNameSize(), results.getNodeSize(),
+                    TimeUnit.NANOSECONDS.toMillis(end - begin), tree, this, updateNodeName);
             return results;
         } catch (RuntimeException e) {
             e.printStackTrace();
             throw e;
-        } finally {
-            long end = SystemClock.elapsedRealtimeNanos();
-            Logger.dformat("Create %d names for %d nodes in %d ms for tree %s by %s [Update node name: %s].", results.getNameSize(),
-                    results.getNameSize(), TimeUnit.NANOSECONDS.toMillis(end - begin), tree, this, updateNodeName);
         }
     }
 

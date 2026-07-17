@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -94,13 +95,23 @@ public class Model implements Serializable {
     }
 
     public static void saveActionHistory(File file, List<ActionRecord> actionHistory) {
+        int skipped = 0;
         try (PrintWriter pw = new PrintWriter(new FileWriter(file))) {
             for (ActionRecord record : actionHistory) {
                 Action action = record.modelAction;
                 int timestamp = record.agentTimestamp;
                 long clockTime = record.clockTimestamp;
-                if (action.isModelAction()) {
-                    record.resolveModelAction();
+                // INV-MODEL-15: a naming refinement can leave a recorded descriptor unresolvable
+                // against its own tree. Skipping that record costs one line; letting the exception
+                // out aborts the whole teardown and the run keeps no history at all.
+                try {
+                    if (action.isModelAction()) {
+                        record.resolveModelAction();
+                    }
+                } catch (RuntimeException e) {
+                    skipped++;
+                    Logger.wformat("[APE-RV] ActionHistory skip: %s (%s)", action, e);
+                    continue;
                 }
                 ApeRRFormatter.startLogAction(pw, action, clockTime, timestamp);
                 ApeRRFormatter.endLogAction(pw, action, timestamp);
@@ -109,6 +120,7 @@ public class Model implements Serializable {
             e.printStackTrace();
             Logger.wformat("Fail to save action history into %s.", actionHistory);
         }
+        Logger.format("[APE-RV] ActionHistory total=%d skipped=%d", actionHistory.size(), skipped);
     }
 
     /**
@@ -213,9 +225,7 @@ public class Model implements Serializable {
                 affectedTrees.addAll(state.getGUITrees());
                 graph.remove(state, stateTransitions);
             }
-            for (StateTransition st : stateTransitions) {
-                treeTransitions.addAll(st.getGUITreeTransitions());
-            }
+            treeTransitions.addAll(collectReplayTreeTransitions(stateTransitions));
             Collections.sort(treeTransitions, new Comparator<GUITreeTransition>() {
 
                 @Override
@@ -285,6 +295,35 @@ public class Model implements Serializable {
                 TimeUnit.NANOSECONDS.toMillis(end - begin), statesToRemove.size(), stateTransitions.size(),
                 treeTransitions.size());
         return this;
+    }
+
+    /**
+     * Flattens the removed edges' {@code GUITreeTransition}s for the rebuild replay. Extracted
+     * from {@link #rebuild()} so the collection contract is JVM-testable (the full rebuild needs
+     * the Android runtime).
+     *
+     * <p>INV-MODEL-16: ephemeral edges are excluded — an ephemeral action is never a member of
+     * {@code State.getActions()} (INV-MODEL-14), so the replay's {@code state.getAction(type)}
+     * re-anchor would throw {@code No such action [MODEL_LLM_TAP]}. Their tree transitions are
+     * also purged from the graph's history, otherwise {@code rebuildHistory} would re-insert the
+     * removed edge (dangling) into the state-transition history.
+     */
+    List<GUITreeTransition> collectReplayTreeTransitions(Collection<StateTransition> stateTransitions) {
+        List<GUITreeTransition> treeTransitions = new ArrayList<>();
+        int ephemeralDropped = 0;
+        for (StateTransition st : stateTransitions) {
+            if (st.getAction().isEphemeral()) {
+                graph.removeFromTreeHistory(st.getGUITreeTransitions());
+                ephemeralDropped++;
+                continue;
+            }
+            treeTransitions.addAll(st.getGUITreeTransitions());
+        }
+        if (ephemeralDropped > 0) {
+            Logger.iformat("[APE-RV] Rebuild: dropped %d ephemeral edge(s) from replay (INV-MODEL-16)",
+                    ephemeralDropped);
+        }
+        return treeTransitions;
     }
 
     public List<GUITreeTransition> getGUITreeTransitions(StateTransition st) {
@@ -381,6 +420,12 @@ public class Model implements Serializable {
     }
 
     public ModelAction update(ModelAction action, GUITreeAction guiAction) {
+        if (action.isEphemeral()) {
+            // INV-MODEL-16: an ephemeral action's identity is its payload (INV-MODEL-13), never
+            // State.getActions() membership — the membership lookup below would throw
+            // "No such action" for it. Keep the reference payload-bound.
+            return action;
+        }
         State state = action.getState();
         if (isStale(state)) {
             GUITree tree = guiAction.getGUITree();

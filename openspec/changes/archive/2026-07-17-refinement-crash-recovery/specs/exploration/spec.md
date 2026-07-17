@@ -14,12 +14,6 @@ possibly-null result. Teardown is also all-or-nothing: `MonkeySourceApe.tearDown
 `StatefulAgent.tearDown` runs eight persistence/diagnostic steps sequentially (a throw at any step
 skips all later steps).
 
-Separately, the post-refinement revalidation pass (`validateAllNewActions`) resolves every action of
-`newState` against the latest `GUITree`; when the refined naming no longer binds an action's
-pre-refinement `Name`, the resulting `IllegalStateException` propagates out of the exploration loop
-uncaught. This delta makes that rebind failure a logged, counted, non-fatal event that invalidates
-the failing action.
-
 ## Invariants
 
 - **INV-EXPL-16** (restated, extended): `tearDown()` SHALL run on every termination path of the
@@ -29,11 +23,6 @@ the failing action.
 - **INV-EXPL-29**: Teardown SHALL be step-isolated: a `Throwable` thrown by one teardown step
   (rotation restore, `disconnect()`, LLM summary, graph save, action-history save, counters,
   activity nodes, naming dump) SHALL NOT prevent any subsequent teardown step from executing.
-- **INV-EXPL-30**: A post-refinement rebind failure (an action of `newState` whose `Name`
-  no longer binds in the latest `GUITree`) SHALL NOT terminate the exploration loop; the action
-  is marked invalid (`setValid(false)`), the failure is logged once with the action descriptor,
-  and exploration proceeds to the next step.
-
 ## MODIFIED Requirements
 
 ### Requirement: Output Persistence on Termination
@@ -113,43 +102,3 @@ caught and logged with its stack trace, and all remaining steps SHALL still exec
 - **THEN** the failure SHALL be logged with its stack trace
 - **AND** the action counters, activity nodes, naming dump, and model counters SHALL still be printed
 
-## ADDED Requirements
-
-### Requirement: Post-Refinement Action Revalidation Tolerance
-
-After a naming refinement rebuilds the model (`checkNonDeterministicTransitions` →
-`Model.resolveNonDeterministicTransitions` → `updateModel`), `StatefulAgent.validateAllNewActions`
-re-resolves every action of `newState` against the latest `GUITree` via
-`State.resolveAction`. A rebind failure — the action's `Name` no longer binds in the re-abstracted
-tree, surfacing as `IllegalStateException: Cannot find widget` from `GUITree.pickNodes` — SHALL NOT
-propagate out of the revalidation pass. The failing action SHALL be marked invalid
-(`setValid(false)`), which excludes it from every action filter — the `valid` flag is the only
-signal all filters honour. Leaving the action merely unresolved would NOT exclude it: `valid` is
-sticky across steps, and a failed resolution retains the previous step's `resolvedNode`, so a
-previously-valid action would stay selectable and dispatch a tap at stale coordinates. The failure
-SHALL be logged once with the action descriptor under an `[APE-RV]` tag, and a per-run counter of
-rebind failures SHALL be maintained and printed at teardown. Exploration SHALL proceed to action
-selection for the same step (INV-EXPL-30).
-
-This is the loop-side counterpart of the tolerant action-history persistence in the `model`
-capability: both consume descriptors minted under a pre-refinement naming, and both treat a failed
-re-resolution as data loss to report, not a fatal condition.
-
-#### Scenario: rebind failure after refinement does not kill the run
-
-- **WHEN** a non-deterministic transition triggers a naming refinement that removes the agent's current state and rebuilds the model
-- **AND** one surviving action of the re-abstracted `newState` fails to rebind (`Cannot find widget`)
-- **THEN** the exploration loop SHALL continue: the step completes and a next action is selected from the remaining resolved actions
-- **AND** the rebind failure SHALL be logged once with the action's descriptor
-- **AND** the run SHALL reach its configured time budget (no early termination attributable to the refinement)
-
-#### Scenario: invalidated action is not selected
-
-- **WHEN** an action that had previously resolved successfully (`valid == true`) fails to rebind and is marked invalid
-- **THEN** the selection step SHALL NOT dispatch that action during the current step
-- **AND** no selection path SHALL read its stale resolved node
-
-#### Scenario: rebind-failure counter reported at teardown
-
-- **WHEN** a run had 3 rebind failures across its refinements
-- **THEN** the teardown diagnostics SHALL include a line reporting the total count of 3

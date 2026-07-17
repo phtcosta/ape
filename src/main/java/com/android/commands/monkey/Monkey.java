@@ -775,13 +775,26 @@ public class Monkey {
         try {
             crashedAtCycle = runMonkeyCycles();
         } finally {
-            // Release the rotation lock if it's still held and restore the
-            // original orientation.
-            new MonkeyRotationEvent(Surface.ROTATION_0, false).injectEvent(mWm, mAm, mVerbose);
-            // INV-EXPL-16: flush APE state (model, coverage, traces) even when runMonkeyCycles
-            // throws — otherwise a crash mid-run silently loses every result of the run.
-            if (this.mEventSource instanceof MonkeySourceApe) {
-                ((MonkeySourceApe) this.mEventSource).tearDown();
+            // INV-EXPL-16: nothing in this finally may throw. A throw here would replace the
+            // exception that ended runMonkeyCycles, destroying the identity of the real failure,
+            // and would skip the steps after it.
+            try {
+                // Release the rotation lock if it's still held and restore the
+                // original orientation.
+                new MonkeyRotationEvent(Surface.ROTATION_0, false).injectEvent(mWm, mAm, mVerbose);
+            } catch (Throwable t) {
+                System.err.println("[APE-RV] tearDown step failed: rotationRestore (" + t + ")");
+                t.printStackTrace();
+            }
+            try {
+                // INV-EXPL-16: flush APE state (model, coverage, traces) even when runMonkeyCycles
+                // throws — otherwise a crash mid-run silently loses every result of the run.
+                if (this.mEventSource instanceof MonkeySourceApe) {
+                    ((MonkeySourceApe) this.mEventSource).tearDown();
+                }
+            } catch (Throwable t) {
+                System.err.println("[APE-RV] tearDown step failed: apeTearDown (" + t + ")");
+                t.printStackTrace();
             }
         }
         mNetworkMonitor.stop();

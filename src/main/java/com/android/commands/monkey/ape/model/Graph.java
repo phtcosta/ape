@@ -1317,6 +1317,14 @@ public class Graph implements Serializable {
         return treeTransitionHistory;
     }
 
+    /**
+     * INV-MODEL-16: removes a dropped ephemeral edge's tree transitions from the history, so
+     * {@link #rebuildHistory()} cannot re-insert the removed (dangling) edge.
+     */
+    void removeFromTreeHistory(List<GUITreeTransition> treeTransitions) {
+        this.treeTransitionHistory.removeAll(treeTransitions);
+    }
+
     public boolean contains(State state) {
         State check = this.keyToState.get(state.getStateKey());
         if (check == null) {

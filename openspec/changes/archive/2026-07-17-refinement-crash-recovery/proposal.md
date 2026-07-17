@@ -34,14 +34,19 @@ persistence steps when any step throws.
   `ActionRecord` inside a per-record guard: an unresolvable record (stale pre-refinement descriptor)
   is skipped with a warning and counted, instead of aborting the file and crashing the process. A
   summary line reports `skipped=N`.
-- **Graceful post-refinement rebind (F-C).** After a naming refinement rebuilds the model,
-  `validateAllNewActions`/`validateNewAction` treat a rebind failure (`Cannot find widget`) as
-  "action invalidated" (`setValid(false)` — the only signal every action filter honours; leaving it
-  merely unresolved would keep it selectable with a stale resolved node) — logged and counted,
-  never an exploration-loop abort. This targets the most likely in-loop killer.
-- **Confirm the loop-killer identity (F-D).** With masking removed, reproduce on the deterministic
-  fixture (`app.maskan.chat`, crashes in ~20–30s) and verify the logged in-loop exception matches
-  F-C's fix; extend if a different terminator appears.
+- **Graceful post-refinement rebind (F-C) — REMOVED at the gate.** The originally proposed guard
+  in `validateAllNewActions`/`validateNewAction` bet that the in-loop killer lived there; the
+  2026-07-17 analysis predicted otherwise and the F-D gate confirmed it (`RebindFailures total=0`,
+  stack entirely upstream). The speculative guard was removed per P1 (design.md D7 outcome 1,
+  task 2.3).
+- **Confirm the loop-killer identity (F-D) — DONE, and fix it.** With masking removed, the
+  deterministic fixture (`app.maskan.chat`, fresh install, crashes in ~20–30s) reported the
+  in-loop exception: `IllegalStateException: No such action [MODEL_LLM_TAP]` in `Model.rebuild`'s
+  transition replay — a `MODEL_LLM_TAP` quarantine hole (ephemeral edges collected by
+  `Graph.remove` with no filter, then re-anchored by `State.getAction(type)`, which cannot
+  succeed by INV-MODEL-14). The real fix (task 2.4): exclude ephemeral edges from the rebuild
+  replay (purging their tree-history entries) and return ephemeral references unchanged from the
+  post-rebuild re-anchor (INV-MODEL-16).
 
 Not in scope: MED/LOW sweep findings outside the main path (LLM side-path swallows are
 circuit-breaker-backed; startup `System.exit` sites fire before any teardown exists), and the
@@ -56,21 +61,25 @@ None.
 ### Modified Capabilities
 
 - `exploration`: teardown execution contract — INV-EXPL-16 extended (teardown SHALL NOT mask the
-  original exception; steps are individually guarded so persistence survives a failing step);
-  post-refinement action revalidation becomes tolerant of rebind failures.
-- `model`: action-history persistence — per-record resolution failures skip the record with
-  telemetry instead of aborting; `ActionRecord` resolution contract documented.
+  original exception; steps are individually guarded so persistence survives a failing step).
+- `model`: (a) ephemeral quarantine extended through model rebuild — ephemeral edges are excluded
+  from the replay and from post-rebuild re-anchoring (INV-MODEL-16, the fix for the proven
+  terminator); (b) action-history persistence — per-record resolution failures skip the record
+  with telemetry instead of aborting; `ActionRecord` resolution contract documented.
 
 ## Impact
 
 - **Components**: `Monkey.run` (finally block), `MonkeySourceApe.tearDown`,
   `StatefulAgent.tearDown`, `Model.saveActionHistory` / `Model.ActionRecord.resolveModelAction`,
-  `StatefulAgent.validateNewAction`/`validateAllNewActions`, `Naming.naming` (finally log).
+  `Model.rebuild`/`Model.update` + `Graph.removeFromTreeHistory` (ephemeral quarantine),
+  `Naming.naming` (finally log).
 - **Behavior**: crashed runs now exit with the *original* exception visible and full artifacts
-  persisted; refinement-heavy runs no longer die at the first stale rebind. Runs that previously
-  truncated at 83–350s complete their budget. No behavior change on healthy paths.
+  persisted; a refinement that removes states touched by an LLM-tap edge no longer kills the run.
+  Runs that previously truncated at 83–350s complete their budget. No behavior change on healthy
+  paths.
 - **Experiments**: unblocks `cmpv2` (rv-android) — its LLM arm depends on 600s runs surviving
-  refinements. Truncation telemetry (`skipped=N`, rebind-failure counts) feeds the re-run analysis.
+  refinements. Truncation telemetry (`skipped=N`, ephemeral-drop counts) feeds the re-run
+  analysis.
 - **Dependencies**: none added. Existing JUnit suite extended (model/agent test conventions).
 - **Risk**: guards are additive on failure paths only; the main risk is over-broad catching hiding
   a real defect — mitigated by logging every guarded failure with a full stack trace.
