@@ -15,6 +15,8 @@
  */
 package com.android.commands.monkey.ape.model;
 
+import android.graphics.Rect;
+
 /**
  * llm-coordinate-tap (D2) — a targetless {@link ModelAction} of type
  * {@link ActionType#MODEL_LLM_TAP} carrying an LLM-supplied pixel coordinate. It represents a tap
@@ -64,6 +66,17 @@ public class LlmTapAction extends ModelAction {
 
     public boolean isLongClick() {
         return longClick;
+    }
+
+    /**
+     * Dispatch geometry (INV-EXPL-30): the minimal non-degenerate rect anchored at the decided
+     * pixel, whose truncated center is exactly {@code (pixelX, pixelY)}. A zero-area
+     * {@code Rect(x, y, x, y)} can never pass the INV-EXPL-19 visibility guard — empty rects fail
+     * both {@code Rect.intersect}-as-nonempty and {@code Rect.contains} — so dispatching one
+     * silently disables the tap.
+     */
+    public Rect toInjectableRect() {
+        return new Rect(pixelX, pixelY, pixelX + 1, pixelY + 1);
     }
 
     /**

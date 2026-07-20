@@ -954,12 +954,13 @@ public class MonkeySourceApe implements MonkeyEventSource {
             break;
         case MODEL_LLM_TAP:
             // llm-coordinate-tap (D5): off-tree tap at a raw LLM pixel coordinate. No resolved node
-            // exists (the element is absent from the GUITree), so dispatch a zero-size Rect at the
-            // coordinate — its center is (x, y) — through the same ApeClickEvent path as MODEL_CLICK.
+            // exists (the element is absent from the GUITree), so dispatch the tap's injectable
+            // 1×1 rect — truncated center (x, y) — through the same ApeClickEvent path as
+            // MODEL_CLICK. INV-EXPL-30: the rect must be non-degenerate; a zero-area rect is
+            // unconditionally rejected by the INV-EXPL-19 visibility guard.
             LlmTapAction tap = (LlmTapAction) action;
-            Rect tapRect = new Rect(tap.getPixelX(), tap.getPixelY(), tap.getPixelX(), tap.getPixelY());
-            generateClickEventAt(tapRect, tap.isLongClick() ? LONG_CLICK_WAIT_TIME : CLICK_WAIT_TIME,
-                    ClickPoint.CENTER);
+            generateClickEventAt(tap.toInjectableRect(),
+                    tap.isLongClick() ? LONG_CLICK_WAIT_TIME : CLICK_WAIT_TIME, ClickPoint.CENTER);
             break;
         case MODEL_SCROLL_BOTTOM_UP:
         case MODEL_SCROLL_TOP_DOWN:

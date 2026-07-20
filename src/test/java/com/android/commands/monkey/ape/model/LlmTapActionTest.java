@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.model;
 
+import android.graphics.Rect;
+
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -59,6 +61,43 @@ public class LlmTapActionTest {
         LlmTapAction b = new LlmTapAction(null, 600, 900, false);
         assertEquals("same state + same payload is the same action", a, b);
         assertEquals("equal actions must share hashCode", a.hashCode(), b.hashCode());
+    }
+
+    @Test
+    public void toInjectableRectIsMinimalNonEmptyAtPixel() {
+        // INV-EXPL-30: a zero-area Rect(x,y,x,y) is unconditionally dropped by the INV-EXPL-19
+        // guard (empty rects fail both Rect.intersect-as-nonempty and Rect.contains), which made
+        // every campaign tap a no-op (cmpm forensics A1). The injectable rect is the minimal
+        // non-degenerate rect whose truncated center is the decided pixel.
+        LlmTapAction tap = new LlmTapAction(null, 853, 1657, false);
+        Rect r = tap.toInjectableRect();
+        assertEquals(853, r.left);
+        assertEquals(1657, r.top);
+        assertEquals(854, r.right);
+        assertEquals(1658, r.bottom);
+        assertFalse("injectable rect must not be empty", r.isEmpty());
+        assertEquals(853, (int) r.exactCenterX());
+        assertEquals(1657, (int) r.exactCenterY());
+    }
+
+    @Test
+    public void injectableRectSurvivesVisibilityGuardForInteriorPixel() {
+        // Replicates generateClickEventAt's guard arithmetic (MonkeySourceApe): the visible-bounds
+        // intersection must be non-empty and must contain the click point.
+        LlmTapAction tap = new LlmTapAction(null, 540, 1158, false);
+        Rect visible = new Rect(0, 0, 1080, 1920);
+        assertTrue("interior pixel must intersect the visible bounds", visible.intersect(tap.toInjectableRect()));
+        assertFalse("intersection must be non-empty", visible.isEmpty());
+        assertTrue("click point must lie inside the intersection", visible.contains(540, 1158));
+    }
+
+    @Test
+    public void injectableRectAtExclusiveRightEdgeFailsGuard() {
+        // x == visible.right is outside the (exclusive) right edge: the off-screen drop must be
+        // preserved for genuinely out-of-bounds coordinates.
+        LlmTapAction tap = new LlmTapAction(null, 1080, 500, false);
+        Rect visible = new Rect(0, 0, 1080, 1920);
+        assertFalse("edge pixel must keep failing the visibility guard", visible.intersect(tap.toInjectableRect()));
     }
 
     @Test

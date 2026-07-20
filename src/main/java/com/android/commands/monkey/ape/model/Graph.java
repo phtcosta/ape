@@ -449,6 +449,16 @@ public class Graph implements Serializable {
         }
         StateTransition edge = null;
         if (source != null) {
+            if (action.isEphemeral() && !source.equals(action.getState())) {
+                // INV-MODEL-17: a rebuild removes the state an in-flight ephemeral action is
+                // anchored to, and INV-MODEL-16 deliberately leaves the agent's reference
+                // unchanged — so the pair arriving here is (rebuilt source, dead anchor). The
+                // edge is observational (rebuild replay purges it anyway); recording it would
+                // fabricate a source the action was never decided in, and constructing the
+                // StateTransition would throw the IllegalStateException that terminated runs.
+                Logger.wformat("[APE-RV] stale ephemeral edge dropped: %s (source %s)", action, source);
+                return null;
+            }
             edge = new StateTransition(source, action, target);
             added = Utils.addToMapMapIfAbsent(actionToOutStateTransitions, action, edge, edge);
             if (verbose) {
