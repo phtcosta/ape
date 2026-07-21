@@ -68,6 +68,11 @@ public class LlmRouter {
     // joins the decisions denominator (an off-tree event formerly counted under no_match).
     private int llmTapCount     = 0;
     private int noMatchCount    = 0;
+    // Successful decisions whose tool call needed a ToolCallParser repair (repair-form label other
+    // than none, per llm-infrastructure INV-LLM-09). A subset overlay on matched/llm_tap/no_match —
+    // NOT a cause counter and NOT part of the decisions denominator (INV-RTR-13) — so the base×v2
+    // tool-call fidelity contrast stays countable post-hoc from the summary line alone.
+    private int repairedCount   = 0;
     // Discriminated failure-cause counters (INV-RTR-11): each attempt abandoned before the mapping
     // step increments exactly one, so the seven counters partition the retired single nullCount and
     // the decisions denominator is value-identical. Client-observed causes (timeout/http/connection/
@@ -498,6 +503,12 @@ public class LlmRouter {
             if (noMatchReason != null) {
                 tel.append(" reason=").append(noMatchReason);
             }
+            // Repair-form overlay (INV-RTR-13): additive, emitted once, only when the model's tool
+            // call needed a pre-parse repair. Never suppresses an error line, never touches cause=parse.
+            if (!"none".equals(parsed.getRepairForm())) {
+                tel.append(" repair=").append(parsed.getRepairForm());
+                repairedCount++;
+            }
             tel.append(" matched_class=").append(matchedClass)
                     .append(" nearest_class=").append(nearestClass)
                     .append(" nearest_dist=").append(String.format("%.1f", nearestDist))
@@ -713,6 +724,7 @@ public class LlmRouter {
                 + " matched=" + matchedCount
                 + " llm_tap=" + llmTapCount
                 + " no_match=" + noMatchCount
+                + " repaired=" + repairedCount
                 + " timeout=" + timeoutCount
                 + " http_error=" + httpErrorCount
                 + " conn_error=" + connErrorCount

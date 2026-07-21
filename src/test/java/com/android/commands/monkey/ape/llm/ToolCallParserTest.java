@@ -115,7 +115,7 @@ public class ToolCallParserTest {
     @Test
     public void testFixMalformedJson_missingYKey() {
         String malformed = "{\"name\": \"click\", \"arguments\": {\"x\": 540, 399}}";
-        String fixed = ToolCallParser.fixMalformedJson(malformed);
+        String fixed = ToolCallParser.fixMalformedJson(malformed).json;
         // After fix the string should contain "y": 399
         assertTrue("fixed JSON should contain \"y\": 399", fixed.contains("\"y\": 399"));
     }
@@ -138,7 +138,7 @@ public class ToolCallParserTest {
     @Test
     public void testFixMalformedJson_arrayCoords() {
         String malformed = "{\"name\": \"click\", \"arguments\": {\"x\": [540, 399]}}";
-        String fixed = ToolCallParser.fixMalformedJson(malformed);
+        String fixed = ToolCallParser.fixMalformedJson(malformed).json;
         assertTrue("fixed JSON should contain \"x\": 540", fixed.contains("\"x\": 540"));
         assertTrue("fixed JSON should contain \"y\": 399", fixed.contains("\"y\": 399"));
     }
@@ -161,7 +161,7 @@ public class ToolCallParserTest {
     @Test
     public void testFixMalformedJson_missingLeadingZero() {
         String malformed = "{\"confidence\": .91}";
-        String fixed = ToolCallParser.fixMalformedJson(malformed);
+        String fixed = ToolCallParser.fixMalformedJson(malformed).json;
         assertTrue("fixed JSON should contain 0.91", fixed.contains("0.91"));
     }
 
@@ -234,5 +234,186 @@ public class ToolCallParserTest {
     public void testNullResponse_returnsNull() {
         ToolCallParser.ParsedAction action = parser.parse(null);
         assertNull(action);
+    }
+
+    // ===========================================================================
+    // llm-toolcall-parse-recovery: quoted-collapsed-XY fix, last-resort int scan,
+    // and repair-form labels (INV-LLM-09). Bodies are taken verbatim from the real
+    // cmp_llm_20260721 smoke corpus / the reference-parser catalogue.
+    // ===========================================================================
+
+    // --- quoted-collapsed-XY: both coordinates in one string under "x" ---------
+
+    // Open quote, no closing quote — the exact 7/7 form dropped at the smoke gate.
+    @Test
+    public void testFix_quotedXY_openQuote() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\": \"500, 527}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(500, action.getX());
+        assertEquals(527, action.getY());
+        assertEquals("quoted_xy", action.getRepairForm());
+    }
+
+    // Closing quote present — this is VALID JSON (string value), never throws, so
+    // only the regex can recover it (int-scan is unreachable for this variant).
+    @Test
+    public void testFix_quotedXY_closedQuote() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\": \"820, 590\"}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(820, action.getX());
+        assertEquals(590, action.getY());
+        assertEquals("quoted_xy", action.getRepairForm());
+    }
+
+    // No-space form, observed verbatim in traffic.
+    @Test
+    public void testFix_quotedXY_noSpace() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\":\"820,590}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(820, action.getX());
+        assertEquals(590, action.getY());
+        assertEquals("quoted_xy", action.getRepairForm());
+    }
+
+    // The quoted fix must NOT fire on a lone quoted integer — the coords parse
+    // cleanly as string-coerced ints, so the label is `none`.
+    @Test
+    public void testFix_quotedSingleInts_notQuotedXY() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\": \"500\", \"y\": \"527\"}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(500, action.getX());
+        assertEquals(527, action.getY());
+        assertEquals("none", action.getRepairForm());
+    }
+
+    // --- no regression: bare / array forms keep their existing labels ----------
+
+    @Test
+    public void testFix_bareMissingY_stillMissingY() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\": 932, 71}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(932, action.getX());
+        assertEquals(71, action.getY());
+        assertEquals("missing_y", action.getRepairForm());
+    }
+
+    @Test
+    public void testFix_arrayCoords_labelArrayXY() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\":[540,399]}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(540, action.getX());
+        assertEquals(399, action.getY());
+        assertEquals("array_xy", action.getRepairForm());
+    }
+
+    // --- last-resort int scan: unparseable-after-fix, tap action, ≥2 ints ------
+
+    // Equals-sign body (rv-agent P4, vLLM backend) — verified to throw `Missing value`.
+    @Test
+    public void testLastResort_intScan() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\": = 265, \"y\": 687}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(265, action.getX());
+        assertEquals(687, action.getY());
+        assertEquals("int_scan", action.getRepairForm());
+    }
+
+    // Double-colon body (vision doc 012) — verified to throw `Expected a ',' or '}'`.
+    @Test
+    public void testLastResort_doubleColon() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\":\": 541, \"y\": 562}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(541, action.getX());
+        assertEquals(562, action.getY());
+        assertEquals("int_scan", action.getRepairForm());
+    }
+
+    // Trailing-quote body (rv-agent P0b) — x-first, so first-two-ints map to (x,y).
+    @Test
+    public void testLastResort_trailingQuote() {
+        String content = "{\"name\":\"click\",\"arguments\":{\"x\": 200\", \"y\": 473}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(200, action.getX());
+        assertEquals(473, action.getY());
+        assertEquals("int_scan", action.getRepairForm());
+    }
+
+    // Gate boundary: the same unparseable body naming `scroll` (not a tap action)
+    // must NOT be int-scanned — parse() returns null → cause=parse → SATA fallback.
+    @Test
+    public void testLastResort_gateExcludesUnadvertisedAction() {
+        String content = "{\"name\":\"scroll\",\"arguments\":{\"x\": = 265, \"y\": 687}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNull(action);
+    }
+
+    // --- clean parses carry label `none` (fidelity: no repair happened) --------
+
+    @Test
+    public void testNative_formNone() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("x", 540.0);
+        args.put("y", 399.0);
+        ToolCallParser.ParsedAction action = parser.parse(responseWithToolCall("click", args));
+
+        assertNotNull(action);
+        assertEquals("none", action.getRepairForm());
+    }
+
+    @Test
+    public void testCleanInlineJson_formNone() {
+        String content = "{\"name\": \"click\", \"arguments\": {\"x\": 100, \"y\": 200}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("none", action.getRepairForm());
+    }
+
+    @Test
+    public void testCleanXmlTypeText_formNone() {
+        String content = "<tool_call>{\"name\": \"type_text\", \"arguments\": {\"x\": 300, \"y\": 500, \"text\": \"hello\"}}</tool_call>";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("type_text", action.getActionType());
+        assertEquals("none", action.getRepairForm());
+    }
+
+    @Test
+    public void testCleanLongClick_formNone() {
+        String content = "<function_call>{\"name\": \"long_click\", \"arguments\": {\"x\": 450, \"y\": 600}}</function_call>";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("long_click", action.getActionType());
+        assertEquals("none", action.getRepairForm());
     }
 }
