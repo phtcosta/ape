@@ -114,6 +114,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     protected ModelAction currentAction;
     protected GUITreeAction currentGUITreeAction;
 
+    // [APE-OUTCOME] join buffer (scoring-pipeline delta): the selection step and action of the last
+    // model-action [APE-STEP] emission. An action selected at step N produces its transition only
+    // during step N+1's updateGraph(), by which point getTimestamp() reads N+1 — so the selection
+    // step must be buffered to key the outcome to the [APE-STEP] it belongs to. Written only inside
+    // the stepTelemetryEnabled block; lastDecisionAction == null means "no decision buffered".
+    private int lastDecisionStep = -1;
+    private ModelAction lastDecisionAction = null;
+
     protected State newState;
     protected GUITree newGUITree;
     protected ModelAction newAction;
@@ -240,7 +248,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             currentState = model.update(currentGUITree);
         }
         if (currentAction != null) {
+            ModelAction prevCurrentAction = currentAction;
             currentAction = model.update(currentAction, currentGUITreeAction);
+            // Refinement replaces currentAction with the rebuilt model's object before updateGraph()
+            // runs. Remap the [APE-OUTCOME] buffer through the same mapping, or the reference guard
+            // would silently drop the outcome on exactly the non-deterministic (refinement) steps.
+            if (lastDecisionAction != null && lastDecisionAction == prevCurrentAction) {
+                lastDecisionAction = currentAction;
+            }
         }
         if (lastState != null) {
             lastState = model.update(lastGUITree);
@@ -980,6 +995,21 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
         currentStateTransition = model.addTransition(currentState, currentAction, newState, currentGUITree,
                 currentGUITreeAction, newGUITree);
+        // [APE-OUTCOME] attribution (scoring-pipeline delta, INV-ARCH-08/09): emit here — after
+        // addTransition, never inside Model/Graph, so the refinement rebuild replay (which re-records
+        // via the Graph.addTransition(GUITreeTransition) overload) cannot emit. Guards: (1) non-null
+        // transition — addTransition returns null on the run's first step, post-restart, and the
+        // stale-ephemeral drop; (2) the buffered decision is reference-equal to currentAction — state
+        // recovery / non-model interludes install a foreign action. The buffer is consumed (single-shot)
+        // so the BadStateException selection-retry and recovery re-record cannot duplicate the line.
+        if (Config.stepTelemetryEnabled && currentStateTransition != null
+                && lastDecisionAction != null && lastDecisionAction == currentAction) {
+            Logger.iformat(
+                    "[APE-OUTCOME] step=%d decision_source=%s new_state=%s target_state=%s activity_changed=%s",
+                    lastDecisionStep, currentAction.getDecisionSource().name(), _isNewState,
+                    newState.getStateKey(), !currentStateTransition.isSameActivity());
+            lastDecisionAction = null;
+        }
         checkStable();
     }
 
@@ -1372,6 +1402,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                         newAction.getMopBoost(), newAction.getWtgBoost(),
                         newAction.getCoverageBoost(), newAction.getMenuBoost(),
                         newAction.getFormBoost());
+                // Buffer this model decision so its [APE-OUTCOME] can key back to this [APE-STEP].
+                lastDecisionStep = getTimestamp();
+                lastDecisionAction = newAction;
             }
             return newAction;
         } else {
@@ -1384,6 +1417,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                         getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
                         newState.getStateKey(), action,
                         nonModelDecisionSource(action.getType()).name());
+                // Non-model actions produce no transition under their own identity; clear the buffer so
+                // a stale model decision cannot be resurrected as currentAction by state recovery.
+                lastDecisionAction = null;
             }
             return action;
         }

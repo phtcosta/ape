@@ -1,0 +1,40 @@
+## Why
+
+Phase 5 is a comparative experiment: vary the LLM hyperparameters (prompt variant, `temperature`, `top_p`, `top_k`, `model`) across arms and measure the effect on exploration outcome (UI/method coverage, MOP violations). The dependent variable lives in the `.logcat` (coverage + MOP), the independent variables and the LLM's per-decision behavior live in the APE `.trace` (which is APE-RV's stdout). To attribute a coverage/MOP difference to a hyperparameter change, the `.trace` of each run must be **self-describing** (records the exact config it ran under) and each LLM decision must be **joinable to its outcome**. A logging audit of the `ape.llm` package found three gaps that block this:
+
+1. **Hyperparameters are not reliably recorded per run.** The sampling params (`temperature`, `top_p`, `top_k`, `model`, `max_tokens`) are set into the request body (`SglangClient.buildRequestBody`, lines 78–82) but never logged. No `[APE-LLM-TEL]` line carries them. The startup config echo (`Config.printConfigurations`) cannot serve as the record: it echoes the raw property strings rather than the effective values (`llmPercentage` is clamped in its field initializer — the dump would show an out-of-range raw value), it runs only at `tearDown()` and is lost when the platform kills the process at the time limit, and `max_tokens` is hardcoded to `1024` in `LlmRouter` and appears nowhere. A `.trace` in isolation cannot prove which sampling config produced it.
+
+2. **Decision→outcome attribution is offline-only and fragile.** The `[APE-STEP]` line carries `decision_source=LLM` but is emitted at selection time, before the action executes, so it never records what the action produced. New-state discovery (`_isNewState`) and the resulting transition (`addTransition`) are known one step later but are logged independently, with no key tying them back to the `decision_source` that caused them. "Of the actions the LLM chose, what fraction discovered a new state vs. the ones SATA chose?" is not answerable from the `.trace` without a brittle timestamp reconstruction.
+
+3. **LLM failure causes are collapsed.** `SglangClient.chat()` catches every exception and returns `null` (lines 67–69). Timeout, HTTP error, connection failure, and parse failure all become the same `null`, incrementing a single `nullCount`. The summary reports one opaque `null=<N>`. An aggressive config (high temperature, long prompt) can degrade via **timeout** (slow server) or via **parse** (malformed output) — opposite conclusions that today are indistinguishable.
+
+## What Changes
+
+- Emit an `[APE-LLM-CONFIG]` manifest line once at `LlmRouter` construction recording the **effective** LLM config actually in use (`model`, `temperature`, `top_p`, `top_k`, `max_tokens`, `timeout_ms`, `prompt_variant`, `llm_percentage`, `on_new_state`, `on_stagnation`, `stagnation_threshold`, `url`), read from the values passed to the client — not from the `ape.properties` map — so defaults, the clamped `llm_percentage`, and the hardcoded `max_tokens` are recorded. Makes every `.trace` self-describing (fix #1).
+- Emit an `[APE-OUTCOME]` line after a transition is recorded, correlated to the action's `[APE-STEP]` by a `step` key and carrying `decision_source`, `new_state`, `target_state`, and `activity_changed`. Turns decision→outcome attribution into a deterministic per-step join (fix #2). The mechanism buffers the selection step/action at `[APE-STEP]` emission and emits after `Model.addTransition` under four guards: non-null returned transition, reference match between buffered action and `currentAction`, single-shot buffer consumption, and buffer remap through model refinement (plus buffer invalidation on the non-model `[APE-STEP]` branch). Gated by `stepTelemetryEnabled` for parity (zero lines under `apePureMode`). A small `action-selection` delta pins the `[APE-STEP] step=<N>` field contract the join depends on.
+- Classify LLM failure causes without violating INV-LLM-01 (`chat()` still returns `null`): client-observable causes (`timeout`, `http_<status>`, `connection`, envelope `parse`) are classified in `SglangClient` and exposed via `getLastErrorCause()` (reset per invocation; `LlmException` gains a status-code field); router-observable causes are attributed by `LlmRouter` directly (tool-call extraction → `parse`, `ImageProcessor` null → `image`, unexpected pipeline exception → `internal`). Replace the single `nullCount` with per-cause counters, emit `[APE-LLM-ERROR] cause=<x>` at the failure sites (screenshot failures keep their existing line and counter), and emit the already-specified `[APE-RV] LLM circuit breaker OPEN` line once per open episode at the block point (fix #3).
+- Stamp `step=<N>` (the agent exploration step, passed by the caller into `selectAction()`) on every `[APE-LLM-TEL]` and `[APE-LLM-ERROR]` line, closing the deterministic three-way join `[APE-LLM-TEL]` ↔ `[APE-STEP]` ↔ `[APE-OUTCOME]` — per-call cost (tokens, latency) becomes attributable to the decision and its outcome on one key.
+- Emit one `[APE-LLM-CONFIG-ACK] server_model=<m>` line after the first successful `chat()` response, carrying the model identifier the server reports in the response envelope. The manifest records the requested model; the ACK proves which model the server actually served.
+
+## Capabilities
+
+### New Capabilities
+
+_None — this change modifies existing telemetry/observability behavior._
+
+### Modified Capabilities
+
+- `llm-routing`: adds the `[APE-LLM-CONFIG]` manifest, the `[APE-LLM-CONFIG-ACK]` server-model acknowledgement, the `step` join key on `[APE-LLM-TEL]`/`[APE-LLM-ERROR]`, and the discriminated failure counters / `[APE-LLM-ERROR]` line and once-per-episode breaker-OPEN emission to the telemetry requirement; the summary `null=<N>` is replaced by a per-cause breakdown.
+- `llm-infrastructure`: `SglangClient.chat()` classifies and exposes the client-observable failure cause (reset per invocation); `LlmException` carries the HTTP status; response parsing extracts the server-reported model into `ChatResponse`; the classification preserves INV-LLM-01.
+- `scoring-pipeline`: adds the `[APE-OUTCOME]` per-step attribution line alongside `[APE-STEP]`, under the same `stepTelemetryEnabled` gate.
+- `action-selection`: pins the `[APE-STEP] step=<N>` field contract (previously only `step#` in a scenario bullet) that the `[APE-OUTCOME]` join key depends on. No emission behavior change.
+
+## Impact
+
+- **LlmRouter.java**: config manifest at construction; server-model ACK on first success; `selectAction()` gains a `step` parameter stamped on `[APE-LLM-TEL]`/`[APE-LLM-ERROR]`; discriminated failure counters replacing `nullCount` (screenshot failures stop double-counting into an aggregate); router-side attribution for `parse`/`image`/`internal`; once-per-episode breaker-OPEN line using a side-effect-free breaker query; `printSummary()` per-cause breakdown with a value-identical `decisions` denominator.
+- **SglangClient.java**: `chat()` resets and classifies the failure cause inside the existing catch, still returns null; `sendRequest()` catches `SocketTimeoutException` before the generic `IOException`; `parseResponse()` extracts the envelope's `model` field into `ChatResponse`.
+- **SataAgent.java**: the three `selectAction` call sites pass `getTimestamp()` as the `step` argument.
+- **LlmException.java**: gains a numeric HTTP status field (today the status exists only in the message string).
+- **StatefulAgent.java**: buffer write/clear at the two `[APE-STEP]` emission branches; `[APE-OUTCOME]` emission in `updateGraph()` after `addTransition` under the four guards; buffered-action remap in `updateModel()`.
+- **Experiment analysis**: `.trace` becomes self-describing (config manifest) and per-decision joinable (outcome line); the `.logcat` coverage/MOP remains the dependent variable, now attributable to `decision_source` via the `step` join.
+- **No config flags added.** No behavior change to action selection, routing decisions, or the LLM request itself — this change is observability only.

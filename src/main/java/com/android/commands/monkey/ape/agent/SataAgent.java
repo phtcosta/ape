@@ -422,7 +422,7 @@ public class SataAgent extends StatefulAgent {
         if (actionBufferSize() == 0 && newState.getActions().size() > 2
                 && _llmRouter != null && _llmRouter.shouldRouteNewState(_isNewState)) {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
-                    newState.getActions(), getMopData(), _actionHistory, "new-state");
+                    newState.getActions(), getMopData(), _actionHistory, "new-state", getTimestamp());
             if (result != null) {
                 return acceptLlmResult(result);
             }
@@ -436,7 +436,7 @@ public class SataAgent extends StatefulAgent {
                 && graphStableCounter == graphStableRestartThreshold / 2
                 && _llmRouter != null && _llmRouter.shouldRouteStagnation(graphStableCounter)) {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
-                    newState.getActions(), getMopData(), _actionHistory, "stagnation");
+                    newState.getActions(), getMopData(), _actionHistory, "stagnation", getTimestamp());
             if (result != null) {
                 graphStableCounter = 0;
                 return acceptLlmResult(result);
@@ -446,7 +446,7 @@ public class SataAgent extends StatefulAgent {
         if (actionBufferSize() == 0 && newState.getActions().size() > 2
                 && _llmRouter != null && _llmRouter.shouldRouteRandom()) {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
-                    newState.getActions(), getMopData(), _actionHistory, "random");
+                    newState.getActions(), getMopData(), _actionHistory, "random", getTimestamp());
             if (result != null) {
                 return acceptLlmResult(result);
             }

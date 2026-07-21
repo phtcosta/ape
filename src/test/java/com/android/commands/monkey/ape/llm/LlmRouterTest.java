@@ -55,7 +55,7 @@ public class LlmRouterTest {
         assertEquals(0, router.getCallCount());
         assertEquals(0, router.getMatchedCount());
         assertEquals(0, router.getNoMatchCount());
-        assertEquals(0, router.getNullCount());
+        assertEquals(0, router.getFailureCount());
         assertEquals(0, router.getScreenshotFailedCount());
         assertEquals(0, router.getBreakerTrips());
     }
@@ -104,7 +104,7 @@ public class LlmRouterTest {
     }
 
     @Test
-    public void printSummary_includesScreenshotFailedField_separateFromNull() {
+    public void printSummary_includesDiscriminatedCauseFields_notAggregateNull() {
         LlmRouter router = new LlmRouter(new java.util.Random(42));
         java.io.PrintStream originalOut = System.out;
         java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
@@ -115,11 +115,15 @@ public class LlmRouterTest {
             System.setOut(originalOut);
         }
         String out = captured.toString();
-        // The summary line reports screenshot_failed as its own field, adjacent to null.
+        // screenshot_failed is a peer cause field, and the aggregate null field is replaced by the
+        // per-cause breakdown (INV-RTR-11).
         assertTrue("summary must expose screenshot_failed field, got: " + out,
                 out.contains("screenshot_failed=0"));
-        assertTrue("summary must still expose the aggregate null field, got: " + out,
-                out.contains("null=0"));
+        for (String field : new String[]{"timeout=0", "http_error=0", "conn_error=0",
+                "parse_error=0", "image_error=0", "internal_error=0"}) {
+            assertTrue("summary must expose " + field + ", got: " + out, out.contains(field));
+        }
+        assertFalse("aggregate null field must be gone, got: " + out, out.contains(" null="));
     }
 
     // -------------------------------------------------------------------------

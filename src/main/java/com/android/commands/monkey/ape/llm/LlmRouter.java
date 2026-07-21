@@ -68,13 +68,27 @@ public class LlmRouter {
     // joins the decisions denominator (an off-tree event formerly counted under no_match).
     private int llmTapCount     = 0;
     private int noMatchCount    = 0;
-    private int nullCount       = 0;
-    // Sub-count of nullCount: attempts abandoned at screenshot capture (null capture,
-    // e.g. FLAG_SECURE windows). These still count toward nullCount (the step yields no
-    // action); screenshotFailedCount attributes the cause so per-app FLAG_SECURE
-    // degradation of the LLM arm to SATA is countable post-hoc from the summary line.
+    // Discriminated failure-cause counters (INV-RTR-11): each attempt abandoned before the mapping
+    // step increments exactly one, so the seven counters partition the retired single nullCount and
+    // the decisions denominator is value-identical. Client-observed causes (timeout/http/connection/
+    // parse-envelope) are read once from SglangClient.getLastErrorCause() at the chat()-null site;
+    // router-observed causes (parse tool-call, image, internal) are attributed directly.
+    // screenshotFailedCount is a peer cause (no longer a subset of an aggregate) so per-app
+    // FLAG_SECURE degradation of the LLM arm to SATA stays countable post-hoc from the summary line.
+    private int timeoutCount    = 0;
+    private int httpErrorCount  = 0;
+    private int connErrorCount  = 0;
+    private int parseErrorCount = 0;
+    private int imageErrorCount = 0;
+    private int internalErrorCount = 0;
     private int screenshotFailedCount = 0;
     private int breakerTrips    = 0;
+
+    // [APE-LLM-CONFIG-ACK] latch (INV-RTR-12): emitted once, on the first successful chat() response.
+    private boolean ackEmitted  = false;
+    // Breaker-OPEN latch: emit the breaker-OPEN line once per open episode; reset when the breaker
+    // next allows an attempt (leaves OPEN).
+    private boolean breakerOpenLatched = false;
 
     // -------------------------------------------------------------------------
     // Constructor
@@ -87,13 +101,15 @@ public class LlmRouter {
      */
     public LlmRouter(java.util.Random random) {
         this.random = random;
+        // Hoisted so the manifest and the request body share one max_tokens value; not a Config key.
+        int maxTokens = 1024;
         this.client = new SglangClient(
                 Config.llmUrl,
                 Config.llmModel,
                 Config.llmTemperature,
                 Config.llmTopP,
                 Config.llmTopK,
-                1024,
+                maxTokens,
                 Config.llmTimeoutMs);
         this.client.setTools(buildToolsSchema());
         this.breaker       = new LlmCircuitBreaker();
@@ -101,6 +117,24 @@ public class LlmRouter {
         this.imageProcessor = new ImageProcessor();
         this.parser        = new ToolCallParser();
         this.promptBuilder = new ApePromptBuilder();
+
+        // Effective-config manifest (INV-RTR-10): one line per run recording the values actually in
+        // use — read from the effective Config fields and the hoisted max_tokens, NOT the raw
+        // ape.properties map. Makes each .trace self-describing from its first seconds, independent of
+        // how the run ends (the Config dump runs only at tearDown and echoes raw, pre-clamp strings).
+        Logger.println("[APE-LLM-CONFIG]"
+                + " model=" + Config.llmModel
+                + " temperature=" + Config.llmTemperature
+                + " top_p=" + Config.llmTopP
+                + " top_k=" + Config.llmTopK
+                + " max_tokens=" + maxTokens
+                + " timeout_ms=" + Config.llmTimeoutMs
+                + " prompt_variant=" + ApePromptBuilder.getPromptVariant()
+                + " llm_percentage=" + Config.llmPercentage
+                + " on_new_state=" + Config.llmOnNewState
+                + " on_stagnation=" + Config.llmOnStagnation
+                + " stagnation_threshold=" + Config.graphStableRestartThreshold
+                + " url=" + Config.llmUrl);
     }
 
     /**
@@ -171,7 +205,7 @@ public class LlmRouter {
     public boolean shouldRouteNewState(boolean isNewState) {
         return isNewState
                 && Config.llmOnNewState
-                && breaker.shouldAttempt()
+                && breakerAllows()
 ;
     }
 
@@ -184,7 +218,7 @@ public class LlmRouter {
     public boolean shouldRouteStagnation(int graphStableCounter) {
         return graphStableCounter == Config.graphStableRestartThreshold / 2
                 && Config.llmOnStagnation
-                && breaker.shouldAttempt()
+                && breakerAllows()
 ;
     }
 
@@ -195,8 +229,29 @@ public class LlmRouter {
     public boolean shouldRouteRandom() {
         return Config.llmPercentage > 0.0
                 && random.nextDouble() < Config.llmPercentage
-                && breaker.shouldAttempt()
+                && breakerAllows()
 ;
+    }
+
+    /**
+     * Consult the breaker exactly once — preserving {@code shouldAttempt()}'s OPEN→HALF_OPEN probe
+     * transition — and log the breaker-OPEN line at the FIRST breaker-caused decline of each open
+     * episode. The emission check uses the side-effect-free {@code isOpen()} (never a second
+     * {@code shouldAttempt()}), and the latch resets when the breaker next allows an attempt (leaves
+     * OPEN), so each open episode logs once regardless of how many predicates it declines. Because
+     * this runs only after the earlier predicate conjuncts pass (short-circuit &&), a decline here is
+     * unambiguously breaker-caused, not a mode/coin/stagnation condition returning false.
+     */
+    private boolean breakerAllows() {
+        boolean allow = breaker.shouldAttempt();
+        if (allow) {
+            breakerOpenLatched = false;
+        } else if (breaker.isOpen() && !breakerOpenLatched) {
+            breakerOpenLatched = true;
+            Logger.println("[APE-RV] LLM circuit breaker OPEN, skipping (trips="
+                    + breaker.getTripCount() + ")");
+        }
+        return allow;
     }
 
     // -------------------------------------------------------------------------
@@ -216,6 +271,10 @@ public class LlmRouter {
      * @param mopData      MOP reachability data (may be null)
      * @param recentActions recent action history (may be null or empty)
      * @param mode         routing mode label for telemetry ("new-state" or "stagnation")
+     * @param step         agent exploration step of this attempt (the same value the step's
+     *                     {@code [APE-STEP]} line carries); stamped on {@code [APE-LLM-TEL]} /
+     *                     {@code [APE-LLM-ERROR]} as the join key. Supplied by the caller — the
+     *                     router holds no agent reference.
      * @return the selected ModelAction, or null if selection failed
      */
     public ModelAction selectAction(GUITree tree,
@@ -223,7 +282,8 @@ public class LlmRouter {
                                     List<ModelAction> actions,
                                     MopData mopData,
                                     List<ApePromptBuilder.ActionHistoryEntry> recentActions,
-                                    String mode) {
+                                    String mode,
+                                    int step) {
         totalCalls++;
         long startMs = System.currentTimeMillis();
 
@@ -259,9 +319,8 @@ public class LlmRouter {
                 breaker.recordFailure();
                 breakerTrips = breaker.getTripCount();
                 Logger.println("[APE-RV] LLM screenshot capture failed, skipping LLM step");
-                // Screenshot failure is a null outcome (counts toward nullCount) AND is
-                // attributed to its own counter so FLAG_SECURE degradation is countable.
-                nullCount++;
+                // Screenshot failure is a peer cause counter (INV-RTR-11): it keeps its existing
+                // line above and emits no [APE-LLM-ERROR].
                 screenshotFailedCount++;
                 return null;
             }
@@ -269,8 +328,10 @@ public class LlmRouter {
             // Step 2: Process image (resize + base64-encode)
             base64 = imageProcessor.processScreenshot(pngBytes);
             if (base64 == null) {
+                imageErrorCount++;
                 Logger.println("[APE-RV] LLM image processing failed, skipping LLM step");
-                nullCount++;
+                Logger.println("[APE-LLM-ERROR] step=" + step
+                        + " cause=image detail=image processing returned null");
                 return null;
             }
 
@@ -296,9 +357,27 @@ public class LlmRouter {
             if (response == null) {
                 breaker.recordFailure();
                 breakerTrips = breaker.getTripCount();
+                // Client seam: the ONLY site that may read getLastErrorCause(). chat() reset it at
+                // entry, so its value belongs to exactly this call (INV-LLM-08); any later read is stale.
+                String cause = client.getLastErrorCause();
+                if (cause == null) cause = "connection";
+                if (cause.startsWith("http_"))      httpErrorCount++;
+                else if ("timeout".equals(cause))   timeoutCount++;
+                else if ("parse".equals(cause))     parseErrorCount++;
+                else                                connErrorCount++;
                 Logger.println("[APE-RV] LLM call failed: null response from SGLang");
-                nullCount++;
+                Logger.println("[APE-LLM-ERROR] step=" + step + " cause=" + cause
+                        + " detail=null response from SGLang");
                 return null;
+            }
+
+            // Server-model acknowledgement (INV-RTR-12): once per run, on the first successful
+            // chat() response. The manifest records the requested model; the ACK proves what the
+            // server served.
+            if (!ackEmitted) {
+                ackEmitted = true;
+                String serverModel = response.getModel() != null ? response.getModel() : "unknown";
+                Logger.println("[APE-LLM-CONFIG-ACK] server_model=" + serverModel);
             }
 
             // Log response raw
@@ -311,8 +390,12 @@ public class LlmRouter {
             if (parsed == null) {
                 breaker.recordFailure();
                 breakerTrips = breaker.getTripCount();
+                // Router-attributed parse: chat() already succeeded, so its error seam is stale here
+                // and MUST NOT be read — the failure is tool-call extraction, not transport.
+                parseErrorCount++;
                 Logger.println("[APE-RV] LLM response parse failed, no action extracted");
-                nullCount++;
+                Logger.println("[APE-LLM-ERROR] step=" + step
+                        + " cause=parse detail=no tool call extracted");
                 return null;
             }
 
@@ -404,6 +487,7 @@ public class LlmRouter {
 
             StringBuilder tel = new StringBuilder();
             tel.append("[APE-LLM-TEL]")
+                    .append(" step=").append(step)
                     .append(" variant=").append(variant)
                     .append(" call=").append(totalCalls)
                     .append(" mode=").append(mode)
@@ -430,8 +514,9 @@ public class LlmRouter {
             return match;
 
         } catch (Exception e) {
+            internalErrorCount++;
             Logger.println("[APE-RV] LLM unexpected error in selectAction: " + e.getMessage());
-            nullCount++;
+            Logger.println("[APE-LLM-ERROR] step=" + step + " cause=internal detail=" + e.getMessage());
             return null;
         } finally {
             // Memory cleanup — these objects can be large
@@ -612,12 +697,13 @@ public class LlmRouter {
      * Print a summary of all LLM calls made during this session.
      */
     public void printSummary() {
-        // Screenshot failures are already included in nullCount, so the decisions
-        // denominator is unchanged; screenshot_failed only attributes their cause.
-        // llmTapCount is a completed mapping outcome and joins the denominator so it stays stable
-        // across this change (an off-tree event formerly counted under no_match is now llm_tap,
-        // both inside decisions); the numerator stays matchedCount (widget-match rate).
-        int decisions = matchedCount + llmTapCount + noMatchCount + nullCount;
+        // The seven cause counters partition the retired single nullCount (INV-RTR-11), so the
+        // decisions denominator is value-identical to the pre-change matched + llm_tap + no_match +
+        // null. screenshot_failed is a peer cause (no longer a subset of an aggregate); llmTapCount is
+        // a completed mapping outcome inside decisions; the numerator stays matchedCount (match rate).
+        int failureCount = timeoutCount + httpErrorCount + connErrorCount + parseErrorCount
+                + imageErrorCount + internalErrorCount + screenshotFailedCount;
+        int decisions = matchedCount + llmTapCount + noMatchCount + failureCount;
         double matchRate = decisions > 0 ? (matchedCount * 100.0 / decisions) : 0.0;
         Logger.println("[APE-RV] LLM Summary"
                 + " calls=" + totalCalls
@@ -627,7 +713,12 @@ public class LlmRouter {
                 + " matched=" + matchedCount
                 + " llm_tap=" + llmTapCount
                 + " no_match=" + noMatchCount
-                + " null=" + nullCount
+                + " timeout=" + timeoutCount
+                + " http_error=" + httpErrorCount
+                + " conn_error=" + connErrorCount
+                + " parse_error=" + parseErrorCount
+                + " image_error=" + imageErrorCount
+                + " internal_error=" + internalErrorCount
                 + " screenshot_failed=" + screenshotFailedCount
                 + " breaker_trips=" + breakerTrips);
         Logger.println(String.format("[APE-RV] LLM Decision ratio: %.1f%% (%d/%d)",
@@ -650,10 +741,35 @@ public class LlmRouter {
     /** Number of times parsing / matching produced no result. */
     public int getNoMatchCount() { return noMatchCount; }
 
-    /** Number of null returns due to infrastructure failures. */
-    public int getNullCount() { return nullCount; }
+    /** Attempts abandoned at connect/read timeout. */
+    public int getTimeoutCount() { return timeoutCount; }
 
-    /** Number of null returns attributed to screenshot-capture failure (subset of {@link #getNullCount()}). */
+    /** Attempts abandoned on a non-200 HTTP status. */
+    public int getHttpErrorCount() { return httpErrorCount; }
+
+    /** Attempts abandoned on a non-timeout I/O failure reaching the server. */
+    public int getConnErrorCount() { return connErrorCount; }
+
+    /** Attempts abandoned on an unparseable envelope (client) or unextractable tool call (router). */
+    public int getParseErrorCount() { return parseErrorCount; }
+
+    /** Attempts abandoned because {@code ImageProcessor} returned null. */
+    public int getImageErrorCount() { return imageErrorCount; }
+
+    /** Attempts abandoned by the {@code selectAction()} catch-all. */
+    public int getInternalErrorCount() { return internalErrorCount; }
+
+    /**
+     * Total attempts abandoned before the mapping step — the sum of the seven cause counters
+     * (partition of the retired {@code nullCount}, INV-RTR-11). {@code no_match} outcomes are
+     * excluded (they emit an {@code [APE-LLM-TEL]} line and are counted by {@link #getNoMatchCount()}).
+     */
+    public int getFailureCount() {
+        return timeoutCount + httpErrorCount + connErrorCount + parseErrorCount
+                + imageErrorCount + internalErrorCount + screenshotFailedCount;
+    }
+
+    /** Number of null returns attributed to screenshot-capture failure (peer cause counter). */
     public int getScreenshotFailedCount() { return screenshotFailedCount; }
 
     /** Number of circuit-breaker trips recorded by this router. */

@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -32,6 +33,12 @@ public class SglangClient {
     private final int maxTokens;
     private final int timeoutMs;
     private JSONArray tools;
+
+    // Cause of the most recent chat() null return: "timeout", "http_<status>", "connection",
+    // or "parse" (envelope). Reset at the start of every chat() call so a stale cause from an
+    // earlier failure can never be attributed to a later one (INV-LLM-08). Read by the caller
+    // only immediately after a null return; null when the last call succeeded.
+    private String lastErrorCause;
 
     public SglangClient(String baseUrl, String model, double temperature,
                         double topP, int topK, int maxTokens, int timeoutMs) {
@@ -60,13 +67,48 @@ public class SglangClient {
      * @return parsed response, or null if the request fails
      */
     public ChatResponse chat(List<Message> messages) {
+        lastErrorCause = null;
         try {
             String requestBody = buildRequestBody(messages);
             String responseBody = sendRequest(requestBody);
             return parseResponse(responseBody);
         } catch (Exception e) {
+            lastErrorCause = classifyCause(e);
             return null;
         }
+    }
+
+    /**
+     * Classify a chat() failure into exactly one named cause (INV-LLM-08). Transport failures
+     * arrive as a tagged {@link LlmException}: an HTTP status set via {@link LlmException#getStatusCode()}
+     * (non-200 branch), a {@link SocketTimeoutException} cause ({@code timeout}), or any other
+     * {@link IOException} cause ({@code connection}). Anything else — a bad OpenAI envelope, a
+     * request-body build failure — is {@code parse}.
+     */
+    private String classifyCause(Exception e) {
+        if (e instanceof LlmException) {
+            LlmException le = (LlmException) e;
+            if (le.getStatusCode() >= 0) {
+                return "http_" + le.getStatusCode();
+            }
+            Throwable cause = le.getCause();
+            if (cause instanceof SocketTimeoutException) {
+                return "timeout";
+            }
+            if (cause instanceof IOException) {
+                return "connection";
+            }
+        }
+        return "parse";
+    }
+
+    /**
+     * Cause of the most recent {@link #chat} null return ({@code timeout}, {@code http_<status>},
+     * {@code connection}, or {@code parse}), or null when the last call succeeded. Valid only
+     * between a null return and the next {@code chat()} call, which resets it (INV-LLM-08).
+     */
+    public String getLastErrorCause() {
+        return lastErrorCause;
     }
 
     /**
@@ -145,7 +187,8 @@ public class SglangClient {
 
             int statusCode = conn.getResponseCode();
             if (statusCode != HttpURLConnection.HTTP_OK) {
-                throw new LlmException("LLM server returned HTTP " + statusCode + " for " + baseUrl);
+                throw new LlmException(
+                        "LLM server returned HTTP " + statusCode + " for " + baseUrl, statusCode);
             }
 
             StringBuilder sb = new StringBuilder();
@@ -160,6 +203,10 @@ public class SglangClient {
 
         } catch (LlmException e) {
             throw e;
+        } catch (SocketTimeoutException e) {
+            // Caught before the generic IOException (its superclass) so connect/read timeouts
+            // classify as `timeout`, distinct from `connection`.
+            throw new LlmException("LLM request timed out: " + e.getMessage(), e);
         } catch (IOException e) {
             throw new LlmException("LLM request failed: " + e.getMessage(), e);
         } finally {
@@ -227,7 +274,13 @@ public class SglangClient {
                 if (usage.has("completion_tokens")) completionTokens = usage.getInt("completion_tokens");
             }
 
-            return new ChatResponse(content, toolCalls, promptTokens, completionTokens);
+            // Server-reported model from the envelope (nullable; absence is not a parse failure).
+            // Enables the caller's [APE-LLM-CONFIG-ACK] server-model acknowledgement.
+            String serverModel = (root.has("model") && !root.isNull("model"))
+                    ? root.optString("model", null)
+                    : null;
+
+            return new ChatResponse(content, toolCalls, promptTokens, completionTokens, serverModel);
 
         } catch (LlmException e) {
             throw e;
@@ -354,19 +407,30 @@ public class SglangClient {
         private final List<ToolCall> toolCalls;
         private final int promptTokens;
         private final int completionTokens;
+        private final String model;
 
+        /** Text-only / server-model-agnostic response (model unknown). */
         public ChatResponse(String content, List<ToolCall> toolCalls,
                             int promptTokens, int completionTokens) {
+            this(content, toolCalls, promptTokens, completionTokens, null);
+        }
+
+        public ChatResponse(String content, List<ToolCall> toolCalls,
+                            int promptTokens, int completionTokens, String model) {
             this.content = content;
             this.toolCalls = toolCalls != null ? toolCalls : Collections.<ToolCall>emptyList();
             this.promptTokens = promptTokens;
             this.completionTokens = completionTokens;
+            this.model = model;
         }
 
         public String getContent() { return content; }
         public List<ToolCall> getToolCalls() { return toolCalls; }
         public int getPromptTokens() { return promptTokens; }
         public int getCompletionTokens() { return completionTokens; }
+
+        /** Server-reported model identifier from the response envelope, or null when absent. */
+        public String getModel() { return model; }
     }
 
     /**

@@ -41,7 +41,7 @@ public class ApePromptBuilder {
     private static final int MAX_HISTORY   = 5;
 
     // -------------------------------------------------------------------------
-    // Prompt variant names — selected via system property ape.llm.prompt_variant
+    // Prompt variant names — selected via config key ape.llmPromptVariant
     // -------------------------------------------------------------------------
 
     static final String VARIANT_APE_CURRENT = "ape_current";
