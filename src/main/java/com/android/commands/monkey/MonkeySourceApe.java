@@ -395,7 +395,12 @@ public class MonkeySourceApe implements MonkeyEventSource {
     }
 
     protected void generateClickEventAt(Rect nodeRect, long waitTime, ClickPoint clickPoint) {
-        Rect bounds = getVisibleBounds(nodeRect);
+        // Node actions validate against the app window's root-node visible bounds (status quo,
+        // INV-EXPL-19). MODEL_LLM_TAP overrides this via the explicit-bounds overload below.
+        generateClickEventAt(nodeRect, waitTime, clickPoint, getVisibleBounds(nodeRect));
+    }
+
+    protected void generateClickEventAt(Rect nodeRect, long waitTime, ClickPoint clickPoint, Rect bounds) {
         if (bounds == null) {
             // INV-EXPL-19: the node's bounds do not intersect the visible screen. Drop the
             // action rather than substituting the display bounds and clicking its centre
@@ -956,11 +961,15 @@ public class MonkeySourceApe implements MonkeyEventSource {
             // llm-coordinate-tap (D5): off-tree tap at a raw LLM pixel coordinate. No resolved node
             // exists (the element is absent from the GUITree), so dispatch the tap's injectable
             // 1×1 rect — truncated center (x, y) — through the same ApeClickEvent path as
-            // MODEL_CLICK. INV-EXPL-30: the rect must be non-degenerate; a zero-area rect is
-            // unconditionally rejected by the INV-EXPL-19 visibility guard.
+            // MODEL_CLICK. INV-EXPL-30 (amended): the tap's validity domain is the physical display
+            // bounds (the screenshot's coordinate space), not the app root-node visible bounds — its
+            // legitimate targets include cross-window elements (IME, dialogs) inside the display but
+            // outside the app window. clipToDisplay returns the display∩rect (or null → dropped by
+            // the same single guard body), so the guard and drop-log line stay single-sourced.
             LlmTapAction tap = (LlmTapAction) action;
             generateClickEventAt(tap.toInjectableRect(),
-                    tap.isLongClick() ? LONG_CLICK_WAIT_TIME : CLICK_WAIT_TIME, ClickPoint.CENTER);
+                    tap.isLongClick() ? LONG_CLICK_WAIT_TIME : CLICK_WAIT_TIME, ClickPoint.CENTER,
+                    tap.clipToDisplay(AndroidDevice.getDisplayBounds()));
             break;
         case MODEL_SCROLL_BOTTOM_UP:
         case MODEL_SCROLL_TOP_DOWN:

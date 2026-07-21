@@ -65,7 +65,7 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-17**: Per-step debug artifacts (PNG/XML) SHALL be written only when explicitly enabled via `ape.properties`.
 - **INV-EXPL-18**: Every fuzz gesture branch SHALL emit exactly one event per invocation.
 - **INV-EXPL-19**: No touch event SHALL ever be delivered to coordinates derived from bounds other than the resolved node's own bounds — or, for coordinate-carrying actions without a node (`MODEL_LLM_TAP`), other than the action's own decided coordinate.
-- **INV-EXPL-30**: `MODEL_LLM_TAP` dispatch SHALL construct a non-degenerate rect `(x, y, x+1, y+1)` for the decided pixel `(x, y)`. A tap whose coordinate lies strictly inside the visible bounds SHALL enqueue a touch down/up pair; a tap outside them SHALL be dropped with the `[APE-RV] off-screen action dropped` log line and no event.
+- **INV-EXPL-30**: `MODEL_LLM_TAP` dispatch SHALL construct a non-degenerate rect `(x, y, x+1, y+1)` for the decided pixel `(x, y)`, and its validity domain SHALL be the physical display bounds (`AndroidDevice.getDisplayBounds()`), not the app root-node visible bounds. A tap whose pixel lies inside the display SHALL enqueue a touch down/up pair; a tap outside it SHALL be dropped with the `[APE-RV] off-screen action dropped` log line and no event. Node actions keep the root-node visible-bounds domain.
 ## Requirements
 ### Requirement: Strategy Selection
 
@@ -858,8 +858,12 @@ For coordinate-carrying actions without a resolved node (`MODEL_LLM_TAP`), the r
 `generateClickEventAt` MUST be the minimal non-degenerate rect anchored at the decided pixel —
 `(x, y, x+1, y+1)` — never the zero-area `(x, y, x, y)`: an empty rect is unconditionally dropped by
 both guard branches, which silently disables the action (cmpm finding A1: 16,625/16,625 taps
-dropped). The drop branches apply to a coordinate tap exactly as to a node action: a coordinate
-outside the visible bounds produces the log line and no event.
+dropped). The validity domain of a coordinate tap is the **physical display bounds**
+(`AndroidDevice.getDisplayBounds()`), not the app root-node visible bounds: the coordinate is
+decided from a full-display screenshot, and its legitimate targets include cross-window elements
+(IME keyboards, dialogs) that lie outside the app root node (measured: 6/7 thumbkey gate taps and
+~50% of cmpm v2 taps dropped on the root-node domain). A coordinate outside the display produces
+the log line and no event; node actions keep the root-node visible-bounds domain unchanged.
 
 #### Scenario: off-screen node produces no event
 - **WHEN** a MODEL_CLICK resolves to a node whose bounds do not intersect the visible screen
@@ -872,14 +876,21 @@ outside the visible bounds produces the log line and no event.
 - **THEN** click generation SHALL be identical to the previous implementation
 
 #### Scenario: in-bounds coordinate tap is not dropped
-- **WHEN** a `MODEL_LLM_TAP` carrying pixel `(540, 1158)` is dispatched and the visible bounds are
+- **WHEN** a `MODEL_LLM_TAP` carrying pixel `(540, 1158)` is dispatched and the display bounds are
   `(0, 0, 1080, 1920)`
 - **THEN** the rect handed to the guard SHALL be `(540, 1158, 541, 1159)`
 - **AND** a touch down/up pair SHALL be enqueued at that point
 - **AND** no `[APE-RV] off-screen action dropped` line SHALL be emitted
 
-#### Scenario: out-of-bounds coordinate tap is dropped
-- **WHEN** a `MODEL_LLM_TAP` carrying pixel `(1080, 500)` is dispatched and the visible bounds are
+#### Scenario: coordinate tap below the app window but inside the display injects
+- **WHEN** the app root-node bounds are `(0, 0, 1080, 1400)`, the display bounds are
+  `(0, 0, 1080, 1920)`, and a `MODEL_LLM_TAP` carrying pixel `(424, 1618)` is dispatched (the
+  IME band that the llm-tap-injection gate measured as dropped)
+- **THEN** a touch down/up pair SHALL be enqueued at `(424, 1618)`
+- **AND** no `[APE-RV] off-screen action dropped` line SHALL be emitted
+
+#### Scenario: out-of-display coordinate tap is dropped
+- **WHEN** a `MODEL_LLM_TAP` carrying pixel `(1080, 500)` is dispatched and the display bounds are
   `(0, 0, 1080, 1920)` (x equals the exclusive right edge)
 - **THEN** no touch event SHALL be enqueued
 - **AND** one `[APE-RV] off-screen action dropped` line SHALL be emitted
@@ -892,6 +903,13 @@ decided pixel: `toInjectableRect()` returns `new Rect(pixelX, pixelY, pixelX + 1
 single construction site, unit-testable on the JVM), and the resulting click point (rect center,
 truncated to int) SHALL equal the decided pixel `(pixelX, pixelY)`.
 
+`LlmTapAction` SHALL also own the guard-bounds decision: `clipToDisplay(Rect displayBounds)`
+returns the intersection of the display bounds with `toInjectableRect()` when the pixel lies inside
+the display, and `null` when the pixel is outside it or `displayBounds` is `null`. The
+`MODEL_LLM_TAP` dispatch SHALL pass this result as the explicit guard bounds of
+`generateClickEventAt` (never the root-node `getVisibleBounds()` result), so that the guard body
+and the drop log line remain single-sourced for node and coordinate actions alike.
+
 #### Scenario: injectable rect is non-empty and centered on the pixel
 - **WHEN** `LlmTapAction` carries `pixelX=853, pixelY=1657` and `toInjectableRect()` is called
 - **THEN** the returned rect SHALL be `(853, 1657, 854, 1658)`
@@ -903,6 +921,21 @@ truncated to int) SHALL equal the decided pixel `(pixelX, pixelY)`.
 - **WHEN** the visible bounds are `(0, 0, 1080, 1920)` and the rect is `(853, 1657, 854, 1658)`
 - **THEN** `visibleBounds.intersect(rect)` SHALL yield the non-empty rect `(853, 1657, 854, 1658)`
 - **AND** `contains(853, 1657)` on the intersection SHALL be `true`
+
+#### Scenario: clipToDisplay accepts an in-display pixel outside the app window
+- **WHEN** `LlmTapAction` carries `pixelX=424, pixelY=1618` and `clipToDisplay(new Rect(0, 0,
+  1080, 1920))` is called
+- **THEN** the returned rect SHALL be the non-empty `(424, 1618, 425, 1619)`
+- **AND** `contains(424, 1618)` on it SHALL be `true`
+
+#### Scenario: clipToDisplay rejects an out-of-display pixel
+- **WHEN** `LlmTapAction` carries `pixelX=1080, pixelY=500` and `clipToDisplay(new Rect(0, 0,
+  1080, 1920))` is called
+- **THEN** the result SHALL be `null`
+
+#### Scenario: clipToDisplay tolerates a null display
+- **WHEN** `clipToDisplay(null)` is called
+- **THEN** the result SHALL be `null` (the tap is dropped, never NPEs)
 
 ### Requirement: Foreign-Activity Guard in Event Generation
 

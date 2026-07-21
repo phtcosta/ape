@@ -80,6 +80,31 @@ public class LlmTapAction extends ModelAction {
     }
 
     /**
+     * Guard bounds for dispatch (INV-EXPL-30, amended): the validity domain of a coordinate tap is
+     * the <b>physical display bounds</b>, not the app root-node visible bounds. The pixel is decided
+     * from a full-display screenshot, so its legitimate targets include cross-window elements (IME
+     * keyboards, dialogs in other windows, surfaces under insets) that lie inside the display but
+     * outside the app root node — the region the root-node domain wrongly rejected (the
+     * llm-tap-injection gate measured 6/7 thumbkey taps dropped there).
+     *
+     * <p>Returns the intersection of {@code displayBounds} with {@link #toInjectableRect()} when the
+     * decided pixel lies inside the display, or {@code null} when the pixel is outside it or
+     * {@code displayBounds} is {@code null} (drop, never NPE — {@code getDisplayBounds()} can fail
+     * before the display is ready). The display rect is defensively copied because Android's
+     * {@code Rect.intersect} mutates its receiver.
+     */
+    public Rect clipToDisplay(Rect displayBounds) {
+        if (displayBounds == null) {
+            return null;
+        }
+        Rect clipped = new Rect(displayBounds);
+        if (!clipped.intersect(toInjectableRect())) {
+            return null;
+        }
+        return clipped;
+    }
+
+    /**
      * Extends the inherited identity with the tap payload (INV-MODEL-13). {@code super.equals}
      * already covers {@code state}, {@code target} and {@code getClass()}.
      */

@@ -101,6 +101,60 @@ public class LlmTapActionTest {
     }
 
     @Test
+    public void clipToDisplayAcceptsInDisplayPixelOutsideAppWindow() {
+        // INV-EXPL-30 (amended): the validity domain of a coordinate tap is the physical display
+        // bounds, not the app root-node bounds. (424,1618) is the exact IME-band coordinate the
+        // llm-tap-injection gate measured as dropped (6/7 thumbkey taps) — below the app window but
+        // inside the 1080×1920 display, it must now clip to a non-empty rect containing the pixel.
+        LlmTapAction tap = new LlmTapAction(null, 424, 1618, false);
+        Rect clipped = tap.clipToDisplay(new Rect(0, 0, 1080, 1920));
+        assertNotNull("in-display IME-band pixel must not be dropped", clipped);
+        assertEquals(424, clipped.left);
+        assertEquals(1618, clipped.top);
+        assertEquals(425, clipped.right);
+        assertEquals(1619, clipped.bottom);
+        assertFalse("clipped rect must not be empty", clipped.isEmpty());
+        assertTrue("clipped rect must contain the decided pixel", clipped.contains(424, 1618));
+    }
+
+    @Test
+    public void clipToDisplayAcceptsInteriorPixel() {
+        LlmTapAction tap = new LlmTapAction(null, 540, 957, false);
+        Rect clipped = tap.clipToDisplay(new Rect(0, 0, 1080, 1920));
+        assertNotNull("interior pixel must not be dropped", clipped);
+        assertTrue("clipped rect must contain the decided pixel", clipped.contains(540, 957));
+    }
+
+    @Test
+    public void clipToDisplayRejectsOutOfDisplayPixel() {
+        // x == display.right is outside the (exclusive) right edge: a genuinely out-of-display
+        // coordinate must still be dropped (null).
+        LlmTapAction tap = new LlmTapAction(null, 1080, 500, false);
+        assertNull("out-of-display pixel must be dropped", tap.clipToDisplay(new Rect(0, 0, 1080, 1920)));
+    }
+
+    @Test
+    public void clipToDisplayToleratesNullDisplay() {
+        // getDisplayBounds() can fail before the display is ready: a null display must drop the tap,
+        // never NPE.
+        LlmTapAction tap = new LlmTapAction(null, 540, 957, false);
+        assertNull("null display bounds must drop the tap without NPE", tap.clipToDisplay(null));
+    }
+
+    @Test
+    public void clipToDisplayDoesNotMutateDisplayBounds() {
+        // Android Rect.intersect mutates its receiver: clipToDisplay must defensively copy the
+        // display rect so the caller's bounds are not shrunk to the 1×1 tap rect.
+        LlmTapAction tap = new LlmTapAction(null, 540, 957, false);
+        Rect display = new Rect(0, 0, 1080, 1920);
+        tap.clipToDisplay(display);
+        assertEquals(0, display.left);
+        assertEquals(0, display.top);
+        assertEquals(1080, display.right);
+        assertEquals(1920, display.bottom);
+    }
+
+    @Test
     public void tapIsNotEqualToMenuAction() {
         // ModelAction.equals guards getClass(), so an LlmTapAction is never equal to a
         // MODEL_MENU action even though both are targetless in the same state.
