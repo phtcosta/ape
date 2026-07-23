@@ -247,22 +247,29 @@ public class SglangClient {
                     String name = functionObj.getString("name");
                     // arguments may be a JSON string or a JSON object
                     Map<String, Object> args = Collections.emptyMap();
+                    // Raw arguments preserved verbatim for the downstream repair pipeline (INV-LLM-10):
+                    // the string as-is when it is a JSON string (kept even when unparseable — that is
+                    // precisely the case the repair path exists for), the object's serialization when
+                    // it is a JSON object, null when absent.
+                    String rawArgs = null;
                     if (functionObj.has("arguments")) {
                         Object argsRaw = functionObj.get("arguments");
                         if (argsRaw instanceof JSONObject) {
+                            rawArgs = argsRaw.toString();
                             args = parseArgsObject((JSONObject) argsRaw);
                         } else if (argsRaw instanceof String) {
                             // Arguments encoded as a JSON string
                             String argsStr = (String) argsRaw;
+                            rawArgs = argsStr;
                             try {
                                 JSONObject argsObj = new JSONObject(argsStr);
                                 args = parseArgsObject(argsObj);
                             } catch (Exception ignored) {
-                                // Leave args empty on parse failure
+                                // Leave args empty on parse failure — the raw string survives above.
                             }
                         }
                     }
-                    toolCalls.add(new ToolCall(name, args));
+                    toolCalls.add(new ToolCall(name, args, rawArgs));
                 }
             }
 
@@ -439,13 +446,27 @@ public class SglangClient {
     public static class ToolCall {
         private final String name;
         private final Map<String, Object> arguments;
+        // Arguments exactly as they appeared in the response envelope (INV-LLM-10): the string
+        // verbatim when the envelope encodes arguments as a JSON string — kept even when it fails
+        // to parse — the object's serialization when it arrives as a JSON object, null when absent.
+        // Carries the malformation ToolCallParser Level 1 repairs; the parsed `arguments` map above
+        // is still built best-effort and feeds the never-worse fallback path.
+        private final String rawArguments;
 
         public ToolCall(String name, Map<String, Object> arguments) {
+            this(name, arguments, null);
+        }
+
+        public ToolCall(String name, Map<String, Object> arguments, String rawArguments) {
             this.name = name;
             this.arguments = arguments != null ? arguments : Collections.<String, Object>emptyMap();
+            this.rawArguments = rawArguments;
         }
 
         public String getName() { return name; }
         public Map<String, Object> getArguments() { return arguments; }
+
+        /** Envelope-verbatim arguments for the repair pipeline; null when unavailable (INV-LLM-10). */
+        public String getRawArguments() { return rawArguments; }
     }
 }

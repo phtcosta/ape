@@ -63,13 +63,15 @@ The two modes target different exploration bottlenecks:
 ### Requirement: LlmRouter Lifecycle
 
 `LlmRouter` SHALL be constructed in `StatefulAgent`'s constructor when `Config.llmUrl` is non-null. The constructor SHALL create and wire all infrastructure components:
-- `SglangClient` with `Config.llmUrl`, `Config.llmModel`, `Config.llmTemperature`, `Config.llmTopP`, `Config.llmTopK`, maxTokens `1024`, `Config.llmTimeoutMs`
+- `SglangClient` with `Config.llmUrl`, `Config.llmModel`, `Config.llmTemperature`, `Config.llmTopP`, `Config.llmTopK`, `Config.llmMaxTokens` (default `1024`), `Config.llmTimeoutMs`
 - `LlmCircuitBreaker` with default thresholds (3 failures, 60s recovery)
 - `ScreenshotCapture` (no-arg constructor)
 - `ImageProcessor` (no-arg constructor)
 - `ToolCallParser` (no-arg constructor)
 - `CoordinateNormalizer` (static utility, no instantiation)
 - `ApePromptBuilder` (no-arg constructor)
+
+The `max_tokens` value SHALL be read once from `Config.llmMaxTokens` and shared by the request body and the `[APE-LLM-CONFIG]` manifest, so the manifest always reports the value actually sent.
 
 All fields SHALL be final. The router instance SHALL be reused for the entire exploration session. A `totalCalls` field SHALL be initialized to 0 and incremented at the start of each `selectAction()` invocation (per INV-RTR-07).
 
@@ -84,6 +86,17 @@ All fields SHALL be final. The router instance SHALL be reused for the entire ex
 - **WHEN** `Config.llmUrl` is null
 - **THEN** `StatefulAgent` SHALL set `_llmRouter` to null
 - **AND** no LLM infrastructure objects SHALL be created
+
+#### Scenario: max_tokens sourced from Config at default
+
+- **WHEN** `ape.properties` does not contain `ape.llmMaxTokens`
+- **THEN** the request body SHALL carry `max_tokens=1024`
+- **AND** the `[APE-LLM-CONFIG]` line SHALL carry `max_tokens=1024` — byte-identical to the pre-change hard-coded value
+
+#### Scenario: max_tokens configurable without rebuild
+
+- **WHEN** `ape.properties` contains `ape.llmMaxTokens=2048`
+- **THEN** the request body and the `[APE-LLM-CONFIG]` line SHALL both carry `max_tokens=2048`
 
 ---
 
@@ -225,7 +238,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 `LlmRouter.mapToModelAction(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions, State state, int deviceWidth, int deviceHeight)` SHALL map LLM output coordinates to a `ModelAction` for the current state, returning a matched widget action, a synthesized off-tree `LlmTapAction`, or null.
 
-**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * 0.05` (status bar, and any degenerate `(0,0)` emission) or `pixelY > deviceHeight * 0.94` (navigation bar), `mapToModelAction` SHALL return null and log the boundary reject. This prevents the LLM from tapping system UI, and no off-tree tap is synthesized for these coordinates.
+**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * Config.llmBoundaryTopPct` (default `0.05` — status bar, and any degenerate `(0,0)` emission) or `pixelY > deviceHeight * Config.llmBoundaryBottomPct` (default `0.94` — navigation bar), `mapToModelAction` SHALL return null and log the boundary reject. This prevents the LLM from tapping system UI, and no off-tree tap is synthesized for these coordinates. The band fractions are configuration-exposed (J1b) with defaults reproducing the previous hard-coded `0.05`/`0.94` (INV-RTR-14).
 
 **Special action types**:
 - If `actionType` equals `"back"`, the state's `backAction` SHALL be returned directly without coordinate matching.
@@ -234,7 +247,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 
 **Bounds containment (primary matching strategy)**: For each action where `action.requireTarget() == true` AND `action.isValid() == true` AND `action.getResolvedNode() != null`, check if `(pixelX, pixelY)` falls within the node's `getBoundsInScreen()` rectangle. If exactly one action's bounds contain the point, return that action. If multiple actions' bounds contain the point, return the one with the smallest area (most specific widget).
 
-**Euclidean distance (fallback matching)**: If no action's bounds contain the point, compute the Euclidean distance from `(pixelX, pixelY)` to the center of each valid action's resolved node bounds. Return the action with the minimum distance if that distance is within a proportional tolerance: `max(50, min(nodeWidth, nodeHeight) / 2)` pixels. This ensures larger widgets accept more coordinate imprecision.
+**Euclidean distance (fallback matching)**: If no action's bounds contain the point, compute the Euclidean distance from `(pixelX, pixelY)` to the center of each valid action's resolved node bounds. Return the action with the minimum distance if that distance is within a proportional tolerance: `max(Config.llmSnapTolerancePx, min(nodeWidth, nodeHeight) / 2)` pixels (floor default `50`, configuration-exposed per J1b with the identical default; the lever was analyzed and discarded — the default is not swept). This ensures larger widgets accept more coordinate imprecision.
 
 **Off-tree coordinate tap (dynamic element)**: If no action's bounds contain the point AND no action is within Euclidean tolerance AND `actionType` is `"click"` or `"long_click"`, `mapToModelAction` SHALL return `new LlmTapAction(state, pixelX, pixelY, "long_click".equals(actionType))` — a targetless `MODEL_LLM_TAP` action carrying the LLM coordinate. Because the boundary reject runs first, a coordinate reaching this point is guaranteed in-bounds and non-degenerate. For any other `actionType` (e.g. `type_text`), `mapToModelAction` SHALL return null. This is the mechanism by which APE acts on elements invisible to UIAutomator (game canvas, custom view, Compose-without-semantics).
 
@@ -296,7 +309,7 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 #### Scenario: Boundary reject — status bar
 
 - **WHEN** `mapToModelAction(540, 50, "click", null, actions, state, 1080, 1920)` is called on a 1080x1920 device
-- **AND** `pixelY (50) < deviceHeight * 0.05 (96)`
+- **AND** `pixelY (50) < deviceHeight * Config.llmBoundaryTopPct (96 at the 0.05 default)`
 - **THEN** `mapToModelAction` SHALL return null
 - **AND** no `LlmTapAction` SHALL be constructed
 - **AND** the boundary reject SHALL be logged
@@ -304,14 +317,24 @@ The trigger condition is: `graphStableCounter == Config.graphStableRestartThresh
 #### Scenario: Boundary reject — navigation bar
 
 - **WHEN** `mapToModelAction(540, 1850, "click", null, actions)` is called on a 1080x1920 device
-- **AND** `pixelY (1850) > deviceHeight * 0.94 (1804.8)`
+- **AND** `pixelY (1850) > deviceHeight * Config.llmBoundaryBottomPct (1804.8 at the 0.94 default)`
 - **THEN** `mapToModelAction` SHALL return null
+
+#### Scenario: Default bands and floor reproduce pre-change behavior
+
+- **WHEN** `ape.properties` contains none of `ape.llmBoundaryTopPct`, `ape.llmBoundaryBottomPct`, `ape.llmSnapTolerancePx`
+- **THEN** every boundary-reject decision and every euclidean tolerance match SHALL be identical to the hard-coded `0.05` / `0.94` / `50.0` behavior (INV-RTR-14)
+
+#### Scenario: Band configurable without rebuild
+
+- **WHEN** `ape.properties` contains `ape.llmBoundaryBottomPct=0.98`
+- **THEN** a `pixelY=1850` click on a 1080x1920 device SHALL pass the boundary check (1850 < 1881.6) and proceed to coordinate matching
 
 ---
 
 ### Requirement: Effective LLM Config Manifest
 
-`LlmRouter` SHALL emit exactly one `[APE-LLM-CONFIG]` line at construction time, recording the **effective** LLM configuration actually in use for the run. The values SHALL be read from the parameters passed to the `SglangClient` / router (the effective values), NOT from the `ape.properties` `configurations` map. The config dump (`Config.printConfigurations`) is insufficient for arm attribution on three grounds: it echoes the raw property string rather than the effective value (e.g. `llmPercentage` is clamped to `[0,1]` in its field initializer — the dump would show `1.5`, the manifest shows the effective `1.0`), it runs only at `tearDown()` and is lost when the platform kills the process at the time limit, and the router-hardcoded `max_tokens` never appears in it at all. The manifest line makes each run's `.trace` self-describing from its first seconds, independent of how the run ends.
+`LlmRouter` SHALL emit exactly one `[APE-LLM-CONFIG]` line at construction time, recording the **effective** LLM configuration actually in use for the run. The values SHALL be read from the parameters passed to the `SglangClient` / router (the effective values), NOT from the `ape.properties` `configurations` map. The config dump (`Config.printConfigurations`) is insufficient for arm attribution: it echoes the raw property string rather than the effective value (e.g. `llmPercentage` is clamped to `[0,1]` in its field initializer — the dump would show `1.5`, the manifest shows the effective `1.0`), and it runs only at `tearDown()` and is lost when the platform kills the process at the time limit. The manifest line makes each run's `.trace` self-describing from its first seconds, independent of how the run ends.
 
 The line SHALL carry the following fields:
 
@@ -321,7 +344,7 @@ The line SHALL carry the following fields:
 | `temperature` | effective `temperature` |
 | `top_p` | effective `top_p` |
 | `top_k` | effective `top_k` |
-| `max_tokens` | effective `max_tokens` (currently the router-set `1024`, not a `Config` key) |
+| `max_tokens` | effective `max_tokens` — `Config.llmMaxTokens` (default `1024`), the same value placed in the request body |
 | `timeout_ms` | effective `Config.llmTimeoutMs` passed to `SglangClient` (connect and read timeout; shapes the `timeout` failure-cause rate across arms) |
 | `prompt_variant` | `ApePromptBuilder.getPromptVariant()` |
 | `llm_percentage` | `Config.llmPercentage` (post-clamp, per INV-RTR-08; the clamp lives in the `Config` field initializer, so any read is post-clamp) |
@@ -330,21 +353,23 @@ The line SHALL carry the following fields:
 | `stagnation_threshold` | `Config.graphStableRestartThreshold` (the stagnation hook fires at `threshold / 2`; config-settable, gates stagnation-mode LLM call frequency) |
 | `url` | `Config.llmUrl` |
 
-Emission is governed by INV-RTR-10.
+Emission is governed by INV-RTR-10. The field set is unchanged by this change; only the `max_tokens` source moves from a router-hardcoded literal to `Config.llmMaxTokens` (INV-RTR-14 — identical value at default).
 
 #### Scenario: Manifest records defaults not present in ape.properties
 
-- **WHEN** a run starts with `ape.llmUrl` set but `ape.llmTemperature` / `ape.llmTopP` / `ape.llmTopK` left at their code defaults
+- **WHEN** a run starts with `ape.llmUrl` set but `ape.llmTemperature` / `ape.llmTopP` / `ape.llmTopK` / `ape.llmMaxTokens` left at their code defaults
 - **THEN** exactly one `[APE-LLM-CONFIG]` line SHALL be emitted
-- **AND** it SHALL carry the effective default values (e.g. `temperature=0.3`)
-- **AND** it SHALL carry `max_tokens=1024` even though `max_tokens` is not an `ape.properties` key
+- **AND** it SHALL carry the effective default values (e.g. `temperature=0.3`, `max_tokens=1024`)
 
 #### Scenario: Manifest records effective clamped percentage
 
 - **WHEN** a run starts with `ape.llmPercentage=1.5` in `ape.properties`
 - **THEN** the `[APE-LLM-CONFIG]` line SHALL carry `llm_percentage=1.0` (the effective post-clamp value), even though the config dump would echo the raw `1.5`
 
----
+#### Scenario: Manifest tracks a configured max_tokens
+
+- **WHEN** a run starts with `ape.llmMaxTokens=2048`
+- **THEN** the `[APE-LLM-CONFIG]` line SHALL carry `max_tokens=2048`, matching the request body
 
 ### Requirement: Server Model Acknowledgement
 

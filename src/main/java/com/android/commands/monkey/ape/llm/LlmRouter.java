@@ -106,8 +106,9 @@ public class LlmRouter {
      */
     public LlmRouter(java.util.Random random) {
         this.random = random;
-        // Hoisted so the manifest and the request body share one max_tokens value; not a Config key.
-        int maxTokens = 1024;
+        // Hoisted so the manifest and the request body share one max_tokens value (J1c). Config-sourced
+        // with default 1024 — byte-identical to the pre-change hard-coded local at defaults (INV-RTR-14).
+        int maxTokens = Config.llmMaxTokens;
         this.client = new SglangClient(
                 Config.llmUrl,
                 Config.llmModel,
@@ -579,8 +580,10 @@ public class LlmRouter {
             }
         }
 
-        // Boundary reject: top 5% and bottom 6% of screen
-        if (pixelY < deviceHeight * 0.05 || pixelY > deviceHeight * 0.94) {
+        // Boundary reject: top and bottom bands of the screen (J1b, Config-sourced with defaults
+        // 0.05/0.94 — byte-identical to the pre-change hard-coded literals at defaults, INV-RTR-14).
+        if (pixelY < deviceHeight * Config.llmBoundaryTopPct
+                || pixelY > deviceHeight * Config.llmBoundaryBottomPct) {
             Logger.println("[APE-RV] LLM coordinate rejected (boundary): pixelY=" + pixelY
                     + " deviceHeight=" + deviceHeight);
             return null;
@@ -658,10 +661,12 @@ public class LlmRouter {
                 int centerY = (bounds.top  + bounds.bottom) / 2;
                 double dist = Math.hypot(centerX - pixelX, centerY - pixelY);
 
-                // tolerance = max(50, min(nodeWidth, nodeHeight) / 2)
+                // tolerance = max(floor, min(nodeWidth, nodeHeight) / 2); floor J1b-configurable with
+                // default 50 — byte-identical to the pre-change hard-coded 50.0 at defaults (INV-RTR-14).
                 int nodeWidth  = bounds.width();
                 int nodeHeight = bounds.height();
-                double tolerance = Math.max(50.0, Math.min(nodeWidth, nodeHeight) / 2.0);
+                double tolerance = Math.max((double) Config.llmSnapTolerancePx,
+                        Math.min(nodeWidth, nodeHeight) / 2.0);
 
                 if (dist <= tolerance && dist < bestDist) {
                     bestDist      = dist;

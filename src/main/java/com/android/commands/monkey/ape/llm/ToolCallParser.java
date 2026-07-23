@@ -81,9 +81,29 @@ public class ToolCallParser {
     public ParsedAction parse(SglangClient.ChatResponse response) {
         if (response == null) return null;
 
-        // Level 1: native tool_calls list
+        // Level 1: native tool_calls list.
+        // INV-LLM-10: run the SAME repair pipeline Levels 2-3 use. Rebuild the XML-path intermediate
+        // {"name": <quoted name>, "arguments": <raw>} from the raw arguments string SglangClient
+        // preserved and route it through the shared parseJsonString (fixMalformedJson → org.json →
+        // lastResortIntScan), so native malformations get identical repair + repair-form labeling
+        // (INV-LLM-09). When the raw form is null (2-arg ToolCall / absent arguments) or the shared
+        // pipeline yields no action, fall back to the pre-delta map-based construction — every input
+        // that parses today parses identically, so the change can only add recoveries (D3).
+        //
+        // Two intended divergences from the pre-delta map path, both on well-formed object arguments:
+        //   - array form {"x":[a,b]} is now labeled array_xy instead of reaching TEL unlabeled (D4);
+        //   - the self-contradictory shape {"x":[a,b],"y":c} — an x-array AND a separate y — resolves
+        //     to (a,b) via the array fix + int-scan here, where the map path's !obj.has("y") guard kept
+        //     (a,c). Both stay non-degenerate; the input has no correct answer and does not occur in the
+        //     dominant string malformations. Pinned by ToolCallParserTest.testNativeArrayPlusSeparateY_*.
         if (response.getToolCalls() != null && !response.getToolCalls().isEmpty()) {
             SglangClient.ToolCall tc = response.getToolCalls().get(0);
+            String raw = tc.getRawArguments();
+            if (raw != null) {
+                ParsedAction repaired = parseJsonString(
+                        "{\"name\":" + JSONObject.quote(tc.getName()) + ",\"arguments\":" + raw + "}");
+                if (repaired != null) return repaired;
+            }
             return buildParsedAction(tc.getName(), tc.getArguments(), "none");
         }
 

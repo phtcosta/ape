@@ -416,4 +416,161 @@ public class ToolCallParserTest {
         assertEquals("long_click", action.getActionType());
         assertEquals("none", action.getRepairForm());
     }
+
+    // ---------------------------------------------------------------------------
+    // llm-native-toolcall-repair (INV-LLM-10): Level 1 unification.
+    //
+    // Native tool calls now run the same repair pipeline the XML path uses. The
+    // raw arguments string (SglangClient.ToolCall.getRawArguments) is rebuilt into
+    // the XML-path intermediate {"name":...,"arguments":<raw>} and parsed through
+    // the shared parseJsonString — so native malformations get the identical
+    // fixMalformedJson + int-scan treatment and repair-form labeling. When the raw
+    // form is null or unrecoverable, Level 1 falls back to the pre-delta map path.
+    // ---------------------------------------------------------------------------
+
+    // Helper: a native tool call carrying both a best-effort map and the raw arguments string,
+    // exactly as SglangClient.parseResponse now constructs it (3-arg ToolCall).
+    private SglangClient.ChatResponse responseWithRawToolCall(String name, Map<String, Object> args,
+                                                              String rawArguments) {
+        SglangClient.ToolCall tc = new SglangClient.ToolCall(name, args, rawArguments);
+        return new SglangClient.ChatResponse(
+                "",
+                Collections.singletonList(tc),
+                0, 0);
+    }
+
+    // 3.1 — dominant degenerate form: missing-"y" string, empty map + raw. Must NOT collapse to (0,0).
+    @Test
+    public void testNativeMissingYString_repairedNotDegenerate() {
+        SglangClient.ChatResponse response = responseWithRawToolCall(
+                "click", Collections.<String, Object>emptyMap(), "{\"x\": 616, 891}");
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(616, action.getX());
+        assertEquals(891, action.getY());
+        assertEquals("missing_y", action.getRepairForm());
+        assertFalse("must not collapse to (0,0)", action.getX() == 0 && action.getY() == 0);
+    }
+
+    // 3.2 — quoted-collapsed-XY with a VALID map: {"x": "540, 399"} parses as JSON (map holds the
+    // string under x), but Integer.parseInt("540, 399") would fail → (0,0). The raw path must run
+    // even when the map parsed OK, recovering (540, 399) via quoted_xy.
+    @Test
+    public void testNativeQuotedCollapsedXY_validMap_repaired() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("x", "540, 399");   // valid JSON string value, as SglangClient would parse it
+        SglangClient.ChatResponse response = responseWithRawToolCall(
+                "click", args, "{\"x\": \"540, 399\"}");
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals(540, action.getX());
+        assertEquals(399, action.getY());
+        assertEquals("quoted_xy", action.getRepairForm());
+        assertFalse("must not collapse to (0,0)", action.getX() == 0 && action.getY() == 0);
+    }
+
+    // 3.3a — native array-form object arguments. SglangClient expands {"x":[540,399]} into the map
+    // AND carries the object serialization as raw; under D4 the raw path runs first and labels array_xy.
+    @Test
+    public void testNativeArrayForm_labeledArrayXy() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("x", 540.0);   // parseArgsObject already expanded the array into the map
+        args.put("y", 399.0);
+        SglangClient.ChatResponse response = responseWithRawToolCall(
+                "click", args, "{\"x\": [540, 399]}");
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals(540, action.getX());
+        assertEquals(399, action.getY());
+        assertEquals("array_xy", action.getRepairForm());
+    }
+
+    // 3.3b — native unrecoverable tap: {"x": = 265, "y": 687} defeats every regex fix; the click
+    // gate admits the last-resort integer scan → (265, 687) int_scan.
+    @Test
+    public void testNativeUnrecoverableTap_intScan() {
+        SglangClient.ChatResponse response = responseWithRawToolCall(
+                "click", Collections.<String, Object>emptyMap(), "{\"x\": = 265, \"y\": 687}");
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(265, action.getX());
+        assertEquals(687, action.getY());
+        assertEquals("int_scan", action.getRepairForm());
+    }
+
+    // 3.4a — fallback preservation: raw unrecoverable AND name=back (the int-scan gate admits only
+    // tap actions) → Level 1 falls back to the map-based construction, repair=none, no exception.
+    @Test
+    public void testNativeUnrecoverableBack_fallsBackToMapPath() {
+        SglangClient.ChatResponse response = responseWithRawToolCall(
+                "back", Collections.<String, Object>emptyMap(), "{\"bad\": =}");
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals("back", action.getActionType());
+        assertEquals("none", action.getRepairForm());
+    }
+
+    // 3.4b — no raw form (2-arg ToolCall, getRawArguments()==null) + valid map → identical to the
+    // pre-delta map path: (540, 399), repair=none.
+    @Test
+    public void testNativeNullRaw_usesMapPathUnchanged() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("x", 540.0);
+        args.put("y", 399.0);
+        // responseWithToolCall uses the 2-arg constructor → raw is null
+        ToolCallParser.ParsedAction action = parser.parse(responseWithToolCall("click", args));
+
+        assertNotNull(action);
+        assertEquals(540, action.getX());
+        assertEquals(399, action.getY());
+        assertEquals("none", action.getRepairForm());
+    }
+
+    // Characterization (code-review NT-01): the self-contradictory shape {"x":[540,399],"y":700} —
+    // an x-array AND a separate y — is an intended divergence from the pre-delta map path (which the
+    // !obj.has("y") guard resolved to (540,700)). The raw path fires the array fix, producing a
+    // duplicate "y" key that org.json rejects, then the click gate's int-scan takes (540,399). The
+    // input is contradictory (no correct answer); this pins the chosen behavior so a future edit
+    // cannot shift it silently. The result stays non-degenerate — the never-worse guarantee's intent.
+    @Test
+    public void testNativeArrayPlusSeparateY_pinnedNonDegenerate() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("x", 540.0);
+        args.put("y", 700.0);
+        SglangClient.ChatResponse response = responseWithRawToolCall(
+                "click", args, "{\"x\": [540, 399], \"y\": 700}");
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(540, action.getX());
+        assertEquals(399, action.getY());
+        assertEquals("int_scan", action.getRepairForm());
+        assertFalse("contradictory shape must still not collapse to (0,0)",
+                action.getX() == 0 && action.getY() == 0);
+    }
+
+    // 3.4c — clean native call carrying a well-formed raw → identical result, repair=none.
+    @Test
+    public void testNativeCleanRaw_repairNone() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("x", 540.0);
+        args.put("y", 399.0);
+        SglangClient.ChatResponse response = responseWithRawToolCall(
+                "click", args, "{\"x\": 540, \"y\": 399}");
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(540, action.getX());
+        assertEquals(399, action.getY());
+        assertEquals("none", action.getRepairForm());
+    }
 }

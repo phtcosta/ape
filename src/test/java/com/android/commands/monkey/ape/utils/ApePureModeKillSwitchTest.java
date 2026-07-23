@@ -164,4 +164,20 @@ public class ApePureModeKillSwitchTest {
         assertEquals(expected, exempt.get("activityTriggerStagnationStep"));
         assertEquals(expected, exempt.get("activityTriggerMaxPerRun"));
     }
+
+    // ---------------------------------------------------------------------------
+    // llm-native-toolcall-repair J1b/J1c — the four new LLM knobs
+    // (llmMaxTokens / llmSnapTolerancePx / llmBoundaryTopPct / llmBoundaryBottomPct)
+    // are exempt LLM sub-params: inert once the LLM masters are forced off. Pins the
+    // bucket and reason text; complements the reflective completeness guard (INV-ARCH-06).
+    // ---------------------------------------------------------------------------
+    @Test
+    public void llmNativeRepairFlagsAreExemptLlmSubParams() {
+        Map<String, String> exempt = Config.rvExemptReasons();
+        String expected = "LLM sub-param; inert when the LLM masters are forced off";
+        assertEquals(expected, exempt.get("llmMaxTokens"));
+        assertEquals(expected, exempt.get("llmSnapTolerancePx"));
+        assertEquals(expected, exempt.get("llmBoundaryTopPct"));
+        assertEquals(expected, exempt.get("llmBoundaryBottomPct"));
+    }
 }

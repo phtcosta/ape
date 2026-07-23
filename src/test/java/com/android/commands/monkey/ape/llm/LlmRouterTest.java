@@ -316,6 +316,110 @@ public class LlmRouterTest {
     }
 
     // -------------------------------------------------------------------------
+    // llm-native-toolcall-repair J1b/J1c (INV-RTR-14): max_tokens, boundary bands
+    // and the euclidean snap floor are Config-sourced; at the defaults every
+    // observable behavior is byte-identical to the pre-change hard-coded constants.
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void manifest_maxTokens_isConfigDefault1024_byteIdentical() {
+        // The [APE-LLM-CONFIG] manifest is emitted in the constructor (INV-RTR-10) via Logger →
+        // System.out. At the J1c default the max_tokens field must read 1024 — the same value the
+        // request body carries and byte-identical to the pre-change hard-coded local (INV-RTR-14).
+        java.io.PrintStream originalOut = System.out;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        try {
+            System.setOut(new java.io.PrintStream(captured, true));
+            new LlmRouter(new java.util.Random(42));
+        } finally {
+            System.setOut(originalOut);
+        }
+        String out = captured.toString();
+        assertTrue("constructor must emit the [APE-LLM-CONFIG] manifest line, got: " + out,
+                out.contains("[APE-LLM-CONFIG]"));
+        assertTrue("manifest max_tokens must be the Config default 1024 (J1c, INV-RTR-14), got: " + out,
+                out.contains("max_tokens=1024"));
+    }
+
+    @Test
+    public void mapToModelAction_defaultBands_boundaryRejectsIdentical() {
+        // INV-RTR-14: at the 0.05/0.94 defaults, a top-band (pixelY=50) and a bottom-band
+        // (pixelY=1850) coordinate on a 1080x1920 device are both rejected — identical to the
+        // pre-change hard-coded literals.
+        LlmRouter router = new LlmRouter(new java.util.Random(42));
+        List<com.android.commands.monkey.ape.model.ModelAction> actions = new ArrayList<>();
+        assertNull("top-band coordinate (50 < 1920*0.05) must be rejected at the default",
+                router.mapToModelAction(540, 50, "click", null, actions, null, 1080, 1920));
+        assertNull("bottom-band coordinate (1850 > 1920*0.94) must be rejected at the default",
+                router.mapToModelAction(540, 1850, "click", null, actions, null, 1080, 1920));
+    }
+
+    @Test
+    public void mapToModelAction_useSites_readConfigNotLiterals() throws Exception {
+        // The three J1b/J1c use sites (max_tokens, boundary bands, euclidean snap floor) must read
+        // the Config keys, not bare literals. The euclidean MATCH needs a resolved GUITreeNode
+        // (device-gated, excluded here), so INV-RTR-14 floor-identity is pinned structurally: guard
+        // against a silent revert to 50.0 / 0.05 / 0.94 / 1024 hard-coded constants. Mirrors this
+        // class's existing source-content check for the llmPercentageNoSubstrate no-consumer seam.
+        java.io.File src = new java.io.File(
+                "src/main/java/com/android/commands/monkey/ape/llm/LlmRouter.java");
+        assertTrue("LlmRouter source not found at " + src.getAbsolutePath(), src.exists());
+        String body = new String(java.nio.file.Files.readAllBytes(src.toPath()),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue("max_tokens must read Config.llmMaxTokens (J1c)",
+                body.contains("Config.llmMaxTokens"));
+        assertTrue("euclidean floor must read Config.llmSnapTolerancePx (J1b)",
+                body.contains("Config.llmSnapTolerancePx"));
+        assertTrue("top boundary band must read Config.llmBoundaryTopPct (J1b)",
+                body.contains("Config.llmBoundaryTopPct"));
+        assertTrue("bottom boundary band must read Config.llmBoundaryBottomPct (J1b)",
+                body.contains("Config.llmBoundaryBottomPct"));
+    }
+
+    // -------------------------------------------------------------------------
+    // 4.2 — the native repaired decision now feeds the EXISTING repair= telemetry
+    // (INV-RTR-13, unchanged, now native-fed). selectAction's TEL emission is
+    // device-gated (screenshot capture), so this is pinned at the two JVM-observable
+    // seams: (1) the value the emitter keys on — a native malformed tool call now
+    // yields a ParsedAction whose repair form is non-none — and (2) the emitter site
+    // itself, unchanged (D6: zero telemetry-emission changes).
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void nativeRepairedDecision_feedsNonNoneRepairForm() {
+        ToolCallParser parser = new ToolCallParser();
+        SglangClient.ToolCall tc = new SglangClient.ToolCall(
+                "click", Collections.<String, Object>emptyMap(), "{\"x\": 616, 891}");
+        SglangClient.ChatResponse response = new SglangClient.ChatResponse(
+                "", Collections.singletonList(tc), 0, 0);
+        ToolCallParser.ParsedAction parsed = parser.parse(response);
+
+        assertNotNull(parsed);
+        // Exactly the value LlmRouter.selectAction reads to drive the repair= TEL field.
+        assertNotEquals("native malformed tool call must now carry a repair form for TEL",
+                "none", parsed.getRepairForm());
+        assertEquals("missing_y", parsed.getRepairForm());
+    }
+
+    @Test
+    public void repairTelemetryEmitter_isNativeFedAndUnchanged() throws Exception {
+        // INV-RTR-13/D6: the repair= append + repairedCount++ emitter keys purely on
+        // ParsedAction.getRepairForm(), so it fires for native-path repairs the same way it fires
+        // for XML ones — no emitter change. Pinned structurally (the emission lives in the
+        // device-gated selectAction).
+        java.io.File src = new java.io.File(
+                "src/main/java/com/android/commands/monkey/ape/llm/LlmRouter.java");
+        String body = new String(java.nio.file.Files.readAllBytes(src.toPath()),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue("repair= must be gated on getRepairForm() != none",
+                body.contains("!\"none\".equals(parsed.getRepairForm())"));
+        assertTrue("repair= field must be appended to the TEL line",
+                body.contains("\" repair=\""));
+        assertTrue("repairedCount must be incremented at the repair emission site",
+                body.contains("repairedCount++"));
+    }
+
+    // -------------------------------------------------------------------------
     // The gh15 A-6 null-screenshot breaker behavior (LlmRouter.java:246-254) is
     // NOT unit-tested here: it lives inside selectAction(), which loads
     // AndroidDevice (getDisplayBounds) and therefore android.os.RemoteException,

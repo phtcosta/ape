@@ -236,4 +236,106 @@ public class SglangClientTest {
         SglangClient client = makeClient();
         client.parseResponse("not-json-at-all");
     }
+
+    // -------------------------------------------------------------------------
+    // llm-native-toolcall-repair (INV-LLM-10): raw-arguments preservation.
+    //
+    // SglangClient.parseResponse must carry the tool-call arguments in raw string
+    // form on the constructed ToolCall — the string verbatim when arguments is a
+    // JSON string (even when unparseable), the object's serialization when it is a
+    // JSON object, null when absent. This is what lets ToolCallParser Level 1 run
+    // the same repair pipeline the XML path uses.
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void parseResponse_malformedArgumentsString_mapEmptyRawVerbatim() {
+        // Dominant Qwen3-VL degenerate form: arguments encoded as a JSON string that is
+        // itself invalid JSON (missing "y" key). The map must stay empty (parse fails), but
+        // the raw string must survive verbatim for downstream repair.
+        SglangClient client = makeClient();
+        String json = "{"
+                + "\"choices\":[{\"message\":{\"role\":\"assistant\","
+                + "\"content\":null,"
+                + "\"tool_calls\":[{\"function\":{\"name\":\"click\","
+                + "\"arguments\":\"{\\\"x\\\": 616, 891}\"}}]}}]"
+                + "}";
+
+        SglangClient.ChatResponse resp = client.parseResponse(json);
+
+        assertNotNull(resp);
+        assertFalse("tool_calls must be non-empty", resp.getToolCalls().isEmpty());
+        SglangClient.ToolCall tc = resp.getToolCalls().get(0);
+        assertEquals("click", tc.getName());
+        assertTrue("malformed arguments string must leave the map empty",
+                tc.getArguments().isEmpty());
+        assertEquals("raw arguments must survive verbatim",
+                "{\"x\": 616, 891}", tc.getRawArguments());
+    }
+
+    @Test
+    public void parseResponse_wellFormedArgumentsString_mapPopulatedRawVerbatim() {
+        SglangClient client = makeClient();
+        String json = "{"
+                + "\"choices\":[{\"message\":{\"role\":\"assistant\","
+                + "\"content\":null,"
+                + "\"tool_calls\":[{\"function\":{\"name\":\"click\","
+                + "\"arguments\":\"{\\\"x\\\": 540, \\\"y\\\": 399}\"}}]}}]"
+                + "}";
+
+        SglangClient.ChatResponse resp = client.parseResponse(json);
+
+        assertNotNull(resp);
+        SglangClient.ToolCall tc = resp.getToolCalls().get(0);
+        assertEquals(540.0, ((Number) tc.getArguments().get("x")).doubleValue(), 1e-9);
+        assertEquals(399.0, ((Number) tc.getArguments().get("y")).doubleValue(), 1e-9);
+        assertEquals("raw arguments must be the string verbatim",
+                "{\"x\": 540, \"y\": 399}", tc.getRawArguments());
+    }
+
+    @Test
+    public void parseResponse_argumentsObject_mapPopulatedRawIsObjectSerialization() throws Exception {
+        // arguments encoded as a JSON object (not a string). Map populated as before; raw is
+        // the object's JSON serialization (re-parseable to the same coordinates).
+        SglangClient client = makeClient();
+        String json = "{"
+                + "\"choices\":[{\"message\":{\"role\":\"assistant\","
+                + "\"content\":null,"
+                + "\"tool_calls\":[{\"function\":{\"name\":\"click\","
+                + "\"arguments\":{\"x\":400,\"y\":600}}}]}}]"
+                + "}";
+
+        SglangClient.ChatResponse resp = client.parseResponse(json);
+
+        SglangClient.ToolCall tc = resp.getToolCalls().get(0);
+        assertEquals(400.0, ((Number) tc.getArguments().get("x")).doubleValue(), 1e-9);
+        assertEquals(600.0, ((Number) tc.getArguments().get("y")).doubleValue(), 1e-9);
+        assertNotNull("raw arguments must be the object serialization, not null",
+                tc.getRawArguments());
+        org.json.JSONObject reparsed = new org.json.JSONObject(tc.getRawArguments());
+        assertEquals(400, reparsed.getInt("x"));
+        assertEquals(600, reparsed.getInt("y"));
+    }
+
+    @Test
+    public void parseResponse_absentArguments_rawIsNull() {
+        SglangClient client = makeClient();
+        String json = "{"
+                + "\"choices\":[{\"message\":{\"role\":\"assistant\","
+                + "\"content\":null,"
+                + "\"tool_calls\":[{\"function\":{\"name\":\"back\"}}]}}]"
+                + "}";
+
+        SglangClient.ChatResponse resp = client.parseResponse(json);
+
+        SglangClient.ToolCall tc = resp.getToolCalls().get(0);
+        assertEquals("back", tc.getName());
+        assertNull("absent arguments must give null raw", tc.getRawArguments());
+    }
+
+    @Test
+    public void toolCall_twoArgConstructor_rawIsNull() {
+        SglangClient.ToolCall tc =
+                new SglangClient.ToolCall("click", Collections.singletonMap("x", (Object) 540.0));
+        assertNull("2-arg constructor must leave raw null", tc.getRawArguments());
+    }
 }

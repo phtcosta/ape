@@ -132,6 +132,9 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `llmModel` / `llmTemperature` / `llmTopP` / `llmTopK` — LLM sampling params
 - `llmTimeoutMs` — HTTP timeout (default: 15000ms)
 - `llmPercentage` — probability of random LLM routing per step (default: 0.02 = 2%; 0.0 disables; 0.7 = rv-agent-like 70%)
+- `llmMaxTokens` — `max_tokens` for the chat completion request (default: 1024; J1c expose-only, defaults reproduce the prior hard-coded value; not causal for truncation — `tokens_out` ≈ 25). Shared by the `[APE-LLM-CONFIG]` manifest and the request body
+- `llmSnapTolerancePx` — floor of the euclidean snap tolerance `max(floor, min(w,h)/2)` in `LlmRouter.mapToModelAction` (default: 50; J1b expose-only, lever analyzed and discarded — default not swept)
+- `llmBoundaryTopPct` / `llmBoundaryBottomPct` — top/bottom boundary reject bands as a fraction of screen height (defaults: 0.05 / 0.94; J1b expose-only, policy levers, defaults reproduce the prior hard-coded bands). A coordinate with `pixelY < h*top` or `pixelY > h*bottom` is rejected (status/nav bar) with no off-tree tap synthesized. All four J1b/J1c keys are registered exempt in `Config.rvExemptReasons` (LLM sub-params, inert when the LLM masters are forced off — INV-ARCH-06). Native `tool_calls` malformations now run the same coordinate-repair pipeline as the XML `<tool_call>` path (`SglangClient.ToolCall.rawArguments` → `ToolCallParser` Level 1 → shared `parseJsonString`), surfacing through the existing `repair=` telemetry field (INV-LLM-10, INV-RTR-14)
 
 ## Notes
 

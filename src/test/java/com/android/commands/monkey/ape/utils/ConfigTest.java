@@ -257,4 +257,30 @@ public class ConfigTest {
     public void testClampActivityTriggerMaxPerRun_negativeClampsToZero() {
         assertEquals(0, Config.clampActivityTriggerMaxPerRun(-3));
     }
+
+    // ---------------------------------------------------------------------------
+    // llm-native-toolcall-repair J1b/J1c: four LLM knobs exposed as config keys
+    // with defaults reproducing the previously hard-coded values bit-for-bit. No
+    // clamping (researcher-facing, like llmTimeoutMs/llmTopK). The B1 arm runs all
+    // four at defaults so the experimental contrast isolates the J1a parser fix.
+    // ---------------------------------------------------------------------------
+    @Test
+    public void testLlmMaxTokens_defaultIs1024() {
+        assertEquals(1024, Config.llmMaxTokens);
+    }
+
+    @Test
+    public void testLlmSnapTolerancePx_defaultIs50() {
+        assertEquals(50, Config.llmSnapTolerancePx);
+    }
+
+    @Test
+    public void testLlmBoundaryTopPct_defaultIs0_05() {
+        assertEquals(0.05, Config.llmBoundaryTopPct, 1e-9);
+    }
+
+    @Test
+    public void testLlmBoundaryBottomPct_defaultIs0_94() {
+        assertEquals(0.94, Config.llmBoundaryBottomPct, 1e-9);
+    }
 }
