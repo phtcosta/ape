@@ -374,6 +374,7 @@ Emission is governed by INV-RTR-10.
 | `mode` | `new-state`, `stagnation`, `random` |
 | `result` | `matched`, `llm_tap`, `no_match` |
 | `reason` | emitted only on `no_match`, immediately after `result=`: `degenerate` (parsed coordinate `(0,0)`) or `boundary` (status/nav band) |
+| `repair` | emitted only when the decision's `ParsedAction` carries a repair-form label other than `none` (per `llm-infrastructure` INV-LLM-09): `missing_y`, `array_xy`, `quoted_xy`, or `int_scan`. Absent on a clean parse. Records that the model's tool call needed a pre-parse repair to become executable, keeping raw tool-call fidelity measurable after the parser is hardened |
 | `tokens_in/out` | From `ChatResponse.usage.prompt_tokens` / `completion_tokens` (0 if unavailable) |
 | `time_ms` | Wall clock milliseconds for the full pipeline (screenshot → response) |
 
@@ -384,6 +385,8 @@ The `step` field makes the LLM call telemetry joinable to the decision and its o
 | `matched` | LLM coordinate resolved to a widget in the `GUITree` |
 | `llm_tap` | LLM coordinate matched no widget; an off-tree `MODEL_LLM_TAP` was synthesized and dispatched |
 | `no_match` | LLM coordinate was discarded; accompanied by `reason=degenerate` or `reason=boundary` |
+
+The `repair` field is orthogonal to `result`: a repaired tool call yields a normal `matched`, `llm_tap`, or `no_match` outcome and additionally carries `repair=<form>`. It marks a fidelity property of the model's output (the tool call was malformed but recoverable), not the routing outcome.
 
 Routing attempts abandoned before the mapping step (null screenshot, image-processing failure, HTTP/timeout/connection failure, parse failure, unexpected internal error) do not emit an `[APE-LLM-TEL]` line; they are counted in the aggregate summary only. Each such abandoned attempt SHALL additionally emit one `[APE-LLM-ERROR]` line naming its cause — except the screenshot-capture failure, which keeps its existing `[APE-RV] LLM screenshot failed` line (Action Selection Pipeline requirement) and is counted by `screenshot_failed` only, with no `[APE-LLM-ERROR]` line.
 
@@ -398,6 +401,8 @@ Routing attempts abandoned before the mapping step (null screenshot, image-proce
 | `image` | `ImageProcessor` returned null while preparing the screenshot payload | `imageErrorCount` |
 | `internal` | unexpected exception caught by the `selectAction()` catch-all | `internalErrorCount` |
 | `screenshot` | `ScreenshotCapture` returned null (e.g. FLAG_SECURE) | `screenshotFailedCount` (unchanged) |
+
+A `parse` failure is now the residual after `ToolCallParser` recovery: it is counted only when `parse()` returns null despite the added quoted-collapsed-XY fix and last-resort integer extraction (per the `llm-infrastructure` capability). A recovered tool call is not a `parse` failure — it is a successful decision carrying `repair=<form>`.
 
 **Cause attribution SHALL follow the failure point.** When `chat()` returns null, the cause SHALL be read from `SglangClient.getLastErrorCause()` — the only site where that seam MAY be consulted (the client resets it per invocation, per the `llm-infrastructure` capability; at any other site its value belongs to an earlier call and is stale). Failures occurring after `chat()` returns non-null SHALL be attributed by `LlmRouter` directly, without consulting `getLastErrorCause()`: tool-call extraction failure (`ToolCallParser.parse()` returning null) is `parse`, an `ImageProcessor` null result is `image`, and an unexpected exception in the routing pipeline is `internal`.
 
@@ -414,11 +419,13 @@ The circuit-breaker-blocked line SHALL be emitted at the **first** routing-predi
 
 **Aggregate summary** (printed at `StatefulAgent.tearDown()`):
 ```
-[APE-RV] LLM Summary calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> matched=<N> llm_tap=<N> no_match=<N> timeout=<N> http_error=<N> conn_error=<N> parse_error=<N> image_error=<N> internal_error=<N> screenshot_failed=<N> breaker_trips=<N>
+[APE-RV] LLM Summary calls=<N> tokens_in=<N> tokens_out=<N> time_ms=<N> matched=<N> llm_tap=<N> no_match=<N> repaired=<N> timeout=<N> http_error=<N> conn_error=<N> parse_error=<N> image_error=<N> internal_error=<N> screenshot_failed=<N> breaker_trips=<N>
 [APE-RV] Decision ratio: LLM=<N>/<total> (<pct>%), SATA=<N>/<total> (<pct>%)
 ```
 
 The aggregate `null` field is replaced by the named cause counters. The `decisions` denominator for the `[APE-RV] LLM Decision ratio` line SHALL be `matched + llm_tap + no_match + (timeout + http_error + conn_error + parse_error + image_error + internal_error + screenshot_failed)`. This is identical in value to the pre-change `matched + llm_tap + no_match + null`: the retired `nullCount` was incremented on every abandoned attempt including screenshot failures (`screenshot_failed` was a subset of `null`); under the new scheme a screenshot failure increments `screenshotFailedCount` only, so the seven cause counters form a partition of the retired `null` count and the reported ratio (`matched / decisions`) is unchanged in meaning.
+
+`repaired=<N>` (`repairedCount`) counts successful decisions whose tool call required a `ToolCallParser` repair (repair-form label other than `none`). It is NOT a cause counter and is NOT part of the `decisions` denominator: a repaired decision is already counted under exactly one of `matched` / `llm_tap` / `no_match`. It is a subset overlay on those outcomes, maintained separately so the base-versus-v2 tool-call fidelity contrast — how often the model emitted a malformed-but-recoverable call — is countable post-hoc from the summary line alone.
 
 `llmTapCount` (`llm_tap=<N>`) counts synthesized off-tree taps; it is maintained separately from `matched` and `no_match` so the off-tree effect is countable post-hoc from the summary line alone.
 
@@ -434,6 +441,19 @@ The aggregate `null` field is replaced by the named cause counters. The `decisio
 - **WHEN** the new-state hook routes to the LLM at step 42, the call succeeds and the mapped action executes producing a recorded transition
 - **THEN** the `[APE-LLM-TEL]` line SHALL carry `step=42`
 - **AND** the `[APE-STEP]` and `[APE-OUTCOME]` lines of the same decision SHALL carry `step=42`, so call cost (`tokens_in/out`, `time_ms`), decision, and outcome join without timestamp reconstruction
+
+#### Scenario: Repaired tool call logged and counted
+
+- **WHEN** at step 61 the model returns `{"name": "click", "arguments": {"x": "500, 527}}`, `ToolCallParser` recovers it via the quoted-collapsed-XY fix, and the resulting coordinate resolves to a widget
+- **THEN** the `[APE-LLM-TEL]` line SHALL carry `step=61 result=matched repair=quoted_xy`
+- **AND** the aggregate summary SHALL count the decision under both `matched=<N>` and `repaired=<N>`
+- **AND** no `[APE-LLM-ERROR] cause=parse` line SHALL be emitted for step 61
+
+#### Scenario: Clean tool call omits the repair field
+
+- **WHEN** at step 62 the model returns a well-formed `{"name": "click", "arguments": {"x": 540, "y": 399}}` that resolves to a widget
+- **THEN** the `[APE-LLM-TEL]` line SHALL NOT carry a `repair` field
+- **AND** the decision SHALL NOT increment `repairedCount`
 
 #### Scenario: Off-tree tap logged
 
@@ -456,9 +476,10 @@ The aggregate `null` field is replaced by the named cause counters. The `decisio
 
 #### Scenario: Router-side parse failure attributed without the client seam
 
-- **WHEN** `chat()` returns a non-null response but `ToolCallParser.parse()` extracts no tool call
+- **WHEN** `chat()` returns a non-null response but `ToolCallParser.parse()` extracts no tool call even after the quoted-collapsed-XY fix and last-resort integer extraction
 - **THEN** `[APE-LLM-ERROR] cause=parse ...` SHALL be emitted and `parseErrorCount` incremented
 - **AND** `getLastErrorCause()` SHALL NOT be consulted (the HTTP call succeeded; its value is stale)
+- **AND** no `repair` field SHALL be emitted (there was no successful decision to annotate)
 
 #### Scenario: Circuit breaker event logged once per open episode
 
@@ -476,8 +497,6 @@ The aggregate `null` field is replaced by the named cause counters. The `decisio
 - **WHEN** a run ends after 5 LLM routing attempts of which 3 were abandoned at screenshot capture (secure window) and 1 failed at parse
 - **THEN** the summary line SHALL report `parse_error=1 screenshot_failed=3`
 - **AND** the screenshot failures SHALL NOT have emitted `[APE-LLM-ERROR]` lines (their existing `[APE-RV] LLM screenshot failed` line stands)
-
----
 
 ### Requirement: Probabilistic LLM Routing
 

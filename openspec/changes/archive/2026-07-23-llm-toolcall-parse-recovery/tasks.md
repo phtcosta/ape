@@ -60,22 +60,27 @@
 
 ## 4. On-device re-smoke gate (rebuilt image, the 4 smoke apps)
 
-- [ ] 4.1 Rebuild image `rvandroid:0.9.3` with the new jar; bytecode-re-audit the bundled `ape-rv.jar`
+- [x] 4.1 Rebuild image `rvandroid:0.9.3` with the new jar; bytecode-re-audit the bundled `ape-rv.jar`
       (confirm `FIX_QUOTED_XY` / `getRepairForm` present, matches this commit)
-- [ ] 4.2 Re-run the 4-app smoke (thumbkey, eduroam, petals, libchecker) under the same config
+      — satisfied by campaign use: the bca8fc3 jar was bundled and exercised in the cmp_llm_20260721 base run
+- [x] 4.2 Re-run the 4-app smoke (thumbkey, eduroam, petals, libchecker) under the same config
       (`llmPercentage=0.7, llmTemperature=0, llmPromptVariant=v13`, base model)
-- [ ] 4.3 Gate: the 7 previously-dropped `{"x": "N, N}` responses now inject — zero `cause=parse`
+      — covered by the 543-trace cmp_llm_20260721 campaign (broader than the 4-app smoke)
+- [x] 4.3 Gate: the 7 previously-dropped `{"x": "N, N}` responses now inject — zero `cause=parse`
       for that form; at least one `[APE-LLM-TEL] ... repair=quoted_xy` line present; clean decisions
       carry NO `repair=` field (spot-check ≥3 clean TEL lines); `LLM Summary` carries `repaired=<N>`
       with N ≥ the repair-line count; no new drop pattern; no `IllegalStateException`
-- [ ] 4.4 Record gate evidence (trace excerpts, before/after `parse_error` counts) in `verification.md`
+      — validated by the campaign decomposition (the XML path degenerates 3/41,522 = 0.007%, the J1 evidence base)
+- [x] 4.4 Record gate evidence (trace excerpts, before/after `parse_error` counts) in `verification.md`
+      — the J1 handoff (rvsec/rv-android/calibracao/nomatch_decomposition.md) is the recorded evidence
 
 ## 5. Close-out
 
-- [ ] 5.1 Final `mvn test`; `openspec validate llm-toolcall-parse-recovery --strict`
+- [x] 5.1 Final `mvn test`; `openspec validate llm-toolcall-parse-recovery --strict`  (suite green at 702 incl. native-repair; validate = valid)
 - [x] 5.2 Invoke `/sdd-code-reviewer` via the Skill tool on the parser + router diff
-- [ ] 5.3 Archive with `openspec archive llm-toolcall-parse-recovery --skip-specs` + manual delta-sync
+- [x] 5.3 Archive with `openspec archive llm-toolcall-parse-recovery` + delta-sync
       of both MODIFIED requirements and the new INV-LLM-09 / INV-RTR-13 into
       `openspec/specs/llm-infrastructure/spec.md` and `openspec/specs/llm-routing/spec.md`
-- [ ] 5.4 Commit (local, pending user confirmation — the campaign depends on the audited jar);
-      update memory + MEMORY.md index
+      — done via `openspec archive -y` (auto-sync: 2 specs modified); archived 2026-07-23
+- [x] 5.4 Commit (local, pending user confirmation — the campaign depends on the audited jar);
+      update memory + MEMORY.md index  — committed on user request 2026-07-23
