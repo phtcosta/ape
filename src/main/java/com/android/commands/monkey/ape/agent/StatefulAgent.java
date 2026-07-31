@@ -114,11 +114,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     protected ModelAction currentAction;
     protected GUITreeAction currentGUITreeAction;
 
-    // [APE-OUTCOME] join buffer (scoring-pipeline delta): the selection step and action of the last
-    // model-action [APE-STEP] emission. An action selected at step N produces its transition only
-    // during step N+1's updateGraph(), by which point getTimestamp() reads N+1 — so the selection
-    // step must be buffered to key the outcome to the [APE-STEP] it belongs to. Written only inside
-    // the stepTelemetryEnabled block; lastDecisionAction == null means "no decision buffered".
+    // Decision join buffer: the selection step and action of the last model-action selection. An
+    // action selected at step N produces its transition only during step N+1's updateGraph(), by
+    // which point getTimestamp() reads N+1 — so the selection step must be buffered to key the
+    // outcome to the [APE-STEP] it belongs to. Two consumers read it at that point: the
+    // [APE-OUTCOME] line and the dead-pair ban's outcome feedback. lastDecisionAction == null means
+    // "no decision buffered".
     private int lastDecisionStep = -1;
     private ModelAction lastDecisionAction = null;
 
@@ -1002,12 +1003,24 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         // stale-ephemeral drop; (2) the buffered decision is reference-equal to currentAction — state
         // recovery / non-model interludes install a foreign action. The buffer is consumed (single-shot)
         // so the BadStateException selection-retry and recovery re-record cannot duplicate the line.
-        if (Config.stepTelemetryEnabled && currentStateTransition != null
+        if (currentStateTransition != null
                 && lastDecisionAction != null && lastDecisionAction == currentAction) {
-            Logger.iformat(
-                    "[APE-OUTCOME] step=%d decision_source=%s new_state=%s target_state=%s activity_changed=%s",
-                    lastDecisionStep, currentAction.getDecisionSource().name(), _isNewState,
-                    newState.getStateKey(), !currentStateTransition.isSameActivity());
+            if (Config.stepTelemetryEnabled) {
+                Logger.iformat(
+                        "[APE-OUTCOME] step=%d decision_source=%s new_state=%s target_state=%s activity_changed=%s",
+                        lastDecisionStep, currentAction.getDecisionSource().name(), _isNewState,
+                        newState.getStateKey(), !currentStateTransition.isSameActivity());
+            }
+            // B1 outcome feedback (llm-routing INV-RTR-15): the router cannot observe outcomes, so
+            // the agent hands it the executed LLM decision and the new_state bit computed here. Only
+            // LLM-originated decisions feed the ban record — SATA-selected actions are never banned.
+            // The feedback rides the same buffered-decision guards as the line above but not its
+            // telemetry gate: the ban is a selection mechanism, and it must behave identically in an
+            // arm that runs with [APE-STEP] emission turned off.
+            if (_llmRouter != null
+                    && currentAction.getDecisionSource() == ModelAction.DecisionSource.LLM) {
+                _llmRouter.recordLlmOutcome(currentAction, _isNewState);
+            }
             lastDecisionAction = null;
         }
         checkStable();
@@ -1402,10 +1415,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                         newAction.getMopBoost(), newAction.getWtgBoost(),
                         newAction.getCoverageBoost(), newAction.getMenuBoost(),
                         newAction.getFormBoost());
-                // Buffer this model decision so its [APE-OUTCOME] can key back to this [APE-STEP].
-                lastDecisionStep = getTimestamp();
-                lastDecisionAction = newAction;
             }
+            // Buffer this model decision so its [APE-OUTCOME] can key back to this [APE-STEP], and
+            // so the dead-pair ban receives the decision's outcome. Buffering is not gated by
+            // stepTelemetryEnabled — it writes nothing to the trace, and the ban must work the same
+            // in an arm that emits no [APE-STEP] lines.
+            lastDecisionStep = getTimestamp();
+            lastDecisionAction = newAction;
             return newAction;
         } else {
             // Non-model actions (e.g. event-level) carry no per-mechanism boosts. The decision
@@ -1417,10 +1433,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                         getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
                         newState.getStateKey(), action,
                         nonModelDecisionSource(action.getType()).name());
-                // Non-model actions produce no transition under their own identity; clear the buffer so
-                // a stale model decision cannot be resurrected as currentAction by state recovery.
-                lastDecisionAction = null;
             }
+            // Non-model actions produce no transition under their own identity; clear the buffer so
+            // a stale model decision cannot be resurrected as currentAction by state recovery.
+            lastDecisionAction = null;
             return action;
         }
     }

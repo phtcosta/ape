@@ -27,8 +27,15 @@ import java.util.Set;
  */
 public class ApePromptBuilder {
 
-    // --- Input field class names that enable type_text ---
-    private static final Set<String> INPUT_CLASS_NAMES = new HashSet<>(Arrays.asList(
+    /**
+     * The canonical "input-capable" widget set. One definition serves every consumer of the
+     * notion: whether the system message offers {@code type_text}, the {@code type_text} filter in
+     * the router's coordinate mapping, the fixTextEdit conversion of a click on such a widget, and
+     * the dead-pair ban's exemption (llm-routing INV-RTR-15). Kept in one place so that if the
+     * notion of "input-capable" is ever wrong, it is wrong once — a second, independently
+     * maintained list would let the prompt, the mapping and the ban drift apart.
+     */
+    static final Set<String> INPUT_CLASS_NAMES = new HashSet<>(Arrays.asList(
             "android.widget.EditText",
             "android.widget.AutoCompleteTextView",
             "android.widget.SearchView",
@@ -781,7 +788,12 @@ public class ApePromptBuilder {
         return false;
     }
 
-    private boolean isInputClass(GUITreeNode node) {
+    /**
+     * The canonical input-capable predicate, read by the prompt builder, the router's coordinate
+     * mapping and the dead-pair ban. Static so every consumer reaches the same set
+     * ({@link #INPUT_CLASS_NAMES}) without holding a builder instance.
+     */
+    static boolean isInputClass(GUITreeNode node) {
         if (node == null) return false;
         try {
             String cn = node.getClassName();

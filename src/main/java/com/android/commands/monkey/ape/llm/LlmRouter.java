@@ -7,6 +7,7 @@ import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Config;
@@ -16,10 +17,9 @@ import com.android.commands.monkey.ape.utils.MopData;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 /**
  * Orchestrates LLM-assisted action selection in the APE-RV agent loop.
@@ -40,13 +40,13 @@ import java.util.Set;
  */
 public class LlmRouter {
 
-    // Input widget class names that support type_text
-    private static final Set<String> INPUT_CLASS_NAMES = new HashSet<>(Arrays.asList(
-            "android.widget.EditText",
-            "android.widget.AutoCompleteTextView",
-            "android.widget.SearchView",
-            "androidx.appcompat.widget.SearchView"
-    ));
+    // B1 dead-pair ban (INV-RTR-15): a pair dies after five executions whose recorded outcome had
+    // new_state=false. The threshold is uniform over every widget class the ban covers; the class
+    // that is not covered — input-capable — is exempt outright rather than given a larger k, since
+    // no finite threshold reproduces an exemption. Measured on the 84 cal_a1 calibration runs: k=5
+    // refuses 27.5% of LLM decisions (k=3 refuses 37.6%, breaking the 30% ceiling that keeps the
+    // arm interpretable as "the LLM exploring" rather than as its SATA fallback).
+    private static final int DEAD_PAIR_STRIKES = 5;
 
     // Infrastructure — all final, wired in constructor
     private final SglangClient       client;
@@ -88,6 +88,15 @@ public class LlmRouter {
     private int internalErrorCount = 0;
     private int screenshotFailedCount = 0;
     private int breakerTrips    = 0;
+    // Dead-pair overlay counter: each banned decision is already counted under noMatchCount, and is
+    // counted again here so bucket D — the ban's falsification gate — is readable from the summary
+    // line alone, without joining the per-decision [APE-LLM-TEL] stream.
+    private int deadPairCount   = 0;
+
+    // Per-run, in-memory strike record of the dead-pair ban: ban key → unproductive executions of
+    // that pair. No persistence and no cross-run state — a run's bans die with the run — and no size
+    // cap, since it is bounded by the number of LLM decisions the run executes.
+    private final Map<String, Integer> deadPairStrikes = new HashMap<>();
 
     // [APE-LLM-CONFIG-ACK] latch (INV-RTR-12): emitted once, on the first successful chat() response.
     private boolean ackEmitted  = false;
@@ -414,6 +423,17 @@ public class LlmRouter {
                     pixels[0], pixels[1], parsed.getActionType(), parsed.getText(),
                     actions, state, deviceWidth, deviceHeight);
 
+            // Step 7b: dead-pair ban (INV-RTR-15). The check runs here — after the mapping, before
+            // the result is returned — so a banned decision is a *refused answer*, not a failed
+            // pipeline: it leaves through the same caller-visible path as no_match (null → SATA
+            // fallback) while the breaker still records success below (INV-RTR-16). The ban saves no
+            // latency: screenshot, HTTP call and parse have all already completed.
+            boolean banned = false;
+            if (match != null && isDeadPair(banKey(match))) {
+                banned = true;
+                match = null;
+            }
+
             // Step 8: Compute nearest widget for telemetry
             String nearestClass = "none";
             double nearestDist = -1;
@@ -479,9 +499,15 @@ public class LlmRouter {
             } else {
                 noMatchCount++;
                 resultTag = "no_match";
-                // Separate the two remaining no_match mechanisms: a (0,0) model emission
-                // (degenerate) vs a status/nav-band coordinate (boundary). Emitted only here.
-                noMatchReason = (parsed.getX() == 0 && parsed.getY() == 0) ? "degenerate" : "boundary";
+                if (banned) {
+                    // Third no_match cause: the mapping produced a result, and the ban refused it.
+                    deadPairCount++;
+                    noMatchReason = "dead_pair";
+                } else {
+                    // Separate the two remaining no_match mechanisms: a (0,0) model emission
+                    // (degenerate) vs a status/nav-band coordinate (boundary). Emitted only here.
+                    noMatchReason = (parsed.getX() == 0 && parsed.getY() == 0) ? "degenerate" : "boundary";
+                }
             }
 
             // Enhanced telemetry line for experiment analysis
@@ -605,7 +631,7 @@ public class LlmRouter {
                 if (node == null) continue;
 
                 // For type_text: restrict to input-capable widgets
-                if ("type_text".equals(actionType) && !isInputClass(node)) continue;
+                if ("type_text".equals(actionType) && !ApePromptBuilder.isInputClass(node)) continue;
 
                 // For long_click: prefer MODEL_LONG_CLICK; fall through to MODEL_CLICK if needed
                 if (preferLongClick && action.getType() != ActionType.MODEL_LONG_CLICK) continue;
@@ -654,7 +680,7 @@ public class LlmRouter {
                 GUITreeNode node = action.getResolvedNode();
                 if (node == null) continue;
 
-                if ("type_text".equals(actionType) && !isInputClass(node)) continue;
+                if ("type_text".equals(actionType) && !ApePromptBuilder.isInputClass(node)) continue;
 
                 Rect bounds = node.getBoundsInScreen();
                 int centerX = (bounds.left + bounds.right) / 2;
@@ -697,12 +723,84 @@ public class LlmRouter {
     // Helpers
     // -------------------------------------------------------------------------
 
-    private boolean isInputClass(GUITreeNode node) {
-        if (node == null) return false;
+    // -------------------------------------------------------------------------
+    // Dead-pair ban (B1)
+    // -------------------------------------------------------------------------
+
+    /**
+     * The ban key of a mapped result, or null when the result carries no bannable pair (a
+     * {@code back} answer returns the state's targetless BACK action).
+     *
+     * <p>Two shapes, per INV-RTR-15. An off-tree tap keys on the exact emitted coordinate, because
+     * the measured waste is exact-coordinate repetition (the spatial collapse x∈{499,500} is 36.7%
+     * of emissions). A matched widget keys on the action {@code Name}'s XPath — the same widget
+     * identity {@code UICoverageTracker.widgetId} and the MOP revisit cap already use — plus the
+     * event type. That anchor is deliberately <b>abstraction-level</b>, not per-node: a {@code Name}
+     * may resolve to several nodes (16.3% of targeted steps in the calibration corpus), so one ban
+     * withdraws the action from all of them, and a ban count is a count of abstract pairs that must
+     * never be reported as a count of widgets. The anchor is never a list index — index anchoring is
+     * the bug class this project's autopsy catalogued.
+     */
+    String banKey(ModelAction action) {
+        if (action == null) return null;
         try {
-            String cn = node.getClassName();
-            return cn != null && INPUT_CLASS_NAMES.contains(cn);
-        } catch (Exception ignored) { return false; }
+            String stateKey = String.valueOf(action.getState() != null
+                    ? action.getState().getStateKey() : "none");
+            if (action instanceof LlmTapAction) {
+                LlmTapAction tap = (LlmTapAction) action;
+                return "tap|" + stateKey + "|" + tap.getPixelX() + "," + tap.getPixelY();
+            }
+            Name target = action.getTarget();
+            if (target == null) return null;
+            return "matched|" + stateKey + "|" + target.toXPath() + "|" + action.getType();
+        } catch (Exception ignored) { return null; }
+    }
+
+    /** True once the pair has accumulated its five unproductive executions. */
+    boolean isDeadPair(String key) {
+        if (key == null) return false;
+        Integer strikes = deadPairStrikes.get(key);
+        return strikes != null && strikes >= DEAD_PAIR_STRIKES;
+    }
+
+    /**
+     * Record the outcome of an executed LLM-originated decision. Called by {@code StatefulAgent} at
+     * the point where {@code new_state} is computed for the {@code [APE-OUTCOME]} line, under the
+     * same single-shot buffered-decision discipline that guards that emission — the router cannot
+     * observe outcomes itself.
+     *
+     * <p>Only unproductive executions are recorded: a {@code new_state=true} execution neither
+     * counts toward death nor resets the accumulated count, so the counter only ever grows and
+     * counts exactly the unproductive executions of that pair.
+     *
+     * <p>An input-capable target is exempt at any strike count, and the exemption is realized here
+     * by <b>not recording the strike</b> rather than by filtering at the ban check: the pair never
+     * enters the record, so there is no state to keep for it and nothing to consult. It keys on the
+     * widget rather than on the event type, which is what carries the exemption through the
+     * fixTextEdit conversion of a click on that same widget. It reaches the {@code matched} half
+     * only — that is a property of the evidence, not a scoping choice: an off-tree tap has no
+     * matched widget (and hence no resolved node), so no class-based exemption of any design can
+     * see a class there.
+     */
+    public void recordLlmOutcome(ModelAction action, boolean newState) {
+        if (action == null || newState) return;
+        if (ApePromptBuilder.isInputClass(safeResolvedNode(action))) return;
+        String key = banKey(action);
+        if (key == null) return;
+        Integer strikes = deadPairStrikes.get(key);
+        deadPairStrikes.put(key, strikes == null ? 1 : strikes + 1);
+    }
+
+    /**
+     * Number of pairs holding at least one strike. Exists because the exemption's invariant is
+     * about the record itself — an input-capable pair never enters it — and that is not observable
+     * from {@link #isDeadPair} alone, which cannot distinguish "recorded but never dead" from
+     * "never recorded".
+     */
+    int deadPairRecordSize() { return deadPairStrikes.size(); }
+
+    private static GUITreeNode safeResolvedNode(ModelAction action) {
+        try { return action.getResolvedNode(); } catch (Exception ignored) { return null; }
     }
 
     // -------------------------------------------------------------------------
@@ -729,6 +827,7 @@ public class LlmRouter {
                 + " matched=" + matchedCount
                 + " llm_tap=" + llmTapCount
                 + " no_match=" + noMatchCount
+                + " dead_pair=" + deadPairCount
                 + " repaired=" + repairedCount
                 + " timeout=" + timeoutCount
                 + " http_error=" + httpErrorCount
@@ -757,6 +856,12 @@ public class LlmRouter {
 
     /** Number of times parsing / matching produced no result. */
     public int getNoMatchCount() { return noMatchCount; }
+
+    /**
+     * Decisions refused by the dead-pair ban — an overlay on {@link #getNoMatchCount()}, not a peer
+     * of it: every banned decision is counted under both.
+     */
+    public int getDeadPairCount() { return deadPairCount; }
 
     /** Attempts abandoned at connect/read timeout. */
     public int getTimeoutCount() { return timeoutCount; }
