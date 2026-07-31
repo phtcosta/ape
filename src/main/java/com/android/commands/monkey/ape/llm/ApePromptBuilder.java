@@ -797,7 +797,7 @@ public class ApePromptBuilder {
      * mapping and the dead-pair ban. Static so every consumer reaches the same set
      * ({@link #INPUT_CLASS_NAMES}) without holding a builder instance.
      */
-    static boolean isInputClass(GUITreeNode node) {
+    public static boolean isInputClass(GUITreeNode node) {
         if (node == null) return false;
         try {
             String cn = node.getClassName();

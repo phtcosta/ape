@@ -668,7 +668,7 @@ public class LlmRouter {
             } catch (Exception ignored) { /* skip bad actions */ }
         }
 
-        if (bestBounds != null) return bestBounds;
+        if (bestBounds != null) return fixTextEdit(bestBounds, actions, actionType);
 
         // If long_click had no match with MODEL_LONG_CLICK, retry with any click type
         if (preferLongClick) {
@@ -687,7 +687,7 @@ public class LlmRouter {
                     }
                 } catch (Exception ignored) { /* skip bad actions */ }
             }
-            if (bestBounds != null) return bestBounds;
+            if (bestBounds != null) return fixTextEdit(bestBounds, actions, actionType);
         }
 
         // --- Euclidean fallback ---
@@ -728,7 +728,7 @@ public class LlmRouter {
         }
 
         if (bestEuclidean != null) {
-            return bestEuclidean;
+            return fixTextEdit(bestEuclidean, actions, actionType);
         }
 
         // --- Off-tree coordinate tap (dynamic element) ---
@@ -747,6 +747,37 @@ public class LlmRouter {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * fixTextEdit (B6(iv)): a {@code click}/{@code long_click} that resolves to an input-capable
+     * widget is a text-entry decision, not a bare press. The <i>where</i> is the LLM's — its
+     * grounding on these widgets is its best (93.1% on EditText) — and the <i>what</i> is the
+     * harness's: APE types a node's {@code inputText} as part of dispatching a {@code MODEL_CLICK}
+     * on it, and {@code ApeAgent.checkInput} fills that text for an LLM decision on an
+     * input-capable widget using the same generator a SATA-selected input action uses. No second
+     * LLM call is made. This removes the bare click on input widgets from the LLM's effective
+     * action space — banning by subtraction, the mechanism that outperforms prompt instruction, and
+     * the answer to the measured {@code type_text≈0} collapse.
+     *
+     * <p>All this method has to do, then, is make sure the returned action is the one whose
+     * dispatch carries text: {@code MODEL_LONG_CLICK} does not type, so a long-press match on an
+     * input widget is swapped for the {@code MODEL_CLICK} on the same node. When the widget offers
+     * no such action the long-press stands — there is nothing on it that could carry the text.
+     */
+    private static ModelAction fixTextEdit(ModelAction match, List<ModelAction> actions,
+                                           String actionType) {
+        if (!"click".equals(actionType) && !"long_click".equals(actionType)) return match;
+        GUITreeNode node = safeResolvedNode(match);
+        if (!ApePromptBuilder.isInputClass(node)) return match;
+        if (match.getType() == ActionType.MODEL_CLICK) return match;
+        for (ModelAction candidate : actions) {
+            try {
+                if (candidate.getType() != ActionType.MODEL_CLICK || !candidate.isValid()) continue;
+                if (candidate.getResolvedNode() == node) return candidate;
+            } catch (Exception ignored) { /* skip bad actions */ }
+        }
+        return match;
+    }
 
     // -------------------------------------------------------------------------
     // Dead-pair ban (B1)

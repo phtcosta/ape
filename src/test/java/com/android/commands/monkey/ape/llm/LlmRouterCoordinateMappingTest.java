@@ -118,4 +118,90 @@ public class LlmRouterCoordinateMappingTest {
 
         assertSame("long_click keeps its documented fallback to MODEL_CLICK", click, result);
     }
+
+    // -------------------------------------------------------------------------
+    // B6(iv) — fixTextEdit: a press on an input widget is a text entry
+    // -------------------------------------------------------------------------
+
+    /**
+     * The two halves of fixTextEdit live in different classes: the router decides <i>that</i> the
+     * decision is a text entry and returns the action whose dispatch carries text; {@code
+     * ApeAgent.checkInput} supplies the text itself. This file covers the router half — the agent
+     * half needs a live agent (MopData, foreground activity) and is covered by
+     * {@link com.android.commands.monkey.ape.agent.ApeAgentLlmInputTest} for its guard and by the
+     * device smoke for the generation.
+     */
+    @Test
+    public void clickOnAnEditTextReturnsTheClickThatCarriesText() {
+        // APE types a node's inputText while dispatching a MODEL_CLICK on it, so a click that
+        // resolved to an input widget is already the text-entry action — nothing to swap.
+        ModelAction click = action(ActionType.MODEL_CLICK, "android.widget.EditText",
+                new Rect(50, 300, 400, 350));
+
+        ModelAction result = router().mapToModelAction(
+                225, 325, "click", null, actions(click), null, W, H);
+
+        assertSame(click, result);
+        assertTrue(ApePromptBuilder.isInputClass(result.getResolvedNode()));
+    }
+
+    @Test
+    public void longClickOnAnInputWidgetIsConvertedToTheClickOnTheSameNode() {
+        // MODEL_LONG_CLICK dispatch does not type, so a long press on an input widget must not be
+        // returned bare: the click on the same node is what carries the generated text.
+        GUITreeNode field = new GUITreeNode(null);
+        field.setClassName("android.widget.SearchView");
+        field.setBoundsInScreen(new Rect(50, 300, 400, 350));
+
+        ModelAction longClick = new ModelAction(null, new TestName("//SearchView"),
+                ActionType.MODEL_LONG_CLICK);
+        longClick.resolveAt(1, 0, null, field, new GUITreeNode[]{field});
+        longClick.setValid(true);
+        ModelAction click = new ModelAction(null, new TestName("//SearchView"),
+                ActionType.MODEL_CLICK);
+        click.resolveAt(1, 0, null, field, new GUITreeNode[]{field});
+        click.setValid(true);
+
+        ModelAction result = router().mapToModelAction(
+                225, 325, "long_click", null, actions(longClick, click), null, W, H);
+
+        assertSame("the press is converted to the action that can carry text", click, result);
+    }
+
+    @Test
+    public void longClickOnAnInputWidgetWithNoClickAvailableStaysAsItIs() {
+        // Documented boundary: nothing on this widget can carry text, so there is nothing to
+        // convert into.
+        ModelAction longClick = action(ActionType.MODEL_LONG_CLICK, "android.widget.EditText",
+                new Rect(50, 300, 400, 350));
+
+        ModelAction result = router().mapToModelAction(
+                225, 325, "long_click", null, actions(longClick), null, W, H);
+
+        assertSame(longClick, result);
+    }
+
+    @Test
+    public void typeTextAnswersAreUnaffected() {
+        ModelAction click = action(ActionType.MODEL_CLICK, "android.widget.EditText",
+                new Rect(50, 300, 400, 350));
+
+        ModelAction result = router().mapToModelAction(
+                225, 325, "type_text", "user@example.com", actions(click), null, W, H);
+
+        assertSame("a well-behaved type_text answer keeps its existing path", click, result);
+    }
+
+    @Test
+    public void aPressOnANonInputWidgetIsNotConverted() {
+        ModelAction longClick = action(ActionType.MODEL_LONG_CLICK, "android.widget.Button",
+                new Rect(100, 200, 300, 250));
+        ModelAction click = action(ActionType.MODEL_CLICK, "android.widget.Button",
+                new Rect(100, 200, 300, 250));
+
+        ModelAction result = router().mapToModelAction(
+                200, 230, "long_click", null, actions(longClick, click), null, W, H);
+
+        assertSame("only input-capable widgets are converted", longClick, result);
+    }
 }

@@ -39,6 +39,7 @@ import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.events.ApeEvent;
 import com.android.commands.monkey.ape.events.ApeFuzzer;
+import com.android.commands.monkey.ape.llm.ApePromptBuilder;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.Crash;
@@ -186,16 +187,34 @@ public abstract class ApeAgent implements Agent {
     protected Action checkInput(Action action) {
         if (action.requireTarget()) {
             GUITreeNode node = ((ModelAction) action).getResolvedNode();
-            if (node.isEditText() && node.getInputText() == null) {
+            boolean llmTextEntry = isLlmInputDecision(action, node);
+            if ((node.isEditText() || llmTextEntry) && node.getInputText() == null) {
                 // In a form-completion context fill deterministically so every field of a form
                 // gets text; otherwise keep the legacy probabilistic gate for non-form screens
                 // (INV-FORM-03 / INV-INP-04). The toss is short-circuited when in context.
-                if (inFormCompletionContext() || RandomHelper.toss(inputRate)) {
+                // An LLM decision on an input-capable widget also fills deterministically: it is
+                // the *what* half of fixTextEdit (B6(iv)), where the router already decided the
+                // decision is a text entry rather than a bare press. The generator is the same one
+                // a SATA-selected input action uses — the LLM is never asked for the text.
+                if (llmTextEntry || inFormCompletionContext() || RandomHelper.toss(inputRate)) {
                     node.setInputText(generateInputText(node));
                 }
             }
         }
         return action;
+    }
+
+    /**
+     * True when the selected action is an LLM decision landing on an input-capable widget — the
+     * fixTextEdit case. Widens the fill beyond {@code isEditText()} to the input-capable set the
+     * prompt and the dead-pair ban share (it adds both {@code SearchView} classes), and only for
+     * LLM-originated decisions: the algorithmic arms keep their existing input behavior exactly.
+     * Pure static so the guard is unit-testable without a live agent.
+     */
+    static boolean isLlmInputDecision(Action action, GUITreeNode node) {
+        if (node == null || !(action instanceof ModelAction)) return false;
+        return ((ModelAction) action).getDecisionSource() == ModelAction.DecisionSource.LLM
+                && ApePromptBuilder.isInputClass(node);
     }
 
     /**
