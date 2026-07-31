@@ -58,9 +58,9 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 10. A8 — escape newlines in [APE-STEP] (~5–10 LOC)
 
-- [ ] 10.1 `ModelAction.resolvedInfo` (`ModelAction.java:136-144`): flatten `\n`/`\r` in the interpolated node text (fixes `[APE-STEP]` for all emitters) (INV-SEL-07)
-- [ ] 10.2 `ApePromptBuilder` element-line display text: same flattening (the `capMeta` metadata path already does it) — makes `[APE-LLM-PROMPT]` per-element parseable
-- [ ] 10.3 JVM unit tests: node text with `\n` yields single-line `resolvedInfo`; element line flattened
+- [x] 10.1 `ModelAction.resolvedInfo` (`ModelAction.java:136-144`): flatten `\n`/`\r` in the interpolated node text (fixes `[APE-STEP]` for all emitters) (INV-SEL-07)
+- [x] 10.2 `ApePromptBuilder` element-line display text: same flattening (the `capMeta` metadata path already does it) — makes `[APE-LLM-PROMPT]` per-element parseable
+- [x] 10.3 JVM unit tests: node text with `\n` yields single-line `resolvedInfo`; element line flattened
 
 ## 11. A7 (jar part) — screenshot-failure telemetry (1–10 LOC)
 

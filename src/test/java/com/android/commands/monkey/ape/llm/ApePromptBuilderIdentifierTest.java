@@ -97,6 +97,22 @@ public class ApePromptBuilderIdentifierTest {
     }
 
     @Test
+    public void multiLineWidgetTextIsFlattenedOntoOneElementLine() {
+        // A8 (INV-PRM-05): one element, one line of the [APE-LLM-PROMPT] user_text dump.
+        String text = userText(imageView("Sign\nIn", null, null));
+
+        assertTrue(text.contains("\"Sign In\""));
+        for (String line : text.split("\n")) {
+            assertFalse("no element line may be split by widget text", line.trim().equals("In\""));
+        }
+    }
+
+    @Test
+    public void multiLineContentDescriptionIsFlattenedToo() {
+        assertTrue(userText(imageView(null, "Add\naccount", null)).contains("\"Add account\""));
+    }
+
+    @Test
     public void resourceIdWithoutTheIdSegmentYieldsNoIdentifier() {
         // extractShortId only recognizes the ":id/" form; anything else is not an identifier.
         assertTrue(userText(imageView(null, null, "com.example.something")).contains("ImageView \"\""));

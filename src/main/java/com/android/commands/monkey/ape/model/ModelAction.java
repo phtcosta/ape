@@ -179,7 +179,19 @@ public class ModelAction extends Action {
         Rect bounds = resolvedNode.getBoundsInScreen();
         return String.format("%s[S=%f][RN=%d][%d,%d,%d,%d][%s]", super.resolvedInfo(), resolvedSaturation,
                 resolvedNodes.length, bounds.left, bounds.top, bounds.right, bounds.bottom,
-                resolvedNode.getText());
+                flatten(resolvedNode.getText()));
+    }
+
+    /**
+     * Widget text with {@code \n}/{@code \r} replaced by spaces (INV-SEL-07). This string is
+     * interpolated into the action's {@code toString()}, which every {@code [APE-STEP]} emitter
+     * prints, so a multi-line label used to split the line in two: 752 of 166,359 lines in the
+     * calibration corpus, distributed unevenly across arms (32–116 each), which biased every
+     * {@code decision_source} count by 0.45%. Flattening here fixes all emitters at once.
+     */
+    private static String flatten(String text) {
+        if (text == null) return null;
+        return text.replace('\n', ' ').replace('\r', ' ');
     }
 
     public String toFullString() {

@@ -853,13 +853,24 @@ public class ApePromptBuilder {
         if (node == null) return "";
         try {
             String text = node.getText();
-            if (text != null && !text.isEmpty()) return text;
+            if (text != null && !text.isEmpty()) return flatten(text);
             String cd = node.getContentDesc();
-            if (cd != null && !cd.isEmpty()) return cd;
+            if (cd != null && !cd.isEmpty()) return flatten(cd);
             String shortId = MopData.extractShortId(node.getResourceID());
             if (!shortId.isEmpty()) return "id=" + shortId;
         } catch (Exception ignored) { /* fall through */ }
         return "";
+    }
+
+    /**
+     * Widget text with {@code \n}/{@code \r} replaced by spaces, so one element occupies one line
+     * of the element list and of the {@code [APE-LLM-PROMPT] user_text=} dump (INV-PRM-05). The
+     * metadata suffix already does this via {@code capMeta}; the identifier is the other half. The
+     * prompt's own multi-line structure is intentional and untouched — only widget-derived text is
+     * flattened.
+     */
+    private static String flatten(String text) {
+        return text.replace('\n', ' ').replace('\r', ' ');
     }
 
     /**

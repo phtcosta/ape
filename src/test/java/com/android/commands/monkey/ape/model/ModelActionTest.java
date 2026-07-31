@@ -1,5 +1,9 @@
 package com.android.commands.monkey.ape.model;
 
+import android.graphics.Rect;
+
+import com.android.commands.monkey.ape.tree.GUITreeNode;
+
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -62,5 +66,35 @@ public class ModelActionTest {
         assertEquals("formBoost defaults to 0", 0, a.getFormBoost());
         a.setFormBoost(150);
         assertEquals(150, a.getFormBoost());
+    }
+
+    // ---- A8: widget text never breaks the [APE-STEP] line (INV-SEL-07) -------
+
+    @Test
+    public void testResolvedInfoFlattensNewlinesInWidgetText() throws Exception {
+        GUITreeNode node = new GUITreeNode(null);
+        node.setClassName("android.widget.Button");
+        node.setBoundsInScreen(new Rect(100, 200, 300, 250));
+        node.setText("Sign\nIn");
+        ModelAction action = new ModelAction(null, ActionType.MODEL_CLICK);
+        action.resolveAt(1, 0, null, node, new GUITreeNode[]{node});
+
+        String line = action.toString();
+
+        assertTrue("the label is flattened, not dropped", line.contains("Sign In"));
+        assertEquals("the action's string form occupies exactly one physical line",
+                1, line.split("\n", -1).length);
+    }
+
+    @Test
+    public void testResolvedInfoFlattensCarriageReturnsToo() {
+        GUITreeNode node = new GUITreeNode(null);
+        node.setClassName("android.widget.TextView");
+        node.setBoundsInScreen(new Rect(0, 0, 10, 10));
+        node.setText("a\r\nb");
+        ModelAction action = new ModelAction(null, ActionType.MODEL_CLICK);
+        action.resolveAt(1, 0, null, node, new GUITreeNode[]{node});
+
+        assertTrue(action.toString().contains("a  b"));
     }
 }
