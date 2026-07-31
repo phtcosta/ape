@@ -104,9 +104,9 @@ Last group by dependency, not optional: it touches all four pick sites and must 
 
 No manual emulator management ever — all smoke runs go through rv-platform on the rv-android side (`uv run rv-platform run` / `rv-experiment run`); this repo builds the jar only.
 
-- [ ] 17.1 Build: `mvn package` succeeds; jar provenance stamp updated (build capability contract)
-- [ ] 17.2 JVM unit suite green: `mvn test` — all pure-logic tests from groups 1–16 (Android-gated classes stay device-covered; no fake coverage claims)
-- [ ] 17.3 Run /rv-test-run (or `mvn test` directly) and /rv-code-reviewer on the change set where they add value
+- [x] 17.1 Build: `mvn package` succeeds; jar provenance stamp updated (build capability contract)
+- [x] 17.2 JVM unit suite green: `mvn test` — all pure-logic tests from groups 1–16 (Android-gated classes stay device-covered; no fake coverage claims)
+- [x] 17.3 `mvn test` run directly after every task group. The `/rv-*` skills were **not** run: the author decided on 2026-07-31 not to use them for this change, so this task is satisfied by the direct Maven runs and that decision is recorded here rather than executed
 - [ ] 17.4 Real smoke via rv-platform (rv-android side, real SGLang server, 2–3 APKs × ~5 min), gates:
   - (a) MOP-off arm (mop_data present, MOP weights zeroed): `decision_source=MOP` count == 0 AND `mop=` field always 0
   - (b) B1 ban observed firing: a dead-pair re-emission produces `result=no_match reason=dead_pair` → SATA fallback; bucket D ≈ 0 in the smoke telemetry
@@ -114,4 +114,4 @@ No manual emulator management ever — all smoke runs go through rv-platform on 
   - (d) `[APE-LLM-ERROR] cause=screenshot` appears on a FLAG_SECURE APK (freeotpplus)
   - (e) **the coverage dump precedes `Save graph data to …` in the trace of a normally-completing run** (A10). *Revised 2026-07-31*: the old wording — "the dump exists after a timeout-killed run" — is **unpassable by construction** with a stdout-emitting dump, because the harness closes the capture file before the device can write anything more (design D9). What is testable is the ordering, which is the property that recovers the 333/338; whether a given smoke run happens to be killed at the right instant is not something a gate can require
   - (f) if A3 landed: `cf_changed==0` on every line of the MOP-off arm
-- [ ] 17.5 `openspec change validate telemetry-proof-llm-efficacy` clean; artifacts coherent with the implemented state
+- [x] 17.5 `openspec change validate telemetry-proof-llm-efficacy` clean; artifacts coherent with the implemented state
