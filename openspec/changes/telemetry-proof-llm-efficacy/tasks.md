@@ -19,9 +19,9 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 3. B6(iii) — per-request tool schema (~10–20 LOC, touches SglangClient)
 
-- [ ] 3.1 `SglangClient`: replace the constructor-era `setTools(JSONArray)` single-schema path with a per-invocation `chat(messages, tools)` parameter; delete the run-wide field (P3, INV-LLM-11)
-- [ ] 3.2 `LlmRouter`: build the two schema constants once (with/without `type_text`, from the existing `buildToolsSchema`, `LlmRouter.java:150-167`); remove `client.setTools(...)` from the constructor (`:120`); pass the schema matching `hasInputField(actions)` on each call — the same predicate the system message uses (`ApePromptBuilder.java:133`)
-- [ ] 3.3 JVM unit tests: request body tools == supplied schema; screen without input fields → no `type_text` on the wire; prompt/wire coherence (schema with `type_text` iff system message lists it)
+- [x] 3.1 `SglangClient`: replace the constructor-era `setTools(JSONArray)` single-schema path with a per-invocation `chat(messages, tools)` parameter; delete the run-wide field (P3, INV-LLM-11)
+- [x] 3.2 `LlmRouter`: build the two schema constants once (with/without `type_text`, from the existing `buildToolsSchema`, `LlmRouter.java:150-167`); remove `client.setTools(...)` from the constructor (`:120`); pass the schema matching `hasInputField(actions)` on each call — the same predicate the system message uses (`ApePromptBuilder.java:133`)
+- [x] 3.3 JVM unit tests: request body tools == supplied schema; screen without input fields → no `type_text` on the wire; prompt/wire coherence (schema with `type_text` iff system message lists it)
 
 ## 4. B6(iv) — fixTextEdit (Guardian mechanism)
 

@@ -32,7 +32,6 @@ public class SglangClient {
     private final int topK;
     private final int maxTokens;
     private final int timeoutMs;
-    private JSONArray tools;
 
     // Cause of the most recent chat() null return: "timeout", "http_<status>", "connection",
     // or "parse" (envelope). Reset at the start of every chat() call so a stale cause from an
@@ -52,24 +51,25 @@ public class SglangClient {
     }
 
     /**
-     * Set the OpenAI tools schema. Required for Qwen3-VL to generate
-     * structured tool calls when processing multimodal input.
-     */
-    public void setTools(JSONArray tools) {
-        this.tools = tools;
-    }
-
-    /**
      * Send a chat completion request and return the model response.
      * Per INV-LLM-01: never throws unchecked exceptions to the caller.
      *
+     * <p>The tools schema travels with the request (INV-LLM-11): nothing about it is retained on
+     * the client between invocations, so the caller decides per request which tools exist. This is
+     * what lets the wire schema track the screen — the router omits {@code type_text} where there
+     * is no input field, matching its system message. A schema fixed at construction could not,
+     * and the run-wide array it installed always advertised {@code type_text} while the prompt
+     * conditionally omitted it: the model was offered a tool the prompt said did not exist.
+     *
      * @param messages conversation messages (system, user, assistant roles)
+     * @param tools    OpenAI function-calling schema for this request. Required — Qwen3-VL returns
+     *                 empty content on multimodal input without it.
      * @return parsed response, or null if the request fails
      */
-    public ChatResponse chat(List<Message> messages) {
+    public ChatResponse chat(List<Message> messages, JSONArray tools) {
         lastErrorCause = null;
         try {
-            String requestBody = buildRequestBody(messages);
+            String requestBody = buildRequestBody(messages, tools);
             String responseBody = sendRequest(requestBody);
             return parseResponse(responseBody);
         } catch (Exception e) {
@@ -114,7 +114,7 @@ public class SglangClient {
     /**
      * Build the JSON request body for the chat completions endpoint.
      */
-    String buildRequestBody(List<Message> messages) {
+    String buildRequestBody(List<Message> messages, JSONArray tools) {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
@@ -152,8 +152,8 @@ public class SglangClient {
             }
             body.put("messages", messagesArray);
 
-            // OpenAI tools parameter — required for Qwen3-VL to generate
-            // structured tool calls when processing multimodal input
+            // OpenAI tools parameter — required for Qwen3-VL to generate structured tool calls when
+            // processing multimodal input, and supplied per request so it can track the screen.
             if (tools != null && tools.length() > 0) {
                 body.put("tools", tools);
             }

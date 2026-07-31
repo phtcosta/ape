@@ -57,6 +57,12 @@ public class LlmRouter {
     private final ApePromptBuilder   promptBuilder;
     private final java.util.Random   random;
 
+    // The two wire schemas, built once (INV-LLM-11). Which one a request carries is decided per
+    // call by the same hasInputField predicate that decides whether the system message lists
+    // type_text, so prompt and wire cannot disagree about which tools exist.
+    private final JSONArray toolsWithTypeText;
+    private final JSONArray toolsWithoutTypeText;
+
     // Telemetry counters
     private int totalCalls      = 0;
     private int totalTokensIn   = 0;
@@ -126,7 +132,8 @@ public class LlmRouter {
                 Config.llmTopK,
                 maxTokens,
                 Config.llmTimeoutMs);
-        this.client.setTools(buildToolsSchema());
+        this.toolsWithTypeText    = buildToolsSchema(true);
+        this.toolsWithoutTypeText = buildToolsSchema(false);
         this.breaker       = new LlmCircuitBreaker();
         this.screenshot    = new ScreenshotCapture();
         this.imageProcessor = new ImageProcessor();
@@ -155,8 +162,10 @@ public class LlmRouter {
     /**
      * Build the OpenAI tools schema for the VLM.
      * For ape_reasoning variant, adds optional "reasoning" param to click/long_click/type_text.
+     *
+     * @param includeTypeText whether the screen this schema will be sent for has an input field
      */
-    private static JSONArray buildToolsSchema() {
+    static JSONArray buildToolsSchema(boolean includeTypeText) {
         boolean addReasoning = ApePromptBuilder.VARIANT_APE_REASONING
                 .equals(ApePromptBuilder.getPromptVariant());
         try {
@@ -165,8 +174,10 @@ public class LlmRouter {
                     new String[]{"x", "y"}, new String[]{"integer", "integer"}, addReasoning));
             tools.put(buildTool("long_click", "Long press on an element",
                     new String[]{"x", "y"}, new String[]{"integer", "integer"}, addReasoning));
-            tools.put(buildTool("type_text", "Type text into an input field",
-                    new String[]{"x", "y", "text"}, new String[]{"integer", "integer", "string"}, addReasoning));
+            if (includeTypeText) {
+                tools.put(buildTool("type_text", "Type text into an input field",
+                        new String[]{"x", "y", "text"}, new String[]{"integer", "integer", "string"}, addReasoning));
+            }
             tools.put(buildTool("back", "Press the back button",
                     new String[]{}, new String[]{}, false));
             return tools;
@@ -367,8 +378,11 @@ public class LlmRouter {
                 }
             }
 
-            // Step 4: Call LLM (chat() returns null on failure per INV-LLM-01)
-            SglangClient.ChatResponse response = client.chat(messages);
+            // Step 4: Call LLM (chat() returns null on failure per INV-LLM-01). The wire schema is
+            // chosen by the same predicate that decided whether the system message lists type_text,
+            // so the model is never offered a tool the prompt says does not exist.
+            SglangClient.ChatResponse response = client.chat(messages,
+                    ApePromptBuilder.hasInputField(actions) ? toolsWithTypeText : toolsWithoutTypeText);
             if (response == null) {
                 breaker.recordFailure();
                 breakerTrips = breaker.getTripCount();

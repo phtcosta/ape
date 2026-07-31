@@ -777,8 +777,12 @@ public class ApePromptBuilder {
 
     /**
      * Returns true if any action in the list targets an input-type widget.
+     *
+     * <p>One predicate decides both halves of the same offer: whether the system message lists
+     * {@code type_text}, and whether the wire schema the router sends carries it. Static so the
+     * router can ask it without a builder instance — prompt and wire can then never disagree.
      */
-    private boolean hasInputField(List<ModelAction> actions) {
+    static boolean hasInputField(List<ModelAction> actions) {
         if (actions == null) return false;
         for (ModelAction action : actions) {
             if (action == null || !action.requireTarget()) continue;
@@ -802,7 +806,7 @@ public class ApePromptBuilder {
         } catch (Exception ignored) { return false; }
     }
 
-    private GUITreeNode safeGetResolvedNode(ModelAction action) {
+    private static GUITreeNode safeGetResolvedNode(ModelAction action) {
         try { return action.getResolvedNode(); } catch (Exception ignored) { return null; }
     }
 

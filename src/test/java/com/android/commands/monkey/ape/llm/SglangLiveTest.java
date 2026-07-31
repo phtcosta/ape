@@ -59,10 +59,8 @@ public class SglangLiveTest {
     private SglangClient buildClient() {
         String model = System.getenv("SGLANG_MODEL") != null
                 ? System.getenv("SGLANG_MODEL") : DEFAULT_MODEL;
-        SglangClient client = new SglangClient(sglangUrl, model,
+        return new SglangClient(sglangUrl, model,
                 TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS);
-        client.setTools(buildToolsSchema());
-        return client;
     }
 
     private static org.json.JSONArray buildToolsSchema() {
@@ -271,7 +269,7 @@ public class SglangLiveTest {
         List<SglangClient.Message> messages = buildRealPrompt(base64, widgets, hasEditText);
 
         long startMs = System.currentTimeMillis();
-        SglangClient.ChatResponse response = client.chat(messages);
+        SglangClient.ChatResponse response = client.chat(messages, buildToolsSchema());
         long elapsedMs = System.currentTimeMillis() - startMs;
 
         assertNotNull("ChatResponse must not be null for " + tupleId, response);
@@ -387,14 +385,13 @@ public class SglangLiveTest {
         SglangClient client = new SglangClient(
                 "http://localhost:9999/v1", DEFAULT_MODEL,
                 TEMPERATURE, TOP_P, TOP_K, MAX_TOKENS, TIMEOUT_MS);
-        client.setTools(buildToolsSchema());
 
         byte[] pngBytes = loadFixture("001.png");
         String base64 = processScreenshot(pngBytes);
         List<PromptIntegrationTest.WidgetInfo> widgets = loadWidgets("001");
         List<SglangClient.Message> messages = buildRealPrompt(base64, widgets, false);
 
-        String body = client.buildRequestBody(messages);
+        String body = client.buildRequestBody(messages, buildToolsSchema());
         org.json.JSONObject root = new org.json.JSONObject(body);
 
         assertTrue("must have 'tools' field", root.has("tools"));
