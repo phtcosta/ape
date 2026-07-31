@@ -16,6 +16,8 @@ Why five, and why no exception list — measured on the 84 `cal_a1` runs of the 
 
 **The sweep must be read on the keys the ban actually uses.** An earlier reading of this measurement keyed *both* result types by `(state, pixel)`, because the recorded trace does not carry the widget XPath. Only `llm_tap` uses that key, and `llm_tap` is 15.9% of the decision stream; the other 84.1% is `matched`, which ships with the looser `Name`-level key above and therefore bans more. Both columns below come from the same replay:
 
+Every share below is computed against a denominator of **6,500 LLM decisions** — the reconstructed decision stream of the 84 `cal_a1` traces (80 main runs at `timeout=300` plus 4 smoke runs at `timeout=90`). Main-only the denominator is 6,440, which moves the k=5 share to 27.8% and leaves it inside the ceiling.
+
 | k | refused, `(state,pixel)` key | share | **refused, shipped keys** | **share** | new states lost |
 |---|---|---|---|---|---|
 | 1 | 3,161 | 48.6% | 3,847 | **59.2%** | 44 → 80 |
@@ -221,9 +223,10 @@ The restart mechanism is unchanged: `StatefulAgent.onGraphStable()` still handle
 #### Scenario: edge snap on an elongated bar
 
 - **WHEN** `mapToModelAction(540, 180, "click", null, actions)` is called
-- **AND** a MODEL_CLICK bar has bounds `[0, 200, 1080, 350]` (point is 20 px above its top edge; centre distance would be ~487 px)
+- **AND** a MODEL_CLICK bar has bounds `[0, 200, 1080, 350]`, whose centre is `(540, 275)` — the point is 20 px above the bar's top edge but 95 px from its centre
 - **THEN** the point-to-rectangle distance SHALL be 20 (dx=0, dy=20)
 - **AND** with tolerance `max(50, 75) = 75` the bar SHALL be snapped and returned
+- **AND** the retired centre-distance rule would have rejected it (95 > 75), which is the regression this locks
 
 #### Scenario: click on an EditText becomes text entry
 
@@ -412,6 +415,60 @@ The `decisions` denominator for the `[APE-RV] LLM Decision ratio` line SHALL be 
 - **WHEN** an element's widget text contains `"line1\nline2"` and the `[APE-LLM-PROMPT] user_text=` dump is emitted
 - **THEN** the element's line in the dump SHALL contain `"line1 line2"` (flattened)
 - **AND** the number of element lines SHALL equal the number of elements
+
+---
+
+### Requirement: Action Selection Pipeline
+
+`LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` SHALL return `ModelAction` or `null`. Pipeline:
+
+1. `totalCalls++` — counts this attempt regardless of outcome (per INV-RTR-07).
+2. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → `breaker.recordFailure()`, log `[APE-RV] LLM screenshot capture failed, skipping LLM step`, emit `[APE-LLM-ERROR] step=<N> cause=screenshot activity=<current activity> detail=<stage>` (INV-RTR-20), return null. A persistent null-capture condition therefore opens the breaker and halts retries for the recovery window.
+4. `ImageProcessor.processScreenshot(pngBytes)` → base64 JPEG. If null → return null.
+5. `ApePromptBuilder.build(tree, state, actions, mopData, base64Image, recentActions)` → messages.
+6. `SglangClient.chat(messages, tools)` → `ChatResponse`, where `tools` is the per-request schema selected by `hasInputField(actions)` ("LlmRouter Lifecycle"). If IOException → `breaker.recordFailure()`, return null.
+7. `ToolCallParser.parse(response)` → `ParsedAction`. If null → `breaker.recordFailure()`, return null.
+8. `CoordinateNormalizer.normalize(parsedAction.x, parsedAction.y, deviceWidth, deviceHeight)` → pixel coords.
+9. `mapToModelAction(pixelX, pixelY, parsedAction.actionType, parsedAction.text, actions, state, deviceWidth, deviceHeight)` → matched widget `ModelAction`, synthesized `LlmTapAction`, or null.
+10. **Dead-pair ban check** (new): when step 9 returned a `matched` or `llm_tap` result, compute that result's ban key and consult the per-run dead-pair record ("Deterministic Dead-Pair Ban"). A dead key SHALL convert the outcome to `no_match` with `reason=dead_pair` and return null. The check runs here — after the mapping, before the return — so a banned decision is a *refused answer*, not a failed pipeline.
+11. `breaker.recordSuccess()` — including for a banned decision (INV-RTR-16: the pipeline succeeded; only its answer was refused).
+12. Outcome classification and return:
+    - A **matched widget** `ModelAction` → `result=matched`, return it.
+    - A synthesized `LlmTapAction` (type `MODEL_LLM_TAP`, off-tree case) → `result=llm_tap`, increment `llmTapCount`, return it.
+    - `null` → `result=no_match`, return null (SATA fallback). The `no_match` telemetry SHALL carry exactly one `reason` from the fixed set `degenerate` (parsed coordinate `(0,0)`), `boundary` (status/navigation band), or `dead_pair` (the mapped result resolved to a banned dead pair). The previous binary rule — `degenerate` when the coordinate is `(0,0)`, else `boundary` — is replaced, because it cannot express the third cause.
+
+**type_text handling**: When `mapToModelAction` finds a matching input widget and `parsedAction.text` is non-null, `selectAction()` calls `match.getResolvedNode().setInputText(text)` before returning. The caller receives a ready-to-execute ModelAction. A `type_text` action that matches no input widget returns null (`no_match`) — it is NOT converted to an off-tree tap, because a raw coordinate has no node to receive the text.
+
+**Memory cleanup**: Steps 3-9 SHALL be wrapped in a `try-finally` block that nulls out `pngBytes`, `base64Image`, and `messages`.
+
+**Error behavior**: Any step failure → log warning, record circuit breaker failure for network-related failures AND for a null screenshot, return null (SATA fallback). A dead-pair ban is NOT a step failure.
+
+#### Scenario: Full pipeline success
+
+- **WHEN** `selectAction()` is called with a valid GUITree and SGLang is responsive
+- **AND** the LLM returns `click` at normalized coordinates `(450, 300)`
+- **AND** the nearest ModelAction's GUITreeNode bounds contain the pixel coordinates
+- **THEN** that ModelAction SHALL be returned
+- **AND** the telemetry line SHALL carry `result=matched`
+- **AND** `breaker.recordSuccess()` SHALL be called
+
+#### Scenario: Off-tree element becomes a coordinate tap
+
+- **WHEN** the LLM pipeline succeeds with a `click` at in-bounds pixel `(600, 900)` on a 1080x1794 device
+- **AND** `mapToModelAction()` finds no widget containing the point and none within Euclidean tolerance
+- **THEN** `selectAction()` SHALL return an `LlmTapAction` of type `MODEL_LLM_TAP` carrying `(600, 900)`
+
+#### Scenario: banned result is refused at step 10, not failed
+
+- **WHEN** step 9 returns a `matched` result whose ban key is already dead in this run
+- **THEN** `selectAction()` SHALL return null with `result=no_match reason=dead_pair`
+- **AND** `breaker.recordSuccess()` SHALL still be called
+- **AND** `breaker.recordFailure()` SHALL NOT be called
+
+#### Scenario: no_match reason is always one of three
+
+- **WHEN** any decision in a run ends as `result=no_match`
+- **THEN** its `[APE-LLM-TEL]` line SHALL carry exactly one `reason` from `degenerate`, `boundary`, `dead_pair`
 
 ## Invariants
 

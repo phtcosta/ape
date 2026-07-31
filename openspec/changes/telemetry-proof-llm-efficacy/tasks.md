@@ -29,13 +29,13 @@ Group order is the deadline-driven priority order (decided 2026-07-29, source of
 
 ## 5. N1 — identifiers in prompt element lines (~1–5 LOC)
 
-- [ ] 5.1 `ApePromptBuilder` element rendering (`safeGetDisplayText` fallback, near `:464-469`/`:830-839`): when text AND content-description are empty, render the short resource-id (`id=<shortId>`); never an empty `""` identifier for a node that has any of the three (INV-PRM-05)
+- [ ] 5.1 `ApePromptBuilder`: extend the `safeGetDisplayText` fallback (`:830-839`) so that when text AND content-description are empty it renders the short resource-id (`id=<shortId>`); never an empty `""` identifier for a node that has any of the three (INV-PRM-05). The element lines that consume it are at `:381`, `:618` and `:688` — note `:464-469` is `buildWidgetMetadata` (the MOP marker suffix), a different function
 - [ ] 5.2 JVM unit tests: ImageView with only content-desc renders it; only resource-id renders `id=...`; all-empty node omits the identifier without breaking the line format
 
 ## 6. B4 — edge-based snapping (~6–10 LOC)
 
 - [ ] 6.1 `LlmRouter.mapToModelAction` snap loop (`LlmRouter.java:659-676`): replace centre distance with point-to-rectangle distance (clamped `dx`/`dy`, `hypot`); tolerance formula `max(floor, min(w,h)/2)` (`:666-669`) unchanged (INV-RTR-18). Note: `ape.llmSnapTolerancePx` (`Config.java:223`) stays as-is — raising it to 150 is an rv-android config decision gated on B1, out of this change
-- [ ] 6.2 JVM unit test: point 20 px above a 1080×150 bar's top edge snaps (edge distance 20 ≤ tolerance 75); the same point fails centre distance (~487 px) — regression-locks the geometry
+- [ ] 6.2 JVM unit test: point `(540,180)` 20 px above the top edge of a bar at `[0,200,1080,350]` snaps (edge distance 20 ≤ tolerance 75); the same point fails centre distance — the bar's centre is `(540,275)`, so the centre distance is **95 px** > 75 — regression-locks the geometry
 
 ## 7. A4 — serialize mop_reach (~3 LOC)
 
@@ -67,11 +67,11 @@ Group order is the deadline-driven priority order (decided 2026-07-29, source of
 - [ ] 11.2 `ScreenshotCapture` (`:40-57`): add the failure-stage seam (`surface_control` | `uiautomation`), reset per `capture()` (INV-LLM-12). Do NOT claim OutOfMemoryError is conflated — it is an `Error` and escapes
 - [ ] 11.3 JVM unit test on the seam reset semantics (pure logic)
 
-## 12. A10 — hoist the coverage dump to the front of the teardown chain (~10 LOC)
+## 12. A10 — hoist the coverage dump ahead of the model serialization (~10 LOC)
 
 **Revised 2026-07-31 (design D9): the shutdown hook is withdrawn.** It recovers zero on the measured failure path — the trace is the host's `adb` stdout, SIGKILLed and closed by the harness before any device-side signal is delivered, so the hook's output has nowhere to land. Ordering is the mechanism that works: 330 of the 338 lossy runs are cut inside `saveGraph`, three steps before the dump.
 
-- [ ] 12.1 `StatefulAgent.tearDown()`: add an overridable protected first step (default no-op) invoked **before** `safeStep("saveGraph", …)` at `:1699`; `SataAgent` overrides it with the `getCoverageTracker().dump(...)` call currently at `:290-291`, keeping its `mopReach` predicate (which only `SataAgent` can supply). Remove the call from its old position — one call site, no dual path (P3) (INV-COV-10)
+- [ ] 12.1 `StatefulAgent.tearDown()`: add an overridable protected step (default no-op) invoked **immediately before** `safeStep("saveGraph", …)` at `:1699`; `SataAgent` overrides it with the `getCoverageTracker().dump(...)` call currently at `:290-291`, keeping its `mopReach` predicate (which only `SataAgent` can supply). Remove the call from its old position — one call site, no dual path (P3) (INV-COV-10). Note the chain is `llmSummary → superTearDown → saveGraph → …` (`:1694-1704`), so this step lands **third, not first** — "before the model serialization" is the property that recovers the 333/338 and the one INV-COV-10 states
 - [ ] 12.2 No idempotence flag: with a single call site there is nothing to guard. Do NOT port the atomic once-per-run flag from the withdrawn design
 - [ ] 12.3 JVM unit test: the teardown chain invokes the dump before `saveGraph`; a subclass that does not override emits nothing and the chain still completes
 

@@ -2,7 +2,7 @@
 
 ## Context
 
-Source of record: `rvsec/rv-android/docs/20260729_propostas_melhorias_e3.md` §0 — every decision below was fixed by the project author on 2026-07-29; this design records the decisions and resolves only the implementation details the record left open. Hard window: implemented + tested by Friday 09:00 (max Saturday 09:00); the jar feeds the decisive run that decides whether the LLM stays in the design. Task order is the deadline-driven priority order; A3 is the designated cut.
+Source of record: `rvsec/rv-android/docs/20260729_propostas_melhorias_e3.md` §0 — every decision below was fixed by the project author on 2026-07-29, **except the items tagged `2026-07-31`, which are decided here on evidence the adversarial verification produced after that session**: D11 (O4) is new, D1's threshold was re-selected, and D9 withdraws the mechanism the record named for A10. Those three are flagged at their own headers and are the ones needing the author's ratification; everything else records a decision already made. This design resolves the implementation details the record left open. Hard window: implemented + tested by Friday 09:00 (max Saturday 09:00); the jar feeds the decisive run that decides whether the LLM stays in the design. Task order is the deadline-driven priority order; A3 is the designated cut.
 
 Current state (verified against this worktree, file:line):
 
@@ -40,7 +40,7 @@ No new components. One new in-router data structure (the dead-pair map), one new
 | `SataAgent` | A5 `pick_channel` at the pick sites; B7(i) trigger condition; A3 counterfactual at the 4 sites |
 | `ModelAction` | A6 `mopFrontierBoost` field + `MopFrontier` decision source; A8 `resolvedInfo` newline flattening; A5 `pickChannel` provenance |
 | `MopFrontierPass` | A6 writes `mopFrontierBoost` instead of accumulating into `wtgBoost` |
-| `UICoverageTracker` / `SataAgent` / `StatefulAgent` | A10 dump hoisted to the front of the teardown chain, via an overridable first step (D9) — no shutdown hook |
+| `UICoverageTracker` / `SataAgent` / `StatefulAgent` | A10 dump hoisted ahead of the model serialization, via an overridable step invoked before `saveGraph` (D9) — no shutdown hook |
 | `GUITreeNode` | O4 `patchedClickable` bit set by `patchGUITree`, read by the `[APE-STEP]` emitter |
 | `CLAUDE.md` | K10 `activityTriggerEnabled` default corrected to `true` |
 
@@ -48,7 +48,7 @@ No new components. One new in-router data structure (the dead-pair map), one new
 
 ### D1 — B1 ban design (FIXED by the author; details resolved here)
 
-- **Keys** (fixed): `llm_tap` result → `(state.getStateKey(), pixelX, pixelY)` with exact coordinate equality — the measured bucket D is exact-coordinate repetition (spatial collapse: `x∈{499,500}` is 36.7% of emissions). `matched` result → `(state.getStateKey(), widget-stable-id, eventType)` where the widget-stable-id is **`Name.toXPath()`** — the XPath of the action's abstract `Name`, which is the identity `UICoverageTracker.widgetId` (`UICoverageTracker.java:240-255`) and `SataAgent.mopPickKey` (`:815-827`) already use. **Never a list index** — index anchoring is the autopsy-catalogued bug class.
+- **Keys** (fixed): `llm_tap` result → `(state.getStateKey(), pixelX, pixelY)` with exact coordinate equality — the measured bucket D is exact-coordinate repetition (spatial collapse: `x∈{499,500}` is 36.7% of emissions). `matched` result → `(state.getStateKey(), widget-stable-id, eventType)` where the widget-stable-id is **`Name.toXPath()`** — the XPath of the action's abstract `Name`, which is the identity `UICoverageTracker.widgetId` (`UICoverageTracker.java:240-250`) and `SataAgent.mopPickKey` (`:815-827`) already use. **Never a list index** — index anchoring is the autopsy-catalogued bug class.
 
   *Correction, 2026-07-31*: earlier drafts of this line said the id "reuses the existing convention `GUITreeNode.toXPath()`". **`GUITreeNode` has no `toXPath` method** (`grep -c toXPath GUITreeNode.java` → 0); the only `toXPath()` in the tree is on `Name` (`Name.java:22`, `AbstractName.java:55`). The distinction is not cosmetic and must be stated, because it is what makes the ban coarser than a physical widget: a `Name` is an abstraction that resolves to `RN` nodes (`ModelAction.resolvedNodes`, `:136-143`), and **16.3% of targeted steps have `RN>1`** (23,441 of 144,174). **Banning one pair therefore withdraws the action from all `RN` widgets that share the `Name` in that state.** This is accepted for the decisive run — the alternative anchors were reviewed and none is safer (a node-derived key `(activity, className, resourceId, actionType)` is *coarser* still, colliding on ≥18.3% of anchors and 36.3% of those whose `resourceId` is empty, which is 57.6% of clicks) — but it is a known cost, not an invisible one, and the falsification gate must be read with it in mind.
 - **Death rule** (author-fixed range k=2–3; **k=5 selected on re-measurement, 2026-07-31**): a pair dies after **five** executions whose recorded outcome has `new_state=false`, uniform across widget classes, with no exemption list. A `new_state=true` execution neither counts toward death nor resets the accumulated count.
@@ -67,7 +67,7 @@ No new components. One new in-router data structure (the dead-pair map), one new
 
   The swept-key column reproduces the original sweep cell for cell, which is what establishes that the sweep itself was executed correctly — it was simply run on a partition of the space that 84.1% of the ban does not use. Under the shipped keys, **k=3 refuses 37.6%**, which violates the ceiling that was the stated reason for preferring it over k=1 (see reason 1 below); **k=5 refuses 27.5%** and restores it, at the cost of 9 new states lost instead of 8.
 
-  *Denominator note*: the "6,500 decisions" of the original sweep is only reachable with the 4 `cal_a1` smoke runs included (84 traces = 80 main at `timeout=300` + 4 smoke at `timeout=90`). Main-only: 6,440 decisions, k=5 → 27.4% shipped. The difference is under 0.2 pp and changes no conclusion, but the denominator label is corrected here.
+  *Denominator note*: **the table's denominator is 6,500 decisions**, and it is only reachable with the 4 `cal_a1` smoke runs included (84 traces = 80 main at `timeout=300` + 4 smoke at `timeout=90`). The main-only denominator is 6,440. Holding the shipped-key numerator at 1,788, the main-only share is 27.8% rather than 27.5% — a shift of 0.3 pp that leaves k=5 inside the 30% ceiling and changes no conclusion. (A main-only *numerator* was not re-derived; the figure above is the bound obtained by holding it fixed, which is the conservative direction.) The denominator label is corrected here because every share in the table is computed against it.
 
   Two reasons, one evidential and one about the experiment:
 
@@ -80,7 +80,7 @@ No new components. One new in-router data structure (the dead-pair map), one new
 - **Telemetry**: the banned decision emits `[APE-LLM-TEL] result=no_match reason=dead_pair` (the `reason` field already discriminates `no_match` causes) and a `dead_pair=<N>` overlay counter on the summary line — bucket D becomes countable from the summary alone, which the falsification gate requires.
 - **Never feeds the breaker** (fixed): the ban is a successful LLM pipeline whose answer we refuse — `breaker.recordSuccess()` still runs; `recordFailure()` never. A ban storm must not disable the LLM.
 - **Memory**: per-run, in-memory `HashMap` in the router; no persistence, no cross-run state, no size cap needed (bounded by executed LLM decisions per run).
-- **Falsification gate** (fixed): bucket D must fall to ≈0 in the decisive-run telemetry BEFORE any new-state gain is credited to B1; if D≈0 and new states do not rise, B1 is judged ineffective. The +28.0% projection is a projection [P], not a promise.
+- **Falsification gate** (fixed): bucket D must fall to ≈0 in the decisive-run telemetry BEFORE any new-state gain is credited to B1; if D≈0 and new states do not rise, B1 is judged ineffective. The projected uplift — per-decision yield ≈11.4% → ≈14.7%, i.e. **+28.9% relative** — is a projection [P], not a promise.
 
 ### D2 — A3 RNG isolation (mandatory dedicated test)
 
@@ -118,7 +118,9 @@ Flattening happens where widget-derived text enters a telemetry line: `ModelActi
 
 **The mechanism that does work is ordering.** The dump is currently the last instruction of the teardown chain and `saveGraph` is the third; 330 of the 338 lossy runs are cut inside `saveGraph`, and 3 more are cut after it but before the dump. Emitting the dump **first** — before `safeStep("saveGraph", …)` at `StatefulAgent.java:1699` — recovers **333 of 338 (98.5%)**. The 5 it does not recover never reached teardown at all (they are exactly the 5 LLM-arm runs with `n_summary_lines==0`), and no teardown-side mechanism can reach those.
 
-Implementation note, because it is not literally one line: the dump's predicate argument (`mopReach`) is supplied by `SataAgent` (`:288-291`), while the chain lives in `StatefulAgent.tearDown()`. The hoist is realized as an overridable first step of the chain (`StatefulAgent` calls a protected no-op that `SataAgent` overrides with its dump call), not by moving the `SataAgent` line upward into a class that cannot see it.
+Implementation note, because it is not literally one line: the dump's predicate argument (`mopReach`) is supplied by `SataAgent` (`:289-291`), while the chain lives in `StatefulAgent.tearDown()`. The hoist is realized as an overridable step of the chain invoked immediately before `saveGraph` (`StatefulAgent` calls a protected no-op that `SataAgent` overrides with its dump call), not by moving the `SataAgent` line upward into a class that cannot see it.
+
+**"Before the model serialization", not "first in the chain".** The chain is `llmSummary → superTearDown → saveGraph → …` (`StatefulAgent.java:1694-1704`), so the hoisted step lands third, not first. That is the property that recovers the 333/338 — the losses are inside `saveGraph` — and it is the property the unit test and smoke gate (e) actually assert. The requirement and INV-COV-10 are stated on that boundary rather than on chain position, so nothing claims a guarantee that nothing checks.
 
 **Partial dumps are now expected and must be tolerated.** 3 of the 462 runs that *do* dump are truncated mid-`UICOV-ACT`. Hoisting the dump does not make its emission atomic — it only moves it before the expensive write. Any consumer (the rv-android-side parser) SHALL treat a truncated final line as a partial dump, not as a corrupt run.
 
@@ -140,13 +142,13 @@ Three boundaries, stated so the field is not over-read:
 - **`RN>1` applies here too**: the bit describes the *resolved* node the line prints, and a `Name` may resolve to several. The field is exact for the printed node and a sample for the others.
 - **It does not make the patch a controllable factor.** `Config.patchGUITree` (`:90`, default `true`) is absent from `APERV_PROPERTY_MAPPING` and from the `apePureMode` kill-switch registry, so no arm can toggle it — a fact independently confirmed on the rv-android side, where `_push_properties()` silently drops unmapped keys. O4 characterizes an invariant of the substrate; it does not turn it into a variable. Making it one is out of scope here and would be an rv-android change.
 
-Why it is worth 10 LOC now: without the bit the quantity is only reachable through a `(class, resource-id)` **type** proxy that bounds it at [19.4%; 36.0%], and that bound is itself conditional on the patch log being complete — 64 of the 800 `aperv` runs carry 6,561 `MODEL_CLICK` steps and **zero** `Patching child node` lines, which is enough to move the upper end by +6.3 pp if those runs simply lost their log lines. One bit removes both the proxy and the condition.
+Why it is worth 10 LOC now: without the bit the quantity is only reachable through a `(class, resource-id)` **type** proxy, and that proxy does not yield an interval. **36.0% is a point estimate at type level, and 19.4% rests on a different denominator — no lower bound above 0 is derivable from this corpus**, so `[19.4%; 36.0%]` must not be read as a confidence interval or as a range the true value is known to lie in. The estimate is additionally conditional on the patch log being complete — 64 of the 800 `aperv` runs carry 6,561 `MODEL_CLICK` steps and **zero** `Patching child node` lines, which is enough to move the type-level estimate by +6.3 pp if those runs simply lost their log lines. One bit removes both the proxy and the condition.
 
 ## Mapping: Spec → Implementation → Test
 
 | Requirement / Invariant | Implementation | Test |
 |-------------|---------------|------|
-| INV-RTR-15/16 dead-pair ban (B1) | `LlmRouter` ban map + check; `StatefulAgent` feedback | JVM unit: key identity, survives 2 dead executions and dies on the 3rd, threshold uniform across widget classes, `new_state=true` neither kills nor resets, breaker untouched; smoke gate (b) |
+| INV-RTR-15/16 dead-pair ban (B1) | `LlmRouter` ban map + check; `StatefulAgent` feedback | JVM unit: key identity, survives 4 dead executions and dies on the 5th, threshold uniform across widget classes, `new_state=true` neither kills nor resets, breaker untouched; smoke gate (b) |
 | INV-RTR-17 ActionType coherence (B6(i)) | `mapToModelAction` containment + euclidean filters | JVM unit: click answer never returns non-CLICK action |
 | INV-LLM-11 per-request tools (B6(iii)) | `SglangClient.chat(messages, tools)`; `LlmRouter` schema selection | JVM unit: request body tools == supplied schema; no input field → no type_text |
 | fixTextEdit (B6(iv)) | `mapToModelAction` click-on-input conversion | JVM unit where mockable; smoke observation |
@@ -157,7 +159,7 @@ Why it is worth 10 LOC now: without the bit the quantity is only reachable throu
 | INV-ARCH-10 mopFrontierBoost (A6) | `ModelAction`, `MopFrontierPass`, `attributeByLargestBoost` | JVM unit: no wtgBoost write from MopFrontierPass; attribution precedence |
 | INV-SEL-07 single-line [APE-STEP] (A8) | `ModelAction.resolvedInfo`, prompt display text | JVM unit: text with `\n` yields one-line resolvedInfo; smoke gate (c) zero broken lines |
 | INV-RTR-20 screenshot error line (A7) | `LlmRouter:320-332`, `ScreenshotCapture` seam | Smoke gate (d) on freeotpplus |
-| INV-COV-10 dump ordering (A10) | dump hoisted ahead of `saveGraph` via the overridable first teardown step | JVM unit: the chain calls the dump before `saveGraph`; smoke gate (e): dump precedes `Save graph data` in the trace |
+| INV-COV-10 dump ordering (A10) | dump hoisted ahead of `saveGraph` via the overridable pre-`saveGraph` teardown step | JVM unit: the chain calls the dump before `saveGraph`; smoke gate (e): dump precedes `Save graph data` in the trace |
 | INV-SEL-10 patch provenance (O4) | `GUITreeNode.patchedClickable` set in `patchGUITree`; `[APE-STEP]` field | JVM unit: patched child reports 1, natively clickable node reports 0, parent demoted at `:295` reports 1; smoke gate (c) |
 | INV-RTR-19 stagnation re-arm (B7(i)) | trigger condition + fired flag | JVM unit on the predicate (pure logic) |
 | INV-SEL-08/09 counterfactual (A3) | 4 pick sites, draw replay | Dedicated JVM test: seed-identical sequence with A3 on/off; smoke gate (f) |
@@ -194,7 +196,7 @@ Why it is worth 10 LOC now: without the bit the quantity is only reachable throu
 - [A4's `activity_has_mop` is constant 1 in part of the corpus, so the field cannot discriminate there] → measured on the 181-APK corpus: in ~30% of Compose apps every activity carries `reachesTarget=true`, because transitive reachability saturates through the Compose recomposition machinery (96.1% of `@Composable` methods reach a JCA target, against 28.8% of non-composable ones). The field is still correct and still required — it is what makes the saturation visible instead of invisible — but a null Δ in that stratum is absence of contrast in the instrument, not evidence against the hypothesis. The analysis stratifies by UI toolkit; the detector and the full measurement are recorded in `rvsec/rv-android/docs/20260730_compose_gator_substrato_estatico.md` §4-§5.2, and the stratification is pre-registered in the sister change's design.
 - [A6 changes `decision_source` distributions mid-experiment-series] → intended: the old WTG counts were conflated; offline analysis notes the label change at this jar version (jar provenance stamp).
 - [A3 touches all 4 pick sites days before the deadline] → it is the designated cut; the dedicated RNG test is the merge gate; if it slips, everything else ships without it.
-- [Hoisting the dump delays `saveGraph` and loses the model file instead] → the dump is ~31 lines per run (median, 12,623 `UICOV` + 1,855 `UICOV-ACT` over 462 runs) against a `/sdcard` object serialization; it displaces `saveGraph` by a negligible margin. The trade is also asymmetric in the right direction: `sataModel.obj` has no consumer in the analysis path, the coverage dump does.
+- [Hoisting the dump delays `saveGraph` and loses the model file instead] → the dump is ~31 lines per run (mean: 12,623 `UICOV` + 1,855 `UICOV-ACT` over 462 runs) against a `/sdcard` object serialization; it displaces `saveGraph` by a negligible margin. The trade is also asymmetric in the right direction: `sataModel.obj` has no consumer in the analysis path, the coverage dump does.
 - [A10's remaining 1.5% is read as a defect of the fix] → the 5 unrecovered runs never reached teardown at all. No teardown-side mechanism reaches them, and the spec says so rather than promising resilience it cannot deliver.
 
 ## Testing Strategy
@@ -207,4 +209,10 @@ Why it is worth 10 LOC now: without the bit the quantity is only reachable throu
 
 ## Open Questions
 
-None blocking — all scope decisions are recorded as FINAL in the source of record. The decisive-run LLM dose is explicitly an open decision on the rv-android side and does not gate this change.
+Three items in this change are **not** in the source of record and await the author's ratification. None blocks starting implementation — each is written down and internally coherent — but each is a place where this change decided something §0 did not:
+
+- **D1's threshold.** §0 fixes B1 as "one-strike com exceções por tipo (Switch/CheckBox/Radio cap k=2–3; EditText isento)". This change ships k=5 uniform with no exemption list, on a re-measurement over the shipped keys. The uniform threshold dominates the list for the stateful trio (k=2 granted → 5 granted), but **it does not cover EditText, which §0 exempted by name and which k=5 bans**. The criterion invoked to move k — refusal under 30% — is stated in this design, not in §0.
+- **D9's mechanism.** §0 names "shutdown hook idempotente"; this change withdraws it and replaces it with teardown reordering, and deletes the idempotence flag. The evidence that the hook recovers zero is mechanical and checkable, and §0's own figure for this item (165/880) is superseded. What is a scoping call rather than a refutation: a **device-side sink** would deliver the guarantee §0 asked for and is deliberately out of budget (see D9's closing note).
+- **D11 (O4)** has no §0 entry at all; it is decided here on the verification's evidence.
+
+The decisive-run LLM dose is an rv-android decision (settled there as `llm_percentage=0.7`, sister change design D8) and does not gate this change.

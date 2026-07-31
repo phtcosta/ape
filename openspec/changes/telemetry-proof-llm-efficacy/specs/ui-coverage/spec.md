@@ -2,9 +2,11 @@
 
 ### Requirement: Coverage Dump Emitted Before Model Serialization
 
-The coverage dump (the per-state `[APE-RV] UICOV` and per-Activity `[APE-RV] UICOV-ACT` emissions specified by "UICoverageTracker — Coverage Dump" and "UICoverageTracker — Per-Activity Coverage Dump") SHALL be emitted as the **first** step of the agent teardown chain, before the model serialization step (`saveGraph`) and before every other teardown step that writes to the device filesystem.
+The coverage dump (the per-state `[APE-RV] UICOV` and per-Activity `[APE-RV] UICOV-ACT` emissions specified by "UICoverageTracker — Coverage Dump" and "UICoverageTracker — Per-Activity Coverage Dump") SHALL be emitted **before the model serialization step (`saveGraph`)** of the agent teardown chain.
 
-Today it is the **last** step: `StatefulAgent.tearDown()` runs `llmSummary → superTearDown → saveGraph → saveActionHistory → actionCounters → activityNodes → namingDump → modelCounters`, and only then does `SataAgent.tearDown()` reach `getCoverageTracker().dump(...)`. The most fragile item is emitted after the most expensive write.
+The boundary is the model serialization, not chain position. The chain is `llmSummary → superTearDown → saveGraph → saveActionHistory → actionCounters → activityNodes → namingDump → modelCounters` (`StatefulAgent.java:1694-1704`), so the hoisted emission lands third; the two steps that precede it write nothing to `/sdcard`. Stating the requirement on the `saveGraph` boundary keeps it aligned with what recovers the lost dumps and with what the tests actually assert — a requirement written on chain position would promise a property nothing verifies.
+
+Today it is the **last** step: `StatefulAgent.tearDown()` runs the eight-step chain above, and only then does `SataAgent.tearDown()` reach `getCoverageTracker().dump(...)`. The most fragile item is emitted after the most expensive write.
 
 The consequence is measured: **338 of the 800 `aperv` calibration runs (42.3%) carry no dump**, and **330 of those 338 end on the line `Save graph data to /sdcard/sata-…`** — cut *during* the `/sdcard` serialization, three steps before the dump would have run. A further 3 are cut after `saveGraph` but before the dump. Emitting the dump first recovers **333 of the 338**.
 
@@ -14,7 +16,7 @@ The consequence is measured: **338 of the 800 `aperv` calibration runs (42.3%) c
 
 **Partial dumps are valid output.** Hoisting the emission does not make it atomic: 3 of the 462 runs that do dump today are truncated mid-`UICOV-ACT`. A consumer SHALL treat a truncated final line as a partial dump of an otherwise valid run, not as a corrupt run, and SHALL NOT discard the complete lines that precede it.
 
-The dump remains read-only with respect to tracker state (INV-COV-07). Because there is exactly one call site, no idempotence flag is required.
+The dump remains read-only with respect to tracker state (INV-COV-07). Because the teardown dump has exactly one call site, no idempotence flag is required. This says nothing about the optional per-state emission at LRU eviction that "UICoverageTracker — Coverage Dump" permits (`MAY additionally emit one line for a state at the moment that state is evicted`): that emission is a distinct, mid-run, per-state path, it is not part of the teardown dump this requirement orders, and it is not currently implemented.
 
 #### Scenario: dump precedes model serialization
 
@@ -40,4 +42,4 @@ The dump remains read-only with respect to tracker state (INV-COV-07). Because t
 
 ## Invariants
 
-- **INV-COV-10**: The coverage dump SHALL be emitted exactly once per run, from the first step of the teardown chain, strictly before the model-serialization step; the emission SHALL be read-only (INV-COV-07 applies). No second emission path exists, so no cross-path idempotence guard is required.
+- **INV-COV-10**: The teardown coverage dump SHALL be emitted exactly once per run, strictly before the model-serialization step (`saveGraph`) of the teardown chain; the emission SHALL be read-only (INV-COV-07 applies). It has exactly one call site, so no cross-path idempotence guard is required. This invariant governs the teardown dump only; it makes no claim about the optional per-state emission at LRU eviction that INV-COV-07 and "UICoverageTracker — Coverage Dump" permit.

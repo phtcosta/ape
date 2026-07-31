@@ -42,7 +42,7 @@ The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`
   [1] MENU (key)
   [2] Button "Encrypt" @(185,117) [DM] (v:0)
   [3] EditText "Password" hint="Enter password" @(208,169) (v:3)
-  [4] TextView "Help" @(231,219) [M] (v:1)
+  [4] TextView "Help" @(231,218) [M] (v:1)
   ```
 
 #### Scenario: ImageView with only a content-description gets an identifier
@@ -71,7 +71,7 @@ The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`
 #### Scenario: Widget text truncation
 
 - **WHEN** a widget's text is `"This is a very long label that exceeds fifty characters in total length"`
-- **THEN** the displayed text SHALL be truncated to 50 characters: `"This is a very long label that exceeds fifty char..."`
+- **THEN** the displayed text SHALL be the first 47 characters followed by an ellipsis, 50 characters in total: `"This is a very long label that exceeds fifty ch..."`
 
 #### Scenario: multi-line widget text flattened
 
