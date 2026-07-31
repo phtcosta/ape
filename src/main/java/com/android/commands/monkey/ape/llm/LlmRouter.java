@@ -345,9 +345,21 @@ public class LlmRouter {
                 breaker.recordFailure();
                 breakerTrips = breaker.getTripCount();
                 Logger.println("[APE-RV] LLM screenshot capture failed, skipping LLM step");
-                // Screenshot failure is a peer cause counter (INV-RTR-11): it keeps its existing
-                // line above and emits no [APE-LLM-ERROR].
+                // Screenshot failure is a peer cause counter (INV-RTR-11), and now an attributable
+                // one (INV-RTR-20). The branch used to be deliberately silent, and that silence hid
+                // the LLM arm's dominant failure mode: 147 capture failures concentrated in 4
+                // FLAG_SECURE APKs, co-located with 100% of the 57 breaker trips — the breaker
+                // silently disabled the LLM with nothing in the trace to attribute it to. The
+                // activity name is what makes per-app degradation countable offline.
                 screenshotFailedCount++;
+                String activity = "unknown";
+                try {
+                    if (state != null) activity = state.getActivity();
+                } catch (Exception ignored) { /* keep the placeholder */ }
+                String stage = screenshot.getLastFailureStage();
+                Logger.println("[APE-LLM-ERROR] step=" + step + " cause=screenshot"
+                        + " activity=" + activity
+                        + " detail=" + (stage != null ? stage : "unknown"));
                 return null;
             }
 

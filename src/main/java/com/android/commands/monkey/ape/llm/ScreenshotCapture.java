@@ -18,6 +18,16 @@ import java.lang.reflect.Method;
  */
 public class ScreenshotCapture {
 
+    /** Failure stages named by the cause seam. */
+    static final String STAGE_SURFACE_CONTROL = "surface_control";
+    static final String STAGE_UIAUTOMATION = "uiautomation";
+
+    // The stage that failed on the most recent capture() call, or null when it succeeded. Same seam
+    // pattern as SglangClient.getLastErrorCause (INV-LLM-12): reset at the start of every
+    // invocation, so a stale stage can never be attributed to a later call, and read by the router
+    // between the null return and the next call.
+    private String lastFailureStage;
+
     /**
      * Capture a screenshot and return PNG bytes.
      *
@@ -26,9 +36,32 @@ public class ScreenshotCapture {
      * @return PNG byte array, or null if capture failed
      */
     public byte[] capture(int width, int height) {
+        lastFailureStage = null;
         byte[] result = captureViaSurfaceControl(width, height);
         if (result != null) return result;
-        return captureViaUiAutomation();
+        lastFailureStage = STAGE_SURFACE_CONTROL;
+        result = captureViaUiAutomation();
+        if (result != null) {
+            lastFailureStage = null;
+            return result;
+        }
+        lastFailureStage = STAGE_UIAUTOMATION;
+        return null;
+    }
+
+    /**
+     * The capture stage that failed on the last {@link #capture} call, or null when it succeeded.
+     *
+     * <p>Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unavailability
+     * and permission denial without distinguishing them, so this names the failing <b>stage</b>,
+     * not the OS-level reason. Joining the stage and the foreground activity — which the router's
+     * {@code [APE-LLM-ERROR] cause=screenshot} line carries — with the known FLAG_SECURE APK list
+     * is an offline step. {@code OutOfMemoryError} is an {@code Error} and escapes the
+     * {@code catch (Exception)} blocks below: it is not folded into the null return, and this seam
+     * makes no claim about it.
+     */
+    String getLastFailureStage() {
+        return lastFailureStage;
     }
 
     /**

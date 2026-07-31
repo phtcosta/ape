@@ -64,9 +64,9 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 11. A7 (jar part) — screenshot-failure telemetry (1–10 LOC)
 
-- [ ] 11.1 `LlmRouter.java:320-332`: emit `[APE-LLM-ERROR] step=<N> cause=screenshot activity=<current activity> detail=<stage>` at the null-capture branch (removing the intentional silence noted at `:328-329`); breaker semantics and `screenshotFailedCount` unchanged (INV-RTR-20)
-- [ ] 11.2 `ScreenshotCapture` (`:40-57`): add the failure-stage seam (`surface_control` | `uiautomation`), reset per `capture()` (INV-LLM-12). Do NOT claim OutOfMemoryError is conflated — it is an `Error` and escapes
-- [ ] 11.3 JVM unit test on the seam reset semantics (pure logic)
+- [x] 11.1 `LlmRouter.java:320-332`: emit `[APE-LLM-ERROR] step=<N> cause=screenshot activity=<current activity> detail=<stage>` at the null-capture branch (removing the intentional silence noted at `:328-329`); breaker semantics and `screenshotFailedCount` unchanged (INV-RTR-20)
+- [x] 11.2 `ScreenshotCapture` (`:40-57`): add the failure-stage seam (`surface_control` | `uiautomation`), reset per `capture()` (INV-LLM-12). Do NOT claim OutOfMemoryError is conflated — it is an `Error` and escapes
+- [x] 11.3 JVM unit test on the seam reset semantics (pure logic)
 
 ## 12. A10 — hoist the coverage dump ahead of the model serialization (~10 LOC)
 
