@@ -84,12 +84,12 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 14. B7(i) — make the stagnation trigger fire (~5 LOC)
 
-- [ ] 14.1 Replace exact equality with `>=` + per-episode fired flag at both sites: `SataAgent.java:436` and `LlmRouter.shouldRouteStagnation` (`LlmRouter.java:224-228`); flag re-arms when `graphStableCounter` resets to 0 (`StatefulAgent.java:1334-1345`) (INV-RTR-19)
-- [ ] 14.2 JVM unit test on the predicate: fires once per episode; midpoint jump-over still fires; re-arms after a new edge
+- [x] 14.1 Replace exact equality with `>=` + per-episode fired flag at both sites: `SataAgent.java:436` and `LlmRouter.shouldRouteStagnation` (`LlmRouter.java:224-228`); flag re-arms when `graphStableCounter` resets to 0 (`StatefulAgent.java:1334-1345`) (INV-RTR-19)
+- [x] 14.2 JVM unit test on the predicate: fires once per episode; midpoint jump-over still fires; re-arms after a new edge
 
 ## 15. K10 — docs fix
 
-- [ ] 15.1 `CLAUDE.md` (~line 128): correct `activityTriggerEnabled` default to `true` (matches `Config.java:165`); state current behavior only, no history (P4)
+- [x] 15.1 `CLAUDE.md` (~line 128): correct `activityTriggerEnabled` default to `true` (matches `Config.java:165`); state current behavior only, no history (P4)
 
 ## 16. A3 — per-step counterfactual (~50–80 LOC + dedicated test)
 

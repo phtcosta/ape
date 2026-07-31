@@ -237,8 +237,46 @@ public class LlmRouterTest {
     @Test
     public void shouldRouteStagnation_negativeCounter_returnsFalse() {
         LlmRouter router = new LlmRouter(new java.util.Random(42));
-        // Negative graphStableCounter cannot equal graphStableRestartThreshold / 2
-        assertFalse(router.shouldRouteStagnation(-1));
+        // A negative graphStableCounter is below any midpoint.
+        assertFalse(router.shouldRouteStagnation(-1, false));
+    }
+
+    // -------------------------------------------------------------------------
+    // B7(i): the stagnation trigger predicate (INV-RTR-19)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void stagnationTriggerFiresAtTheMidpoint() {
+        assertTrue(LlmRouter.stagnationMidpointReached(100, 200, false));
+    }
+
+    @Test
+    public void stagnationTriggerFiresWhenTheMidpointIsJumpedOver() {
+        // The retired condition was exact equality, so a counter that went from 99 to 101 without
+        // ever being checked at 100 lost the episode's only chance. This is the defect >= closes.
+        assertTrue(LlmRouter.stagnationMidpointReached(101, 200, false));
+        assertTrue(LlmRouter.stagnationMidpointReached(150, 200, false));
+    }
+
+    @Test
+    public void stagnationTriggerStaysSilentBelowTheMidpoint() {
+        assertFalse(LlmRouter.stagnationMidpointReached(99, 200, false));
+        assertFalse(LlmRouter.stagnationMidpointReached(0, 200, false));
+    }
+
+    @Test
+    public void stagnationTriggerFiresOnlyOncePerEpisode() {
+        // Once the episode's shot is spent, no later value of the counter fires it again.
+        assertFalse(LlmRouter.stagnationMidpointReached(100, 200, true));
+        assertFalse(LlmRouter.stagnationMidpointReached(199, 200, true));
+    }
+
+    @Test
+    public void stagnationTriggerReArmsAfterANewEdge() {
+        // The agent clears the flag where a new edge resets graphStableCounter to 0; the next
+        // episode's climb back to the midpoint fires again.
+        assertFalse(LlmRouter.stagnationMidpointReached(100, 200, true));
+        assertTrue("a re-armed episode fires again", LlmRouter.stagnationMidpointReached(100, 200, false));
     }
 
     // -------------------------------------------------------------------------

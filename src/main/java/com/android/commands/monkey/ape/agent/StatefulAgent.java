@@ -123,6 +123,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     private int lastDecisionStep = -1;
     private ModelAction lastDecisionAction = null;
 
+    // Per-episode single shot of the LLM stagnation hook (INV-RTR-19). Set when the hook fires,
+    // cleared when a new edge resets graphStableCounter to 0.
+    protected boolean stagnationHookFired = false;
+
     protected State newState;
     protected GUITree newGUITree;
     protected ModelAction newAction;
@@ -1397,6 +1401,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         case NEW_ACTION:
         case NEW_ACTION_TARGET:
             graphStableCounter = 0;
+            // A new edge ends the stagnation episode, so the LLM stagnation hook re-arms here and
+            // only here (INV-RTR-19). The hook's own reset of the counter after a successful escape
+            // does not re-arm it: no new edge was observed, so it is the same episode.
+            stagnationHookFired = false;
             break;
         case EXISTING:
             graphStableCounter++;

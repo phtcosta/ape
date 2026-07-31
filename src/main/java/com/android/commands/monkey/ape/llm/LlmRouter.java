@@ -30,8 +30,9 @@ import java.util.Map;
  * <ul>
  *   <li>{@link #shouldRouteNewState} — true when the agent just entered a new
  *       state and LLM routing is configured for that trigger.</li>
- *   <li>{@link #shouldRouteStagnation} — true when the graph-stable counter
- *       reaches the half-threshold, signalling exploration stagnation.</li>
+ *   <li>{@link #shouldRouteStagnation} — true when the graph-stable counter has reached the
+ *       half-threshold and the episode's single shot is still unspent, signalling exploration
+ *       stagnation.</li>
  * </ul>
  *
  * <p>The main method {@link #selectAction} runs the full pipeline:
@@ -236,16 +237,36 @@ public class LlmRouter {
     }
 
     /**
-     * Returns true when an exploration-stagnation LLM call should be attempted.
-     * Fires at the half-threshold so the LLM can nudge the agent before a full restart.
+     * Returns true when an exploration-stagnation LLM call should be attempted: at or past the
+     * half-threshold, once per stagnation episode, so the LLM can nudge the agent before a full
+     * restart.
      *
      * @param graphStableCounter current value of the agent's graphStableCounter field
+     * @param firedThisEpisode   whether the hook already fired in the current stagnation episode;
+     *                           the agent owns the flag, since only it sees the counter reset that
+     *                           re-arms it
      */
-    public boolean shouldRouteStagnation(int graphStableCounter) {
-        return graphStableCounter == Config.graphStableRestartThreshold / 2
+    public boolean shouldRouteStagnation(int graphStableCounter, boolean firedThisEpisode) {
+        return stagnationMidpointReached(graphStableCounter, Config.graphStableRestartThreshold,
+                        firedThisEpisode)
                 && Config.llmOnStagnation
                 && breakerAllows()
 ;
+    }
+
+    /**
+     * The stagnation trigger predicate (INV-RTR-19): at or past the midpoint, with the episode's
+     * flag still armed.
+     *
+     * <p>The retired condition was exact equality with {@code threshold / 2}. Since the counter
+     * resets to 0 on every new edge, that gave each stagnation episode a one-step window: any step
+     * where the counter jumped past the midpoint, or was reset just before it, silently cost the
+     * episode its only chance, and the hook virtually never fired. {@code >=} closes the window and
+     * the flag preserves the original single-shot intent. Pure, so both halves are unit-testable.
+     */
+    static boolean stagnationMidpointReached(int graphStableCounter, int threshold,
+                                             boolean firedThisEpisode) {
+        return !firedThisEpisode && graphStableCounter >= threshold / 2;
     }
 
     /**

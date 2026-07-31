@@ -457,8 +457,12 @@ public class SataAgent extends StatefulAgent {
         // mechanisms no longer share any firing point. cmpft5 runs the LLM OFF, so there is no
         // interaction; an enabled LLM hook here still runs before the launcher block below.
         if (actionBufferSize() == 0 && newState.getActions().size() > 2
-                && graphStableCounter == graphStableRestartThreshold / 2
-                && _llmRouter != null && _llmRouter.shouldRouteStagnation(graphStableCounter)) {
+                && _llmRouter != null
+                && _llmRouter.shouldRouteStagnation(graphStableCounter, stagnationHookFired)) {
+            // The episode's single shot is spent here, whatever the LLM answers: a null result is a
+            // failed attempt, not an unused one, and the restart at the full threshold is what
+            // follows if the stagnation persists.
+            stagnationHookFired = true;
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "stagnation", getTimestamp());
             if (result != null) {
