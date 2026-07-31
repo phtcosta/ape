@@ -633,6 +633,13 @@ public class LlmRouter {
                 // For type_text: restrict to input-capable widgets
                 if ("type_text".equals(actionType) && !ApePromptBuilder.isInputClass(node)) continue;
 
+                // For click: the tool the model called constrains the ActionType (INV-RTR-17). Without
+                // this, any action sharing the widget's bounds could answer a click — measured, a click
+                // answer executed a CLICK only 80.9% of the time, the rest being long-clicks and
+                // scrolls. A click that finds no MODEL_CLICK falls to the snap pass or off-tree
+                // synthesis, both of which stay honest about what the model asked for.
+                if ("click".equals(actionType) && action.getType() != ActionType.MODEL_CLICK) continue;
+
                 // For long_click: prefer MODEL_LONG_CLICK; fall through to MODEL_CLICK if needed
                 if (preferLongClick && action.getType() != ActionType.MODEL_LONG_CLICK) continue;
 
@@ -681,6 +688,10 @@ public class LlmRouter {
                 if (node == null) continue;
 
                 if ("type_text".equals(actionType) && !ApePromptBuilder.isInputClass(node)) continue;
+
+                // Same ActionType constraint as the containment pass (INV-RTR-17): the fallback must
+                // not re-admit what the primary pass filtered out.
+                if ("click".equals(actionType) && action.getType() != ActionType.MODEL_CLICK) continue;
 
                 Rect bounds = node.getBoundsInScreen();
                 int centerX = (bounds.left + bounds.right) / 2;

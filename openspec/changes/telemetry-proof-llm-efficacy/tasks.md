@@ -13,9 +13,9 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 2. B6(i) — ActionType filter in the containment pass (~10 LOC)
 
-- [ ] 2.1 `LlmRouter.mapToModelAction` containment loop (`LlmRouter.java:601-622`; today only `preferLongClick` at `:611`): when `actionType=="click"`, require `ActionType.MODEL_CLICK` (INV-RTR-17)
-- [ ] 2.2 Apply the same filter in the Euclidean fallback loop (`:651-677`)
-- [ ] 2.3 JVM unit test: a `click` answer over a point contained only by a `MODEL_LONG_CLICK` action does not return it (falls to snap/off-tree)
+- [x] 2.1 `LlmRouter.mapToModelAction` containment loop (`LlmRouter.java:601-622`; today only `preferLongClick` at `:611`): when `actionType=="click"`, require `ActionType.MODEL_CLICK` (INV-RTR-17)
+- [x] 2.2 Apply the same filter in the Euclidean fallback loop (`:651-677`)
+- [x] 2.3 JVM unit test: a `click` answer over a point contained only by a `MODEL_LONG_CLICK` action does not return it (falls to snap/off-tree)
 
 ## 3. B6(iii) — per-request tool schema (~10–20 LOC, touches SglangClient)
 
