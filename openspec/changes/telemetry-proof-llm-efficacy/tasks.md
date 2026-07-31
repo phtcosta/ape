@@ -30,8 +30,8 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 5. N1 — identifiers in prompt element lines (~1–5 LOC)
 
-- [ ] 5.1 `ApePromptBuilder`: extend the `safeGetDisplayText` fallback (`:830-839`) so that when text AND content-description are empty it renders the short resource-id (`id=<shortId>`); never an empty `""` identifier for a node that has any of the three (INV-PRM-05). The element lines that consume it are at `:381`, `:618` and `:688` — note `:464-469` is `buildWidgetMetadata` (the MOP marker suffix), a different function
-- [ ] 5.2 JVM unit tests: ImageView with only content-desc renders it; only resource-id renders `id=...`; all-empty node omits the identifier without breaking the line format
+- [x] 5.1 `ApePromptBuilder`: extend the `safeGetDisplayText` fallback (`:830-839`) so that when text AND content-description are empty it renders the short resource-id (`id=<shortId>`); never an empty `""` identifier for a node that has any of the three (INV-PRM-05). The element lines that consume it are at `:381`, `:618` and `:688` — note `:464-469` is `buildWidgetMetadata` (the MOP marker suffix), a different function
+- [x] 5.2 JVM unit tests: ImageView with only content-desc renders it; only resource-id renders `id=...`; all-empty node omits the identifier without breaking the line format
 
 ## 6. B4 — edge-based snapping (~6–10 LOC)
 

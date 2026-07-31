@@ -840,8 +840,14 @@ public class ApePromptBuilder {
     }
 
     /**
-     * Returns the best display text for a node: prefers getText(), falls back to
-     * getContentDesc(), then returns empty string.
+     * The node's identifier for the element line, by fallback: visible text, then
+     * content-description, then the short resource id rendered as {@code id=<shortId>} (INV-PRM-05).
+     * Only a node carrying none of the three yields an empty identifier.
+     *
+     * <p>The resource-id step is what N1 adds. Without it, 35.8% of grounding tests rendered
+     * elements the model had nothing to anchor on, and it hit 33.1% on those lines against 71.4%
+     * on lines with an identifier. {@code ImageView} was the canonical victim at 0/210: icon
+     * buttons routinely carry a content-description or a resource id and no text at all.
      */
     private String safeGetDisplayText(GUITreeNode node) {
         if (node == null) return "";
@@ -850,6 +856,8 @@ public class ApePromptBuilder {
             if (text != null && !text.isEmpty()) return text;
             String cd = node.getContentDesc();
             if (cd != null && !cd.isEmpty()) return cd;
+            String shortId = MopData.extractShortId(node.getResourceID());
+            if (!shortId.isEmpty()) return "id=" + shortId;
         } catch (Exception ignored) { /* fall through */ }
         return "";
     }
