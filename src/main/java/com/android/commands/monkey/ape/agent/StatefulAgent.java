@@ -1436,12 +1436,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             if (Config.stepTelemetryEnabled) {
                 Logger.iformat(
                         "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
-                        + "priority=%d mop=%d wtg=%d coverage=%d menu=%d form=%d activity_has_mop=%d"
-                        + " pick_channel=%s",
+                        + "priority=%d mop=%d mop_frontier=%d wtg=%d coverage=%d menu=%d form=%d"
+                        + " activity_has_mop=%d pick_channel=%s",
                         getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
                         newState.getStateKey(), newAction,
                         newAction.getDecisionSource().name(), newAction.getPriority(),
-                        newAction.getMopBoost(), newAction.getWtgBoost(),
+                        newAction.getMopBoost(), newAction.getMopFrontierBoost(),
+                        newAction.getWtgBoost(),
                         newAction.getCoverageBoost(), newAction.getMenuBoost(),
                         newAction.getFormBoost(),
                         activityHasMop(newState.getActivity()),

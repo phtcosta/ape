@@ -17,7 +17,8 @@ import static org.junit.Assert.assertEquals;
  * ({@code selectUnvisitedMopTarget} / {@code pickBestMopTarget}). Those sites are exercised
  * end-to-end on a device because they require a live {@link com.android.commands.monkey.ape.model.State}
  * and model graph; here we pin the pure rule they all consume: largest positive boost wins,
- * ties resolved MOP &gt; WTG &gt; Menu &gt; Form &gt; Coverage, SATA when no boost is positive.
+ * ties resolved MOP &gt; MopFrontier &gt; WTG &gt; Menu &gt; Form &gt; Coverage, SATA when no boost
+ * is positive.
  *
  * <p>The Back-/Menu-unvisited short-circuits ({@code :461,468}), {@code greedyPickLeastVisited}
  * ({@code :492}), and the graph-navigation / shortest-path returns ({@code :1121,1133}, backward
@@ -35,8 +36,14 @@ import static org.junit.Assert.assertEquals;
 public class SataAgentDecisionSourceTest {
 
     private static ModelAction action(int mop, int wtg, int menu, int form, int coverage) {
+        return action(mop, 0, wtg, menu, form, coverage);
+    }
+
+    private static ModelAction action(int mop, int mopFrontier, int wtg, int menu, int form,
+                                      int coverage) {
         ModelAction a = new ModelAction(null, ActionType.MODEL_CLICK);
         a.setMopBoost(mop);
+        a.setMopFrontierBoost(mopFrontier);
         a.setWtgBoost(wtg);
         a.setMenuBoost(menu);
         a.setFormBoost(form);
@@ -132,5 +139,38 @@ public class SataAgentDecisionSourceTest {
         // All five tied on the same positive value: MOP is the most specific, wins.
         assertEquals(DecisionSource.MOP,
                 SataAgent.attributeByLargestBoost(action(100, 100, 100, 100, 100)));
+    }
+
+    // ---- A6: MopFrontier is its own source, next to MOP ----------------------
+
+    @Test
+    public void testSingleMopFrontierBoostIsMopFrontier() {
+        // Spec scenario: mop=0, mop_frontier=200, wtg=0, coverage=100 -> MopFrontier. Before the
+        // de-aliasing this pick reported WTG, because MopFrontierPass wrote wtgBoost.
+        assertEquals(DecisionSource.MopFrontier,
+                SataAgent.attributeByLargestBoost(action(0, 200, 0, 0, 0, 100)));
+    }
+
+    @Test
+    public void testTieMopBeatsMopFrontier() {
+        assertEquals(DecisionSource.MOP,
+                SataAgent.attributeByLargestBoost(action(300, 300, 0, 0, 0, 0)));
+    }
+
+    @Test
+    public void testTieMopFrontierBeatsWtg() {
+        // The whole point of A6: on a tie the MOP mechanism is named, not the WTG family.
+        assertEquals(DecisionSource.MopFrontier,
+                SataAgent.attributeByLargestBoost(action(0, 300, 300, 0, 0, 0)));
+    }
+
+    @Test
+    public void testCoApplyingBoostsStayDecomposable() {
+        // mopWeightWtg=200 + frontierBoostWeight=200 land in wtgBoost, mopFrontierWeight=200 in its
+        // own field: +600 of priority, reported as wtg=400 mop_frontier=200 rather than wtg=600.
+        ModelAction a = action(0, 200, 400, 0, 0, 0);
+        assertEquals(400, a.getWtgBoost());
+        assertEquals(200, a.getMopFrontierBoost());
+        assertEquals(DecisionSource.WTG, SataAgent.attributeByLargestBoost(a));
     }
 }

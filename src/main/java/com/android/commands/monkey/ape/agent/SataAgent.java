@@ -246,7 +246,7 @@ public class SataAgent extends StatefulAgent {
 
     /**
      * The mechanism holding the largest positive boost on this action, ties resolved by the
-     * fixed precedence MOP &gt; WTG &gt; Menu &gt; Form &gt; Coverage; SATA when no boost is
+     * fixed precedence MOP &gt; MopFrontier &gt; WTG &gt; Menu &gt; Form &gt; Coverage; SATA when no boost is
      * positive. This is largest-contributing-boost attribution on a priority-consuming pick:
      * it reports which mechanism boosted the chosen action the most, NOT a counterfactual
      * claim that the boost changed the outcome (P4). It is applied only at the pick sites that
@@ -258,17 +258,24 @@ public class SataAgent extends StatefulAgent {
      */
     static ModelAction.DecisionSource attributeByLargestBoost(ModelAction action) {
         int mop = action.getMopBoost();
+        int mopFrontier = action.getMopFrontierBoost();
         int wtg = action.getWtgBoost();
         int menu = action.getMenuBoost();
         int form = action.getFormBoost();
         int coverage = action.getCoverageBoost();
-        int max = Math.max(Math.max(Math.max(mop, wtg), Math.max(menu, form)), coverage);
+        int max = Math.max(Math.max(Math.max(mop, mopFrontier), Math.max(wtg, menu)),
+                Math.max(form, coverage));
         if (max <= 0) {
             return ModelAction.DecisionSource.SATA;
         }
-        // Tie precedence MOP > WTG > Menu > Form > Coverage.
+        // Tie precedence MOP > MopFrontier > WTG > Menu > Form > Coverage. MopFrontier sits next to
+        // MOP because it is a MOP mechanism — the de-aliasing exists precisely so that it can no
+        // longer launder as WTG.
         if (mop == max) {
             return ModelAction.DecisionSource.MOP;
+        }
+        if (mopFrontier == max) {
+            return ModelAction.DecisionSource.MopFrontier;
         }
         if (wtg == max) {
             return ModelAction.DecisionSource.WTG;

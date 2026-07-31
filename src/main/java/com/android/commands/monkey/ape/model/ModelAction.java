@@ -40,7 +40,7 @@ public class ModelAction extends Action {
      * budget-exhausted early-return set their own source explicitly.
      */
     public enum DecisionSource {
-        SATA, MOP, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form
+        SATA, MOP, MopFrontier, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form
     }
 
     /**
@@ -92,6 +92,11 @@ public class ModelAction extends Action {
     private PickChannel pickChannel = PickChannel.SATA_OTHER;
     private int mopBoost;
     private int wtgBoost;
+    // The MOP-frontier contribution, kept apart from wtgBoost (INV-ARCH-10). Three passes used to
+    // accumulate into wtgBoost — WtgPass, the generic FrontierPass and MopFrontierPass — so
+    // decision_source=WTG conflated a MOP mechanism with generic WTG navigation and the corpus's
+    // stacked 400/600 values could not be decomposed by mechanism.
+    private int mopFrontierBoost;
     private int coverageBoost;
     private int menuBoost;
     private int formBoost;
@@ -251,6 +256,7 @@ public class ModelAction extends Action {
     public void resetBoosts() {
         this.mopBoost = 0;
         this.wtgBoost = 0;
+        this.mopFrontierBoost = 0;
         this.coverageBoost = 0;
         this.menuBoost = 0;
         this.formBoost = 0;
@@ -263,6 +269,10 @@ public class ModelAction extends Action {
     public int getWtgBoost() { return this.wtgBoost; }
 
     public void setWtgBoost(int wtgBoost) { this.wtgBoost = wtgBoost; }
+
+    public int getMopFrontierBoost() { return this.mopFrontierBoost; }
+
+    public void setMopFrontierBoost(int mopFrontierBoost) { this.mopFrontierBoost = mopFrontierBoost; }
 
     public int getCoverageBoost() { return this.coverageBoost; }
 

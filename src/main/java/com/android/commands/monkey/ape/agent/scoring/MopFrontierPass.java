@@ -20,14 +20,14 @@ import com.android.commands.monkey.ape.utils.MopData;
  * independent of and additive to it.
  *
  * <p>The boost is {@code Config.mopFrontierWeight} (default {@code 0} → pass disabled, byte-identical
- * to absent). It is applied as a {@code setPriority} increment — the steering mechanism, since
- * {@code wtgBoost} is telemetry-only and never enters {@code getPriority()} — and accumulated into the
- * {@code wtgBoost} field by read-modify-write, so it stacks on top of the WTG-MOP and generic-frontier
- * boosts rather than overwriting them.
+ * to absent). It is applied as a {@code setPriority} increment — the steering mechanism, since the
+ * boost fields are telemetry-only and never enter {@code getPriority()} — and accumulated into its own
+ * {@code mopFrontierBoost} field by read-modify-write, so a priority stacked with the WTG-MOP and
+ * generic-frontier boosts stays decomposable by mechanism (INV-ARCH-10).
  *
- * <p>The MOP∩unvisited predicate is the pure, unit-tested novelty ({@link #qualifyingMopTargets}); the
- * per-action write in {@link #apply} runs on a resolved {@code GUITreeNode}/{@code ModelAction} and is
- * exercised on device, the same boundary as {@link FrontierPass#apply}.
+ * <p>The MOP∩unvisited predicate ({@link #qualifyingMopTargets}) and the per-action write
+ * ({@link #boostAction}) are both pure and unit-tested; what remains device-gated in {@link #apply}
+ * is the resolved-node/graph plumbing between them, the same boundary as {@link FrontierPass#apply}.
  */
 public final class MopFrontierPass implements ScoringPass {
 
@@ -75,8 +75,7 @@ public final class MopFrontierPass implements ScoringPass {
             String shortId = MopData.extractShortId(node.getResourceID());
             if (shortId == null || shortId.isEmpty()) continue;
             if (matchesQualifyingTarget(shortId, transitions, qualifying)) {
-                action.setPriority(action.getPriority() + weight);
-                action.setWtgBoost(action.getWtgBoost() + weight);
+                boostAction(action, weight);
                 boostedCount++;
             }
         }
@@ -84,6 +83,23 @@ public final class MopFrontierPass implements ScoringPass {
             Logger.iformat("[APE-RV] MopFrontier boost: state=%s#%s, boosted=%d, weight=%d",
                     activity, state.getStateKey(), boostedCount, weight);
         }
+    }
+
+    /**
+     * Apply this pass's contribution to one qualifying action. The {@code setPriority} increment is
+     * what steers — {@code mopFrontierBoost} is never read by {@code getPriority()} — and the boost
+     * field is the telemetry record of this pass's own contribution, accumulated read-modify-write
+     * so several qualifying transitions on one action sum (INV-MFP-02).
+     *
+     * <p>It never writes {@code wtgBoost}. That is the whole of A6: {@code WtgPass} and the generic
+     * {@code FrontierPass} write {@code wtgBoost}, and while this pass joined them there,
+     * {@code decision_source=WTG} conflated a MOP mechanism with generic WTG navigation and a
+     * stacked priority could not be decomposed by mechanism (INV-ARCH-10). Pure, so the disjointness
+     * is unit-testable without a live graph.
+     */
+    static void boostAction(ModelAction action, int weight) {
+        action.setPriority(action.getPriority() + weight);
+        action.setMopFrontierBoost(action.getMopFrontierBoost() + weight);
     }
 
     /**

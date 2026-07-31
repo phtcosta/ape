@@ -28,25 +28,28 @@ public class ModelActionTest {
 
     @Test
     public void testDecisionSourceEnumCoversAllSources() {
-        // SATA, MOP, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form (Form added in §5.2).
-        assertEquals(10, ModelAction.DecisionSource.values().length);
+        // SATA, MOP, MopFrontier, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form.
+        assertEquals(11, ModelAction.DecisionSource.values().length);
         // Spot-check the sources attributed by the selection paths.
         assertNotNull(ModelAction.DecisionSource.valueOf("SATA"));
         assertNotNull(ModelAction.DecisionSource.valueOf("LLM"));
         assertNotNull(ModelAction.DecisionSource.valueOf("Budget"));
         assertNotNull(ModelAction.DecisionSource.valueOf("Form"));
+        assertNotNull(ModelAction.DecisionSource.valueOf("MopFrontier"));
     }
 
     @Test
     public void testResetBoostsZeroesAllMechanisms() {
         ModelAction a = new ModelAction(null, ActionType.MODEL_CLICK);
         a.setMopBoost(500);
+        a.setMopFrontierBoost(200);
         a.setWtgBoost(200);
         a.setCoverageBoost(100);
         a.setMenuBoost(250);
         a.setFormBoost(150);
         a.resetBoosts();
         assertEquals(0, a.getMopBoost());
+        assertEquals(0, a.getMopFrontierBoost());
         assertEquals(0, a.getWtgBoost());
         assertEquals(0, a.getCoverageBoost());
         assertEquals(0, a.getMenuBoost());

@@ -50,11 +50,11 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 9. A6 — un-alias wtgBoost (~15 LOC)
 
-- [ ] 9.1 `ModelAction`: add `mopFrontierBoost` field (get/set, reset with the other boosts)
-- [ ] 9.2 `MopFrontierPass.java:79`: write `mopFrontierBoost` (accumulating) instead of `wtgBoost`; `setPriority` increment unchanged (INV-MFP-02, INV-ARCH-10)
-- [ ] 9.3 `SataAgent.attributeByLargestBoost` (`SataAgent.java:252-276`): include `mopFrontierBoost` with new `DecisionSource.MopFrontier`; tie precedence `MOP > MopFrontier > WTG > Menu > Form > Coverage`
-- [ ] 9.4 Serialize `mop_frontier=<N>` on `[APE-STEP]`; `wtg=` reverts to WTG-family only
-- [ ] 9.5 JVM unit tests: MopFrontierPass writes only its own field; co-applying passes decompose (wtg=400, mop_frontier=200 for the 600 stack); attribution precedence
+- [x] 9.1 `ModelAction`: add `mopFrontierBoost` field (get/set, reset with the other boosts)
+- [x] 9.2 `MopFrontierPass.java:79`: write `mopFrontierBoost` (accumulating) instead of `wtgBoost`; `setPriority` increment unchanged (INV-MFP-02, INV-ARCH-10)
+- [x] 9.3 `SataAgent.attributeByLargestBoost` (`SataAgent.java:252-276`): include `mopFrontierBoost` with new `DecisionSource.MopFrontier`; tie precedence `MOP > MopFrontier > WTG > Menu > Form > Coverage`
+- [x] 9.4 Serialize `mop_frontier=<N>` on `[APE-STEP]`; `wtg=` reverts to WTG-family only
+- [x] 9.5 JVM unit tests: MopFrontierPass writes only its own field; co-applying passes decompose (wtg=400, mop_frontier=200 for the 600 stack); attribution precedence
 
 ## 10. A8 — escape newlines in [APE-STEP] (~5–10 LOC)
 
