@@ -259,7 +259,19 @@ public class GUITreeBuilder {
         }
     }
 
-    private void patchGUITree(GUITreeNode node) {
+    /**
+     * Rewrite clickability so that a clickable container's children become the click targets: when
+     * a node's bounds contain its children's and the container qualifies, every non-clickable child
+     * is made clickable, and the container itself loses clickability when the children cover its
+     * centre. Both writes set the node's {@code patchedClickable} bit (INV-SEL-10), which is the
+     * only record that an attribute came from here — a patched attribute is otherwise
+     * indistinguishable from a native one.
+     *
+     * <p>Static and package-visible: it reads no builder state, and the two mutation sites are
+     * exactly what O4's provenance bit claims, so they are unit-tested over a hand-built node tree
+     * rather than device-gated.
+     */
+    static void patchGUITree(GUITreeNode node) {
         if (node.getChildCount() == 0) {
             return;
         }
@@ -284,6 +296,7 @@ public class GUITreeBuilder {
                         Logger.iprintln("Patching child node: " + child.getClassName() + "@" + child.getResourceID()
                         + "@" + child.getText());
                         child.setClickable(true);
+                        child.setPatchedClickable(true);
                         if (node.getChildCount() == 1) {
                             if (node.getIndex() != child.getIndex()) {
                                 child.setIndex(node.getIndex());
@@ -293,6 +306,7 @@ public class GUITreeBuilder {
                 }
                 if (childrenBounds.contains(nodeBounds.centerX(), nodeBounds.centerY())) {
                     node.setClickable(false);
+                    node.setPatchedClickable(true);
                 }
             }
         }
@@ -303,7 +317,7 @@ public class GUITreeBuilder {
         }
     }
 
-    private boolean sameRow(Iterator<GUITreeNode> nodeIt) {
+    private static boolean sameRow(Iterator<GUITreeNode> nodeIt) {
         int top = -1;
         int bot = -1;
         while (nodeIt.hasNext()) {
@@ -322,7 +336,7 @@ public class GUITreeBuilder {
         return true;
     }
 
-    private boolean sameColumn(Iterator<GUITreeNode> nodeIt) {
+    private static boolean sameColumn(Iterator<GUITreeNode> nodeIt) {
         int left = -1;
         int right = -1;
         while (nodeIt.hasNext()) {
@@ -348,7 +362,7 @@ public class GUITreeBuilder {
      * @param node
      * @return
      */
-    private boolean doPatchingChildren(GUITreeNode node) {
+    private static boolean doPatchingChildren(GUITreeNode node) {
         if (!node.isClickable()) {
             return false;
         }

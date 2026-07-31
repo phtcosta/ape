@@ -1142,6 +1142,24 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     /**
+     * The {@code patched=0|1} field of an `[APE-STEP]` line, or "" for an action with no resolved
+     * target (INV-SEL-10). {@code MODEL_BACK}, {@code MODEL_MENU} and {@code MODEL_LLM_TAP} omit it,
+     * consistently with the line's other target-derived fields.
+     *
+     * <p>The bit says the node's clickability was written by {@code patchGUITree}. Two boundaries
+     * come with it: it is the node's provenance and not the action's causality (a causal reading
+     * holds for {@code MODEL_CLICK}, which is derived from {@code clickable || checkable}, and not
+     * for a scroll or long-click on the same node), and where a {@code Name} resolves to several
+     * nodes it describes the one this line prints — exact for that node, a sample for its siblings.
+     */
+    static String patchedField(ModelAction action) {
+        if (!action.requireTarget()) return "";
+        GUITreeNode node = action.getResolvedNode();
+        if (node == null) return "";
+        return " patched=" + (node.isPatchedClickable() ? 1 : 0);
+    }
+
+    /**
      * The pick channel for a non-model action's {@code [APE-STEP]} line (INV-SEL-05). These actions
      * carry no provenance field of their own — they are not {@code ModelAction}s — so the channel is
      * read off the type: {@code EVENT_TRIGGER_ACTIVITY} is the stagnation activity launcher, and
@@ -1437,7 +1455,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 Logger.iformat(
                         "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
                         + "priority=%d mop=%d mop_frontier=%d wtg=%d coverage=%d menu=%d form=%d"
-                        + " activity_has_mop=%d pick_channel=%s",
+                        + " activity_has_mop=%d pick_channel=%s%s",
                         getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
                         newState.getStateKey(), newAction,
                         newAction.getDecisionSource().name(), newAction.getPriority(),
@@ -1446,7 +1464,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                         newAction.getCoverageBoost(), newAction.getMenuBoost(),
                         newAction.getFormBoost(),
                         activityHasMop(newState.getActivity()),
-                        newAction.getPickChannel().getLabel());
+                        newAction.getPickChannel().getLabel(),
+                        patchedField(newAction));
             }
             // Buffer this model decision so its [APE-OUTCOME] can key back to this [APE-STEP], and
             // so the dead-pair ban receives the decision's outcome. Buffering is not gated by

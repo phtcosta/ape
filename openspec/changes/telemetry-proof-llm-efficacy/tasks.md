@@ -78,9 +78,9 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 13. O4 — `patched=<bool>` on `[APE-STEP]` (~10 LOC)
 
-- [ ] 13.1 `GUITreeNode`: add a `patchedClickable` boolean, default `false`, set to `true` at the two `patchGUITree` mutation sites (`GUITreeBuilder.java:286` for a child made clickable, `:295` for a parent that loses clickability). Never inferred at emission time — post-patch attributes are indistinguishable from native ones by construction (INV-SEL-10)
-- [ ] 13.2 `[APE-STEP]` emission: add `patched=0|1` from the action's resolved node, for actions with a target only; targetless actions (`MODEL_BACK`, `MODEL_MENU`, `MODEL_LLM_TAP`) omit the field
-- [ ] 13.3 JVM unit tests: a child made clickable by the patch reports 1; a natively clickable node reports 0; the demoted parent reports 1; a targetless action emits no `patched` field
+- [x] 13.1 `GUITreeNode`: add a `patchedClickable` boolean, default `false`, set to `true` at the two `patchGUITree` mutation sites (`GUITreeBuilder.java:286` for a child made clickable, `:295` for a parent that loses clickability). Never inferred at emission time — post-patch attributes are indistinguishable from native ones by construction (INV-SEL-10)
+- [x] 13.2 `[APE-STEP]` emission: add `patched=0|1` from the action's resolved node, for actions with a target only; targetless actions (`MODEL_BACK`, `MODEL_MENU`, `MODEL_LLM_TAP`) omit the field
+- [x] 13.3 JVM unit tests: a child made clickable by the patch reports 1; a natively clickable node reports 0; the demoted parent reports 1; a targetless action emits no `patched` field
 
 ## 14. B7(i) — make the stagnation trigger fire (~5 LOC)
 

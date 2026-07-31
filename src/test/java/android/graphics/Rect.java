@@ -55,6 +55,42 @@ public class Rect {
         return left < right && top < bottom && x >= left && x < right && y >= top && y < bottom;
     }
 
+    public final int centerX() {
+        return (left + right) >> 1;
+    }
+
+    public final int centerY() {
+        return (top + bottom) >> 1;
+    }
+
+    /** AOSP: true when this rect is non-empty and entirely encloses {@code r}. */
+    public boolean contains(Rect r) {
+        return left < right && top < bottom
+                && left <= r.left && top <= r.top && right >= r.right && bottom >= r.bottom;
+    }
+
+    public void union(Rect r) {
+        union(r.left, r.top, r.right, r.bottom);
+    }
+
+    /** AOSP: an empty receiver takes the argument's coordinates; an empty argument is ignored. */
+    public void union(int left, int top, int right, int bottom) {
+        if (left >= right || top >= bottom) {
+            return;
+        }
+        if (this.left < this.right && this.top < this.bottom) {
+            if (this.left > left) this.left = left;
+            if (this.top > top) this.top = top;
+            if (this.right < right) this.right = right;
+            if (this.bottom < bottom) this.bottom = bottom;
+        } else {
+            this.left = left;
+            this.top = top;
+            this.right = right;
+            this.bottom = bottom;
+        }
+    }
+
     public boolean intersect(Rect r) {
         return intersect(r.left, r.top, r.right, r.bottom);
     }

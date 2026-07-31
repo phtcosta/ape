@@ -54,6 +54,12 @@ public class GUITreeNode implements Serializable {
     private boolean clickable;
     private boolean isFocusable;
     private boolean longClickable;
+    // O4 (INV-SEL-10): true when this node's clickability was written by GUITreeBuilder.patchGUITree
+    // rather than read from the AccessibilityNodeInfo, in either direction — the patch both grants
+    // clickability to a child and removes it from the parent. Set at the patch sites and never
+    // inferred at emission time: a post-patch attribute is indistinguishable from a native one by
+    // construction, which is why no recorded artifact could tell the two apart before this bit.
+    private boolean patchedClickable;
     private int scrollable;
     private boolean isPassword;
 
@@ -363,6 +369,22 @@ public class GUITreeNode implements Serializable {
 
     public boolean isClickable() {
         return clickable;
+    }
+
+    /**
+     * True when {@code patchGUITree} wrote this node's clickability. It records the <b>node's</b>
+     * provenance, not an action's causality: for a {@code MODEL_CLICK} it does imply the action
+     * would not exist without the patch (the action is derived from {@code clickable || checkable}),
+     * but for a scroll or long-click on the same node it does not — offline analysis conditions on
+     * {@code MODEL_CLICK} before reading it causally.
+     */
+    public boolean isPatchedClickable() {
+        return patchedClickable;
+    }
+
+    /** Record that {@code patchGUITree} wrote this node's clickability. */
+    public void setPatchedClickable(boolean patchedClickable) {
+        this.patchedClickable = patchedClickable;
     }
 
     public void setClickable(boolean clickable) {
