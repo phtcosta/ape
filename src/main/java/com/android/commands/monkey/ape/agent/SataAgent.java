@@ -297,9 +297,17 @@ public class SataAgent extends StatefulAgent {
     public void tearDown() {
         super.tearDown();
         printCounters();
-        // Per-state UI-coverage dump (read-only). mopReach is computed here because the
-        // tracker holds no MopData reference (D4): a state's Activity gates a MOP target
-        // iff _mopData != null && activityHasMop(activity).
+    }
+
+    /**
+     * Per-state UI-coverage dump (read-only), emitted at the pre-{@code saveGraph} step of the
+     * teardown chain (INV-COV-10). {@code mopReach} is computed here because the tracker holds no
+     * MopData reference (D4): a state's Activity gates a MOP target iff
+     * {@code _mopData != null && activityHasMop(activity)} — which is why the hoist is an
+     * overridable step rather than a line moved up into a class that cannot see the predicate.
+     */
+    @Override
+    protected void dumpCoverage() {
         MopData mopData = getMopData();
         getCoverageTracker().dump(
                 state -> mopData != null && mopData.activityHasMop(state.getActivity()));

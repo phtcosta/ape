@@ -72,9 +72,9 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 **Revised 2026-07-31 (design D9): the shutdown hook is withdrawn.** It recovers zero on the measured failure path — the trace is the host's `adb` stdout, SIGKILLed and closed by the harness before any device-side signal is delivered, so the hook's output has nowhere to land. Ordering is the mechanism that works: 330 of the 338 lossy runs are cut inside `saveGraph`, three steps before the dump.
 
-- [ ] 12.1 `StatefulAgent.tearDown()`: add an overridable protected step (default no-op) invoked **immediately before** `safeStep("saveGraph", …)` at `:1699`; `SataAgent` overrides it with the `getCoverageTracker().dump(...)` call currently at `:290-291`, keeping its `mopReach` predicate (which only `SataAgent` can supply). Remove the call from its old position — one call site, no dual path (P3) (INV-COV-10). Note the chain is `llmSummary → superTearDown → saveGraph → …` (`:1694-1704`), so this step lands **third, not first** — "before the model serialization" is the property that recovers the 333/338 and the one INV-COV-10 states
-- [ ] 12.2 No idempotence flag: with a single call site there is nothing to guard. Do NOT port the atomic once-per-run flag from the withdrawn design
-- [ ] 12.3 JVM unit test: the teardown chain invokes the dump before `saveGraph`; a subclass that does not override emits nothing and the chain still completes
+- [x] 12.1 `StatefulAgent.tearDown()`: add an overridable protected step (default no-op) invoked **immediately before** `safeStep("saveGraph", …)` at `:1699`; `SataAgent` overrides it with the `getCoverageTracker().dump(...)` call currently at `:290-291`, keeping its `mopReach` predicate (which only `SataAgent` can supply). Remove the call from its old position — one call site, no dual path (P3) (INV-COV-10). Note the chain is `llmSummary → superTearDown → saveGraph → …` (`:1694-1704`), so this step lands **third, not first** — "before the model serialization" is the property that recovers the 333/338 and the one INV-COV-10 states
+- [x] 12.2 No idempotence flag: with a single call site there is nothing to guard. Do NOT port the atomic once-per-run flag from the withdrawn design
+- [x] 12.3 JVM unit test: the teardown chain invokes the dump before `saveGraph`; a subclass that does not override emits nothing and the chain still completes
 
 ## 13. O4 — `patched=<bool>` on `[APE-STEP]` (~10 LOC)
 

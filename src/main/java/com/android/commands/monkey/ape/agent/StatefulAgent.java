@@ -1747,12 +1747,33 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             if (_llmRouter != null) _llmRouter.printSummary();
         });
         safeStep("superTearDown", super::tearDown);
+        safeStep("coverageDump", this::dumpCoverage);
         safeStep("saveGraph", this::saveGraph);
         safeStep("saveActionHistory", this::saveActionHistory);
         safeStep("actionCounters", () -> actionCounters.print());
         safeStep("activityNodes", () -> getGraph().printActivityNodes());
         safeStep("namingDump", () -> model.getNamingManager().dump());
         safeStep("modelCounters", () -> model.printCounters());
+    }
+
+    /**
+     * The teardown step that emits the UI-coverage dump, run immediately before the model
+     * serialization (INV-COV-10). No-op here: only {@code SataAgent} can supply the dump's
+     * {@code mopReach} predicate, so it overrides this.
+     *
+     * <p>Ordering is the whole mechanism. The dump used to be the last instruction of the whole
+     * teardown, after {@code saveGraph} had written the model to {@code /sdcard} — and 338 of the
+     * 800 calibration runs (42.3%) lost it, 330 of them cut on the very line {@code saveGraph}
+     * prints. Emitting before that write recovers 333 of the 338. The remaining 5 never reached
+     * teardown at all, and no teardown-side mechanism can reach them.
+     *
+     * <p>A shutdown hook cannot substitute for this: the trace is the host's {@code adb} stdout,
+     * which the harness SIGKILLs and closes, so anything the device writes afterwards has nowhere
+     * to land. The boundary that matters is therefore "before the model serialization", not "first
+     * in the chain" — this step lands third, after {@code llmSummary} and {@code superTearDown},
+     * neither of which writes to {@code /sdcard}.
+     */
+    protected void dumpCoverage() {
     }
 
     public List<ActionRecord> getActionHistory() {
