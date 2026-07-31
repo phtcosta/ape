@@ -48,8 +48,18 @@ public class RandomHelper {
     }
 
     public static <V extends PriorityObject> V randomPickWithPriority(List<V> list) {
+        return randomPickWithPriorityRecorded(list).getValue();
+    }
+
+    /**
+     * The priority roulette, reporting the draw it consumed alongside the value it picked. A3's
+     * counterfactual replays that draw as a fraction of total weight instead of taking one of its
+     * own, so the seeded stream advances exactly as it would without the counterfactual
+     * (INV-SEL-09).
+     */
+    public static <V extends PriorityObject> Draw<V> randomPickWithPriorityRecorded(List<V> list) {
         if (list.isEmpty()) {
-            return null;
+            return new Draw<V>(null, 0, 0);
         }
         int count = 0;
         for (V o : list) {
@@ -58,18 +68,43 @@ public class RandomHelper {
             }
             count += o.getPriority();
         }
+        int total = count;
         int index = nextInt(count);
         count = 0;
         for (V o : list) {
-            if (o.getPriority() <= 0) {
-                throw new IllegalStateException("Object should have a positive priority for random pick.");
-            }
             count += o.getPriority();
             if (count > index) {
-                return o;
+                return new Draw<V>(o, index, total);
             }
         }
         throw new IllegalStateException("Should not reach here");
+    }
+
+    /** A weighted pick together with the draw that produced it. */
+    public static final class Draw<V> {
+        private final V value;
+        private final int index;
+        private final int total;
+
+        Draw(V value, int index, int total) {
+            this.value = value;
+            this.index = index;
+            this.total = total;
+        }
+
+        public V getValue() {
+            return value;
+        }
+
+        /** The value drawn from the seeded stream, in [0, total). */
+        public int getIndex() {
+            return index;
+        }
+
+        /** The total weight the draw was taken against. */
+        public int getTotal() {
+            return total;
+        }
     }
 
     public static <V> V randomPick(List<V> list) {

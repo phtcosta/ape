@@ -90,6 +90,11 @@ public class ModelAction extends Action {
     // the most recent adjustActionsByGUITree pass. Boosts are reset each pass.
     private DecisionSource decisionSource = DecisionSource.SATA;
     private PickChannel pickChannel = PickChannel.SATA_OTHER;
+    // A3 (INV-SEL-08): what the channel that picked this action would have selected with the MOP
+    // boosts zeroed. Stamped at the same four pick sites that stamp the channel, so a line can
+    // never pair one step's channel with another step's counterfactual. Transient: it is telemetry
+    // of one selection and has no place in the serialized exploration model.
+    private transient ModelAction counterfactualPick;
     private int mopBoost;
     private int wtgBoost;
     // The MOP-frontier contribution, kept apart from wtgBoost (INV-ARCH-10). Three passes used to
@@ -249,6 +254,18 @@ public class ModelAction extends Action {
 
     public void setDecisionSource(DecisionSource decisionSource) {
         this.decisionSource = decisionSource;
+    }
+
+    /**
+     * The counterfactual pick of this selection, or null when it could not be recomputed. Equal to
+     * this action when the MOP boosts made no difference.
+     */
+    public ModelAction getCounterfactualPick() {
+        return this.counterfactualPick;
+    }
+
+    public void setCounterfactualPick(ModelAction counterfactualPick) {
+        this.counterfactualPick = counterfactualPick;
     }
 
     public PickChannel getPickChannel() {

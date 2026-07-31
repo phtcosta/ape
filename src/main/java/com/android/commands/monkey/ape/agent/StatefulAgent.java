@@ -1164,6 +1164,35 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     /**
+     * The {@code cf_action}/{@code cf_changed} fields of an `[APE-STEP]` line, or "" for a channel
+     * where MOP boosts do not participate in the pick (INV-SEL-08). Only the four MOP-sensitive
+     * channels carry them; the LLM, the launcher, the buffer and every other path carry none.
+     *
+     * <p>A recomputation that failed reports {@code cf_changed=0} with the factual action: the
+     * factual pick was already made, so a failure costs the line its contrast and nothing else.
+     *
+     * <p>Reading rule, part of the contract: this is the divergence point of one step, not a
+     * trajectory effect. Summing {@code cf_changed} over a run does not measure what the MOP
+     * guidance achieved — only an arm-level contrast does.
+     */
+    static String counterfactualFields(ModelAction action) {
+        switch (action.getPickChannel()) {
+        case SHORT_CIRCUIT_UNVISITED:
+        case SHORT_CIRCUIT_0STEP:
+        case ROULETTE_GREEDY:
+        case ROULETTE_EARLY:
+            break;
+        default:
+            return "";
+        }
+        ModelAction counterfactual = action.getCounterfactualPick();
+        if (counterfactual == null) {
+            return " cf_action=" + action + " cf_changed=0";
+        }
+        return " cf_action=" + counterfactual + " cf_changed=" + (counterfactual == action ? 0 : 1);
+    }
+
+    /**
      * The pick channel for a non-model action's {@code [APE-STEP]} line (INV-SEL-05). These actions
      * carry no provenance field of their own — they are not {@code ModelAction}s — so the channel is
      * read off the type: {@code EVENT_TRIGGER_ACTIVITY} is the stagnation activity launcher, and
@@ -1463,7 +1492,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 Logger.iformat(
                         "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
                         + "priority=%d mop=%d mop_frontier=%d wtg=%d coverage=%d menu=%d form=%d"
-                        + " activity_has_mop=%d pick_channel=%s%s",
+                        + " activity_has_mop=%d pick_channel=%s%s%s",
                         getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
                         newState.getStateKey(), newAction,
                         newAction.getDecisionSource().name(), newAction.getPriority(),
@@ -1473,7 +1502,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                         newAction.getFormBoost(),
                         activityHasMop(newState.getActivity()),
                         newAction.getPickChannel().getLabel(),
-                        patchedField(newAction));
+                        patchedField(newAction),
+                        counterfactualFields(newAction));
             }
             // Buffer this model decision so its [APE-OUTCOME] can key back to this [APE-STEP], and
             // so the dead-pair ban receives the decision's outcome. Buffering is not gated by

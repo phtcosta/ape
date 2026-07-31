@@ -95,10 +95,10 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 Last group by dependency, not optional: it touches all four pick sites and must not perturb the seeded RNG stream, so it lands once the sites are otherwise stable. Task 16.4's seed-identity test is its merge gate.
 
-- [ ] 16.1 Implement `cf_action`/`cf_changed` at the 4 pick sites (two short-circuits `SataAgent.java:575-587`/`:1544-1552`, two roulettes `:607`/`:1558`): recompute the pick with `mopBoost`+`mopFrontierBoost` zeroed, candidates and other boosts unchanged (INV-SEL-08)
-- [ ] 16.2 RNG isolation: roulette counterfactual replays the factual pick's recorded draw as a fraction of total weight — zero additional draws from the live seeded stream (INV-SEL-09, INV-EXPL-14); short-circuit counterfactuals are deterministic
-- [ ] 16.3 Serialize `cf_action`/`cf_changed` on the four channels' `[APE-STEP]` lines only; recomputation failure → `cf_changed=0`, selection unaffected
-- [ ] 16.4 **Dedicated mandatory test**: fixed seed, counterfactual on vs off → identical selected-action sequence; plus per-site divergence cases and the all-MOP-weights-zero ⇒ `cf_changed=0` invariant
+- [x] 16.1 Implement `cf_action`/`cf_changed` at the 4 pick sites (two short-circuits `SataAgent.java:575-587`/`:1544-1552`, two roulettes `:607`/`:1558`): recompute the pick with `mopBoost`+`mopFrontierBoost` zeroed, candidates and other boosts unchanged (INV-SEL-08)
+- [x] 16.2 RNG isolation: roulette counterfactual replays the factual pick's recorded draw as a fraction of total weight — zero additional draws from the live seeded stream (INV-SEL-09, INV-EXPL-14); short-circuit counterfactuals are deterministic
+- [x] 16.3 Serialize `cf_action`/`cf_changed` on the four channels' `[APE-STEP]` lines only; recomputation failure → `cf_changed=0`, selection unaffected
+- [x] 16.4 **Dedicated mandatory test**: fixed seed, counterfactual on vs off → identical selected-action sequence; plus per-site divergence cases and the all-MOP-weights-zero ⇒ `cf_changed=0` invariant
 
 ## 17. Verification
 

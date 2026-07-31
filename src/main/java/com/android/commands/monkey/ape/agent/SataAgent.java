@@ -24,6 +24,7 @@ import static com.android.commands.monkey.ape.utils.Config.trivialActivityRankTh
 import static com.android.commands.monkey.ape.utils.Config.useActionDiffer;
 
 import java.util.ArrayList;
+import java.util.function.Supplier;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -50,6 +51,7 @@ import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.model.MopCounterfactual;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.model.StateActionDiffer;
@@ -256,6 +258,38 @@ public class SataAgent extends StatefulAgent {
      * unvisited, least-visited, and graph-navigation picks are attributed SATA at their own
      * return sites even though they live inside EARLY_STAGE/EPSILON_GREEDY.
      */
+    /**
+     * The candidates a pick channel would walk: the state's actions passing {@code filter}, in the
+     * order the roulette and the least-visited scan iterate them, minus the form-submit exclusion
+     * when the caller applies one. A3 recomputes over exactly this set — the counterfactual changes
+     * the weights, never the candidates.
+     */
+    private static List<ModelAction> candidatesOf(State state, ActionFilter filter,
+                                                  ModelAction excluded) {
+        List<ModelAction> candidates = new ArrayList<>();
+        for (ModelAction action : state.getActions()) {
+            if (action == excluded || !filter.include(action)) {
+                continue;
+            }
+            candidates.add(action);
+        }
+        return candidates;
+    }
+
+    /**
+     * Run a counterfactual recomputation with failure contained (INV-SEL-08): the factual pick has
+     * already been made, so a recomputation that throws costs the line its {@code cf_action} and
+     * nothing else. A null result renders as {@code cf_changed=0}.
+     */
+    private static ModelAction counterfactual(Supplier<ModelAction> recomputation) {
+        try {
+            return recomputation.get();
+        } catch (Exception e) {
+            Logger.wformat("[APE-RV] counterfactual recomputation failed: %s", e.getMessage());
+            return null;
+        }
+    }
+
     static ModelAction.DecisionSource attributeByLargestBoost(ModelAction action) {
         int mop = action.getMopBoost();
         int mopFrontier = action.getMopFrontierBoost();
@@ -607,6 +641,14 @@ public class SataAgent extends StatefulAgent {
         // unvisited short-circuits above. Bounded to unvisited mopBoost>0 so it fires once
         // per MOP target and never overrides least-visited for visited actions
         // (INV-SEL-MOP-01/02). The caller attributes it via logActionSelected(.,EPSILON_GREEDY).
+        // back-menu-pick-cap: capped BACK/MENU must also fall out of the discretionary least-visited
+        // and roulette channels — else a refinement-minted sibling (visitedCount == 0) would win
+        // least-visited outright, merely relabeling the re-pick channel (Decision 3). One wrapped
+        // filter, stable across the roulette's count/pick passes (INV-SEL-NAV-04). Built before the
+        // short-circuit because A3's counterfactual needs the same candidate set the fall-through
+        // would have seen; constructing it decides nothing.
+        ActionFilter cappedFilter =
+                cappedBackMenuFilter(ActionFilter.ENABLED_VALID, backMenuPicks, activity, cap);
         ModelAction mopTarget = selectUnvisitedMopTarget(submitExcluded);
         if (mopTarget != null) {
             Logger.iformat("Select MOP target %s because it is unvisited (mopBoost=%d).",
@@ -614,14 +656,13 @@ public class SataAgent extends StatefulAgent {
             // Boost-based deterministic pick: attribute by largest contributing boost.
             mopTarget.setDecisionSource(attributeByLargestBoost(mopTarget));
             mopTarget.setPickChannel(ModelAction.PickChannel.SHORT_CIRCUIT_UNVISITED);
+            // A3: this short-circuit exists only because of the MOP boost, so its counterfactual is
+            // the fall-through it pre-empted — the least-visited pick with MOP weights zeroed.
+            final ModelAction excluded = submitExcluded;
+            mopTarget.setCounterfactualPick(counterfactual(() -> MopCounterfactual
+                    .leastVisitedWithoutMopWeights(candidatesOf(newState, cappedFilter, excluded))));
             return mopTarget;
         }
-        // back-menu-pick-cap: capped BACK/MENU must also fall out of the discretionary least-visited
-        // and roulette channels — else a refinement-minted sibling (visitedCount == 0) would win
-        // least-visited outright, merely relabeling the re-pick channel (Decision 3). One wrapped
-        // filter, stable across the roulette's count/pick passes (INV-SEL-NAV-04).
-        ActionFilter cappedFilter =
-                cappedBackMenuFilter(ActionFilter.ENABLED_VALID, backMenuPicks, activity, cap);
         if (egreedy()) { // TODO: this is different from Sarsa.
             Logger.iformat("Try to select the least visited action.");
             // Least-visited pick: priority (and any boost) is only a tie-break, not the
@@ -635,11 +676,16 @@ public class SataAgent extends StatefulAgent {
             return leastVisited;
         }
         Logger.iformat("Try to randomly select a visited action.");
-        // Priority roulette: attribute by largest contributing boost.
-        ModelAction roulettePick = newState.randomlyPickAction(getRandom(), cappedFilter);
+        // Priority roulette: attribute by largest contributing boost. The recorded form reports the
+        // draw so A3 can replay it; the pick itself is unchanged.
+        State.RoulettePick pick = newState.randomlyPickActionRecorded(getRandom(), cappedFilter, true);
+        ModelAction roulettePick = pick.getAction();
         if (roulettePick != null) {
             roulettePick.setDecisionSource(attributeByLargestBoost(roulettePick));
             roulettePick.setPickChannel(ModelAction.PickChannel.ROULETTE_GREEDY);
+            // A3: same random point, different weights — no draw of its own (INV-SEL-09).
+            roulettePick.setCounterfactualPick(counterfactual(() -> MopCounterfactual.replayRoulette(
+                    candidatesOf(newState, cappedFilter, null), pick.getDrawIndex(), pick.getTotal())));
             recordBackMenuPick(roulettePick.getType(), activity);
         }
         return roulettePick;
@@ -1575,6 +1621,12 @@ public class SataAgent extends StatefulAgent {
             // shadowed here). Null (no boosted candidate) is a no-op; the roulette then runs
             // unchanged. Chain order intact. The revisit cap (mop-target-revisit-cap) filters
             // candidates whose (widget,type,activity) key has reached ape.mopTargetPickCap.
+            // back-menu-pick-cap (INV-SEL-NAV-05): drop capped target-less BACK/MENU from the EARLY_STAGE
+            // roulette candidates. This composes with the INV-FORM-06 submit exclusion above (BACK/MENU
+            // are never the submit candidate, so the two filters are independent). The MOP probe below
+            // is untouched — it ignores target-less BACK/MENU anyway (mopBoost==0). Built before the
+            // probe because A3's counterfactual needs the roulette's candidate set.
+            List<ModelAction> rouletteCandidates = dropCappedBackMenu(candidates, next.getActivity());
             ModelAction mopTarget = pickCappedMopTarget(candidates, null, next.getActivity());
             if (mopTarget != null) {
                 Logger.iformat("Find a greedy MOP target %s in 0-step (mopBoost=%d).",
@@ -1583,14 +1635,16 @@ public class SataAgent extends StatefulAgent {
                 // Boost-based deterministic pick: attribute by largest contributing boost.
                 mopTarget.setDecisionSource(attributeByLargestBoost(mopTarget));
                 mopTarget.setPickChannel(ModelAction.PickChannel.SHORT_CIRCUIT_0STEP);
+                // A3: the roulette this probe pre-empted made no draw, so its counterfactual is that
+                // roulette's modal outcome with MOP weights zeroed — deterministic, since drawing
+                // here would perturb the seeded stream (INV-SEL-09).
+                mopTarget.setCounterfactualPick(counterfactual(() -> MopCounterfactual
+                        .highestPriorityWithoutMopWeights(rouletteCandidates)));
                 return mopTarget;
             }
-            // back-menu-pick-cap (INV-SEL-NAV-05): drop capped target-less BACK/MENU from the EARLY_STAGE
-            // roulette candidates. This composes with the INV-FORM-06 submit exclusion above (BACK/MENU
-            // are never the submit candidate, so the two filters are independent). The MOP probe above
-            // is untouched — it ignores target-less BACK/MENU anyway (mopBoost==0).
-            List<ModelAction> rouletteCandidates = dropCappedBackMenu(candidates, next.getActivity());
-            action = RandomHelper.randomPickWithPriority(rouletteCandidates);
+            RandomHelper.Draw<ModelAction> draw =
+                    RandomHelper.randomPickWithPriorityRecorded(rouletteCandidates);
+            action = draw.getValue();
             if (action != null) {
                 Logger.iprintln("Find a greedy action in 0-step");
                 // super.disableRestart();
@@ -1599,6 +1653,10 @@ public class SataAgent extends StatefulAgent {
                 // largest contributing boost.
                 action.setDecisionSource(attributeByLargestBoost(action));
                 action.setPickChannel(ModelAction.PickChannel.ROULETTE_EARLY);
+                // A3: replay of this roulette's own draw with MOP weights zeroed.
+                final ModelAction picked = action;
+                picked.setCounterfactualPick(counterfactual(() -> MopCounterfactual.replayRoulette(
+                        rouletteCandidates, draw.getIndex(), draw.getTotal())));
                 recordBackMenuPick(action.getType(), next.getActivity());
                 return action;
             }

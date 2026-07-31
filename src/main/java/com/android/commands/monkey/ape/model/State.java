@@ -176,13 +176,50 @@ public class State extends GraphElement {
     }
 
     public ModelAction randomlyPickAction(Random random, ActionFilter filter, boolean includeBack) {
+        return randomlyPickActionRecorded(random, filter, includeBack).getAction();
+    }
+
+    /**
+     * The priority roulette, reporting the draw it consumed alongside the action it picked. The
+     * draw is what A3's counterfactual replays as a fraction of total weight, so the recomputation
+     * costs the seeded stream nothing (INV-SEL-09); nothing else about the pick differs.
+     */
+    public RoulettePick randomlyPickActionRecorded(Random random, ActionFilter filter,
+                                                   boolean includeBack) {
         int total = countActionPriority(filter, includeBack);
         if (total == 0) {
-            return null;
+            return new RoulettePick(null, 0, 0);
         }
 
         int index = random.nextInt(total);
-        return pickAction(index, filter, includeBack);
+        return new RoulettePick(pickAction(index, filter, includeBack), index, total);
+    }
+
+    /** A roulette pick together with the draw that produced it. */
+    public static final class RoulettePick {
+        private final ModelAction action;
+        private final int drawIndex;
+        private final int total;
+
+        RoulettePick(ModelAction action, int drawIndex, int total) {
+            this.action = action;
+            this.drawIndex = drawIndex;
+            this.total = total;
+        }
+
+        public ModelAction getAction() {
+            return action;
+        }
+
+        /** The value drawn from the seeded stream, in [0, total). */
+        public int getDrawIndex() {
+            return drawIndex;
+        }
+
+        /** The total weight the draw was taken against. */
+        public int getTotal() {
+            return total;
+        }
     }
 
     public boolean containsTarget(Name target) {
