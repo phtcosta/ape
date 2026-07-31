@@ -233,6 +233,13 @@ public class SataAgent extends StatefulAgent {
         if (action != null && action.isModelAction()
                 && type != SataEventType.EARLY_STAGE && type != SataEventType.EPSILON_GREEDY) {
             ((ModelAction) action).setDecisionSource(ModelAction.DecisionSource.SATA);
+            // The channel follows the same discipline (A-5, INV-SEL-05). The buffer is a named
+            // channel of its own; every other branch reaching here selects outside the four
+            // MOP-sensitive channels and reports sata_other. This write is also what clears a
+            // channel carried over from the step that last picked this action object.
+            ((ModelAction) action).setPickChannel(type == SataEventType.USE_BUFFER
+                    ? ModelAction.PickChannel.BUFFER
+                    : ModelAction.PickChannel.SATA_OTHER);
         }
         logEvent(type);
     }
@@ -368,6 +375,7 @@ public class SataAgent extends StatefulAgent {
      */
     private ModelAction acceptLlmResult(ModelAction result) {
         result.setDecisionSource(ModelAction.DecisionSource.LLM);
+        result.setPickChannel(ModelAction.PickChannel.LLM);
         if (requiresSynthesizedResolution(result)) {
             newState.resolveAction(this, result, getThrottleForNewAction(newState, result));
         }
@@ -413,6 +421,7 @@ public class SataAgent extends StatefulAgent {
             if (trivial != null) {
                 Logger.iformat("[APE-RV] Budget exhausted for %s, navigating to trivial activity", newState.getActivity());
                 trivial.setDecisionSource(ModelAction.DecisionSource.Budget);
+                trivial.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
                 return trivial;
             }
             // Fall through to normal SATA chain — budget is advisory, not blocking
@@ -550,6 +559,7 @@ public class SataAgent extends StatefulAgent {
                 Logger.iprintln("Select Back because Back action is unvisited.");
                 // Chosen because Back is unvisited, not because of any boost — SATA.
                 back.setDecisionSource(ModelAction.DecisionSource.SATA);
+                back.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
                 recordBackMenuPick(ActionType.MODEL_BACK, activity);
                 return back;
             }
@@ -560,6 +570,7 @@ public class SataAgent extends StatefulAgent {
                 Logger.iprintln("Select Menu because Menu action is unvisited.");
                 // Chosen because Menu is unvisited, not because of its menuBoost — SATA.
                 menu.setDecisionSource(ModelAction.DecisionSource.SATA);
+                menu.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
                 recordBackMenuPick(ActionType.MODEL_MENU, activity);
                 return menu;
             }
@@ -583,6 +594,7 @@ public class SataAgent extends StatefulAgent {
                     mopTarget, mopTarget.getMopBoost());
             // Boost-based deterministic pick: attribute by largest contributing boost.
             mopTarget.setDecisionSource(attributeByLargestBoost(mopTarget));
+            mopTarget.setPickChannel(ModelAction.PickChannel.SHORT_CIRCUIT_UNVISITED);
             return mopTarget;
         }
         // back-menu-pick-cap: capped BACK/MENU must also fall out of the discretionary least-visited
@@ -598,6 +610,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction leastVisited = newState.greedyPickLeastVisited(cappedFilter, submitExcluded);
             if (leastVisited != null) {
                 leastVisited.setDecisionSource(ModelAction.DecisionSource.SATA);
+                leastVisited.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
                 recordBackMenuPick(leastVisited.getType(), activity);
             }
             return leastVisited;
@@ -607,6 +620,7 @@ public class SataAgent extends StatefulAgent {
         ModelAction roulettePick = newState.randomlyPickAction(getRandom(), cappedFilter);
         if (roulettePick != null) {
             roulettePick.setDecisionSource(attributeByLargestBoost(roulettePick));
+            roulettePick.setPickChannel(ModelAction.PickChannel.ROULETTE_GREEDY);
             recordBackMenuPick(roulettePick.getType(), activity);
         }
         return roulettePick;
@@ -1177,6 +1191,7 @@ public class SataAgent extends StatefulAgent {
         if (action != null) {
             // ABA graph-navigation pick: not priority-driven — SATA.
             action.setDecisionSource(ModelAction.DecisionSource.SATA);
+            action.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
             Logger.iformat("Move from A (%s) to B (%s) for ABA within %d steps that start from action %s",
                     A, B, path.size(), action);
         }
@@ -1548,6 +1563,7 @@ public class SataAgent extends StatefulAgent {
                 checkDisableRestart(mopTarget);
                 // Boost-based deterministic pick: attribute by largest contributing boost.
                 mopTarget.setDecisionSource(attributeByLargestBoost(mopTarget));
+                mopTarget.setPickChannel(ModelAction.PickChannel.SHORT_CIRCUIT_0STEP);
                 return mopTarget;
             }
             // back-menu-pick-cap (INV-SEL-NAV-05): drop capped target-less BACK/MENU from the EARLY_STAGE
@@ -1563,6 +1579,7 @@ public class SataAgent extends StatefulAgent {
                 // Priority roulette over EARLY_STAGE unvisited candidates: attribute by
                 // largest contributing boost.
                 action.setDecisionSource(attributeByLargestBoost(action));
+                action.setPickChannel(ModelAction.PickChannel.ROULETTE_EARLY);
                 recordBackMenuPick(action.getType(), next.getActivity());
                 return action;
             }
@@ -1577,6 +1594,7 @@ public class SataAgent extends StatefulAgent {
                 // Graph-navigation pick (greedy state via a global action): not priority-
                 // driven — SATA.
                 a.setDecisionSource(ModelAction.DecisionSource.SATA);
+                a.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
                 return a;
             }
         }
@@ -1593,6 +1611,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction navAction = refillBuffer(path);
             if (navAction != null) {
                 navAction.setDecisionSource(ModelAction.DecisionSource.SATA);
+                navAction.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
             }
             return navAction;
         }
@@ -1619,6 +1638,7 @@ public class SataAgent extends StatefulAgent {
             // Chosen because Back is unvisited, not because of any boost — SATA.
             ModelAction backAction = next.getBackAction();
             backAction.setDecisionSource(ModelAction.DecisionSource.SATA);
+            backAction.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
             recordBackMenuPick(ActionType.MODEL_BACK, next.getActivity());
             return backAction;
         }
@@ -1634,6 +1654,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction navAction = refillBuffer(path);
             if (navAction != null) {
                 navAction.setDecisionSource(ModelAction.DecisionSource.SATA);
+                navAction.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
             }
             return navAction;
         }

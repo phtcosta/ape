@@ -43,6 +43,39 @@ public class ModelAction extends Action {
         SATA, MOP, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form
     }
 
+    /**
+     * The selection channel that picked this action, for the {@code pick_channel} field of
+     * {@code [APE-STEP]} (A-5, INV-SEL-05). Independent of {@link DecisionSource}: the source names
+     * the mechanism whose boost was largest, the channel names the code path that consumed it.
+     * Measured motivation — the unvisited-MOP short-circuit yields 15.1% new states while the
+     * MOP-boosted roulette yields 1.4%, and aggregating them under {@code decision_source=MOP}
+     * mixes mechanism with noise.
+     *
+     * <p>The enum is total: every path that is not one of the named channels reports
+     * {@code sata_other}, so the field is never absent and never free-form.
+     */
+    public enum PickChannel {
+        SHORT_CIRCUIT_UNVISITED("short_circuit_unvisited"),
+        SHORT_CIRCUIT_0STEP("short_circuit_0step"),
+        ROULETTE_GREEDY("roulette_greedy"),
+        ROULETTE_EARLY("roulette_early"),
+        LAUNCHER("launcher"),
+        LLM("llm"),
+        BUFFER("buffer"),
+        SATA_OTHER("sata_other");
+
+        private final String label;
+
+        PickChannel(String label) {
+            this.label = label;
+        }
+
+        /** The value written to the trace. */
+        public String getLabel() {
+            return label;
+        }
+    }
+
     // Resolution information
     private final State state;
     private final Name target;
@@ -56,6 +89,7 @@ public class ModelAction extends Action {
     // A-5 [APE-STEP] telemetry: decision source + per-mechanism boosts applied in
     // the most recent adjustActionsByGUITree pass. Boosts are reset each pass.
     private DecisionSource decisionSource = DecisionSource.SATA;
+    private PickChannel pickChannel = PickChannel.SATA_OTHER;
     private int mopBoost;
     private int wtgBoost;
     private int coverageBoost;
@@ -198,6 +232,19 @@ public class ModelAction extends Action {
 
     public void setDecisionSource(DecisionSource decisionSource) {
         this.decisionSource = decisionSource;
+    }
+
+    public PickChannel getPickChannel() {
+        return this.pickChannel;
+    }
+
+    /**
+     * Stamp the channel that picked this action. Written on every selection path, exactly like
+     * {@link #setDecisionSource}: an action object outlives the step that selected it, so a fresh
+     * write is what keeps a later step from reporting the previous step's channel.
+     */
+    public void setPickChannel(PickChannel pickChannel) {
+        this.pickChannel = pickChannel;
     }
 
     /** Reset the per-mechanism boost telemetry before a fresh scoring pass. */

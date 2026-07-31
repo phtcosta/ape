@@ -228,6 +228,20 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     /**
+     * The MOP-screen bit of an activity (INV-SEL-06): 1 when MOP data is loaded and the activity is
+     * in its pre-computed MOP set, 0 otherwise — including whenever `MopData` is null, which is how
+     * a MOP-off arm reports. Serialized on `[APE-STEP]` (where the step started) and on
+     * `[APE-OUTCOME]` (where it landed), the two halves of the evidential link that says whether a
+     * decision happened on, or reached, a monitored screen. The lookup is O(1) over a set built at
+     * load time.
+     */
+    private int activityHasMop(String activity) {
+        MopData mopData = getMopData();
+        if (mopData == null || activity == null) return 0;
+        return mopData.activityHasMop(activity) ? 1 : 0;
+    }
+
+    /**
      * The form-completion context for the current state: true when {@code currentState} carries at
      * least one unfilled {@code EditText}. Read by {@link ApeAgent#checkInput} to fill
      * deterministically (bypassing the inputRate toss). {@code checkInput} runs after
@@ -1007,9 +1021,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 && lastDecisionAction != null && lastDecisionAction == currentAction) {
             if (Config.stepTelemetryEnabled) {
                 Logger.iformat(
-                        "[APE-OUTCOME] step=%d decision_source=%s new_state=%s target_state=%s activity_changed=%s",
+                        "[APE-OUTCOME] step=%d decision_source=%s new_state=%s target_state=%s"
+                        + " activity_changed=%s activity_has_mop=%d",
                         lastDecisionStep, currentAction.getDecisionSource().name(), _isNewState,
-                        newState.getStateKey(), !currentStateTransition.isSameActivity());
+                        newState.getStateKey(), !currentStateTransition.isSameActivity(),
+                        activityHasMop(newState.getActivity()));
             }
             // B1 outcome feedback (llm-routing INV-RTR-15): the router cannot observe outcomes, so
             // the agent hands it the executed LLM decision and the new_state bit computed here. Only
@@ -1123,6 +1139,18 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         return type == ActionType.EVENT_TRIGGER_ACTIVITY
                 ? ModelAction.DecisionSource.Component
                 : ModelAction.DecisionSource.SATA;
+    }
+
+    /**
+     * The pick channel for a non-model action's {@code [APE-STEP]} line (INV-SEL-05). These actions
+     * carry no provenance field of their own — they are not {@code ModelAction}s — so the channel is
+     * read off the type: {@code EVENT_TRIGGER_ACTIVITY} is the stagnation activity launcher, and
+     * every other non-model action is outside the four MOP-sensitive channels. Pure.
+     */
+    static ModelAction.PickChannel nonModelPickChannel(ActionType type) {
+        return type == ActionType.EVENT_TRIGGER_ACTIVITY
+                ? ModelAction.PickChannel.LAUNCHER
+                : ModelAction.PickChannel.SATA_OTHER;
     }
 
     private static final String[] PROVIDER_OPERATIONS = {"query", "insert", "update"};
@@ -1408,13 +1436,16 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             if (Config.stepTelemetryEnabled) {
                 Logger.iformat(
                         "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
-                        + "priority=%d mop=%d wtg=%d coverage=%d menu=%d form=%d",
+                        + "priority=%d mop=%d wtg=%d coverage=%d menu=%d form=%d activity_has_mop=%d"
+                        + " pick_channel=%s",
                         getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
                         newState.getStateKey(), newAction,
                         newAction.getDecisionSource().name(), newAction.getPriority(),
                         newAction.getMopBoost(), newAction.getWtgBoost(),
                         newAction.getCoverageBoost(), newAction.getMenuBoost(),
-                        newAction.getFormBoost());
+                        newAction.getFormBoost(),
+                        activityHasMop(newState.getActivity()),
+                        newAction.getPickChannel().getLabel());
             }
             // Buffer this model decision so its [APE-OUTCOME] can key back to this [APE-STEP], and
             // so the dead-pair ban receives the decision's outcome. Buffering is not gated by
@@ -1429,10 +1460,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
             // action stays on the SATA chain that produced it (INV-SEL-04). clock as above.
             if (Config.stepTelemetryEnabled) {
-                Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s",
+                Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s"
+                        + " decision_source=%s activity_has_mop=%d pick_channel=%s",
                         getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
                         newState.getStateKey(), action,
-                        nonModelDecisionSource(action.getType()).name());
+                        nonModelDecisionSource(action.getType()).name(),
+                        activityHasMop(newState.getActivity()),
+                        nonModelPickChannel(action.getType()).getLabel());
             }
             // Non-model actions produce no transition under their own identity; clear the buffer so
             // a stale model decision cannot be resurrected as currentAction by state recovery.

@@ -40,13 +40,13 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 7. A4 — serialize mop_reach (~3 LOC)
 
-- [ ] 7.1 `[APE-STEP]` emission (`StatefulAgent.java:1396-1404`): add `activity_has_mop=0|1` via `MopData.activityHasMop` (`MopData.java:975-977`, O(1)); `0` when `MopData` is null (INV-SEL-06)
-- [ ] 7.2 `[APE-OUTCOME]` emission (`StatefulAgent.java:1007-1010`): add `activity_has_mop` for the **target** activity
+- [x] 7.1 `[APE-STEP]` emission (`StatefulAgent.java:1396-1404`): add `activity_has_mop=0|1` via `MopData.activityHasMop` (`MopData.java:975-977`, O(1)); `0` when `MopData` is null (INV-SEL-06)
+- [x] 7.2 `[APE-OUTCOME]` emission (`StatefulAgent.java:1007-1010`): add `activity_has_mop` for the **target** activity
 
 ## 8. A5 — pick_channel field (~10 LOC)
 
-- [ ] 8.1 `ModelAction`: add `pickChannel` provenance (like `decisionSource`); set at the pick sites — `SataAgent.java:575-587` (`short_circuit_unvisited`), `:1544-1552` (`short_circuit_0step`), `:607` (`roulette_greedy`), `:1558` (`roulette_early`), `:460-483` (`launcher`), LLM hooks `:422-453` (`llm`), buffer path (`buffer`), every other path (`sata_other`) (INV-SEL-05)
-- [ ] 8.2 Serialize `pick_channel=<value>` on every `[APE-STEP]` line
+- [x] 8.1 `ModelAction`: add `pickChannel` provenance (like `decisionSource`); set at the pick sites — `SataAgent.java:575-587` (`short_circuit_unvisited`), `:1544-1552` (`short_circuit_0step`), `:607` (`roulette_greedy`), `:1558` (`roulette_early`), `:460-483` (`launcher`), LLM hooks `:422-453` (`llm`), buffer path (`buffer`), every other path (`sata_other`) (INV-SEL-05)
+- [x] 8.2 Serialize `pick_channel=<value>` on every `[APE-STEP]` line
 
 ## 9. A6 — un-alias wtgBoost (~15 LOC)
 

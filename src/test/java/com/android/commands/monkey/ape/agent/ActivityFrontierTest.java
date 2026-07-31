@@ -104,6 +104,21 @@ public class ActivityFrontierTest {
                 StatefulAgent.nonModelDecisionSource(ActionType.EVENT_ACTIVATE));
     }
 
+    /**
+     * A-5 (INV-SEL-05): a non-model action carries no provenance field of its own, so its
+     * `pick_channel` is read off the type — the launcher is a named channel, everything else is
+     * outside the four MOP-sensitive ones.
+     */
+    @Test
+    public void testNonModelPickChannel() {
+        assertEquals(ModelAction.PickChannel.LAUNCHER,
+                StatefulAgent.nonModelPickChannel(ActionType.EVENT_TRIGGER_ACTIVITY));
+        assertEquals(ModelAction.PickChannel.SATA_OTHER,
+                StatefulAgent.nonModelPickChannel(ActionType.EVENT_NOP));
+        assertEquals(ModelAction.PickChannel.SATA_OTHER,
+                StatefulAgent.nonModelPickChannel(ActionType.EVENT_ACTIVATE));
+    }
+
     // ---- Lever B: cadence firing predicate (mop-census-launcher, INV-CT-05/12) ----
     // shouldFireLauncher(enabled, hasMopData, stepsSinceFiring, cadence, launchesSoFar, maxPerRun).
     // Fires iff enabled && hasMopData && stepsSinceFiring == cadence && (maxPerRun == 0 ||
