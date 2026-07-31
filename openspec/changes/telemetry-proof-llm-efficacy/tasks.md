@@ -35,8 +35,8 @@ Group order is a dependency and risk order (decided 2026-07-29, source of record
 
 ## 6. B4 — edge-based snapping (~6–10 LOC)
 
-- [ ] 6.1 `LlmRouter.mapToModelAction` snap loop (`LlmRouter.java:659-676`): replace centre distance with point-to-rectangle distance (clamped `dx`/`dy`, `hypot`); tolerance formula `max(floor, min(w,h)/2)` (`:666-669`) unchanged (INV-RTR-18). Note: `ape.llmSnapTolerancePx` (`Config.java:223`) stays as-is — raising it to 150 is an rv-android config decision gated on B1, out of this change
-- [ ] 6.2 JVM unit test: point `(540,180)` 20 px above the top edge of a bar at `[0,200,1080,350]` snaps (edge distance 20 ≤ tolerance 75); the same point fails centre distance — the bar's centre is `(540,275)`, so the centre distance is **95 px** > 75 — regression-locks the geometry
+- [x] 6.1 `LlmRouter.mapToModelAction` snap loop (`LlmRouter.java:659-676`): replace centre distance with point-to-rectangle distance (clamped `dx`/`dy`, `hypot`); tolerance formula `max(floor, min(w,h)/2)` (`:666-669`) unchanged (INV-RTR-18). Note: `ape.llmSnapTolerancePx` (`Config.java:223`) stays as-is — raising it to 150 is an rv-android config decision gated on B1, out of this change
+- [x] 6.2 JVM unit test: point `(540,180)` 20 px above the top edge of a bar at `[0,200,1080,350]` snaps (edge distance 20 ≤ tolerance 75); the same point fails centre distance — the bar's centre is `(540,275)`, so the centre distance is **95 px** > 75 — regression-locks the geometry
 
 ## 7. A4 — serialize mop_reach (~3 LOC)
 

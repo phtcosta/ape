@@ -591,7 +591,8 @@ public class LlmRouter {
      *   <li>Boundary reject: y < 5% or y > 94% of screen height</li>
      *   <li>type_text: filter to input-field widgets only</li>
      *   <li>Bounds containment: smallest widget whose bounds contain (pixelX, pixelY)</li>
-     *   <li>Euclidean fallback: nearest widget center within tolerance</li>
+     *   <li>Edge-distance fallback: nearest widget by point-to-rectangle distance,
+     *       within tolerance</li>
      * </ol>
      *
      * @param pixelX     x coordinate in device pixels
@@ -690,10 +691,9 @@ public class LlmRouter {
             if (bestBounds != null) return fixTextEdit(bestBounds, actions, actionType);
         }
 
-        // --- Euclidean fallback ---
-        ModelAction bestEuclidean    = null;
-        double      bestDist         = Double.MAX_VALUE;
-        double      bestTolerance    = Double.MAX_VALUE;
+        // --- Edge-distance fallback ---
+        ModelAction bestEdge = null;
+        double      bestDist = Double.MAX_VALUE;
 
         for (ModelAction action : actions) {
             try {
@@ -708,9 +708,15 @@ public class LlmRouter {
                 if ("click".equals(actionType) && action.getType() != ActionType.MODEL_CLICK) continue;
 
                 Rect bounds = node.getBoundsInScreen();
-                int centerX = (bounds.left + bounds.right) / 2;
-                int centerY = (bounds.top  + bounds.bottom) / 2;
-                double dist = Math.hypot(centerX - pixelX, centerY - pixelY);
+                // Point-to-rectangle (edge) distance, clamped per axis: zero when the point is
+                // inside, otherwise how far outside the widget's own border it fell (INV-RTR-18).
+                // Centre distance punished elongated widgets — on a 1080×150 bar only points within
+                // ~75 px of the centre could snap, leaving ~450 px of the bar's own edge
+                // unsnappable, so a tap 20 px outside a wide widget failed while being visually on
+                // target.
+                int dx = Math.max(Math.max(bounds.left - pixelX, 0), pixelX - bounds.right);
+                int dy = Math.max(Math.max(bounds.top - pixelY, 0), pixelY - bounds.bottom);
+                double dist = Math.hypot(dx, dy);
 
                 // tolerance = max(floor, min(nodeWidth, nodeHeight) / 2); floor J1b-configurable with
                 // default 50 — byte-identical to the pre-change hard-coded 50.0 at defaults (INV-RTR-14).
@@ -720,19 +726,18 @@ public class LlmRouter {
                         Math.min(nodeWidth, nodeHeight) / 2.0);
 
                 if (dist <= tolerance && dist < bestDist) {
-                    bestDist      = dist;
-                    bestTolerance = tolerance;
-                    bestEuclidean = action;
+                    bestDist = dist;
+                    bestEdge = action;
                 }
             } catch (Exception ignored) { /* skip bad actions */ }
         }
 
-        if (bestEuclidean != null) {
-            return fixTextEdit(bestEuclidean, actions, actionType);
+        if (bestEdge != null) {
+            return fixTextEdit(bestEdge, actions, actionType);
         }
 
         // --- Off-tree coordinate tap (dynamic element) ---
-        // No widget contains the point and none is within Euclidean tolerance. The boundary reject
+        // No widget contains the point and none is within edge-distance tolerance. The boundary reject
         // ran first, so a coordinate reaching here is guaranteed in-bounds and non-degenerate. For a
         // click/long_click, synthesize a targetless MODEL_LLM_TAP carrying the LLM coordinate so APE
         // can act on elements invisible to UIAutomator (game canvas, custom view, Compose-without-

@@ -192,6 +192,40 @@ public class LlmRouterCoordinateMappingTest {
         assertSame("a well-behaved type_text answer keeps its existing path", click, result);
     }
 
+    // -------------------------------------------------------------------------
+    // B4 — snapping measures distance to the widget's edge, not to its centre
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void aPointJustAboveAWideBarSnapsToIt() {
+        // The bar is 1080×150 at [0,200,1080,350]; the point is 20 px above its top edge and 95 px
+        // from its centre (540,275). Tolerance is max(50, min(1080,150)/2) = 75.
+        ModelAction bar = action(ActionType.MODEL_CLICK, "android.widget.Button",
+                new Rect(0, 200, 1080, 350));
+
+        ModelAction result = router().mapToModelAction(
+                540, 180, "click", null, actions(bar), null, W, H);
+
+        assertSame("edge distance 20 is within the 75 px tolerance", bar, result);
+        // Regression lock on the geometry this replaced: the retired centre-distance rule measured
+        // 95 px here and rejected the bar, leaving ~450 px of its own edge unsnappable.
+        double centreDistance = Math.hypot(540 - 540, 275 - 180);
+        assertEquals(95.0, centreDistance, 0.001);
+        assertTrue("the retired rule would have rejected it", centreDistance > 75);
+    }
+
+    @Test
+    public void aPointFarOutsideEveryWidgetStillDoesNotSnap() {
+        ModelAction bar = action(ActionType.MODEL_CLICK, "android.widget.Button",
+                new Rect(0, 200, 1080, 350));
+
+        // 300 px below the bar's bottom edge — well past the 75 px tolerance.
+        ModelAction result = router().mapToModelAction(
+                540, 650, "click", null, actions(bar), null, W, H);
+
+        assertTrue("no snap, so the coordinate becomes an off-tree tap", result instanceof LlmTapAction);
+    }
+
     @Test
     public void aPressOnANonInputWidgetIsNotConverted() {
         ModelAction longClick = action(ActionType.MODEL_LONG_CLICK, "android.widget.Button",
