@@ -171,19 +171,20 @@ A `MopFrontierPass` (in `com.android.commands.monkey.ape.agent.scoring`, impleme
 2. **Target is MOP-bearing** — `MopData.activityHasMop(WtgTransition.targetActivity) == true`;
 3. **Target is unvisited** — `Graph.getActivityNode(WtgTransition.targetActivity) == null` at scoring time (evaluated live each pass; the boost recedes once the target is visited).
 
-The boost SHALL be applied as a `setPriority` increment (`action.setPriority(action.getPriority() + mopFrontierWeight)` — the steering mechanism, since `wtgBoost` is telemetry-only and never enters `getPriority()`) AND recorded in the action's existing `wtgBoost` telemetry field via read-modify-write accumulation (`action.setWtgBoost(action.getWtgBoost() + mopFrontierWeight)`), the same field the WTG-MOP boost and the generic frontier boost use. It therefore accumulates with `mopWeightWtg` and `frontierBoostWeight` when they co-apply, and remains attributable via the `[APE-STEP] ... wtg=` field. No new `decision_source` value is introduced.
+The boost SHALL be applied as a `setPriority` increment (`action.setPriority(action.getPriority() + mopFrontierWeight)` — the steering mechanism, unchanged) AND recorded in a **dedicated telemetry field** `ModelAction.mopFrontierBoost` via read-modify-write accumulation (`action.setMopFrontierBoost(action.getMopFrontierBoost() + mopFrontierWeight)`). It SHALL NOT write the `wtgBoost` field. This de-aliases the previous behavior, where `MopFrontierPass` accumulated into the same `wtgBoost` that `WtgPass` and the generic `FrontierPass` write — so `decision_source=WTG` conflated the MOP-frontier mechanism with generic WTG navigation, and the corpus's stacked values (400/600 in the `wtg=` field) could not be decomposed by mechanism. The boost is attributable via a new `[APE-STEP] ... mop_frontier=` field and its own `decision_source` value `MopFrontier` in the largest-boost attribution (`action-selection` capability, "Per-action decision-source telemetry").
 
 `MopFrontierPass.isEnabled()` SHALL be true only when `Config.mopFrontierWeight > 0` AND `MopData` is non-null with WTG data present. With `Config.mopFrontierWeight == 0` (default) the pass SHALL be byte-identical to being absent from the pipeline. The pass is independent of and additive to the generic `frontierBoostWeight` (which requires only unvisited, not MOP) — B is the strictly narrower predicate (unvisited AND MOP).
 
-`Config.mopFrontierWeight` SHALL be declared in `Config.java`, loaded via `ape.mopFrontierWeight`, default `0`, and SHALL be registered in the `apePureMode` RV-flag registry (INV-ARCH-06 of `scoring-pipeline`), forced to `0` when `apePureMode=true`. `ScoringPipeline.fromConfig` SHALL assemble `MopFrontierPass` immediately after the generic `FrontierPass` and before `CoveragePass` — the frontier family stays contiguous and the relative-order contracts of INV-ARCH-03 are preserved.
+`Config.mopFrontierWeight` SHALL be declared in `Config.java`, loaded via `ape.mopFrontierWeight`, default `0`, and SHALL be registered in the `apePureMode` RV-flag registry (INV-ARCH-06), forced to `0` when `apePureMode=true`. `ScoringPipeline.fromConfig` SHALL assemble `MopFrontierPass` immediately after the generic `FrontierPass` and before `CoveragePass` — the frontier family stays contiguous and the relative-order contracts of INV-ARCH-03 are preserved.
 
 - **INV-MFP-01**: `MopFrontierPass` SHALL add `mopFrontierWeight` to an action **only** when its matched WTG transition target satisfies both `activityHasMop(target) == true` AND `Graph.getActivityNode(target) == null` at scoring time. An action failing either condition SHALL receive nothing from this pass.
-- **INV-MFP-02**: The boost SHALL be applied as a `setPriority` increment AND recorded into `wtgBoost` by read-modify-write; because `wtgBoost` is never read by `getPriority()`, the `setPriority` increment is mandatory for the boost to steer. When `mopWeightWtg` and/or `frontierBoostWeight` co-apply to the same action, the resulting `wtgBoost` SHALL equal their accumulated sum, not an overwrite.
+- **INV-MFP-02**: The boost SHALL be applied as a `setPriority` increment AND recorded into `mopFrontierBoost` by read-modify-write; because `mopFrontierBoost` is never read by `getPriority()`, the `setPriority` increment is mandatory for the boost to steer. `MopFrontierPass` SHALL NOT write `wtgBoost`; when `mopWeightWtg` and/or `frontierBoostWeight` co-apply to the same action, `wtgBoost` SHALL reflect only those WTG-family contributions and `mopFrontierBoost` only the MOP-frontier contribution.
 - **INV-MFP-03**: With `Config.mopFrontierWeight == 0`, the scoring outcome SHALL be identical to the pipeline without `MopFrontierPass`.
 
-#### Scenario: unvisited MOP target boosted
+#### Scenario: unvisited MOP target boosted into its own field
 - **WHEN** widget W's WTG transition targets `com.x.CryptoActivity`, `activityHasMop("com.x.CryptoActivity")==true`, `Graph.getActivityNode("com.x.CryptoActivity")==null`, and `ape.mopFrontierWeight=200`
-- **THEN** W's action priority SHALL be increased by 200 and its `wtgBoost` SHALL include 200
+- **THEN** W's action priority SHALL be increased by 200
+- **AND** its `mopFrontierBoost` SHALL be 200 and its `wtgBoost` SHALL be unchanged by this pass
 
 #### Scenario: MOP but already visited — no boost
 - **WHEN** the transition target is MOP-bearing but `Graph.getActivityNode(target)` is non-null (visited)
@@ -193,13 +194,14 @@ The boost SHALL be applied as a `setPriority` increment (`action.setPriority(act
 - **WHEN** the transition target is unvisited but `activityHasMop(target)==false`
 - **THEN** `MopFrontierPass` SHALL add nothing (this is the generic frontier pass's job, not B's)
 
-#### Scenario: stacks with WTG-MOP and generic frontier
+#### Scenario: co-applying boosts stay decomposable
 - **WHEN** the target is MOP-bearing AND unvisited, with `mopWeightWtg=200`, `frontierBoostWeight=200`, `mopFrontierWeight=200`
-- **THEN** the action's `wtgBoost` SHALL accumulate all three (+600 total from the WTG/frontier passes), each also applied as a `setPriority` increment
+- **THEN** the action's priority SHALL gain +600 total
+- **AND** its `wtgBoost` SHALL be 400 (WTG-MOP + generic frontier) and its `mopFrontierBoost` SHALL be 200 — the mechanisms are separable in the `[APE-STEP]` line
 
 #### Scenario: disabled
 - **WHEN** `ape.mopFrontierWeight=0`
-- **THEN** the scoring pipeline SHALL behave exactly as without `MopFrontierPass`, with no boost recorded
+- **THEN** the scoring pipeline SHALL behave exactly as without `MopFrontierPass`, with no boost recorded in either field
 
 ---
 
@@ -228,23 +230,29 @@ The line SHALL carry the following fields:
 | `new_state` | `true` when the target state was visited for the first time (`_isNewState`), else `false` |
 | `target_state` | target `State.getStateKey()` |
 | `activity_changed` | `true` when the target activity differs from the source activity (negation of the recorded `StateTransition.isSameActivity()`) |
+| `activity_has_mop` | `1` when `MopData` is non-null AND `MopData.activityHasMop(<target activity>)` is true, else `0` — whether the step **landed on** a MOP screen, the outcome half of the evidential link that `activity_has_mop` on `[APE-STEP]` opens (where the step started) |
 
 `target_state` reports the state observed at the next model update. When fuzzing piggybacks events after the selected action, or a bad-state `EVENT_ACTIVATE` interlude executes, the recorded transition — and hence `target_state` / `new_state` — reflects the selected action plus those trailing events. The `step` join remains exact; offline analysis SHOULD treat the outcome as "state reached by the step", not "immediate post-action state".
 
 Example:
 ```
-[APE-STEP]    step=42 clock=... activity=A state=S1 action=MODEL_CLICK decision_source=LLM ...
-[APE-OUTCOME] step=42 decision_source=LLM new_state=true target_state=S7 activity_changed=false
+[APE-STEP]    step=42 clock=... activity=A state=S1 action=MODEL_CLICK decision_source=LLM ... activity_has_mop=0 ...
+[APE-OUTCOME] step=42 decision_source=LLM new_state=true target_state=S7 activity_changed=true activity_has_mop=1
 ```
 
 - **INV-ARCH-08**: The `[APE-OUTCOME]` line SHALL be gated by `stepTelemetryEnabled` exactly as the `[APE-STEP]` line is. Under `apePureMode=true` — which forces `stepTelemetryEnabled=false` per the `apePureMode Kill-Switch and Parity` requirement (INV-ARCH-06) — zero `[APE-OUTCOME]` lines SHALL be emitted, preserving upstream-APE parity (INV-ARCH-01: zero telemetry lines).
 - **INV-ARCH-09**: The `step` on an `[APE-OUTCOME]` line SHALL equal the `step` on the `[APE-STEP]` line of the action whose transition it reports. Every emitted `[APE-OUTCOME]` line SHALL have a matching `[APE-STEP]` line with the same `step`, and at most one `[APE-OUTCOME]` line SHALL be emitted per `step` value. An `[APE-STEP]` line MAY have no matching `[APE-OUTCOME]` line — when the selected action produced no recorded transition (restart, refinement discard, run end) — which is a legitimate, informative absence, not an error.
 
-#### Scenario: LLM decision attributed to a new-state discovery
+#### Scenario: LLM decision attributed to a new-state discovery on a MOP screen
 
-- **WHEN** an action with `decision_source=LLM` selected at step 42 executes and the resulting transition reaches a state visited for the first time
-- **THEN** an `[APE-OUTCOME] step=42 decision_source=LLM new_state=true target_state=<key> activity_changed=<bool>` line SHALL be emitted
-- **AND** it SHALL be joinable to the `[APE-STEP] step=42 ... decision_source=LLM` line by the shared `step=42`
+- **WHEN** an action with `decision_source=LLM` selected at step 42 executes, the resulting transition reaches a first-visit state, and the target activity is in the MOP-activity set
+- **THEN** an `[APE-OUTCOME] step=42 decision_source=LLM new_state=true target_state=<key> activity_changed=<bool> activity_has_mop=1` line SHALL be emitted
+- **AND** it SHALL be joinable to the `[APE-STEP] step=42` line by the shared `step=42`
+
+#### Scenario: outcome on a non-MOP screen
+
+- **WHEN** the recorded transition's target activity is not in the MOP-activity set (or `MopData` is null)
+- **THEN** the `[APE-OUTCOME]` line SHALL carry `activity_has_mop=0`
 
 #### Scenario: Outcome line suppressed under pure mode
 
@@ -256,7 +264,7 @@ Example:
 
 - **WHEN** an action is selected and emits an `[APE-STEP] step=50` line but the step ends in a restart before any transition is recorded (or it is the run's first step, where `addTransition` returns null)
 - **THEN** no `[APE-OUTCOME] step=50` line SHALL be emitted
-- **AND** this absence SHALL NOT be treated as an error by offline analysis (an `[APE-STEP]` without a paired `[APE-OUTCOME]` means "selected, no clean transition")
+- **AND** this absence SHALL NOT be treated as an error by offline analysis
 
 #### Scenario: BadStateException retry emits a single outcome
 
@@ -269,3 +277,6 @@ Example:
 - **THEN** the buffered action SHALL be remapped alongside `currentAction`
 - **AND** an `[APE-OUTCOME] step=70` line SHALL be emitted for the recorded transition
 
+## Invariants
+
+- **INV-ARCH-10**: `wtgBoost` and `mopFrontierBoost` SHALL be disjoint accumulators: `wtgBoost` receives only the WTG-MOP and generic-frontier contributions, `mopFrontierBoost` only the MOP-frontier contribution, and the total priority steering from the three passes SHALL equal the sum of the two fields. No pass SHALL write both fields for one contribution.

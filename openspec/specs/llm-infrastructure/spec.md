@@ -54,6 +54,8 @@ The infrastructure is designed for graceful degradation: if any component fails 
 - **INV-LLM-06**: `LlmCircuitBreaker` SHALL transition from CLOSED to OPEN after exactly `failureThreshold` (default: 3) consecutive failures. It SHALL remain OPEN for `openDurationMs` (default: 60000ms), then transition to HALF_OPEN to allow a single probe request.
 - **INV-LLM-07**: All methods on `LlmCircuitBreaker` SHALL be synchronized for thread safety.
 - **INV-LLM-08**: When `chat()` returns null, exactly one cause SHALL be recorded (`timeout`, `http_<status>`, `connection`, or `parse`), reflecting the actual failure point. The cause SHALL be reset at the start of every `chat()` invocation and SHALL be readable by the caller between the null return and the next `chat()` call.
+- **INV-LLM-11**: The `tools` array sent on the wire SHALL be exactly the schema supplied to that `chat()` invocation; no tools state SHALL persist on the client across invocations.
+- **INV-LLM-12**: When `capture()` returns null, exactly one failure stage SHALL be recorded, reset at the start of every `capture()` invocation; the seam SHALL never alter the null-return contract (INV-LLM-02).
 
 ---
 ## Requirements
@@ -61,7 +63,7 @@ The infrastructure is designed for graceful degradation: if any component fails 
 
 `SglangClient` SHALL send HTTP POST requests to `{baseUrl}/chat/completions` using the OpenAI chat completions API format. The request body SHALL be built using `org.json.JSONObject` and `org.json.JSONArray`, and SHALL include model name, sampling parameters (`temperature`, `top_p`, `top_k`, `max_tokens`), a `messages` array, and a `tools` array (OpenAI function-calling schema). The `tools` parameter is **required** for Qwen3-VL to generate structured tool calls when processing multimodal (image+text) input — without it the model returns empty content. Each message MAY contain text content, multimodal content (text + base64 image), or both. The client SHALL support Qwen3-VL's coordinate format where `"x"` may arrive as a `[x, y]` array instead of separate primitives.
 
-The constructor SHALL accept `baseUrl` (String, including `/v1` prefix), `model` (String), `temperature` (double), `topP` (double), `topK` (int), `maxTokens` (int), and `timeoutMs` (int). Both connection and read timeouts SHALL be set to `timeoutMs`. A `setTools(JSONArray)` method SHALL accept the OpenAI function-calling tools schema; when set, the `tools` array is included in every request body.
+The constructor SHALL accept `baseUrl` (String, including `/v1` prefix), `model` (String), `temperature` (double), `topP` (double), `topK` (int), `maxTokens` (int), and `timeoutMs` (int). Both connection and read timeouts SHALL be set to `timeoutMs`. **The `tools` schema SHALL be supplied per invocation** — `chat(messages, tools)` includes the supplied array in that request's body. The `setTools(JSONArray)` method and the run-wide field it installed are **removed**: a single schema fixed at construction cannot track the screen, which is what produced the measured incoherence where the wire always advertised `type_text` while the system message omitted it conditionally. No dual path remains (P3, INV-LLM-11).
 
 Response parsing SHALL use `new JSONObject(responseBody)` to deserialize the response, extract `choices[0].message.content` and `choices[0].message.tool_calls`, and construct a `ChatResponse` object. It SHALL also extract the response envelope's top-level `model` field into `ChatResponse` (null when the server omits it), so the caller can log the server-reported model (`[APE-LLM-CONFIG-ACK]`, per the `llm-routing` capability). A missing `model` field is not a parse failure.
 
@@ -73,68 +75,19 @@ Response parsing SHALL use `new JSONObject(responseBody)` to deserialize the res
 
 The parsed-map construction is unchanged, including the `"x": [x, y]` array expansion; it feeds `ToolCallParser`'s fallback path.
 
-**Failure-cause classification:** when `chat()` returns null, `SglangClient` SHALL classify the underlying failure into exactly one named cause and expose it to the caller via a `getLastErrorCause()` accessor read immediately after the null return. The classification SHALL be:
+The failure-cause classification (`getLastErrorCause()`, INV-LLM-08) is unchanged by this revision.
 
-| Cause | Trigger |
-|-------|---------|
-| `timeout` | `SocketTimeoutException` from connect or read |
-| `http_<status>` | non-200 HTTP status |
-| `connection` | any other `IOException` reaching the server |
-| `parse` | response body received but the OpenAI envelope is not parseable (bad JSON, missing `choices[0].message`) |
+#### Scenario: schema travels with the request, not the client
 
-To distinguish `timeout` from `connection`, `sendRequest()` SHALL catch `SocketTimeoutException` before the generic `IOException` and tag it as `timeout`; the generic `IOException` branch SHALL tag `connection`. The non-200 branch SHALL preserve the numeric HTTP status in a dedicated field on `LlmException`, so the caller can log `http_<status>`.
+- **WHEN** `chat(messages, toolsWithoutTypeText)` is invoked and then `chat(messages, toolsWithTypeText)`
+- **THEN** each request body's `tools` array SHALL be exactly the schema supplied to that invocation
+- **AND** no `setTools` entry point SHALL exist on the client
 
-`chat()` SHALL reset the recorded cause at the start of every invocation, so a stale cause from an earlier failure can never be attributed to a later call. Failures occurring after `chat()` returns non-null (tool-call extraction, coordinate mapping) happen outside `SglangClient` and SHALL NOT be attributed through this seam. Cause recording is governed by INV-LLM-08 and preserves INV-LLM-01.
+#### Scenario: server-reported model still extracted
 
-#### Scenario: Successful multimodal chat request
-
-- **WHEN** `SglangClient.chat(messages)` is called with a message list containing one system message (text) and one user message (text + base64 image)
-- **AND** SGLang is reachable at the configured URL
-- **THEN** an HTTP POST SHALL be sent to `{baseUrl}/chat/completions`
-- **AND** the request body SHALL contain `"model"`, `"temperature"`, `"top_p"`, `"top_k"`, `"max_tokens"`, and `"messages"` fields
-- **AND** the returned `ChatResponse` SHALL contain the model's text content, any tool calls, and the server-reported model identifier when the response carries one
-
-#### Scenario: SGLang unreachable
-
-- **WHEN** `SglangClient.chat(messages)` is called and the HTTP connection times out
-- **THEN** `null` SHALL be returned (or a ChatResponse with null content)
-- **AND** no exception SHALL propagate to the caller
-
-#### Scenario: Timeout classified distinctly from connection failure
-
-- **WHEN** `SglangClient.chat(messages)` is called and the read times out
-- **THEN** `null` SHALL be returned (INV-LLM-01 preserved)
-- **AND** the exposed last error cause SHALL be `timeout`, distinct from the `connection` cause reported when the host is unreachable
-
-#### Scenario: HTTP status preserved in the cause
-
-- **WHEN** `SglangClient.chat(messages)` is called and the server returns HTTP 500
-- **THEN** `null` SHALL be returned
-- **AND** the exposed last error cause SHALL carry the status, enabling the caller to log `cause=http_500`
-
-#### Scenario: Qwen3-VL array coordinate format
-
-- **WHEN** the model returns tool call arguments with `"x": [540, 399]` instead of `"x": 540, "y": 399`
-- **THEN** `SglangClient` SHALL normalize this to separate x and y values in the parsed arguments map before constructing the `ToolCall` object
-- **AND** `getRawArguments()` SHALL carry the arguments' JSON serialization for the downstream repair pipeline
-
-#### Scenario: Malformed native arguments string survives raw
-
-- **WHEN** the envelope carries `"arguments": "{\"x\": 616, 891}"` (missing `"y"` key — invalid JSON)
-- **THEN** the parsed arguments map SHALL be empty (the string does not parse)
-- **AND** `getRawArguments()` SHALL return `{"x": 616, 891}` verbatim
-- **AND** no exception SHALL propagate
-
-#### Scenario: Well-formed native arguments string kept verbatim
-
-- **WHEN** the envelope carries `"arguments": "{\"x\": 540, \"y\": 399}"`
-- **THEN** the parsed arguments map SHALL contain `x=540`, `y=399`
-- **AND** `getRawArguments()` SHALL return the string verbatim
-
-#### Scenario: Absent arguments give null raw
-
-- **WHEN** the envelope's tool call carries no `arguments` field, or a `ToolCall` is constructed via the two-argument constructor
-- **THEN** `getRawArguments()` SHALL return null
+- **WHEN** the response envelope carries a top-level `model` field
+- **THEN** `ChatResponse` SHALL carry it for the `[APE-LLM-CONFIG-ACK]` line
+- **AND** its absence SHALL NOT be a parse failure
 
 ---
 
@@ -477,3 +430,36 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 - **WHEN** the `apePureMode` kill-switch registry completeness guard runs (INV-ARCH-06)
 - **THEN** `llmMaxTokens`, `llmSnapTolerancePx`, `llmBoundaryTopPct`, and `llmBoundaryBottomPct` SHALL each be present in `rvExemptReasons` with an LLM sub-param reason
 
+### Requirement: SglangClient — Per-Request Tool Schema
+
+`SglangClient` SHALL accept the OpenAI function-calling tools schema **per invocation**: `chat(messages, tools)` includes the supplied `tools` array in that request's body. The constructor-time single-schema path (`setTools(JSONArray)` installing one run-wide array included in every request) is removed — no dual path remains (P3). The `tools` parameter stays required in every request for Qwen3-VL to generate structured tool calls on multimodal input; what changes is that the caller now decides per request which tools exist, so the wire schema can track the screen (the router omits `type_text` on screens without input fields, matching the system message — `llm-routing` capability, "LlmRouter Lifecycle"). Previously the schema was built once at router construction and always advertised `type_text`, contradicting the conditional system message.
+
+A null or empty `tools` argument is a programming error at the call site, not a supported mode: the router always supplies one of its two prebuilt schemas.
+
+#### Scenario: request body carries the supplied schema
+
+- **WHEN** `chat(messages, toolsWithoutTypeText)` is invoked
+- **THEN** the request body's `tools` array SHALL be exactly the supplied schema (no `type_text` entry)
+- **AND** a subsequent `chat(messages, toolsWithTypeText)` SHALL carry `type_text` — the schema is per-request state, not client state
+
+#### Scenario: no run-wide schema survives
+
+- **WHEN** two consecutive `chat()` invocations supply different schemas
+- **THEN** neither request SHALL be influenced by the other's schema (nothing is cached on the client between invocations)
+
+### Requirement: ScreenshotCapture — Failure-Stage Cause Seam
+
+`ScreenshotCapture` SHALL record which capture stage failed when `capture()` returns null, readable by the caller between the null return and the next `capture()` invocation (the same seam pattern as `SglangClient.getLastErrorCause`, INV-LLM-08): `surface_control` when the SurfaceControl reflection path returned null or threw, `uiautomation` when the UiAutomation fallback also produced no bitmap. The cause SHALL be reset at the start of every `capture()` invocation, so a stale stage from an earlier failure can never be attributed to a later call. The null-return contract (INV-LLM-02) is unchanged — the seam adds attribution, not new failure behavior.
+
+Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unavailability, and permission denial without distinguishing them — the seam names the failing **stage**, not the OS-level reason; joining the stage + foreground activity (carried on the router's `[APE-LLM-ERROR] cause=screenshot` line) with the known FLAG_SECURE APK list is an offline step. `OutOfMemoryError` is an `Error` and escapes the `catch (Exception)` blocks — it is NOT conflated into the null return and the seam makes no claim about it.
+
+#### Scenario: FLAG_SECURE failure names its stage
+
+- **WHEN** `capture()` returns null because both the SurfaceControl path and the UiAutomation fallback yielded no bitmap on a FLAG_SECURE window
+- **THEN** the failure-cause seam SHALL report the stage of the last attempted path (`uiautomation`)
+- **AND** the caller (LlmRouter) SHALL be able to read it before the next `capture()` call
+
+#### Scenario: cause reset per invocation
+
+- **WHEN** `capture()` fails once and a later `capture()` succeeds
+- **THEN** the seam SHALL NOT report the earlier failure's stage after the successful call
