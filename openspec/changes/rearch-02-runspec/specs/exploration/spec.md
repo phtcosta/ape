@@ -145,3 +145,64 @@ The keys `ape.saveObjModel`, `ape.saveDotGraph`, and `ape.saveVisGraph` are reti
 
 - **WHEN** `/data/local/tmp/ape.properties` contains `ape.fuzzingRate=O.02` (letter O)
 - **THEN** the process SHALL abort with an invalid-type diagnostic before step 1
+
+### Requirement: Exploration Loop Termination
+
+The exploration loop inside `MonkeySourceApe.nextEventImpl()` SHALL run continuously until a stop condition is reached. Two stop conditions are supported: (1) elapsed wall-clock time exceeds the value specified by `--running-minutes N`, and (2) the total Monkey event count reaches the value specified by `-v N`. When either condition is detected, the agent SHALL throw `StopTestingException`, which `MonkeySourceApe` catches to exit the loop. The loop MUST NOT exit silently on any other condition. Crashes and ANRs in the app under test MUST be logged and counted but MUST NOT terminate the loop unless a stop condition is also triggered.
+
+#### Scenario: Time limit reached
+
+- **WHEN** `--running-minutes 30` is specified and 30 minutes of wall-clock time have elapsed since the session started
+- **THEN** the agent SHALL throw `StopTestingException`
+- **AND** `MonkeySourceApe` SHALL catch the exception and proceed to the teardown phase (the teardown chain; **no** `sataModel.obj` or `sataGraph.vis.js` is written — the persistence protocol and the graph dumps are deleted by this change)
+
+#### Scenario: App crash does not stop exploration
+
+- **WHEN** the app under test crashes (process dies) during a step
+- **AND** the time limit has not been reached
+- **THEN** `Agent.appCrashed()` SHALL be called and the crash SHALL be logged
+- **AND** the agent SHALL initiate an app restart via an `EVENT_RESTART` action
+- **AND** the exploration loop SHALL continue from the restarted app state
+
+### Requirement: Seeded Agent Decision Reproducibility
+
+All agent-decision randomness routed through `RandomHelper` (priority roulettes such as `randomPickWithPriority`, uniform picks, `toss`, and `ApeFuzzer` gesture generation) SHALL be driven by a `java.util.Random` seeded from the Monkey `-s` seed. The seeded `java.util.Random` is owned by the `RunContext` (`run-spec` capability), constructed once at bootstrap from the plan's seed — the same value that initializes `Monkey.mRandom` — and reached through the context, never through static state. Input-string generation SHALL draw from this same stream: the `StringCache` `ThreadLocalRandom` path (V23) and the `/sdcard/ape.strings` reader are deleted by this change (owner decision D6), so no agent-decision or input randomness remains outside the seeded stream. Two runs launched with the same `-s`, the same APK, and the same configuration SHALL produce the same sequence of `RandomHelper` draws. (Historically `RandomHelper` used `ThreadLocalRandom.current()`, which cannot be seeded, and a residual `ThreadLocalRandom` survived in `StringCache.nextString()` — verified V23 — leaving input generation unseeded even after `RandomHelper` was fixed. Both are gone at this stage.)
+
+#### Scenario: identical seeds produce identical draw sequences
+- **WHEN** `RandomHelper.seed(42)` is called and a sequence of `randomPick`/`toss`/`nextInt` draws is recorded, then `RandomHelper.seed(42)` is called again
+- **THEN** repeating the same sequence of calls SHALL yield the same values in the same order
+
+#### Scenario: seed comes from the Monkey -s flag
+- **WHEN** the Monkey is launched with `-s 12345`
+- **THEN** `RandomHelper` SHALL be seeded with `12345` before the first agent decision
+
+### Requirement: OptionsMenu Systematic Exploration (MODEL_MENU)
+
+Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, ActionType.MODEL_MENU)`, initialised in the `State` constructor immediately after `backAction`. The field SHALL be exposed via `State.getMenuAction()` and SHALL be non-null for the life of the state. This mirrors the `backAction` / `getBackAction()` pattern exactly.
+
+Inclusion of the `menuAction` in the state's **selectable** action set is gated by `Config.modelMenuEnabled` (declared by the `scoring-pipeline` capability; default `true`). When `modelMenuEnabled` is `true` (default), the `menuAction` SHALL be included in the array returned by `State.getActions()`, exactly as before this change. When `modelMenuEnabled` is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05), the `menuAction` SHALL NOT be included in `State.getActions()` and the agent SHALL never select `MODEL_MENU`; the field SHALL still be constructed and returned by `State.getMenuAction()` (so `INV-EXPL-06` holds). This reproduces upstream APE, which has no model-level options-menu action.
+
+`MonkeySourceApe.generateEventsForActionInternal()` SHALL handle `MODEL_MENU` in its switch statement by calling `generateKeyMenuEvent()`. No target widget node is required or inspected.
+
+`MonkeySourceApe.validateResolvedAction()` SHALL return `true` for `MODEL_MENU` without calling any widget validator (same pattern as `MODEL_BACK`).
+
+#### Scenario: State constructor initialises menuAction
+- **WHEN** a new `State` is constructed for any `StateKey`
+- **THEN** `state.getMenuAction()` MUST return a non-null `ModelAction` whose `getType()` returns `ActionType.MODEL_MENU`
+- **AND** when `Config.modelMenuEnabled` is `true` (default) the `menuAction` MUST be included in the actions array returned by `state.getActions()`
+
+#### Scenario: MODEL_MENU excluded from selection when modelMenuEnabled is false
+- **WHEN** `Config.modelMenuEnabled` is `false` and a new `State` is constructed
+- **THEN** `state.getMenuAction()` MUST still return a non-null `ModelAction` of type `MODEL_MENU`
+- **AND** `state.getActions()` MUST NOT contain the `menuAction`
+- **AND** the agent MUST never select `MODEL_MENU` for that state
+
+#### Scenario: MODEL_MENU event generation
+- **WHEN** `MonkeySourceApe.generateEventsForActionInternal()` is called with a `ModelAction` whose type is `MODEL_MENU`
+- **THEN** `generateKeyMenuEvent()` SHALL be called
+- **AND** no target `GUITreeNode` SHALL be required or consulted
+
+#### Scenario: MODEL_MENU validation always passes
+- **WHEN** `MonkeySourceApe.validateResolvedAction()` is called with a `ModelAction` of type `MODEL_MENU`
+- **THEN** the method SHALL return `true`
+- **AND** no widget validator (`validateClickAction`, `validateScrollAction`) SHALL be invoked

@@ -197,6 +197,8 @@ The A′ 3-source union (widget-derived activities ∪ component-flagged activit
 
 The selection SHALL happen once at load; every downstream consumer (launcher census ordering, `stateMopDensity` substrate floor, WTG/MopFrontier target tests, OPTIONSMENU-gateway condition 2) reads the selected set (INV-MOP-27's observable semantics preserved).
 
+The key's plan grounding from `rearch-02-runspec` is **carried forward unchanged**: in the run-spec `Feature` model, `ape.mopActivitySourceComponents` activates the `MOP_ACTIVITY_SOURCE` feature, which depends on `MOP`. An explicit `true` on a plan without `ape.mopDataPath` aborts resolution as a missing dependency; with the feature absent, the widget-derived source is the only one that exists (INV-RUN-05 of `run-spec` — the recorded substitute for the dissolved INV-ARCH-06 kill-switch registration). This stage changes only *where the augmented set is computed* (host-side generator instead of on-device union), never the key's ownership or its fail-fast behavior.
+
 #### Scenario: flag off ⇒ widget-derived set only
 - **WHEN** `mopActivitySourceComponents=false` and the artifact's augmented set contains an activity absent from the widget-derived set
 - **THEN** `activityHasMop` for that activity SHALL be `false`
@@ -206,6 +208,11 @@ The selection SHALL happen once at load; every downstream consumer (launcher cen
 - **WHEN** `mopActivitySourceComponents=true`
 - **THEN** `getMopActivities()` SHALL equal the wire `mopActivitiesAugmented` set
 - **AND** the OPTIONSMENU-gateway recompute SHALL test condition 2 against it
+
+#### Scenario: explicit activation without MOP data aborts
+- **WHEN** `ape.properties` sets `ape.mopActivitySourceComponents=true` and no `ape.mopDataPath`
+- **THEN** resolution SHALL abort with a missing-dependency diagnostic naming `MOP_ACTIVITY_SOURCE` and `MOP`
+- **AND** the abort SHALL precede any artifact read (the dependency is a plan property, not an artifact property)
 
 ---
 

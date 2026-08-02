@@ -6,11 +6,12 @@ This change is **stage 5 of 7** of the re-architecture selected in `docs/analise
 
 ## What Changes
 
-- **BREAKING (cross-repo)**: the 29 arm definitions in `tool.py` are re-expressed as `preset + explicit overrides`; the hardcoded per-arm property dicts shrink to deltas.
+- **BREAKING (cross-repo)**: 27 of the 29 arm definitions in `tool.py` are re-expressed as `preset + explicit overrides`; the hardcoded per-arm property dicts shrink to deltas. The remaining two — `ape_pure` and `bfs` — are **retired and deleted** (design D2, owner ratifies at approval): no structural-purity preset exists (purity is structural in the jar; `ape.apePureMode` is a retired key), and `bfs` was never an agent type, so it always ran the same `SataAgent` configuration as `sata` (V9, `ApeAgent.java:68-96`).
 - Dead keys removed from `APERV_PROPERTY_MAPPING` (starting with `mop_weight_activity`); the mapping shrinks to the keys the jar actually validates (unknown keys now abort the run fail-fast, per stage 2).
 - The Python-side kill-switch duplication is deleted — purity is structural in the jar (plan without feature ⇒ feature absent), and the effective plan is echoed in `RUN_START`.
 - INV-APV-14 (constant-vs-constant pytest guards) is retired. **Owner decision D1 stands: no automatic echo-vs-intent validation is added** — drift auditing remains post-hoc analysis of the `RUN_START` line.
-- Migration check (report Sec. 11): deterministic regeneration of the 29 current arms' effective property sets, diffed against the pre-change values, to prove the calibrated grid is preserved.
+- Migration check (report Sec. 11): deterministic regeneration of the 27 surviving arms' effective property sets, diffed against the pre-change values, to prove the calibrated grid is preserved; the two retirements are recorded as documented removals in the arm report, never as diffs.
+- The Python-side strategy whitelist shrinks to `["sata", "random"]` — the deletion `rearch-02-runspec` delegates to this stage. Keeping `bfs`/`dfs` would let a run pass Python validation and abort on the device, reintroducing the silent degradation stage 2 exists to remove.
 
 ## Capabilities
 

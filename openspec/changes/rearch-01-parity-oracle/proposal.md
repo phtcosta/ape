@@ -25,6 +25,6 @@ _None — no production requirement changes._
 ## Impact
 
 - **Test tree only** (`src/test/java/`): new fixtures, golden files, harness classes; runs under `mvn test` on the JVM (no device required).
-- **Gate relationship**: `rearch-02-runspec` and `rearch-03-decision-pipeline` cite the oracle as their acceptance gate (report Sec. 10, Sec. 11 risk table). No other change depends on this one's artifacts at runtime.
+- **Gate relationship**: `rearch-02-runspec` and `rearch-03-decision-pipeline` cite the oracle as their acceptance gate (report Sec. 10, Sec. 11 risk table); `rearch-06-memory-surgical` additionally uses the goldens as its decision-neutrality evidence after each retention change (its INV-MODEL-20, report Sec. 9 test 10). Those three are the dependents; no change depends on this one's artifacts at runtime.
 - **Zero changes** to `src/main/java/`, `ape.properties` surface, CLI surface, or the Python side (rv-android untouched).
 - Grounding: report Sec. 3.1 V1/V2/V4 (verified ladder), Sec. 3.3-1 (launcher cadence under LLM preemption), Sec. 9.4/9.9 (architectural tests), Sec. 10 stage 1.

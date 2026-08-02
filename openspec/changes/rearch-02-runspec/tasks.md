@@ -76,7 +76,7 @@ Gate: this change may only be applied after `rearch-01-parity-oracle` is impleme
 
 ## 8. Device smoke (optional, standalone validation only)
 
-- [ ] 8.1 Via `scripts/run_emulator.sh` + adb (standalone path of CLAUDE.md): a valid `sata_mop_widget`-shaped run emits a well-formed `RUN_START` before any `[APE-*]` line; no `sataModel.obj`/`sataGraph.*` in the output dir; coverage dump precedes `action-history` output
+- [ ] 8.1 **Owner-executed device check** (the assistant never starts, stops or manages an emulator — rv-platform owns the lifecycle; this repo's standalone path in `CLAUDE.md` is a human path). Prefer the rv-platform route (`uv run rv-experiment run --tools aperv:sata_mop_widget …`); fall back to `scripts/run_emulator.sh` + adb only if the check cannot be expressed as a tool run. Assert: a valid `sata_mop_widget`-shaped run emits a well-formed `RUN_START` before any `[APE-*]` line; no `sataModel.obj`/`sataGraph.*` in the output dir; coverage dump precedes `action-history` output
 - [ ] 8.2 Same session: push a properties file with one unknown key → process exits nonzero with `[APE-RUNSPEC-ABORT]` and injects zero events; `--ape bfs` → abort naming the valid set
 
 ## 9. Verification (change hygiene)

@@ -166,6 +166,8 @@ When the stage fires and the engine returns a non-null action, the telemetry mod
 
 **type_text handling**: unchanged — when the match is an input-capable widget and text is present, `setInputText(text)` is applied before returning.
 
+**Known defect preserved, deliberately.** "Unchanged" here includes a defect measured at 28 of 1,233 LLM responses (2.3%): a `type_text` answer can execute a `MODEL_LONG_CLICK`. The containment pass restricts the candidate's `ActionType` only when the tool is `"click"` (`LlmRouter.java:689`), and `fixTextEdit` returns the match untouched for any tool that is neither `click` nor `long_click` (`:807`), so the long-click preference can win on a `type_text` answer. This stage is behavior-neutral by contract (parity-gated, R8): `CoordinateMapper` SHALL reproduce this path exactly, defect included. The fix is **out of scope here** and belongs to a separate change against `CoordinateMapper`, whose slicing is precisely what makes it testable in a JVM unit. Recording it is mandatory: a silently inherited defect in a newly extracted unit is indistinguishable from a slicing regression when the parity oracle later disagrees.
+
 The dead-pair outcome feedback SHALL continue to flow from the `[APE-OUTCOME]` join-buffer site in `StatefulAgent` into the ban record — now `CoordinateMapper.recordLlmOutcome(...)` reached through `RunContext`'s LLM units — with unchanged key material and strike semantics.
 
 #### Scenario: Full pipeline success

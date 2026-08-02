@@ -76,7 +76,7 @@ The jar becomes the sole authority on what a preset *means*; the Python side rem
 **Non-Goals:**
 
 - No jar changes. Presets, fail-fast, and the echo are stage-2 deliverables; if a preset is found missing or wrong during this change, that is a stage-2 defect to report, not something to patch here.
-- No change to task orchestration: `configure()` strategy validation, JAR resolution/push, static-analysis discovery + compaction + enrichment (INV-APV-20..25/31/32), seed propagation (INV-APV-18), the `+45 s` command grace, timeout-as-normal-exit, empty-trace detection, LLM provenance capture (INV-APV-33), and the B3 snap-tolerance/jar-sha pairing (INV-APV-34) all stay as they are.
+- No change to task orchestration, with one exception: `configure()`'s strategy **whitelist** shrinks to `["sata", "random"]` (the `bfs`/`dfs` deletion `rearch-02-runspec` delegates to this stage; see D2). The validation mechanism itself, JAR resolution/push, static-analysis discovery + compaction + enrichment (INV-APV-20..25/31/32), seed propagation (INV-APV-18), the `+45 s` command grace, timeout-as-normal-exit, empty-trace detection, LLM provenance capture (INV-APV-33), and the B3 snap-tolerance/jar-sha pairing (INV-APV-34) all stay as they are.
 - No new communication channel, no `RUN_START` parser, no echo-vs-intent check (D1).
 - No new arms, no re-tuning: byte-identical effective configs or a documented, owner-approved divergence.
 

@@ -36,7 +36,7 @@ The design's audit tables (design.md, "Caller Audit" sections) were produced at 
 
 ## 5. Heap observation — before/after on device (measurement only, no gate)
 
-Standalone validation path (`scripts/run_emulator.sh` + `test-apks/cryptoapp.apk`), per design D5. This produces the observation the change is judged by and the baseline any future profiling-gated bound would need; it is not a CI gate and promises no threshold.
+**Owner-executed** standalone validation path (`scripts/run_emulator.sh` + `test-apks/cryptoapp.apk`), per design D5: heap sampling needs `dumpsys meminfo` against a live run, which the rv-platform tool path does not expose, so this group is run by the owner. The assistant never starts, stops or manages an emulator. This produces the observation the change is judged by and the baseline any future profiling-gated bound would need; it is not a CI gate and promises no threshold.
 
 - [ ] 5.1 Build the **pre-fix** jar (commit before group 2) and run 600 s standalone SATA (`--running-minutes 10`), sampling `adb shell dumpsys meminfo <monkey pid>` every 60 s; record the Dalvik Heap Alloc/Size series
 - [ ] 5.2 Build the **post-fix** jar (after group 4) and repeat with the same seed/configuration; best-effort `am dumpheap` at 600 s on both runs for retention-root inspection (may be unavailable for a shell-uid `app_process` — the meminfo series is the primary observation)

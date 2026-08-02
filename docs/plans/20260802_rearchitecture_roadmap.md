@@ -36,7 +36,8 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
 - [ ] **5. `rearch-05-thin-python-arms`** — arms = preset + overrides; dead keys and Python
       kill-switch duplication deleted; INV-APV-14 retired. First cross-repo stage (rv-android).
-      *Gate: regeneration diff of the 29 arms' effective configs, identical before/after.*
+      *Gate: regeneration diff of the 27 surviving arms' effective configs, identical before/after;
+      `ape_pure`/`bfs` recorded as documented retirements, not diffs.*
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
 - [ ] **6. `rearch-06-memory-surgical`** — V12 cache release; V11/V24 diagnostic retention
       to IDs/minimal snapshots, conditional on caller audit. No speculative bounds.
@@ -64,15 +65,21 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
 - `gh10-normalize-boosts` closed as **superseded** 2026-08-02 (never implemented; archived
   with `--skip-specs`). Boost-magnitude question re-expressible later as a preset override
   informed by #16 data.
-- `telemetry-proof-llm-efficacy` (50/51) remains open pending on-device smoke 17.4;
-  orthogonal to stages 1–3; its telemetry format is superseded by stage 4 (acceptance
-  Sec. 9.11 protects the transition).
+- `telemetry-proof-llm-efficacy` is **archived** (2026-08-02, 51/51, verified and synced —
+  `openspec/changes/archive/2026-08-02-telemetry-proof-llm-efficacy/`; task 17.4 was closed by the
+  decisive-run evidence, commit `99dded5`). Its telemetry format is superseded by stage 4
+  (acceptance Sec. 9.11 protects the transition).
 
 ## Cross-change decisions recorded during artifact drafting (owner ratifies at approval)
 
 1. **`ape_pure` and `bfs` variants are retired** (rearch-02 design → rearch-05 D2): no
    structural-purity preset exists; `ape.apePureMode` is a retired key that aborts, and
-   unknown `--ape` values abort. Consistent with D3 (control = minimal `aperv`).
+   unknown `--ape` values abort. Consistent with D3 (control = minimal `aperv`). Verified
+   2026-08-02: `bfs` was never an agent type — `ApeAgent.createAgent` accepts only
+   `sata`/`random`/`replay` and falls through silently to `SataAgent` (V9), so the `bfs` arm
+   always carried the same effective configuration as `sata`. Retiring it removes a duplicate,
+   not an experimental arm. The Python strategy whitelist shrinks to `["sata", "random"]` in
+   rearch-05 (the deletion rearch-02 delegates to stage 5).
 2. **Build provenance stamp reintroduced** (rearch-02 D-8): the gh14 stamp was archived
    without implementation; `RUN_START.build` requires it, so rearch-02 reintroduces it
    reusing the archived gh14 wiring.
@@ -92,9 +99,16 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
    57.7% of aggregate bytes over the 134 real JSONs; coordinated jar+Python cut, no
    fallback window, gated by the full-vs-derived corpus equivalence test (R9).
 
-Open coordination items: `telemetry-proof-llm-efficacy` must archive before rearch-03/04
-(their deltas are written against its post-sync text; rearch-03 task 8.6); rv-android
-changes `gh88`/`gh90` touching the same arms must merge before rearch-05 (task 1.3).
+Open coordination items — status 2026-08-02:
+- `telemetry-proof-llm-efficacy` must archive before rearch-03/04 (their deltas are written
+  against its post-sync text; rearch-03 task 8.6) — **satisfied**: archived 2026-08-02.
+- rv-android changes touching the same arms must merge before rearch-05 (task 1.3):
+  `gh90-e3-decisive-run-setup` is **archived**; **`gh88-cal-llm-control` (47/58, untouched since
+  2026-07-24) is the only live blocker** for stage 5.
+- `gh92-emulator-boot-gating` (rv-android) blocks no **gate**: all seven stage gates are
+  host/JVM-level (the parity goldens are decision-level, cross-change decision 4). It blocks only
+  the device *smokes* routed through rv-platform — rearch-03 t8.4, rearch-04 t9.1, rearch-05
+  t1.1/9.2, rearch-07 t8.1/8.2. See `docs/20260802_verificacao_consistencia_rearch.md` §8.
 
 ## Status log
 
@@ -107,3 +121,15 @@ changes `gh88`/`gh90` touching the same arms must merge before rearch-05 (task 1
   action-selection deltas re-expressed against post-02/post-03 spec text; `ape_pure`/`bfs`
   retirement propagated into 05 (design D2, tasks 1.2/3.1–3.3/9.1–9.2). Awaiting owner
   review/approval of the artifacts — no implementation started.
+- 2026-08-02 — Rigorous consistency verification of all 7 changes against the report, the code and
+  `openspec/specs/` (`docs/20260802_verificacao_consistencia_rearch.md`). Findings applied to the
+  artifacts: the `execute_tool_specific_logic()` blocks of 05 and 07 rewritten over the post-04 /
+  post-05 text (they were reverting stage 4's gzip+converter and stage 5's preset+overrides);
+  `ape_pure`/`bfs` retirement propagated into 05's delta spec, proposal and tasks (29 → 27);
+  strategy whitelist deletion assigned to 05; rearch-06's proposal corrected on its 2+4 hard block;
+  eight orphaned requirements that referenced deleted mechanisms ported into the stage that
+  invalidates them; the `Feature`-model substitutes re-recorded in 03 and 07; INV-SEL-01/04/05/06
+  dispositioned; the preserved `type_text` defect declared in 03; corpus provenance of 07 flagged
+  for pinning; cross-repo OpenSpec instrument tasks added to 05 and 07. Three requirements still
+  need delta files that do not exist yet (`ui-coverage`, `form-completion`, `activity-budget`) —
+  see the verification document §4.1.

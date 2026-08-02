@@ -14,6 +14,7 @@
 - [ ] 1.1 Re-run the caller audit of every `MopData` accessor in `src/main` and diff it against the inventory table in `design.md`; any new consumer added since this design was written amends the schema before anything else proceeds
 - [ ] 1.2 Confirm zero production readers of the drop list: `WtgTransition.widgetClass`, `IntentFilter.data` (`DataSpec`), `ProviderInfo.readPermission`/`writePermission`, `Widget.id`/`text`/`type`, raw `listeners`, `targetMethods` beyond `isEmpty()`, `getReachability`/`getWindows`/`getWindow`/`getTransitions`/`isWidgetlessSubstrate`
 - [ ] 1.3 Confirm the analysis/metrics side reads only the full JSON: grep rv-android (`rv-coverage`, `rv-platform`, consolidation scripts) for static-analysis JSON readers; assert none will resolve `*.mop.json` (R9 provenance argument, design D9)
+- [ ] 1.4 **Pin the corpus** (design "Corpus provenance"): record in `design.md` the exact directory holding the full static-analysis JSONs, its file count, and the command that produced the 57.7 %/5.0 %/10.1 % byte split. `data/instrumented_apks/` does not exist in this repo (`data/` holds only `system-broadcast.json`); the JSONs are held by the sibling dataset repo (`rvsec-dataset/static_analysis/`). Without this the equivalence gate has no corpus and the T7 claim is unreproducible
 
 ## 2. Host-side generator (rv-android: `modules/aperv-tool`)
 
@@ -24,7 +25,7 @@
 - [ ] 2.5 Implement activity sets (`mopActivities` + A′ `mopActivitiesAugmented`), `optionsMenus` records, component projection (`reachesMop` rename, `hasTargetMethods`, trigger-surface fields only), and the `stats` block (INV-DRV-04, INV-DRV-06)
 - [ ] 2.6 Implement `serialize_canonical(artifact) -> bytes` (sorted keys, fixed separators, UTF-8, deterministic array orders) (INV-DRV-05)
 - [ ] 2.7 pytest suite: per-rule unit tests on synthetic fragments + cryptoapp ground-truth scenario (flags, sets, gateway inputs, components, stats) + determinism test (twice-derived byte identity) + no-`*Target*`-key / no-call-graph assertion
-- [ ] 2.8 Run `/sdd-doc-code modules/aperv-tool/src/aperv_tool/tools/aperv/derive_mop_artifact.py`
+- [ ] 2.8 Run `/rv-doc-code modules/aperv-tool/src/aperv_tool/tools/aperv/derive_mop_artifact.py` (rv-android module ⇒ `rv-*` skill)
 
 ## 3. Jar-side rewrite, dual-parser stage (ape: old parser still present)
 
@@ -56,7 +57,8 @@
 - [ ] 6.1 `tool.py`: add `_derive_mop_artifact(task)` (digest-checked cache at `<apk_name>.mop.json`, atomic write, `DerivationError` → `RVToolExecutionError`); delete `_compact_static_analysis_json` and its enrichment helper and their fallback-to-source push
 - [ ] 6.2 `tool.py` step 1c: replace the warn-and-continue branch with the raise (INV-APERV-05); push to `/data/local/tmp/mop-artifact.json`; update the `ape.mopDataPath` value in `_push_properties`
 - [ ] 6.3 Update `test_aperv_tool.py`: absent-JSON raises, derivation-failure raises, cache hit/stale behavior, device path and properties line, non-MOP arms untouched, no-full-JSON-push assertion (INV-APERV-06)
-- [ ] 6.4 Run `/sdd-test-run aperv-tool` (pytest for the module)
+- [ ] 6.4 Run `/rv-test-run aperv-tool` (pytest for the module — rv-android's skills are `rv-*`, not `sdd-*`)
+- [ ] 6.5 **Cross-repo OpenSpec instrument**: rv-android's `openspec/specs/aperv/spec.md` MUST NOT be edited by hand (that repo's CLAUDE.md forbids it). Open a change there via `openspec-new-change` carrying this stage's counterpart delta — the push path switches from the full JSON to the derived artifact, `_compact_static_analysis_json` and its INV-APV-20..25/31/32 requirements retire, and absent-input becomes a raised error — and let that repo's archive/sync apply it
 
 ## 7. Coordinated deploy (design D8)
 
@@ -68,7 +70,7 @@
 
 - [ ] 8.1 End-to-end device smoke: cryptoapp `sata_mop` on the RVSec AVD — assert `status=loaded formatVersion=1 sourceDigest=…` in the trace, MOP boost fires on `btn_cipher_encrypt`/`buttonGenerateHash`, menu-gateway boost fires on MainActivity, run completes to timeout
 - [ ] 8.2 Confirm artifact-size and load-time deltas on device (trace timestamps around agent construction) against a pre-change trace for one call-graph-heavy app (e.g. `com.blogspot.e_kanivets.moneytracker`, 12.45 MB full → compact artifact)
-- [ ] 8.3 Run `/sdd-qa-lint-fix aperv-tool` and `/sdd-qa-lint-fix ape`
+- [ ] 8.3 Run `/rv-qa-lint-fix aperv-tool` (rv-android) and `/sdd-qa-lint-fix ape` (this repo)
 - [ ] 8.4 Run `/sdd-verify ape`
 - [ ] 8.5 Invoke `/sdd-code-reviewer` via Skill tool
 - [ ] 8.6 Run `/sdd-docs-sync ape` (CLAUDE.md + spec cross-references current)

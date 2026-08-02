@@ -27,6 +27,6 @@ _None._
 
 - **Java**: `GUITreeBuilder` (release path), `Model`/`ActionRecord`, `ModelAction`, `GUITreeAction`.
 - **Python/rv-android**: none.
-- **Depends on**: `rearch-01-parity-oracle` (neutrality evidence); independent of stages 4–5, ordered after the pipeline work to avoid double-churn in the same files.
+- **Depends on**: `rearch-01-parity-oracle` (neutrality evidence for every fix). The V12 cache release and the V24 `ModelAction` release are independent of stages 2–5. The **V11 `ActionRecord` snapshot fix is hard-blocked on stages 2 and 4**: stage 2 deletes `saveGraph`/`sataModel.obj` and stage 4 deletes `saveActionHistory`/`action-history.log`, the only consumer that re-resolves every deep record through the rich `GUITreeAction` (design "Ordering", task 1.1 verifies this and blocks group 3 if either has not landed). Ordered after the pipeline work to avoid double-churn in the same files.
 - **Risk** (report Sec. 11): a "surgical" eviction touching an unmapped semantic path — mitigated by the caller audit before and sequence parity after.
 - Grounding: report Sec. 6.7, verified V11/V12/V24, rejection of speculative bounds (Sec. 7).

@@ -33,16 +33,46 @@ This change lands after `rearch-05-thin-python-arms` and edits the same `tool.py
 
 `ApeRVTool.execute_tool_specific_logic(task, app)` SHALL execute the following steps in order:
 
+Written against the post-`rearch-05-thin-python-arms` text (which already carries the stage-4 collection steps). Only steps 5 and 6 change at this stage; every other step, the trailing paragraphs, and the stage-4/5 scenarios are preserved.
+
 1. Resolve device serial from `task.config.device_id` (default `"emulator-5554"`)
-2. Resolve timeout from `task.config.timeout` (default `300` seconds); convert to minutes for APE's `--running-minutes` flag (minimum 1 minute)
-3. Resolve `ape-rv.jar` via `_resolve_jar_path()`
-4. Push `ape-rv.jar` to `/data/local/tmp/ape-rv.jar` via `adb push`
-5. If `_tool_config.get("mop_data") == "static_analysis"`: locate `<task.results_dir>/<apk_name>.json` via `_find_static_analysis_file(task)`. **If not found, raise `RVToolExecutionError`** naming the expected path — a MOP arm without its static-analysis input is a failed task, never a silently degraded run. If found, obtain the derived artifact via `_derive_mop_artifact(task)` (cache-or-generate, see the added requirement below; a `DerivationError` also raises `RVToolExecutionError`), push it to `/data/local/tmp/mop-artifact.json`, and set `mop_json_pushed = True`
-6. Push `ape.properties` to `/data/local/tmp/ape.properties`; when `mop_json_pushed`, include `ape.mopDataPath=/data/local/tmp/mop-artifact.json` in the content
-7. Build and execute main command via `adb shell CLASSPATH=/data/local/tmp/ape-rv.jar /system/bin/app_process /system/bin com.android.commands.monkey.Monkey -p <pkg> --running-minutes <N> --ape <strategy>`, capturing stdout+stderr to `task.result.trace_file`
-8. On `RVToolTimeoutError`: log as expected behaviour and re-raise
+2. Resolve timeout from `task.config.timeout` (default `300` seconds); convert to minutes for APE's `--running-minutes` flag (minimum 1 minute); command timeout keeps the +45 s teardown grace
+3. Resolve `ape-rv.jar` via `_resolve_jar_path()` and push to `/data/local/tmp/ape-rv.jar`
+4. Push `system-broadcast.json` when present (component triggering, unchanged)
+5. If `_tool_config.get("mop_data") == "static_analysis"`: locate `<task.results_dir>/<apk_name>.json` via `_find_static_analysis_file(task)`. **If not found, raise `RVToolExecutionError`** naming the expected path — a MOP arm without its static-analysis input is a failed task, never a silently degraded run (this replaces the warn-and-continue of the previous stages). If found, obtain the derived artifact via `_derive_mop_artifact(task)` (cache-or-generate, see the added requirement below; a `DerivationError` also raises `RVToolExecutionError`), push it to `/data/local/tmp/mop-artifact.json`, and set `mop_json_pushed = True`. The lossless compaction/enrichment shim of the previous stages (INV-APV-20..25/31/32) is **deleted**: its whole purpose was to clear the jar's parse-footprint guard, and the derivation subsumes it
+6. Push `ape.properties` generated as: `ape.preset=<preset>` first; `ape.mopDataPath=/data/local/tmp/mop-artifact.json` when `mop_json_pushed`; then one `ape.<key>=<value>` line per entry of `overrides`, translated through `APERV_PROPERTY_MAPPING`, with Python bools serialized lowercase. The full property expansion of the pre-stage-5 mapping loop SHALL NOT be performed
+7. Capture LLM provenance to the sidecar for arms with `llm_url` in effect (unchanged, INV-APV-33)
+8. Build and execute the main command (`--ape <strategy>`, `-s <seed>` when configured), capturing stdout+stderr to `task.result.trace_file` (the captured stream is the NDJSON trace, per `rearch-04-step-ndjson-telemetry`)
+9. On `RVCommandTimeoutError`: log as expected behaviour, run the collection steps 11–12 below, then re-raise as `RVToolTimeoutError` — timeout is the normal exit for exploration runs, so collection MUST NOT be skipped on it
+10. Run the empty-trace check (`_check_empty_trace`, unchanged)
+11. **Gzip at collection** (unchanged from `rearch-04-step-ndjson-telemetry`): compress the raw NDJSON capture to `<trace>.ndjson.gz` next to the trace file. On failure, log a WARNING and continue
+12. **Temporary legacy conversion** (unchanged from `rearch-04-step-ndjson-telemetry`): run the NDJSON→legacy converter over the raw capture and write the reconstructed legacy line family to `task.result.trace_file` itself. On failure, log a WARNING and leave the raw NDJSON trace in place
+
+Steps 11–12 SHALL NOT inspect, validate, or act on the trace's content beyond mechanical transformation: no `RUN_START`/`RUN_END` presence check, no exit-code interpretation beyond the existing debug log, no task-status change (owner decision D5).
+
+The tool SHALL NOT read back, parse, or validate any jar output (`RUN_START` included) — provenance is write-only in the trace (INV-APV-43, owner decision D1).
 
 No health check step is required (APE has no `--health-check` flag).
+
+#### Scenario: Properties file carries preset plus deltas only
+
+- **WHEN** `_push_properties()` runs for `sata_mop_act_frontier` with the derived artifact pushed
+- **THEN** the generated file SHALL begin with `ape.preset=mop`
+- **AND** SHALL contain `ape.mopDataPath=/data/local/tmp/mop-artifact.json`
+- **AND** SHALL contain exactly the four override lines (`ape.mopActivitySourceComponents=true`, `ape.frontierBoostWeight=200`, `ape.mopFrontierWeight=200`, `ape.activityTriggerEnabled=true`)
+- **AND** SHALL NOT contain any other `ape.*` line
+
+#### Scenario: Post-run conversion keeps current parsers working
+
+- **WHEN** a run completes and the captured `task.result.trace_file` contains NDJSON records
+- **THEN** after step 12, `task.result.trace_file` SHALL contain the legacy `key=value` line family reconstructing every field current parsers consume
+- **AND** `<trace>.ndjson.gz` SHALL contain the compressed raw NDJSON capture
+
+#### Scenario: No exit contract
+
+- **WHEN** a trace ends without a `RUN_END` record (e.g. SIGKILL on timeout before teardown)
+- **THEN** the tool SHALL NOT detect, log, or act on its absence
+- **AND** truncated-run identification remains a post-hoc analysis over trace/logcat timestamps
 
 #### Scenario: MOP arm — artifact derived and pushed
 - **WHEN** `execute_tool_specific_logic` is called with a `mop_data == "static_analysis"` arm AND `_find_static_analysis_file(task)` returns a valid path
@@ -68,8 +98,8 @@ No health check step is required (APE has no `--health-check` flag).
 
 #### Scenario: Timeout during exploration
 - **WHEN** the exploration runs past `task.config.timeout` seconds
-- **THEN** `RVToolTimeoutError` SHALL be re-raised after logging
-- **AND** the trace file SHALL contain partial APE output written before the timeout
+- **THEN** steps 11–12 SHALL run on the trace captured up to the kill (gzip + legacy conversion), and only then SHALL `RVToolTimeoutError` be re-raised
+- **AND** the trace file SHALL contain the partial APE output written before the timeout
 
 #### Scenario: JAR push fails
 - **WHEN** `adb push` exits with non-zero code
