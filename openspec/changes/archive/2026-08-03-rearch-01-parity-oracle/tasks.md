@@ -160,15 +160,15 @@ group.
 
 ## 9. Verification
 
-- [ ] 9.1 `git diff --stat src/main/java` shows **exactly one** changed line for this change —
+- [x] 9.1 `git diff --stat src/main/java` shows **exactly one** changed line for this change —
       the `egreedy()` seam of task 1.6 — and nothing else (INV-ORA-01); no test class shadows a
       production class (only `android.*` source stubs, if any were added)
-- [ ] 9.2 Full `mvn test` green twice in a row (flake check for the determinism claim); the
+- [x] 9.2 Full `mvn test` green twice in a row (flake check for the determinism claim); the
       13 pre-existing `@Ignore` skips unchanged
-- [ ] 9.3 Grep the oracle package for forbidden dependencies: no `HttpURLConnection`, no
+- [x] 9.3 Grep the oracle package for forbidden dependencies: no `HttpURLConnection`, no
       `ScreenshotCapture.capture`, no `System.currentTimeMillis` in any capture/compare path
       (INV-ORA-03)
-- [ ] 9.4 `openspec status --change rearch-01-parity-oracle` shows 4/4;
+- [x] 9.4 `openspec status --change rearch-01-parity-oracle` shows 4/4;
       `openspec validate rearch-01-parity-oracle` clean; artifacts coherent with the
       implemented state
-- [ ] 9.5 Run `/sdd-code-reviewer` via Skill tool on the oracle package
+- [x] 9.5 Run `/sdd-code-reviewer` via Skill tool on the oracle package

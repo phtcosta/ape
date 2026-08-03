@@ -4,8 +4,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * rearch-01 task 2.3 — the declarative description of one oracle scenario: a synthetic app
@@ -303,6 +305,8 @@ public final class ScenarioScript {
         private final long seed;
         private final List<Screen> screens = new ArrayList<>();
         private final Map<String, String> transitions = new HashMap<>();
+        /** The screens transitions start on, kept so {@link #build} can validate that half too. */
+        private final Set<String> transitionSources = new LinkedHashSet<>();
         private final List<Step> steps = new ArrayList<>();
         private final List<String> exhaustedActivities = new ArrayList<>();
         private int stepsSinceLauncherFiring;
@@ -331,6 +335,7 @@ public final class ScenarioScript {
 
         public Builder transition(String from, String targetXPath, String to) {
             transitions.put(transitionKey(from, targetXPath), to);
+            transitionSources.add(from);
             return this;
         }
 
@@ -358,6 +363,17 @@ public final class ScenarioScript {
                 if (!names.contains(transition.getValue())) {
                     throw new IllegalStateException("transition " + transition.getKey()
                             + " targets an undeclared screen: " + transition.getValue());
+                }
+            }
+            // The source half matters as much as the target half, and it fails far more quietly: a
+            // transition keyed on a screen that does not exist simply never matches, so the driver
+            // leaves the agent where it was and the run walks a topology the author did not write.
+            // A scenario that stalls looks exactly like a scenario that works, which is why this is
+            // a build-time error rather than something a golden diff is expected to reveal.
+            for (String source : transitionSources) {
+                if (!names.contains(source)) {
+                    throw new IllegalStateException("scenario " + name + " declares a transition"
+                            + " starting on an undeclared screen: " + source);
                 }
             }
             for (String activity : exhaustedActivities) {

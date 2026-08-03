@@ -229,13 +229,22 @@ import java.util.Set;
  * </ul>
  *
  * <h2>Jar-default {@code Config} values the ladder reads</h2>
- * {@code activityBudgetEnabled=true}, {@code activityTriggerEnabled=true},
- * {@code activityTriggerStagnationStep=50}, {@code activityTriggerMaxPerRun=0},
- * {@code componentPercentage=0.0}, {@code dynamicEpsilon=true}, {@code modelMenuEnabled=true},
- * {@code leastVisitedPriorityTiebreak=true}, {@code backMenuPickCap=3}. Each preset test
- * guard-asserts the ones it depends on (design D2). Scoring weights are deliberately <b>not</b>
- * among them: they are consumed above this entry point, so no golden can depend on one, and their
- * guard belongs to {@code rearch-03} INV-ARCH-12.
+ * Every golden silently depends on these, so the list is {@link LadderConfigGuard}'s assertions and
+ * nothing else — the guard is what fails with the key named when one moves, and a list here that
+ * were shorter than it would understate what the goldens rest on. Read in every preset:
+ * {@code activityBudgetEnabled=true}, {@code activityBaseBudget=50},
+ * {@code activityBudgetPerWidget=5}, {@code trivialActivityRankThreshold=3},
+ * {@code doBackToTrivialActivity=false}, {@code componentPercentage=0.0},
+ * {@code modelMenuEnabled=true}, {@code useActionDiffer=true},
+ * {@code leastVisitedPriorityTiebreak=true}, {@code backMenuPickCap=3},
+ * {@code dynamicEpsilon=true}, {@code defaultEpsilon=0.05}, {@code minEpsilon=0.02},
+ * {@code maxEpsilon=0.15}. Read only where {@code _mopData} is present:
+ * {@code activityTriggerEnabled=true}, {@code activityTriggerStagnationStep=50},
+ * {@code activityTriggerMaxPerRun=0}, {@code mopTargetPickCap=3}. Each preset test guard-asserts
+ * the half it depends on (design D2). Scoring weights are deliberately <b>not</b> among them: they
+ * are consumed above this entry point, so no golden can depend on one, and their guard belongs to
+ * {@code rearch-03} INV-ARCH-12. {@code llmPercentage} is likewise absent — the scripted router
+ * overrides {@code shouldRouteRandom()} outright, so no LLM preset's golden reads it.
  */
 public final class OracleScaffold {
 
