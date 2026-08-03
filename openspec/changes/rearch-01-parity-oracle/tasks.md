@@ -30,8 +30,11 @@ group.
       `getRandom()` (`ApeAgent.java:322`) reaches the epsilon-greedy draw
       (`SataAgent.java:1330`) and the component-trigger draw (`:548`) without a
       `MonkeySourceApe`. **Answered no for the epsilon-greedy draw** (finding 1.4-a): `:1330`
-      reads `ape.getRandom()` directly and NPEs on the null `ape`; the override does reach
-      `:548`, the roulette at `:681` and `handleNullAction`. Resolved by task 1.6
+      reads `ape.getRandom()` directly and NPEs on the null `ape`; the override does reach the
+      roulette at `:681` and `handleNullAction`. Resolved by task 1.6. **Also answered no for
+      `:548`** (finding 2.1-c, 2026-08-03): that draw sits behind
+      `Config.componentPercentage > 0`, false under the jar defaults, so the conjunction
+      short-circuits before it — a draw that never happens cannot desynchronize the stream
 - [x] 1.5 Checkpoint: `mvn test` green with the spike in place
 - [x] 1.6 Land the `egreedy()` RNG seam (owner decision 2026-08-03 on finding 1.4-a, carved out
       in INV-ORA-01): `SataAgent.egreedy()` (`:1330`) reads `getRandom()` instead of
@@ -43,10 +46,14 @@ group.
 ## 2. Oracle scaffold and synthetic fixtures
 
 - [x] 2.1 Create `src/test/java/com/android/commands/monkey/ape/oracle/OracleScaffold.java`:
-      generalized `allocate()`/`setField()` (hierarchy-walking), synthetic
-      `StateKey`/`State`/`GUITree` builders with `TestName`-targeted `ModelAction`s, and the
+      generalized `allocate()`/`setField()` (hierarchy-walking), synthetic `StateKey`/`State`
+      builders with `TestName`-targeted `ModelAction`s plus their graph registration, and the
       per-preset injection profiles (design D2 table); javadoc carries the frozen
-      injected-field + bookkeeping ledger from tasks 1.2/1.3
+      injected-field + bookkeeping ledger from tasks 1.2/1.3. **No GUITree builder**
+      (finding 2.1-a): within the ladder `newGUITree` is read only by the LLM hooks' call into
+      `selectAction`, which the scripted router overrides, and a real one needs
+      `AccessibilityNodeInfo` — the field stays null. Registration mirrors
+      `Graph.getOrCreateState` rather than calling it (finding 2.1-b)
 - [x] 2.2 Create `OracleSataAgent extends SataAgent` overriding `getRandom()` with a
       per-run seeded `Random`; no other override
 - [x] 2.3 Create `ScenarioScript`: ordered screens, transition table, per-step scripted
@@ -75,7 +82,7 @@ group.
 ## 4. Golden format: DecisionRecord, GoldenFile, comparator
 
 - [ ] 4.1 Create `DecisionRecord` (step, actionType, target, decisionSource, pickChannel,
-      llm, componentTrigger; absent-not-null field semantics) and NDJSON
+      llm; absent-not-null field semantics — no `componentTrigger`, finding 2.1-c) and NDJSON
       serialization via org.json — one physical line per record; header record with
       preset/scenario/seed/fixture/capturedAt
 - [ ] 4.2 Create `GoldenFile`: reader, writer (capture mode gated on
@@ -92,8 +99,8 @@ group.
 
 - [ ] 5.1 Create `OracleDriver.run(agent, script)`: per step — inject scripted state, invoke
       `selectNewActionNonnull()`, build the `DecisionRecord` (target via `Name.toXPath()`;
-      launcher steps as `EVENT_TRIGGER_ACTIVITY` + candidate class; component side-effect
-      flag), apply the bookkeeping ledger, advance
+      launcher steps as `EVENT_TRIGGER_ACTIVITY` + candidate class), apply the bookkeeping
+      ledger, advance
 - [ ] 5.2 `OracleDriverTest`: double-capture identity (same seed twice ⇒ identical record
       lists, INV-ORA-02); `BadStateException` fails the run; a scenario reaching a device-only
       branch surfaces `NoClassDefFoundError` (assert the failure is loud, not swallowed)
@@ -105,8 +112,8 @@ group.
       epsilon-greedy rungs; budget both outcomes) in `ParityOracleApervTest`, with the
       preset's Config guard assertions (design D2); capture and commit
       `goldens/aperv/baseline.ndjson`
-- [ ] 6.2 Write the `mop` baseline scenario (MOP-boosted picks, launcher cadence fire,
-      component-trigger side-effect) in `ParityOracleMopTest` against
+- [ ] 6.2 Write the `mop` baseline scenario (MOP-boosted picks, launcher cadence fire)
+      in `ParityOracleMopTest` against
       `cryptoapp.apk.gh60-fresh.json` via the production `MopData.load` path; capture and
       commit `goldens/mop/baseline.ndjson`
 - [ ] 6.3 Write the `llm` baseline scenario (all three hooks; accept, decline, and timeout
@@ -123,8 +130,9 @@ group.
 
 - [ ] 7.1 Write the simultaneous-qualification scenario (`llm_mop` profile): budget both
       outcomes; LLM accept preempting a due launcher; LLM decline falling through to the
-      launcher; component trigger as side-effect; SATA fallback — in `PreemptionGoldenTest`;
-      capture and commit `goldens/llm_mop/preemption.ndjson`
+      launcher; SATA fallback — in `PreemptionGoldenTest`; capture and commit
+      `goldens/llm_mop/preemption.ndjson`. The component trigger is out of scope
+      (finding 2.1-c) and its absence costs no precedence coverage: the block returns nothing
 - [ ] 7.2 Direct field assertions alongside the golden: finding 3.3-1 —
       `_stepsSinceLauncherFiring` unchanged across an LLM-accepted step and cadence resuming
       from the pre-preemption value (INV-ORA-05); stagnation single-shot burn on decline

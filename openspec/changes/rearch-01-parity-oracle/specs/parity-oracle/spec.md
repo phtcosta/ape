@@ -30,6 +30,23 @@ a scripted (deterministic, offline) LLM, not the byte sequence of a real device 
 Device-level behavior (GUITree construction from `AccessibilityNodeInfo`, naming/refinement,
 model evolution, event injection, restart/teardown, branches reaching `AndroidDevice`)
 is outside the capture boundary and remains validated by the existing rv-platform smoke path.
+
+The **component-trigger block** (`SataAgent.java:547-551`) is outside that boundary too, by
+owner decision of 2026-08-03 on implementation finding 2.1-c, and for a reason worth stating
+rather than burying: it never fires. `ape.componentPercentage` is set by no arm of the phase-2
+grid — the key exists only in `aperv-tool`'s mapping (`tool.py:101`) and is absent from the 18
+`ARM_DEFINING_KEYS` and from both arm-flag dicts — so every arm runs on the jar default `0.0`
+(`Config.java:256`), which makes the block's first conjunct false in production and in this
+harness alike. Two further reasons make capture impossible even if the gate were forced open:
+the committed MOP fixture yields zero trigger tuples (no receivers, no services, and its single
+provider has `reachesTarget=false`, filtered at `StatefulAgent.java:1246`), so
+`triggerMopComponent()` returns at `:1266` with nothing observable; and had a tuple existed,
+the dispatch is device-bound (`android.content.Intent` in `dispatchTrigger`,
+`AndroidDevice.executeCommandAndWaitFor` in `dispatchProvider`). Excluding it costs no parity:
+the block returns nothing, so its position cannot change a recorded decision, and because the
+conjunction short-circuits on the disabled gate it consumes no RNG draw either, so it cannot
+shift the agent stream. Should a future arm enable it, this exclusion must be revisited before
+that arm's comparability is claimed.
 Within that boundary, the oracle's contract is strict: same preset, same seed, same scenario
 ⇒ identical decision sequence, before and after any stage-2/3 production change. A golden
 that no longer matches is either a migration regression (fix the code) or a deliberately
@@ -61,8 +78,7 @@ why) — never something to silently re-record.
   (`kind`, `preset`, `scenario`, `seed`, `fixture`, `capturedAt`) followed by one record per
   step: `step`, `actionType`, `target` (the action `Name.toXPath()`, absent for targetless
   actions), `decisionSource`, `pickChannel` (absent for non-`ModelAction` returns), `llm`
-  (`accepted | declined | timeout | not_routed`, absent for presets without the router),
-  `componentTrigger` (present and `true` only on steps where the trigger side-effect fired)
+  (`accepted | declined | timeout | not_routed`, absent for presets without the router)
   (consumer: the compare mode of this suite; the stage-2/3 migration gate)
 - First-divergence report on comparison failure: `preset`, `scenario`, `step`, `field`,
   golden value, actual value, plus the total count of divergent records
@@ -139,8 +155,8 @@ profile mirroring the constructor wiring of `StatefulAgent.java:179-208` — `_m
 
 Each preset's capture SHALL include at least one multi-step baseline scenario exercising:
 the SATA chain fall-through (buffer, early-stage, epsilon-greedy rungs), and — where the
-preset enables them — MOP-boosted picks, the cadence launcher firing, the component-trigger
-side-effect, and all three LLM hooks with accept, decline, and timeout verdicts.
+preset enables them — MOP-boosted picks, the cadence launcher firing, and all three LLM hooks
+with accept, decline, and timeout verdicts.
 
 Each preset capture test SHALL guard-assert the jar-default `Config` values the ladder reads
 for that preset (e.g. `activityBudgetEnabled`, `activityTriggerEnabled`,
@@ -204,8 +220,8 @@ committed to the repository. The first record SHALL be a header carrying `kind:"
 `capturedAt` (the capturing commit). Every subsequent record SHALL describe exactly one
 selection step with `step` (monotonically increasing), `actionType` (the `ActionType` name;
 `EVENT_TRIGGER_ACTIVITY` for launcher steps, with the candidate class recorded in `target`),
-and — when applicable — `target` (`Name.toXPath()`), `decisionSource`, `pickChannel`, `llm`
-(`accepted | declined | timeout | not_routed`), and `componentTrigger`. Fields that do not
+and — when applicable — `target` (`Name.toXPath()`), `decisionSource`, `pickChannel`, and `llm`
+(`accepted | declined | timeout | not_routed`). Fields that do not
 apply SHALL be absent, not null-valued. Files SHALL be written and read by the same
 serializer (org.json), round-trip tested, one physical line per record.
 
@@ -224,23 +240,17 @@ serializer (org.json), round-trip tested, one physical line per record.
 - **AND** `pickChannel` and `decisionSource` SHALL be absent (the return is not a
   `ModelAction`)
 
-#### Scenario: Component side-effect recorded on the step it preceded
-
-- **WHEN** the component trigger fires as a side-effect and the SATA chain then selects a
-  `MODEL_CLICK`
-- **THEN** that step's record SHALL carry `componentTrigger:true` AND
-  `actionType:"MODEL_CLICK"` — the side-effect-without-return semantics is part of the golden
-
 ### Requirement: Preemption-Order Golden
 
 The oracle SHALL include a preemption golden built on synthetic states that simultaneously
-qualify the LLM hooks, the MOP launcher (cadence reached, census candidate available), the
-component trigger, and the SATA chain, asserting the hard precedence order currently
-implemented by textual position in `selectNewActionNonnull()` (report V1/V4): an accepted LLM
-result preempts the launcher; the launcher, when it fires, preempts the component trigger and
-the SATA chain; the component trigger is a side-effect that never returns; the SATA chain is
-the fallback. The budget block precedes them all and SHALL be pinned in both its outcomes:
-trivial-action return and fall-through.
+qualify the LLM hooks, the MOP launcher (cadence reached, census candidate available), and the
+SATA chain, asserting the hard precedence order currently implemented by textual position in
+`selectNewActionNonnull()` (report V1/V4): an accepted LLM result preempts the launcher; the
+launcher, when it fires, preempts the SATA chain; the SATA chain is the fallback. The budget
+block precedes them all and SHALL be pinned in both its outcomes: trivial-action return and
+fall-through. The component-trigger block, which sits between the launcher and the SATA chain,
+is excluded — see the capture boundary in Purpose for why that costs no precedence coverage:
+it returns nothing, so no ordering it participates in is observable in a decision record.
 
 The preemption golden SHALL additionally pin, as current behavior:
 
@@ -280,13 +290,6 @@ The preemption golden SHALL additionally pin, as current behavior:
   unchanged
 - **AND** the later step SHALL NOT consult the stagnation hook (the stub honors the
   `firedThisEpisode` argument)
-
-#### Scenario: Component trigger is a side-effect, never a selection
-
-- **WHEN** a step qualifies the component trigger (scripted draw below
-  `Config.componentPercentage`, MOP components present) and no LLM or launcher preempts
-- **THEN** the step's selected action SHALL come from the SATA chain
-- **AND** the record SHALL carry `componentTrigger:true`
 
 #### Scenario: Budget-exhausted trivial return precedes every other mechanism
 

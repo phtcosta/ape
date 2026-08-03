@@ -152,15 +152,23 @@ import java.util.Set;
  *       {@code ActivityNode}, {@code Graph.markVisited(State,int)} NPEs, and without the action
  *       inventory, {@code Graph.markVisited(ModelAction,int)} throws its sanity check — both of
  *       which the driver's bookkeeping calls (design D7).</li>
- *   <li><b>2.1-c — the component trigger is outside the capture boundary.</b> Two independent
- *       reasons, either sufficient: {@code Config.componentPercentage} defaults to 0.0, so the
- *       block's first conjunct is false under the jar defaults this harness runs on (design D2),
- *       and {@code triggerMopComponent}'s dispatch builds an {@code android.content.Intent} and
- *       calls {@code AndroidDevice.sendBroadcast} ({@code StatefulAgent.java:1302-1322}), so a
- *       scenario that did fire it would die at the boundary rather than record a side-effect. The
- *       {@code componentTrigger} field of the golden format and the spec scenarios that name it
- *       are affected; that is an artifact question for groups 4/6/7, recorded here because this is
- *       where the wiring makes it visible.</li>
+ *   <li><b>2.1-c — the component trigger is outside the capture boundary</b>, by owner decision
+ *       of 2026-08-03. It never fires: {@code ape.componentPercentage} is set by no arm of the
+ *       phase-2 grid — the key exists only in {@code aperv-tool}'s mapping
+ *       ({@code tool.py:101}) and is absent from the 18 {@code ARM_DEFINING_KEYS} and both
+ *       arm-flag dicts — so every arm runs on the jar default 0.0
+ *       ({@code Config.java:256}), which makes the block's first conjunct false in production and
+ *       here alike. Even with the gate forced open the committed fixture yields zero tuples (no
+ *       receivers, no services, and its one provider has {@code reachesTarget=false}, filtered at
+ *       {@code StatefulAgent.java:1246}), so {@code triggerMopComponent()} returns at
+ *       {@code :1266} leaving {@code componentTriggerIndex} untouched; and had a tuple existed,
+ *       dispatch is device-bound ({@code android.content.Intent} in {@code dispatchTrigger},
+ *       {@code AndroidDevice.executeCommandAndWaitFor} in {@code dispatchProvider}, whose wrapper
+ *       catches {@code Exception} and not the {@code NoClassDefFoundError} actually thrown). The
+ *       exclusion costs no parity: the block returns nothing, and its short-circuiting
+ *       conjunction consumes no RNG draw, so it can shift neither a decision nor the agent
+ *       stream. Should a future arm enable it, this must be revisited before that arm's
+ *       comparability is claimed.</li>
  * </ul>
  *
  * <h2>Jar-default {@code Config} values the ladder reads</h2>

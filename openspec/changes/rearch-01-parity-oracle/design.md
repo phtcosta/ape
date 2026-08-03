@@ -88,7 +88,7 @@ ScenarioScript (synthetic app: ordered screens, widgets, transition table)
 OracleDriver ── builds synthetic State/Graph via OracleScaffold (Unsafe + field injection,
       │         generalized from PipelineParityTest)
       │ per step:
-      │   1. inject newState/newGUITree/timestamp per the script
+      │   1. inject newState/timestamp per the script (newGUITree stays null — finding 2.1-a)
       │   2. call agent.selectNewActionNonnull()          ← the system under test (unchanged)
       │   3. record DecisionRecord {step, actionType, target, decisionSource, pickChannel, llm}
       │   4. apply scripted post-step bookkeeping (markVisited, timestamp++, scripted
@@ -104,7 +104,7 @@ GoldenFile (NDJSON, org.json)
 
 | Component | Responsibility | Input | Output |
 |-----------|---------------|-------|--------|
-| `OracleScaffold` | Unsafe allocation + hierarchy-walking field injection; synthetic `StateKey`/`State`/`GUITree` builders; the injection profile that mirrors `StatefulAgent`'s constructor assignments | preset profile | wired `SataAgent` |
+| `OracleScaffold` | Unsafe allocation + hierarchy-walking field injection; synthetic `StateKey`/`State` builders and their graph registration; the injection profile that mirrors `StatefulAgent`'s constructor assignments | preset profile | wired `SataAgent` |
 | `OracleSataAgent extends SataAgent` | test subclass overriding `getRandom()` (protected, `ApeAgent.java:322`) with a seeded `Random` — pins the second RNG stream; no other override | seed | agent under test |
 | `ScenarioScript` | deterministic synthetic app: screens (widget lists → `ModelAction`s with `TestName` targets), transition table, per-step LLM script entries | hand-written per scenario | states + expectations |
 | `ScriptedLlmRouter extends LlmRouter` | deterministic LLM: scripted routing verdicts and scripted `selectAction` results (accept/decline/timeout); never network, never screenshot, never breaker transitions | script | `ModelAction`/null |
@@ -133,8 +133,10 @@ GoldenFile (NDJSON, org.json)
 - Pin the current per-preset decision sequences (`aperv`, `mop`, `llm`, `llm_mop`) as
   committed golden files, reproducible under fixed seeds on the plain JVM (`mvn test`).
 - Pin the hard preemption order of `selectNewActionNonnull` — budget-trivial > LLM new-state >
-  LLM stagnation > LLM random > MOP launcher > component trigger (side-effect) > SATA chain —
-  on a synthetic state that qualifies all mechanisms simultaneously (report Sec. 9.4).
+  LLM stagnation > LLM random > MOP launcher > SATA chain — on a synthetic state that qualifies
+  all capturable mechanisms simultaneously (report Sec. 9.4). The component-trigger block, which
+  sits between the launcher and the chain, is excluded (D6, finding 2.1-c) and costs no
+  precedence coverage: it returns nothing, so no ordering it participates in is observable.
 - Capture finding 3.3-1 (LLM preemption does not advance `_stepsSinceLauncherFiring`) and the
   stagnation-episode effects (single-shot burn on any answer; counter reset on accept) as
   **current** behavior.
@@ -150,6 +152,10 @@ GoldenFile (NDJSON, org.json)
   restart/teardown paths, fuzzing, or event generation.
 - No coverage of SATA-chain branches that reach `AndroidDevice`
   (`getFocusedStack`, `SataAgent.java:1270,1510`) — scenarios steer clear; see Decision D6.
+- **No coverage of the component-trigger block** (`SataAgent.java:547-551`): it is disabled in
+  every arm of the phase-2 grid, unreachable under the committed fixture, and device-bound at
+  dispatch. Owner decision of 2026-08-03 on finding 2.1-c; the three reasons are in D6 and in
+  the spec's Purpose.
 - No statistical/distributional oracle, no production seams, no CI golden regeneration, no
   changes to `openspec/specs/` main capabilities.
 
@@ -234,6 +240,9 @@ Each subsequent record:
  "decisionSource":"MOP","pickChannel":"short_circuit_unvisited","llm":"declined"}
 ```
 
+There is no `componentTrigger` field: the block that would have set it is out of scope (D6,
+finding 2.1-c).
+
 - `actionType`: the `ActionType` name; launcher steps record `EVENT_TRIGGER_ACTIVITY` plus the
   candidate class name in `target`.
 - `target`: the action's `Name.toXPath()` (the identity convention of `UICoverageTracker.widgetId`
@@ -241,9 +250,6 @@ Each subsequent record:
 - `decisionSource`/`pickChannel`: read from the returned `ModelAction`'s provenance fields
   (set at the pick sites); absent for non-`ModelAction` returns.
 - `llm`: `accepted | declined | timeout | not_routed`; absent for presets without the router.
-- Component-trigger side-effects append `"componentTrigger":true` to the step whose selection
-  they preceded (the step still records the SATA-chain action — the side-effect-not-a-return
-  semantics is part of the golden).
 
 org.json (already a test dependency) for read/write; one line per record, written with the
 same serializer that reads them (round-trip tested). NDJSON over a single JSON array because
@@ -260,8 +266,12 @@ which is also what the EARLY_STAGE roulette draws from (`RandomHelper.randomPick
 `OracleSataAgent.getRandom()` returns a per-run `new Random(seed)` and pins the agent-side
 stream without needing a `MonkeySourceApe` (the field `ape` stays null). What that override
 reaches, verified in the tree rather than assumed (spike finding 1.4-a): the epsilon-greedy
-roulette (`SataAgent.java:681`), the component-trigger draw (`:548`), and `handleNullAction`
-(`StatefulAgent.java:1695,1706,1711`).
+roulette (`SataAgent.java:681`), the epsilon-greedy coin flip (`:1330`, once the seam below is
+in place), and `handleNullAction` (`StatefulAgent.java:1695,1706,1711`). The component-trigger
+draw (`:548`) is **not** among them, correcting the earlier reading of this list: that draw sits
+behind `Config.componentPercentage > 0`, which is false under the jar defaults this harness runs
+on, so the conjunction short-circuits before it (finding 2.1-c). Nothing is lost — a draw that
+never happens cannot desynchronize the stream.
 
 **It did not reach the epsilon-greedy coin flip, and that is why this change touches production
 once.** `egreedy()` reads `ape.getRandom()` directly (`SataAgent.java:1330`) instead of the
@@ -320,6 +330,39 @@ spike established:
   on any included action whose priority is ≤ 0. The script declares both per action, which is
   also precisely what keeps the goldens independent of every scoring weight (the boundary the
   capture requirement draws in the spec).
+
+**Three more constraints the group-2 scaffold established** (2026-08-03), all recorded in
+`OracleScaffold`'s javadoc ledger:
+
+- **2.1-a — there is no GUITree builder, and none is needed.** Within the ladder `newGUITree`
+  has exactly one reader: it is passed to `_llmRouter.selectAction`, which the scripted router
+  overrides (D3). Building a real one is also impossible off device — a `GUITree` is assembled
+  from `AccessibilityNodeInfo`. The field therefore stays null for every preset, and the cost is
+  stated rather than hidden: nothing in the goldens exercises tree-derived behavior, which is
+  already a Non-Goal.
+- **2.1-b — synthetic states are registered into the graph by mirroring
+  `Graph.getOrCreateState`, not by calling it.** That production path builds its `State` through
+  `new State(stateKey)`, whose `buildActions` calls `NamerFactory.decodeActions`, which throws
+  `IllegalArgumentException` on any `Name` that is not an `ActionPatchName` — and the harness's
+  names are local xpath-identity stubs, the `StateTest`/`LlmRouterDeadPairTest` idiom. The
+  scaffold performs the same registration steps (`keyToState`/`idToState`, `addActivity`,
+  `addActions`) directly on the graph's fields. This is load-bearing, not cosmetic: without an
+  `ActivityNode`, `Graph.markVisited(State,int)` NPEs, and without the action inventory,
+  `Graph.markVisited(ModelAction,int)` throws its sanity check — both of which the driver's
+  bookkeeping calls (D7).
+- **2.1-c — the component-trigger block is outside the boundary**, by owner decision. It never
+  fires: `ape.componentPercentage` is set by no arm of the phase-2 grid (the key exists only in
+  `aperv-tool`'s mapping, `tool.py:101`, and is absent from the 18 `ARM_DEFINING_KEYS` and both
+  arm-flag dicts), so every arm runs on the jar default `0.0`. Even with the gate forced open the
+  committed fixture yields zero tuples — no receivers, no services, and its one provider has
+  `reachesTarget=false`, filtered at `StatefulAgent.java:1246` — so `triggerMopComponent()`
+  returns at `:1266` leaving `componentTriggerIndex` untouched; and had a tuple existed, dispatch
+  is device-bound (`android.content.Intent`, `AndroidDevice.executeCommandAndWaitFor`, whose
+  wrapper catches `Exception` and not the `NoClassDefFoundError` actually thrown). Excluding it
+  costs no parity: the block returns nothing, and its short-circuiting conjunction consumes no
+  RNG draw, so it can shift neither a decision nor the agent stream. Capturing it anyway would
+  have cost a forked surefire execution, a new fixture, and a dispatch override — three
+  concessions for a block no experiment runs.
 
 ### D7 — Post-step bookkeeping is scripted, minimal, and explicit
 
@@ -401,7 +444,8 @@ and the same goldens gate the diff.
 - [Breaker and `llmPercentage` behavior not in goldens] → out of scope by design (wall-clock
   and RNG-draw hazards); named in the spec so nobody reads the goldens as covering them.
 - [Deep SATA rungs uncaptured] → boundary named in spec; the preemption golden plus per-preset
-  scenarios cover every rung above the SATA chain and the chain's buffer/early-stage/
+  scenarios cover every *returning* mechanism above the SATA chain — the component-trigger block
+  is the one exclusion and returns nothing (finding 2.1-c) — and the chain's buffer/early-stage/
   epsilon-greedy rungs, which is where stage 3's restructuring risk concentrates (V1).
 - [Golden churn if jar defaults change under this change's feet] → per-preset Config guard
   assertions (D2) fail before the golden mysteriously diverges.
@@ -412,7 +456,7 @@ and the same goldens gate the diff.
 |-------|-------------|-----|-------|
 | Unit | `GoldenFile` round-trip/comparator, `ScriptedLlmRouter` semantics, scaffold builders | plain JUnit | ~15 tests |
 | Harness integrity | double-capture identity; Config guard per preset | JUnit | ~6 tests |
-| Golden (the product) | 4 preset scenario sets + preemption golden (incl. 3.3-1, single-shot burn, counter-reset-on-accept, launcher-cadence fire, component side-effect) | compare mode under `mvn test` | ~10 scenarios |
+| Golden (the product) | 4 preset scenario sets + preemption golden (incl. 3.3-1, single-shot burn, counter-reset-on-accept, launcher-cadence fire) | compare mode under `mvn test` | ~10 scenarios |
 
 ## Open Questions
 

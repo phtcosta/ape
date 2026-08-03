@@ -7,7 +7,7 @@ This change is **stage 1 of 7** (report Sec. 10) and is the gate for everything 
 ## What Changes
 
 - New pure-JVM golden-capture harness: for each target preset (`aperv`, `mop`, `llm`, `llm_mop`, as currently expressed by the corresponding `tool.py` arm property sets), record the deterministic action-selection sequence produced by the current code under fixed seeds against synthetic/recorded GUITree fixtures.
-- Preemption golden fixtures (report Sec. 9.4): synthetic states that simultaneously qualify for LLM, MOP launcher, component trigger, and the SATA chain, confirming the hard-precedence order verified in V1/V4 — including the undocumented interaction 3.3-1 (a step preempted by the LLM does **not** advance the launcher cadence counter) captured as *current* behavior, so that stage 3 must make it an explicit, decided behavior.
+- Preemption golden fixtures (report Sec. 9.4): synthetic states that simultaneously qualify for LLM, MOP launcher, and the SATA chain, confirming the hard-precedence order verified in V1/V4 — including the undocumented interaction 3.3-1 (a step preempted by the LLM does **not** advance the launcher cadence counter) captured as *current* behavior, so that stage 3 must make it an explicit, decided behavior.
 - Deterministic LLM stubbing: the LLM presets are captured with a stubbed `LlmRouter`/HTTP layer (scripted accept/decline/timeout responses), since goldens cannot depend on a live SGLang server.
 - Golden artifacts stored in the test tree with a documented regeneration procedure (regeneration is a deliberate act, never automatic).
 - **No production behavior change.** Test infrastructure, plus one behavior-identical line:
