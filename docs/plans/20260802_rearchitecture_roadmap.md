@@ -17,19 +17,19 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
 - [ ] **1. `rearch-01-parity-oracle`** — golden capture of current per-preset decision
       sequences + preemption golden (incl. finding 3.3-1). Pure test infra, no production change.
       *Gate for stages 2–3.*
-  - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
 - [ ] **2. `rearch-02-runspec`** — `RunSpec` + presets in jar + `Feature` enum + total
       fail-fast + level-0 `RUN_START` echo (D1) + removal of `/sdcard` readers (D6) and of
       `saveGraph`/`readGraph`/`--ape-model`. **One ordered Python edit** (AC1): the counterpart change
       in rv-android removes `ape_pure_mode` from `tool.py` and lands *before* this jar — stage 2, not
       stage 5, is where the cross-repo coupling starts.
       *Gate: parity oracle green per preset; counterpart merged before any device deploy.*
-  - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
 - [ ] **3. `rearch-03-decision-pipeline`** — `DecisionPipeline` stages + `StageResult` sum
       type + episode state relocated + `LlmRouter` sliced + `ScoringPipeline` real injection.
       Hard preemption preserved exactly (Q1).
       *Gate: parity oracle green per preset; permanent preemption golden.*
-  - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
 - [ ] **4. `rearch-04-step-ndjson-telemetry`** — `EventSink` step-grouped NDJSON (D2) +
       escaping serializer + heartbeat (D4) + `RUN_END` write-only (D5) + legacy outputs
       deleted + native NDJSON reader on the analysis side + gzip at collection. Dissolves
@@ -37,21 +37,21 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
       NDJSON and is never rewritten.
       *Gates: neutrality test (sink on/off, same seed ⇒ same decisions); calibration report
       2026-07-24 regenerable (Sec. 9.11); round-trip/one-line tests (Sec. 9.12).*
-  - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
 - [ ] **5. `rearch-05-thin-python-arms`** — arms = preset + overrides; dead keys and Python
       kill-switch duplication deleted; INV-APV-14 retired. Largest cross-repo stage (~95% rv-android;
       stage 2 is now the first to cross, per AC1).
       *Gate: regeneration diff of the 27 surviving arms' effective configs, identical before/after;
       `ape_pure`/`bfs` recorded as documented retirements, not diffs.*
-  - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
 - [ ] **6. `rearch-06-memory-surgical`** — V12 cache release; V11/V24 diagnostic retention
       to IDs/minimal snapshots, conditional on caller audit. No speculative bounds.
       *Gate: action-sequence parity after each retention change.*
-  - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
 - [ ] **7. `rearch-07-compact-static-artifact`** — host-side derived artifact (~1–5 MB);
       `MopData` consumes it; MOP-feature-without-artifact aborts fail-fast.
       *Gates: frozen metric sets preserved by derivation (R9); cross-repo push path updated.*
-  - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
 - [ ] **Merge condition — empirical A/B against the E3 baseline** (owner decision 2026-08-03, item 8).
       Not a stage: the gate on merging the `rearch` line into `master`. 40 APKs × the E3 arms × 3 reps
       × 1800 s, same seeds, jar pre vs post, consolidated by `consolidate_cal.py` and compared with
@@ -93,6 +93,13 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   `docs/20260803_procedimento_worktree_rearch.md`. The constraint the shared branch makes easy
   to violate: stage 1's goldens are captured from pre-change code and MUST be committed before
   stage 2's first production edit.
+- **The rv-android side runs on a dedicated branch `rearch-counterparts`**, cut from `modules`
+  (owner decision 2026-08-03). It mirrors the ape worktree's shape — one isolated line, one merge —
+  and keeps `modules` free of intermediate re-architecture state while the E3 analysis and the
+  `master` jar deploy continue to run from it. The five counterparts `gh93`…`gh97` land there.
+  The cost this choice accepts is explicit: **`gh93` must be merged into `modules` before the
+  stage-2 jar reaches any device** (23 of 29 arms push `ape.apePureMode`, which that jar aborts on),
+  so its merge is early and separate from the line's final merge.
 
 ## Related state
 
@@ -275,6 +282,14 @@ Open coordination items — status 2026-08-03:
   block deletes at archive time; and `ape/openspec/config.yaml`'s `references:` field is rejected by
   the CLI ("must be an array of store ids") — harmless warning, not touched here.
   Still 0/309 tasks, no implementation started.
+- 2026-08-03 — **Artifacts approved by the owner; implementation begins.** All seven changes are
+  approved as corrected (the `[x] artifacts approved` marks above), which ratifies the cross-change
+  decisions in the box and list of this document. Each stage still passes its own `apply` → `verify`
+  → `archive` cycle and its own gates; approval is of the plan, not of any outcome. Two procedural
+  facts settled in the same decision: the ape side executes in the worktree `../ape-rearch` on branch
+  `rearch`, and the rv-android side on a dedicated branch `rearch-counterparts` cut from `modules`
+  (standing constraints above). Stage 1 (`rearch-01-parity-oracle`) is the first work; its goldens
+  must be committed on `rearch` with `mvn test` green before any stage-2 production edit.
 - 2026-08-03 — **`gh88-cal-llm-control` archived (rvsec commit `c9dfb704`, `closes #88`), with spec
   sync.** Investigated on the owner's prompt after this roadmap had recorded it as stage 5's only
   live blocker: `experimento-cal/status.py` derives Phase A at 7/8 of its loop — the campaign ran
