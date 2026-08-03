@@ -1,5 +1,7 @@
 # Tasks: rearch-01-parity-oracle
 
+**Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. **This stage owns the ordering constraint the shared branch makes easy to violate**: the goldens are captured from pre-change code and MUST be committed on `rearch` before the first production edit of stage 2 — capturing or regenerating them after any stage-2/3 edit makes the oracle validate the migration against itself (procedure doc §5).
+
 Test infrastructure only: every task writes under `src/test/java`, `src/test/resources`, or
 this change's artifacts. **No task touches `src/main/java/`** (INV-ORA-01) — a stage-1 review
 gate, not a hope. Group order is dependency order; `mvn test` is the checkpoint after every

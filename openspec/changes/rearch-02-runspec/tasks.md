@@ -1,5 +1,7 @@
 # Tasks: rearch-02-runspec
 
+**Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. **No task here may start before `rearch-01`'s goldens are committed on that branch** — they are captured from pre-change code (procedure doc §5).
+
 <!-- Subagent dispatch hints:
      - Group 1 (RunSpec/Feature/Presets core) and Group 2 (build stamp) are independent — parallel.
      - Group 3 (bootstrap wiring) depends on 1+2. Group 4 (echo/RunContext) depends on 3.

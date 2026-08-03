@@ -1,5 +1,7 @@
 # Tasks: rearch-04-step-ndjson-telemetry
 
+**Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. Group 8 lands in rv-android, which the ape worktree does NOT cover — it needs a matching branch in that repository (procedure doc §4).
+
 <!-- Subagent dispatch hints:
      - Group 1 (Serializer) must complete first — everything else builds on JsonBuf.
      - Group 2 (Sink core) depends on 1. Groups 3–6 depend on 2 and are largely sequential

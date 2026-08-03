@@ -1,5 +1,7 @@
 # Tasks: rearch-06-memory-surgical
 
+**Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. The parity runs that close each fix group below use the goldens committed by `rearch-01` on that branch (procedure doc §5).
+
 Group order is the risk order fixed by the proposal and design: the caller audit gates everything (report Sec. 11: "checagem de callers antes; paridade de sequência de ações depois"), then the three fixes land smallest-blast-radius first (V12 → V11 → V24), each closed by a parity run against the `rearch-01` goldens before the next one starts. **Every fix group is conditional on its audit task**: if re-verification finds a consumer the design's tables do not classify, the group STOPS and `design.md` is amended first — no fix is applied over an unmapped semantic path.
 
 ## 1. Preconditions and caller-audit ratification

@@ -1,5 +1,7 @@
 # Tasks — rearch-03-decision-pipeline
 
+**Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. The goldens this change gates on are the ones committed by `rearch-01` on that branch, and they are never regenerated here (procedure doc §5).
+
 > **Standing gate.** This change PRESUPPOSES `rearch-02-runspec` is applied (`RunSpec`/`RunContext`/`Feature` exist, `Config` is demoted, silent fallbacks and `/sdcard` readers are gone) and `rearch-01-parity-oracle` is green. **After every extraction task group below, the full per-preset golden suite (`aperv`, `mop`, `llm`, `llm_mop`) MUST pass before the next group begins** — the oracle is the merge gate, not a final check (INV-DP-09). Semantic preservation is the whole game: no task changes what any step decides.
 >
 > Line anchors reference HEAD `5dcf225` and will shift as extraction proceeds — treat `:NNN` as "find this block".

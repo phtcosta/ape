@@ -1,5 +1,7 @@
 # Tasks: rearch-07-compact-static-artifact
 
+**Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7 — this stage is the last, so its merge is the one that closes the branch. Setup, teardown and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. Group 2's host-side generator lands in rv-android, which the ape worktree does NOT cover — it needs a matching branch there (procedure doc §4).
+
 <!-- Subagent dispatch hints:
      - Group 1 (inventory ratification) must complete first — the schema is derived from it.
      - Group 2 (generator, rv-android) and Group 3 (jar fixture + new parser) can proceed in
