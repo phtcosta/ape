@@ -139,6 +139,16 @@ for that preset (e.g. `activityBudgetEnabled`, `activityTriggerEnabled`,
 `activityTriggerStagnationStep`, `componentPercentage`), so a future default change fails the
 guard explicitly instead of surfacing as an unexplained golden divergence.
 
+The scope of that guard is exactly "the values the ladder reads", and the boundary matters
+because it is easy to over-read. The scoring weights (`mopWeightDirect`,
+`mopWeightTransitive`, `mopWeightOpenMenu`, `mopWeightWtg`, `frontierBoostWeight`,
+`mopFrontierWeight`, `coverageBoostWeight`, `formCompletionEnabled`) are **not** among them:
+scoring happens in `adjustActionsByGUITree()`, which `resolveNewAction()` calls above this
+oracle's entry point (`StatefulAgent.java:1475-1478`), so no golden record depends on a
+scoring weight and no capture test can guard one. Their guard belongs where the injection is
+built — `rearch-03-decision-pipeline`, INV-ARCH-12 — and this requirement SHALL NOT be cited
+as covering them.
+
 #### Scenario: aperv preset golden compares green at HEAD
 
 - **WHEN** `mvn test` runs the `aperv` preset capture test in compare mode against the

@@ -2,7 +2,7 @@
 
 ## Context
 
-Source of truth: `docs/analise_fable-selecao.md` rev. 3 (Sec. 6.2 `RunSpec`, Sec. 6.4 `RunContext`, Sec. 6.6 deletion table, Sec. 12 owner decisions D1/D6 — **final, do not reopen**). This is stage 2 of 7 of the "Disposable Run Kernel" re-architecture (`docs/plans/20260802_rearchitecture_roadmap.md`), gated by the `rearch-01-parity-oracle` goldens. **Zero Python changes**: `tool.py` keeps pushing exactly the properties it pushes today, and the four campaign presets (`aperv`, `mop`, `llm`, `llm_mop`, as expressed by the `sata`/`sata_mop_widget`/`sata_llm`/`sata_mop_llm` arm dicts) must run unchanged.
+Source of truth: `docs/analise_fable-selecao.md` rev. 3 (Sec. 6.2 `RunSpec`, Sec. 6.4 `RunContext`, Sec. 6.6 deletion table, Sec. 12 owner decisions D1/D6 — **final, do not reopen**). This is stage 2 of 7 of the "Disposable Run Kernel" re-architecture (`docs/plans/20260802_rearchitecture_roadmap.md`), gated by the `rearch-01-parity-oracle` goldens. **One ordered Python edit** (D-4): `tool.py` stops pushing `ape.apePureMode`, a key this change retires but which 23 of the 29 arms currently set to `false`, and that edit lands *before* the stage-2 jar. Apart from that single key, `tool.py` keeps pushing exactly the properties it pushes today, and the four campaign presets (`aperv`, `mop`, `llm`, `llm_mop`, as expressed by the `sata`/`sata_mop_widget`/`sata_llm`/`sata_mop_llm` arm dicts) must run unchanged.
 
 Current state, verified at HEAD `5dcf225` (file:line):
 
@@ -15,6 +15,8 @@ Current state, verified at HEAD `5dcf225` (file:line):
 7. **Teardown chain today** (`StatefulAgent.java:1802-1814`): `llmSummary → superTearDown → coverageDump → saveGraph → saveActionHistory → actionCounters → activityNodes → namingDump → modelCounters`, each in `safeStep`. The coverage dump precedes the model serialization (INV-COV-10, telemetry-proof-llm-efficacy A10) — that ordering property must survive `saveGraph`'s removal.
 8. **Build provenance stamp does not exist.** The gh14 `BuildInfo`/`[APE-BUILD]` change was **archived without implementation** (commit `6b7b96f`, "discard build-provenance-stamp before implementation" — judged redundant with build-time provenance in rvsec B-1). The rev. 3 report re-requires a jar version/build-hash *inside the trace* (`RUN_START`, Sec. 6.2, test 9.6; the gh71 stale-jar incident — MOP boost 0× in 147k evaluations — is the motivating case). This change therefore (re)introduces the stamp; the gh14 archived design is reused as the mechanism.
 9. **Python contract** (`rvsec/rv-android/.../aperv/tool.py`): `APERV_PROPERTY_MAPPING` maps 52 Python keys to `ape.*` keys (`tool.py:77-165`); `_push_properties` writes only keys present in both the arm dict and the mapping (`:1154-1169`), plus `ape.mopDataPath` when the static-analysis JSON was pushed. The seed travels as Monkey `-s` (`:1380-1382`), never in `ape.properties`. No arm pushes a preset name, a run id, or any `/sdcard/ape.*` input file. The dead key `mop_weight_activity → ape.mopWeightActivity` is mapped (`:97`) but **set by no arm** (finding 3.3-7).
+
+   `ape_pure_mode → ape.apePureMode` is the opposite case and the two must not be conflated. It is mapped (`:120`); `_BASELINE_ARM_FLAGS` sets it to `False` (`:256`), which every arm that spreads that constant inherits — **23 of the 29 arms, including all four campaign arms**; `_APE_PURE_ARM_FLAGS` sets it to `True` (`:280`); and it is a member of `ARM_DEFINING_KEYS` (`:175`), whose INV-APV-13/14 guard tests require every member to be present in the mapping and set explicitly by every non-exempt variant. `_push_properties` writes one line per key present in both the arm dict and the mapping, with no value filter (`:1159-1168`). Retiring the key on the jar side alone would therefore abort every campaign arm before step 1 — which is why stage 2 carries the Python edit (D-4).
 
 Constraints: R1–R9 (report Sec. 2), especially R5 (total fail-fast config), R6 (observable determinism), R3 (no read-back). P1/P3/P4. Dalvik/`app_process`, Java 11 — no records, no sealed classes, no external dependencies.
 
@@ -81,7 +83,7 @@ exploration loop (unchanged this stage) … tearDown WITHOUT saveGraph:
 **Goals:**
 
 - One immutable, validated, echoed plan per run; everything invalid aborts before step 1 (R5).
-- Presets resident in the jar; the stage-2 jar deployable against the **unchanged** Python side.
+- Presets resident in the jar; the stage-2 jar deployable against a Python side that changed by exactly one key (D-4).
 - Purity as structural absence (a feature not in the plan does not exist), replacing the three string registries and the `apePureMode` Properties overwrite.
 - D6 executed: no `/sdcard/ape.xpath`, `/sdcard/ape.xpath.actions`, `/sdcard/ape.strings`; input-string draws on the run's seeded RNG (V23 closed).
 - Legacy persistence protocol deleted (V14); teardown coverage-dump ordering preserved (INV-COV-10).
@@ -91,7 +93,7 @@ exploration loop (unchanged this stage) … tearDown WITHOUT saveGraph:
 
 - No `DecisionPipeline`, no relocation of episode state, no `ScoringPipeline` injection (stage 3).
 - No NDJSON step telemetry, no `RUN_END`, no heartbeat, no removal of `[APE-STEP]`/`action-history.log`/`produce.log`/`consume.log`/`sataTimeline.vis.js` (stage 4). `RUN_START` is the only new trace record.
-- No Python changes of any kind (stage 5); no eco-vs-intention validation ever (D1 is level 0, definitive).
+- No Python changes beyond the single `ape_pure_mode` removal that the retired key forces (D-4): the arm-definition contract, the `preset + overrides` hand-off, the `bfs`/`dfs` variants and the `ape_pure` arm itself all remain stage-5 work. No echo-vs-intention validation ever (D1 is level 0, definitive).
 - No memory work (stage 6), no static-artifact compaction (stage 7).
 - No migration of the ~100 untouched static-final `Config` read sites (stage 3); only the sites this change must touch move to `RunContext`.
 
@@ -133,18 +135,20 @@ The exact roster is fixed at apply time against the full 113-field inventory; th
 
 **Inert-key rule** (the substitute for `rvExemptReasons`, and the reason `INV-ARCH-06` dissolves): a sub-parameter key explicitly present while its owning feature is **inactive** is accepted **iff its value is the feature's declared neutral value** (e.g., `ape.llmPercentageNoSubstrate=-1`, which `_BASELINE_ARM_FLAGS` pushes on every arm including non-LLM ones — verified `tool.py:243-261`); it is recorded in the echo's `inert` list and enters no params object. A **non-neutral** value for an inactive feature is a missing-dependency abort (you may state OFF for an absent mechanism; you may not state ON). This keeps every current arm's `ape.properties` valid — checked against the actual `_push_properties` output of all 29 arms in `RunSpecCompatTest`.
 
+**The rule does not reach `ape.apePureMode`, and must not be stretched to.** It admits a sub-parameter of a *feature*, judged against that feature's declared neutral value. `ape.apePureMode` owns no `Feature` — this change deletes the very mechanism such a key would parameterize — and retired-key classification is evaluated before any value semantics. `ape.apePureMode=false` is therefore not an inert value: it is a retired key, and it aborts. The 23 arms that push it are handled by removing it from `tool.py` (D-4), which is the honest resolution; admitting `false` as inert would keep a key alive for a mechanism the spec says SHALL NOT exist.
+
 ### D-3 — Presets in the jar, contents derived from the current arm dicts
 
 `Presets.resolve(name)` returns the base key/value vector; explicit keys override on top; the result feeds the same validator. Contents (translated from `tool.py` at HEAD; frozen at apply time by the compat test):
 
-- `aperv` ≙ arm `sata`: `_BASELINE_ARM_FLAGS` (`tool.py:243-261`) + `throttle 200` + agent `sata` — RV exploration ON, MOP/reach/LLM OFF.
+- `aperv` ≙ arm `sata`: `_BASELINE_ARM_FLAGS` (`tool.py:243-261`) **minus `ape_pure_mode`** — the 17 flags that survive the D-4 edit — + `throttle 200` + agent `sata`; RV exploration ON, MOP/reach/LLM OFF. A preset may not carry a retired key: `Presets.resolve` output feeds the same validator as an explicit plan, so baking `ape.apePureMode` into `aperv` would make the preset abort on itself.
 - `mop` ≙ arm `sata_mop_widget`: `aperv` + `_MOP_SUBSTRATE` weights (direct 500 / transitive 300 / openMenu 250 / wtg 200; `tool.py:291-297`). `ape.mopDataPath` is **not** part of the preset — it is deployment-specific and must come explicitly (the `MOP` feature therefore activates only when the path is pushed, same as today).
 - `llm` ≙ arm `sata_llm`: `aperv` + the `_LLM_FLAGS` sampling block (`tool.py:299-309`) minus `llm_url`, which is deployment-specific and must come explicitly.
 - `llm_mop` ≙ arm `sata_mop_llm`: `mop` + `llm`.
 
 Ablation = named override on top of a preset, never a new preset (report Sec. 6.2).
 
-### D-4 — No-preset-key compatibility: stage 2 deploys against unchanged Python
+### D-4 — No-preset-key compatibility, and the one ordered Python edit
 
 `ape.preset` is a new, **optional** key. `tool.py` does not push it and will not until stage 5. Resolution:
 
@@ -153,7 +157,18 @@ Ablation = named override on top of a preset, never a new preset (report Sec. 6.
 
 `preset + overrides` becomes the *Python* contract only at stage 5; at stage 2 it is exercised by tests and available for manual runs.
 
-Purity note: the `ape_pure` arm's `ape.apePureMode=true` key is **retired** (see D-5). This is a deliberate, loud break of a non-campaign arm: owner decision D3 descopes the stock-APE mode entirely (control = minimal `aperv` preset; the phase-2 comparison stays anchored on frozen data). The arm previously depended on the silent registry mechanism this change deletes; letting it "work" would require keeping the mechanism. It aborts with a message naming the decision; stage 5 deletes the arm.
+**Purity note — `ape.apePureMode` is retired, and removing it from `tool.py` is stage-2 work that lands first.**
+
+The key is retired by D-5, and `_push_properties` writes it from 23 of the 29 arms (Context fact 9). A jar-only retirement therefore aborts every campaign arm before step 1 — coverage 0, MOP violations 0, on every arm. The two ways out are to admit `false` as an inert value or to stop pushing the key; the owner chose the second, because the first keeps a key alive for a mechanism the same spec says SHALL NOT exist (see the inert-key rule in D-2, which does not reach this key).
+
+The edit is four deletions in `tool.py` — `APERV_PROPERTY_MAPPING` (`:120`), `_BASELINE_ARM_FLAGS` (`:256`), `_APE_PURE_ARM_FLAGS` (`:280`), `ARM_DEFINING_KEYS` (`:175`) — plus the INV-APV-13/14/15 guard tests, whose arm-defining count falls from 18 to 17. It lives in a counterpart change of the `rvsec` repo, which owns its own OpenSpec artifacts; the roadmap sequences the two.
+
+**Order: Python first, then the jar.** Both intermediate states are safe in that direction, and only in that direction:
+
+- *Python edited, pre-stage-2 jar still deployed*: `Config.apePureMode` already defaults to `false` (`Config.java:287`), so for the 23 arms that pushed `false` explicitly the absent key resolves to the same value. No behavioral delta.
+- *Jar deployed first, `tool.py` untouched*: every campaign arm aborts. This ordering is forbidden — the counterpart change is a hard predecessor of the stage-2 jar deploy, not a parallel task.
+
+The `ape_pure` arm survives the edit intact, and the earlier reasoning here (that letting it work would require keeping the mechanism) was wrong: `_APE_PURE_ARM_FLAGS` (`tool.py:265-284`) already sets all 17 remaining arm-defining flags to their off values explicitly, and the comment above it states why — the original-APE baseline is auditable from `ape.properties` "without trusting the jar's `apePureMode` to force RV off". Purity was already structural on the Python side; this change makes the jar agree, rather than breaking the arm. Owner decision D3 is untouched: the stock-APE mode stays descoped, the campaign control is the minimal `aperv` preset, and stage 5 deletes the arm.
 
 ### D-5 — Fail-fast scope (R5), precisely
 
@@ -272,7 +287,8 @@ Post: exactly one `\n`-terminated line; serializer escapes all control character
 ## Risks / Trade-offs
 
 - [Parity gate vs. the seeded `nextString`] → the only intended behavioral delta; goldens captured on empty-string-list fixtures are unaffected; any list-exercising fixture documents the sanctioned divergence (D-9). Gate remains: per-preset goldens green.
-- [`ape_pure` / `bfs` / `dfs` variants abort loudly with unchanged Python] → deliberate (D3, V9): they currently lie silently; no campaign preset uses them; stage 5 deletes them. Recorded here so a surprised operator finds the decision, not a bug.
+- [`bfs` / `dfs` variants abort loudly] → deliberate (D3, V9): they silently run `SataAgent` today; no campaign preset uses them; stage 5 deletes them. Recorded here so a surprised operator finds the decision, not a bug. `ape_pure` is **not** in this list any more — the D-4 edit removes the retired key from the arm, which then resolves like any other.
+- [Stage-2 jar deployed against a pre-edit `tool.py`] → every arm aborts before step 1: this is the failure the D-4 ordering exists to prevent, and it is the reason the counterpart change is a predecessor rather than a parallel task. Residual exposure is an operator deploying the jar out of order; the failure is loud and immediate (a failed task, never a degraded run — R5), and `RUN_START.build.sha` makes the jar-to-trace pairing auditable post-hoc.
 - [`-D` system properties no longer configure `ape.*`] → intentional narrowing under R5; no deployment path uses it (tool.py pushes files; CLI carries seed/agent).
 - [Static `RunContext.current()` is still a global] → admitted seam (D-12); bounded by R2 and dissolved in stage 3.
 - [RUN_START not literally the first stdout line in stage 2] → AOSP banner lines precede it until stage 4; the spec claims only "before any exploration output", which is what analysis needs.
@@ -285,7 +301,7 @@ Post: exactly one `\n`-terminated line; serializer escapes all control character
 |-------|-------------|-----|-------|
 | Unit (JVM) | `Feature` derivation/dependencies/neutral rule; `Presets` content; digest determinism; serializer escaping + one-line; runId shape; retired keys | pure JVM, no Android | ~25 |
 | Unit (JVM) | abort matrix: unknown key, non-ape key, bad int, bad boolean, dependency, combination, unknown `--ape`, replay-no-log, unknown preset | `RunSpec.resolve` against crafted maps | ~12 |
-| Compat | per-arm fixtures = exact `_push_properties` output of the 29 arms → the 4 campaign arms resolve; `ape_pure`/dead-key fixtures abort with the documented reason | fixture files in test tree | ~8 |
+| Compat | per-arm fixtures = exact `_push_properties` output of the 29 arms **after the D-4 edit** → the 4 campaign arms and `ape_pure` all resolve; hand-written fixtures carrying `ape.apePureMode` or `ape.mopWeightActivity` abort with the documented reason | fixture files in test tree | ~8 |
 | Integration | teardown chain order (dump before `saveActionHistory`); `createAgent` on validated types; `StringCache` seeded determinism (same seed ⇒ same strings) | existing JVM test seams | ~6 |
 | Gate | rearch-01 golden suite per preset, before/after | `mvn test` | existing |
 | Build | `BuildInfo` filtered (no `${…}` residue); sha present in dex (`unzip -p … | strings`); no new jar resources | script + JUnit | 3 |

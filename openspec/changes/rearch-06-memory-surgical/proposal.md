@@ -9,7 +9,7 @@ This change is **stage 6 of 7** of the re-architecture selected in `docs/analise
 - Clear `namingToGUITreeNodeCache` in the same cycle as the existing `release()` path (V12).
 - `ActionRecord` (diagnostic history) stores IDs + a minimal snapshot instead of the resolved `GUITreeAction` → full tree — **conditional on** a prior caller audit proving no semantic path (rebuild/replay) depends on the rich objects.
 - `ModelAction` releases `resolvedTree`/`resolvedGUITreeAction` beyond the last resolve (V24), under the same caller-audit condition.
-- Action-sequence parity test after each retention change (same seed ⇒ same decisions) — memory fixes must be observationally neutral.
+- Per-path unit tests after each retention change, plus the ratified caller audits — memory fixes must be observationally neutral, and that is argued where the changed code runs. An action-sequence parity run (same seed ⇒ same decisions) closes each group as a decision-ladder regression floor; it does not execute the release, history or recovery paths, so it is not the neutrality evidence (design D4).
 - **Explicitly out of scope**: any bound/eviction on `Graph`, `treeHistory`, or naming structures; those require a heap profile by retention root on 600 s runs first (report Sec. 6.7). OOM handling stays "process death + task FAILED in the supervisor" — no heroic catch, no serialization on a dying heap.
 
 ## Capabilities
@@ -27,6 +27,6 @@ _None._
 
 - **Java**: `GUITreeBuilder` (release path), `Model`/`ActionRecord`, `ModelAction`, `GUITreeAction`.
 - **Python/rv-android**: none.
-- **Depends on**: `rearch-01-parity-oracle` (neutrality evidence for every fix). The V12 cache release and the V24 `ModelAction` release are independent of stages 2–5. The **V11 `ActionRecord` snapshot fix is hard-blocked on stages 2 and 4**: stage 2 deletes `saveGraph`/`sataModel.obj` and stage 4 deletes `saveActionHistory`/`action-history.log`, the only consumer that re-resolves every deep record through the rich `GUITreeAction` (design "Ordering", task 1.1 verifies this and blocks group 3 if either has not landed). Ordered after the pipeline work to avoid double-churn in the same files.
-- **Risk** (report Sec. 11): a "surgical" eviction touching an unmapped semantic path — mitigated by the caller audit before and sequence parity after.
+- **Depends on**: `rearch-01-parity-oracle` (the decision-ladder regression floor each group runs against; the neutrality evidence itself is the caller audits plus the per-path unit tests — design D4). The V12 cache release and the V24 `ModelAction` release are independent of stages 2–5. The **V11 `ActionRecord` snapshot fix is hard-blocked on stages 2 and 4**: stage 2 deletes `saveGraph`/`sataModel.obj` and stage 4 deletes `saveActionHistory`/`action-history.log`, the only consumer that re-resolves every deep record through the rich `GUITreeAction` (design "Ordering", task 1.1 verifies this and blocks group 3 if either has not landed). Ordered after the pipeline work to avoid double-churn in the same files.
+- **Risk** (report Sec. 11): a "surgical" eviction touching an unmapped semantic path — mitigated by the caller audit before and the per-path unit tests after; the sequence-parity run bounds a different risk (an accidental change to the decision ladder).
 - Grounding: report Sec. 6.7, verified V11/V12/V24, rejection of speculative bounds (Sec. 7).

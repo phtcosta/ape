@@ -93,6 +93,8 @@ The reader SHALL NOT write to the trace, SHALL NOT emit legacy `[APE-*]` lines, 
 
 `clock_logcat_join.py` SHALL be migrated onto this reader in this change. Its `[APE-STEP]` regex and its entire UTC-offset reconstruction — the year-candidate search, the quarter-hour rounding, the anchor selection, and `alignment_residual_ms` — SHALL be deleted, not disabled: the D4 logcat heartbeat places step and violation on the same clock, so the reconstruction has nothing left to reconstruct.
 
+The deletion has one precondition, and it is not a formality (`event-sink` INV-SNK-14). The platform captures logcat as a live stream under a strict tag allowlist (`adb logcat … -s RVSEC:V RVSEC-COV:V`), so the heartbeat reaches the joined file only once its tag is in that allowlist — a change in the `rvsec` repo, touching the byte-identical-command clause that pins the capture. Until a captured run is shown to contain heartbeat lines, the reconstruction SHALL stay. Deleting a working fallback in favour of a mechanism never observed end-to-end would reproduce, on the analysis path, exactly the silent-inertness class this change exists to remove.
+
 #### Scenario: Reader yields a joined step row
 
 - **WHEN** the reader is run over a trace whose step 42 carries a `dec` with no boosts, two `llm[]` sub-events, and an `out` closed at step 43

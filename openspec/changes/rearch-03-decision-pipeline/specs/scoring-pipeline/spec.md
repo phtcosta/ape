@@ -16,6 +16,7 @@ public interface ScoringPass {
 
 - **INV-ARCH-02**: A `ScoringPass` whose `isEnabled()` returned `false` at construction SHALL NOT appear in the assembled pipeline and SHALL therefore be a strict no-op for the run — zero priority mutations, zero provenance writes, zero log lines. A `ScoringPass` SHALL hold no run-mutable field; all cross-step mutable state (pick counters) SHALL live on the `ScoringContext`.
 - **INV-ARCH-11**: No scoring pass, and no helper it calls (`MopScorer` included), SHALL read static `Config` at any time after construction; every weight and gate SHALL arrive via `ScoringParams` injection. Tests SHALL construct `ScoringParams` directly, never mutate `Config`.
+- **INV-ARCH-12**: Because INV-ARCH-11 makes every pass test blind to the values a real plan resolves to, the plan → `ScoringParams` mapping SHALL itself be guarded: a `ScoringParams` derived from a default plan SHALL equal the eight jar-default weights and gates, asserted as literals in one test. Nothing else in the change set observes a scoring default — the parity goldens never reach the scoring pipeline (it runs above their entry point, `StatefulAgent.java:1475-1478`) and the `RUN_START` echo is write-only by owner decision D1.
 
 #### Scenario: disabled pass is absent and inert
 - **WHEN** a `ScoringPass` is constructed with `ScoringParams` values that make `isEnabled()` return `false`
@@ -30,6 +31,11 @@ public interface ScoringPass {
 - **WHEN** a test constructs `CoveragePass` with `ScoringParams.coverageBoostWeight = 100`
 - **THEN** the pass SHALL boost with weight 100 regardless of any `Config` state
 - **AND** the same construction with weight 0 SHALL yield `isEnabled() == false`
+
+#### Scenario: a changed scoring default fails a test
+- **WHEN** a jar default among the eight `ScoringParams` fields is changed — say `mopWeightDirect` from `500` to `400` — and no other edit is made
+- **THEN** the defaults-guard test SHALL fail, naming the field and both values
+- **AND** the per-preset parity goldens SHALL still pass, because the scoring pipeline never executes under them — which is why the guard is a separate test and not a golden
 
 ---
 

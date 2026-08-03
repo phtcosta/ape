@@ -2,7 +2,7 @@
 
 ## Context
 
-Stage 7 of 7 of the re-architecture selected in `docs/analise_fable-selecao.md` (rev. 3, Sec. 6.6 last row, Sec. 10 item 7). The jar currently parses the **full** static-analysis JSON on-device (`src/main/java/com/android/commands/monkey/ape/utils/MopData.java`, 1212 LOC): a whole-file `org.json` DOM parse of `reachability[]` + `windows[]` + `transitions[]` + `components{}`, guarded by a pre-read footprint budget (`PARSE_FOOTPRINT_FACTOR = 6`, `MopData.java:160-167`) and a repo-unique `catch (OutOfMemoryError)` (`MopData.java:328`, verified V19). Corpus measurement over the 134 real static-analysis JSONs of the campaign corpus confirms Ling's T7: `reachability[]` (call-graph) is **57.7 % of aggregate bytes** (up to 77 % per file); `windows[]` is 5.0 % and `transitions[]` 10.1 % (46 % in the worst case, `eu.vranckaert.worktime`, dominated by exact-duplicate edges — the same duplicates `tool.py`'s current compaction already strips). The explorer consumes none of these sections directly at runtime — they are parse-time inputs to a small set of derived projections (widget MOP flags, MOP-activity sets, WTG click view, OPTIONSMENU gateways, component trigger surface).
+Stage 7 of 7 of the re-architecture selected in `docs/analise_fable-selecao.md` (rev. 3, Sec. 6.6 last row, Sec. 10 item 7). The jar currently parses the **full** static-analysis JSON on-device (`src/main/java/com/android/commands/monkey/ape/utils/MopData.java`, 1212 LOC): a whole-file `org.json` DOM parse of `reachability[]` + `windows[]` + `transitions[]` + `components{}`, guarded by a pre-read footprint budget (`PARSE_FOOTPRINT_FACTOR = 6`, `MopData.java:160-167`) and a repo-unique `catch (OutOfMemoryError)` (`MopData.java:328`, verified V19). Corpus measurement over a 134-file working set (superseded as the gate corpus — see "Corpus provenance" below) confirms Ling's T7: `reachability[]` (call-graph) is **57.7 % of aggregate bytes** (up to 77 % per file); `windows[]` is 5.0 % and `transitions[]` 10.1 % (46 % in the worst case, `eu.vranckaert.worktime`, dominated by exact-duplicate edges — the same duplicates `tool.py`'s current compaction already strips). The explorer consumes none of these sections directly at runtime — they are parse-time inputs to a small set of derived projections (widget MOP flags, MOP-activity sets, WTG click view, OPTIONSMENU gateways, component trigger surface).
 
 On the Python side, `modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py` locates the full JSON (`_find_static_analysis_file`, `:889`), minifies/dedups/enriches it (`_compact_static_analysis_json`, `:917` — a *lossless* shrink that exists purely to clear the jar's footprint guard), and pushes it to `/data/local/tmp/static_analysis.json`. When the JSON is absent it **warns and continues**, so a MOP arm silently runs without MOP guidance (`tool.py:1499-1503`, verified V21).
 
@@ -23,12 +23,14 @@ Every production read of `MopData` in `src/main`, established by exhaustive call
 | `hasWtgData()` / `getWtgTransitions(activity)` | `WtgPass`, `FrontierPass`, `MopFrontierPass`, `MopScorer.scoreWtg`, `StatefulAgent.frontierBoost` | `WtgTransition.widgetName`, `WtgTransition.targetActivity` — **`widgetClass` has zero production readers** |
 | `getReceivers()` / `getServices()` | `StatefulAgent.buildTriggerTuples`, `dispatchTrigger`, `triggerLogLine` | `className`, `componentType` (log), `reachesTarget`, `intentFilters[].actions`, `intentFilters[].categories`, `targetMethods` (**emptiness test only**), `permission` (log via `hasPermissionGate`) |
 | `getProviders()` | `buildProviderTuples`, `buildContentCommand` | `className`, `reachesTarget`, `authorities` |
-| `getActivities()` | `SataAgent.selectTriggerCandidate`; `MopData.augmentActivitiesFromSources` (A′ source 2, parse-time) | `className`, `isMain`, `permission`, `reachesTarget` |
+| `getActivities()` | `SataAgent.selectTriggerCandidate`; **`SataAgent.buildDeepLinkUri`** (`:869`, called at `:543` inside the MOP stagnation launcher, consumed at `MonkeySourceApe.java:993-1002`); `MopData.augmentActivitiesFromSources` (A′ source 2, parse-time) | `className`, `isMain`, `permission`, `reachesTarget`; **`intentFilters[].actions` and `intentFilters[].data.{schemes,hosts,paths}`** — the deep-link inputs |
 | `hasComponents()` | `SataAgent:547` gate | non-emptiness |
 | `getPackageName()` / `getMainActivity()` | trigger `ComponentName` (INV-CT-04), `selectTriggerCandidate`, T1.7 strict-match | scalars |
 | `getReachability()`, `getWindows()`, `getWindow(id)`, `getTransitions()`, `isWidgetlessSubstrate()`, `getDroppedFlaggedNoId()` | **tests only** (`MopDataTest`) | — parse-time inputs to the projections above; never read at exploration time |
 
-Parse-time-only consumption (moves to the generator): `reachability[]` → widget flag cross-reference (`bySignature`), D8 synthetic-lambda recovery (FIX 2, INV-MOP-30), A′ source 3; `windows[]` → widget map, collision policy (INV-MOP-19), empty-id drop (INV-MOP-20), OPTIONSMENU precompute (INV-MOP-13), dialog re-keying (INV-MOP-25); `transitions[]` → WTG click view keyed by base activity (INV-WTG-04), dialog host resolution; `components.activities[].reachesTarget` → A′ source 2 (INV-MOP-27). Also production-unused and dropped from the wire: `IntentFilter.data` (D15 `DataSpec` — parsed-and-exposed only), `ProviderInfo.readPermission`/`writePermission`, `Widget.id`/`text`/`type`, raw `listeners[]`, `WtgTransition.widgetClass`, `targetMethods` signature list (compacted to a boolean).
+Parse-time-only consumption (moves to the generator): `reachability[]` → widget flag cross-reference (`bySignature`), D8 synthetic-lambda recovery (FIX 2, INV-MOP-30), A′ source 3; `windows[]` → widget map, collision policy (INV-MOP-19), empty-id drop (INV-MOP-20), OPTIONSMENU precompute (INV-MOP-13), dialog re-keying (INV-MOP-25); `transitions[]` → WTG click view keyed by base activity (INV-WTG-04), dialog host resolution; `components.activities[].reachesTarget` → A′ source 2 (INV-MOP-27). Also production-unused and dropped from the wire: `ProviderInfo.readPermission`/`writePermission`, `Widget.id`/`text`/`type`, raw `listeners[]`, `WtgTransition.widgetClass`, `targetMethods` signature list (compacted to a boolean).
+
+**`IntentFilter.data` (D15 `DataSpec`) is not in that list, and an earlier revision of this design wrongly put it there.** It has a production consumer: `SataAgent.buildDeepLinkUri` reads `f.data.schemes/hosts/paths` of the first `ACTION_VIEW` filter to build `scheme://host + path`, and `MonkeySourceApe.java:993-1002` switches the trigger intent to `Intent.ACTION_VIEW` + `Uri.parse(...)` whenever that string is non-null. Dropping it would silently downgrade every `EVENT_TRIGGER_ACTIVITY` to an explicit-component intent and make activities reachable only by `ACTION_VIEW` unopenable — a direct hit on `sata_mop_act_frontier`, invisible in the trace (the run still reports `status=loaded`). The structure is nonetheless the wrong thing to ship: what the explorer consumes is one string per activity, not the filter list. The **derivation** therefore moves host-side like every other parse-time semantic, and the wire carries the result: `components.activities[].deepLinkUri` (see the schema below and INV-DRV-07).
 
 ## Architecture
 
@@ -65,7 +67,7 @@ tool.py execute():                                       widgets / mopActivities
 | `MopData.load(path, expectedPackage, expectedMainActivity)` (rewritten) | Parse the compact artifact only; unchanged public query API; version/sentinel/strict-match validation; status line / `MOP_DATA` record | device file | `MopData` or `null` |
 | `MopData` query surface (unchanged) | `getWidget`, `activityHasMop`, `getMopActivities`, `activityHasMopOptionsMenu`, `getWtgTransitions`, component getters, `getPackageName`/`getMainActivity` | — | — (zero consumer edits) |
 | Gateway recompute (jar, ~10 LOC) | `optionsMenus[]` records + WTG + the flag-selected MOP-activity set → `activitiesWithMopOptionsMenu` (keeps INV-MOP-13 sensitive to `mopActivitySourceComponents`) | loaded artifact | gateway set |
-| `MopArtifactEquivalenceTest` (one-shot cutover gate) | Old parser (full JSON) vs new parser (derived artifact): projection identity over the `data/instrumented_apks/` corpus | corpus dir (`-Dmop.corpusDir`) | pass/fail; deleted after cutover with the old parser |
+| `MopArtifactEquivalenceTest` (one-shot cutover gate) | Old parser (full JSON) vs new parser (derived artifact): projection identity over the pinned corpus (`rvsec-dataset/static_analysis/`, 345 apps) | corpus dir (`-Dmop.corpusDir`) | pass/fail; deleted after cutover with the old parser |
 
 ## Mapping: Spec → Implementation → Test
 
@@ -73,7 +75,7 @@ tool.py execute():                                       widgets / mopActivities
 |---|---|---|
 | Compact artifact contents (static-analysis-entrypoints: Derived compact MOP artifact) | `derive_mop_artifact.derive` | `test_derive_mop_artifact.py` (cryptoapp expectations mirroring `MopDataTest`) |
 | Generator determinism (INV-DRV-05) | `serialize_canonical` | `test_derive_determinism` (same bytes in ⇒ same bytes out, twice) |
-| Relocated derivation semantics INV-DRV-01..04 (ex INV-MOP-12/17/19/20/25/30, INV-WTG-04) | `derive_mop_artifact` sub-functions | per-rule unit tests + corpus equivalence gate |
+| Relocated derivation semantics INV-DRV-01..04 and INV-DRV-07 (ex INV-MOP-12/17/19/20/25/30, INV-WTG-04, and the deep-link assembly of INV-CT-07) | `derive_mop_artifact` sub-functions | per-rule unit tests + corpus equivalence gate |
 | Loader consumes only the compact format; unknown/full JSON rejected (`version-mismatch`) | `MopData.load` rewrite | `MopDataTest` (rewritten on `cryptoapp.apk.mop.json` fixture) |
 | Fail-fast: MOP plan + missing/unreadable/mismatched artifact aborts before step 1 (INV-MOP-22 preserved; V21 killed) | `StatefulAgent` `requireMopArm` (existing) + `tool.py` raise | jar: existing INV-MOP-22 tests extended; Python: `test_aperv_tool.py` absent-JSON raises |
 | `MOP_DATA` record fields (status, reason, formatVersion, sourceDigest, counts) | status-line emission in `MopData.load` (record framing owned by rearch-04) | log-line assertion tests |
@@ -107,7 +109,7 @@ Alternatives: (a) inside `rv-static-analysis` / the pre-processing pipeline (gen
 
 ### D2 — Wire schema v1: explorer-shaped, MOP vocabulary, explicit version
 
-See API Design for the full schema. Shape decisions: widget map keyed `baseActivity → shortId` (the exact lookup structure `getWidget` uses today); per-widget MOP flags as **one map of normalized eventType → `none|direct|transitive|both`** — lossless w.r.t. the two Java maps, and key *presence* is semantic (drives the per-event vs aggregate fallback in `isDirectMop`/`isTransitiveMop`, so `none` entries are never omitted); aggregates are recomputed as the OR over the map (INV-MOP-17 preserved by construction). WTG as `sourceBaseActivity → [{widget, target}]` (deduplicated; `widgetClass` dropped — zero readers). Components carry only the trigger surface (see inventory); `targetMethods` compacts to `hasTargetMethods: bool` (only an emptiness test survives in `buildTriggerTuples`). The wire format speaks `MOP` (`mop`, `mopActivities`, `reachesTarget` is renamed `reachesMop` — the D7 boundary now sits in the generator, the single place that still reads `*Target` keys).
+See API Design for the full schema. Shape decisions: widget map keyed `baseActivity → shortId` (the exact lookup structure `getWidget` uses today); per-widget MOP flags as **one map of normalized eventType → `none|direct|transitive|both`** — lossless w.r.t. the two Java maps, and key *presence* is semantic (drives the per-event vs aggregate fallback in `isDirectMop`/`isTransitiveMop`, so `none` entries are never omitted); aggregates are recomputed as the OR over the map (INV-MOP-17 preserved by construction). WTG as `sourceBaseActivity → [{widget, target}]` (deduplicated; `widgetClass` dropped — zero readers). Components carry only the trigger surface (see inventory); `targetMethods` compacts to `hasTargetMethods: bool` (only an emptiness test survives in `buildTriggerTuples`). Activities additionally carry `deepLinkUri`, a precomputed string: the generator applies the same rule the jar applies today — first intent-filter declaring `ACTION_VIEW` with a non-empty scheme list, `scheme + "://" + host + path` with host and path defaulting to empty, null when no such filter exists — so the jar reads a value instead of walking a filter structure it would otherwise need on the wire. This is one more parse-time semantic relocated host-side, the same treatment every other derivation gets here (INV-DRV-07). The wire format speaks `MOP` (`mop`, `mopActivities`, `reachesTarget` is renamed `reachesMop` — the D7 boundary now sits in the generator, the single place that still reads `*Target` keys).
 
 ### D3 — Dual MOP-activity sets; OPTIONSMENU gateways recomputed on-device from a tiny record
 
@@ -137,7 +139,28 @@ The wire format is BREAKING cross-repo. Rollout: one ape commit (parser rewrite 
 
 The frozen metric definitions never touch the device artifact: *MOP coverage* is computed over `directly_reaches_mop` from the **full JSON** host-side; *unique misuse* and the `Mneut` prefix test are computed from logcat via the instrumented APK. The full JSON remains where it is, byte-identical, as the host-side source of truth — so the metric sets are untouched by construction, and a grep audit asserts no analysis-pipeline code reads `*.mop.json`. What the derivation must additionally preserve is the *mechanism* under study: the exact sets that steer exploration (widget flag maps incl. per-event entries, both MOP-activity sets, gateway inputs, WTG views, trigger tuples, `package`/`mainActivity`). That is the corpus equivalence gate: for every JSON of the corpus plus the cryptoapp fixture, old-parser(full) and new-parser(derive(full)) must produce identical projections.
 
-**Corpus provenance — to be pinned before the gate runs (task 1.4).** The percentages above were measured over a 134-file working set that is *not* reproducible from this repository: `data/` here contains only `system-broadcast.json`, and no `data/instrumented_apks/` exists. The full static-analysis JSONs are produced and held by the sibling dataset repo (`rvsec-dataset/static_analysis/`, 345 `.apk.json` at the time of writing). Before the equivalence gate is run, the exact corpus path, its file count, and the command that produced the 57.7 % / 5.0 % / 10.1 % split MUST be recorded in this design — the gate is parameterized by `-Dmop.corpusDir` and is meaningless without a named, countable corpus.
+**Corpus provenance — pinned.** The gate corpus is the sibling dataset repo's static-analysis output:
+
+```
+<workspace>/rvsec-dataset/static_analysis/          345 *.apk.json, 766 MB (verified 2026-08-03)
+```
+
+This is the directory `-Dmop.corpusDir` names. `data/instrumented_apks/` — cited by earlier revisions of this design and still by nothing else — **does not exist in this repository**; `data/` holds only `system-broadcast.json`. Nothing in `ape` produces or vendors these JSONs, and nothing should: they are dataset artifacts, and the dataset repo is their home.
+
+*Two caveats, both load-bearing:*
+
+1. **The byte-split percentages (57.7 % / 5.0 % / 10.1 %) were measured over a different, 134-file working set that is not reproducible.** They are retained above as an order-of-magnitude claim about where the bytes sit, not as a corpus statistic. Task 4.1 re-measures the split over the pinned 345 while it batch-derives, and this design is amended with the command and the result. No decision in this change depends on the exact figures — the projection excludes `reachability[]` entirely whatever its share is.
+2. **The corpus must be shown to *exercise* the relocated semantics, not merely to be large.** A gate that compares 345 apps on rules none of them trigger proves nothing. Coarse presence counts over the raw JSON (verified 2026-08-03, string-level — they establish presence of the input shape, not that the widget in question ends up MOP-flagged):
+
+   | Signal in the full JSON | Apps | Relocated semantics it can exercise |
+   |---|---:|---|
+   | `"idName": ""` | 229 / 345 | empty-short-id drop **and** the flagged-widget activity-marking rule (INV-DRV-02) |
+   | `ExternalSyntheticLambda` | 321 / 345 | D8 synthetic-lambda recovery (INV-DRV-01) |
+   | `"DIALOG"` | 165 / 345 | dialog re-keying and host promotion (INV-DRV-03) |
+
+   Task 4.1 converts these into exact counts of apps that genuinely exercise each rule (flagged-and-dropped widgets, recovered handlers, re-keyed dialogs, A′ sets that differ) and fails the gate if any of the four is exercised by **zero** apps — at which point the missing case is covered by a synthetic fixture in the Python unit suite instead.
+
+   Note for the record: `labnex` and `duress` — the two apps the parser-fidelity investigation named as losing 100 % of per-widget granularity to empty ids (`docs/20260622_investigacao_mop.md`) — are **not** in this corpus, and their static-analysis JSONs are not present anywhere in the workspace. The 229-app empty-id population is what covers that case instead; it is broader than the two named apps and actually available.
 
 ## API Design
 
@@ -184,7 +207,8 @@ Same signature, same null-on-failure contract (INV-MOP-01), same status-line/rec
   },
   "components": {
     "activities": [{"className": "…", "isMain": false, "exported": true,
-                     "permission": null, "reachesMop": false}],
+                     "permission": null, "reachesMop": false,
+                     "deepLinkUri": "myapp://host/path"}],
     "receivers":  [{"className": "…", "isMain": false, "exported": true,
                      "permission": null, "reachesMop": true, "hasTargetMethods": true,
                      "intentFilters": [{"actions": ["…"], "categories": ["…"]}]}],
@@ -198,7 +222,7 @@ Same signature, same null-on-failure contract (INV-MOP-01), same status-line/rec
 }
 ```
 
-Notes: metadata fields and `entries` are emitted only when non-empty (absent = null); a widget appears only if it is MOP-flagged **or** carries ≥ 1 consumed metadata field (an unflagged, metadata-less widget is unreadable through any production path); `mop` map keys are pre-normalized (lowercase, separators stripped — the query side still normalizes, so INV-MOP-08 holds end-to-end); `stats` are generator-computed diagnostics echoed on the load record (the jar recomputes nothing it does not need — `droppedFlaggedNoId`, handler-join counters, and orphan-dialog counts become host facts, satisfying the observability the old load line provided).
+Notes: metadata fields and `entries` are emitted only when non-empty (absent = null); `deepLinkUri` is emitted only when the rule yields one, and its absence carries exactly the meaning `buildDeepLinkUri` returning null carries today — dispatch falls back to the explicit-component intent; a widget appears only if it is MOP-flagged **or** carries ≥ 1 consumed metadata field (an unflagged, metadata-less widget is unreadable through any production path); `mop` map keys are pre-normalized (lowercase, separators stripped — the query side still normalizes, so INV-MOP-08 holds end-to-end); `stats` are generator-computed diagnostics echoed on the load record (the jar recomputes nothing it does not need — `droppedFlaggedNoId`, handler-join counters, and orphan-dialog counts become host facts, satisfying the observability the old load line provided).
 
 ## Data Flow
 
@@ -226,7 +250,7 @@ Notes: metadata fields and `entries` are emitted only when non-empty (absent = n
 
 - [Derivation semantics drift from what the old parser did] → the corpus equivalence gate runs both parsers over the full pinned corpus pre-cutover (path and count fixed by task 1.4); per-rule unit tests pin each relocated invariant permanently on the Python side.
 - [Coordinated cut leaves a skewed pair somewhere (dev device, stale image)] → every skew direction is a reasoned reject + pre-step-1 abort (D6); no silent path exists.
-- [Dropping parsed-and-exposed surfaces (`DataSpec`, `widgetClass`, `targetMethods` list, windows/reachability getters) forecloses future consumers] → they remain in the full JSON host-side; re-adding a field is a `formatVersion` bump + generator change, cheap and loud. Accepted per P1/P3.
+- [Dropping parsed-and-exposed surfaces (`widgetClass`, `targetMethods` list, windows/reachability getters) forecloses future consumers] → they remain in the full JSON host-side; re-adding a field is a `formatVersion` bump + generator change, cheap and loud. Accepted per P1/P3. The list is deliberately shorter than it was: `IntentFilter.data` left it once the deep-link consumer was found, which is the reason task 1.2 re-verifies every remaining member against `src/main` before the schema freezes rather than trusting this table.
 - [Two artifacts per app on the host (~+KBs) and a derivation step in the task path] → derivation is milliseconds on host hardware and cached; negligible against the removed on-device parse of MBs per run.
 - [`stats` echoed, not recomputed — a buggy generator could misreport diagnostics] → diagnostics are observability, not behavior (INV-MOP-31/32 discipline preserved); the equivalence gate validates the behavioral sets independently of `stats`.
 
@@ -236,7 +260,7 @@ Notes: metadata fields and `entries` are emitted only when non-empty (absent = n
 |-------|-------------|-----|-------|
 | Unit (Python) | `derive` rules: flags/precedence/lambda recovery, collision rank, empty-id drop, dialog re-keying, WTG keying+dedup, A′ dual sets, optionsMenus, stats; `serialize_canonical` determinism; cache/digest logic; fail-fast raise | pytest on cryptoapp + synthetic fragments | ~25 |
 | Unit (JVM) | rewritten `MopData.load` on `cryptoapp.apk.mop.json` fixture: every query-API expectation currently in `MopDataTest` restated against the compact fixture; reject reasons; gateway recompute; flag-selected set | JUnit, fixture in `src/test/resources/` + `test-apks/` | ~20 (replacing the parse-machinery share of the current 1005-line `MopDataTest`) |
-| Equivalence (one-shot gate) | old-parser(full) ≡ new-parser(derived) on widget maps, both activity sets, gateways, WTG views, trigger/provider tuples, scalars | JVM test over the pinned corpus directory via `-Dmop.corpusDir` (path recorded by task 1.4); deleted with the old parser after green | 1 × corpus |
+| Equivalence (one-shot gate) | old-parser(full) ≡ new-parser(derived) on widget maps, both activity sets, gateways, WTG views, trigger/provider tuples, **per-activity deep-link URIs**, scalars | JVM test over the pinned corpus directory via `-Dmop.corpusDir` (345 apps, "Corpus provenance"); deleted with the old parser after green | 1 × corpus |
 | Integration (Python) | `tool.py` step 1c: derive-cache-push order, device path, properties line, error propagation, non-MOP arms untouched | pytest with mocked adb | ~6 |
 | End-to-end | cryptoapp `sata_mop` on the RVSec AVD: `MOP_DATA status=loaded`, boost fires, run completes | manual device smoke | 1 |
 

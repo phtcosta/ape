@@ -23,11 +23,12 @@ _None — the artifact format is a requirement change of existing capabilities._
 - `mop-guidance`: `MopData` input contract becomes the derived compact format; absent-artifact behavior becomes fail-fast when the MOP feature is in the plan.
 - `static-analysis-entrypoints`: source-of-truth JSON remains host-side; requirements for the derived projection (what must be included for widgets/WTG/components).
 - `aperv-tool`: generates (or invokes generation of) and pushes the derived artifact instead of the full JSON.
+- `component-triggering`: the activity-launcher deep-link URI is no longer assembled in the jar from the intent-filter structure — it is derived host-side and carried on the wire as `deepLinkUri`. What gets dispatched is unchanged (`ACTION_VIEW` + the URI when present, explicit component otherwise); the requirement text that names the jar as the assembler is what changes.
 
 ## Impact
 
 - **Python/rv-android**: generator + push path in `aperv-tool`; instrumentation pipeline gains a derivation step.
-- **Java**: `MopData` parser rewritten for the compact format (smaller, no `catch(OutOfMemoryError)` path needed — V19).
+- **Java**: `MopData` parser rewritten for the compact format (smaller, no `catch(OutOfMemoryError)` path needed — V19); `SataAgent.buildDeepLinkUri` deleted, its call site reading `ComponentInfo.deepLinkUri` instead.
 - **Depends on**: `rearch-02-runspec` (fail-fast plan validation), `rearch-04-step-ndjson-telemetry` (`MOP_DATA` record), `rearch-05-thin-python-arms` (touching the same `tool.py` push path).
 - **Frozen metrics untouched** (R9): *MOP coverage* stays defined over `directly_reaches_mop`; the derivation must preserve exactly the sets the definitions depend on.
 - Grounding: report Sec. 6.6 (last row), verified V21/V22, Ling T7, Kimi compact-artifact proposal (Sec. 4).

@@ -20,8 +20,10 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
 - [ ] **2. `rearch-02-runspec`** — `RunSpec` + presets in jar + `Feature` enum + total
       fail-fast + level-0 `RUN_START` echo (D1) + removal of `/sdcard` readers (D6) and of
-      `saveGraph`/`readGraph`/`--ape-model`. Zero Python changes.
-      *Gate: parity oracle green per preset.*
+      `saveGraph`/`readGraph`/`--ape-model`. **One ordered Python edit** (AC1): the counterpart change
+      in rv-android removes `ape_pure_mode` from `tool.py` and lands *before* this jar — stage 2, not
+      stage 5, is where the cross-repo coupling starts.
+      *Gate: parity oracle green per preset; counterpart merged before any device deploy.*
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
 - [ ] **3. `rearch-03-decision-pipeline`** — `DecisionPipeline` stages + `StageResult` sum
       type + episode state relocated + `LlmRouter` sliced + `ScoringPipeline` real injection.
@@ -37,7 +39,8 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
       2026-07-24 regenerable (Sec. 9.11); round-trip/one-line tests (Sec. 9.12).*
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
 - [ ] **5. `rearch-05-thin-python-arms`** — arms = preset + overrides; dead keys and Python
-      kill-switch duplication deleted; INV-APV-14 retired. First cross-repo stage (rv-android).
+      kill-switch duplication deleted; INV-APV-14 retired. Largest cross-repo stage (~95% rv-android;
+      stage 2 is now the first to cross, per AC1).
       *Gate: regeneration diff of the 27 surviving arms' effective configs, identical before/after;
       `ape_pure`/`bfs` recorded as documented retirements, not diffs.*
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
@@ -49,6 +52,22 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
       `MopData` consumes it; MOP-feature-without-artifact aborts fail-fast.
       *Gates: frozen metric sets preserved by derivation (R9); cross-repo push path updated.*
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
+- [ ] **Merge condition — empirical A/B against the E3 baseline** (owner decision 2026-08-03, item 8).
+      Not a stage: the gate on merging the `rearch` line into `master`. 40 APKs × the E3 arms × 3 reps
+      × 1800 s, same seeds, jar pre vs post, consolidated by `consolidate_cal.py` and compared with
+      `stats_utils.paired_bootstrap_ci` (B=10,000, seed 42). The "before" side already exists — the E3
+      decisive run was measured on this roadmap's own baseline commit (`5dcf2259…`, jar `386ce08d…`),
+      `experimento-e3-decisiva/per_apk_paired.csv` versioned — so the marginal cost is one ~24 h
+      campaign on 8 containers. Two constraints, both learned the hard way: **paired, n≈40 minimum**
+      (an unpaired 16-APK smoke manufactured a −4.7 pp false positive on 2026-06-19 that was an exact
+      tie at n≈70), and **capture before stage 4 or after `trace_ndjson.py` exists** — stage 4 freezes
+      the comparison scaffold's trace readers on the legacy format, so the step-level panel (steps,
+      `src_*`, actions by type) goes dark in between; outcomes (`cov_*`, `mop_unique`, `mop_total`)
+      survive either way, coming from `tasks.json` and logcat. Hosted as a change in **rv-android**.
+      *Rationale: all seven stage gates are host/JVM-level, so nothing else in the line would notice a
+      jar that is not wrong, only worse — the gh71 failure mode (MOP boost fired 0× in 147,153
+      evaluations, found only in post-hoc analysis of a 2,028-task campaign).*
+  - [ ] change opened · [ ] baseline pinned · [ ] post-jar campaign run · [ ] compared · [ ] merge
 
 ## Standing constraints (apply to every change)
 
@@ -87,9 +106,23 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
 
 ## Cross-change decisions recorded during artifact drafting (owner ratifies at approval)
 
+> **Owner decisions of 2026-08-03** (from `rv-android/docs/20260803_rearch_artifact_vs_code_verification.md` §9; the numbered items below are amended to match):
+>
+> - **AC1** — the `tool.py` edit removing `ape_pure_mode` is **pulled into stage 2** and lands **before** the jar. Not "accept `false` as inert": the key is retired, so it leaves the Python side.
+> - **AC2** — the deep link travels as a **precomputed `deepLinkUri` string** per activity, derived host-side. Not the reduced filter structure.
+> - **AC6** — the targetless-recovery-point remap **preserves HEAD parity** (`requireTarget()` guard carried forward). The unconditional remap, plausible as an improvement, is left to a change that can measure it.
+> - **Item 8** — an empirical A/B against the E3 baseline (jar `386ce08d…`, git `5dcf2259…`) is a **merge condition** for the `rearch` line, with the **full E3 arm set**.
+> - **Cross-repo partition** — work that belongs to rv-android becomes a change **in rv-android**, following that repo's `docs/WORKFLOW.md`; this roadmap coordinates order and checklists for both sides. Specs stay on both sides as distinct viewpoints (jar-side consumption vs Python-side production); the boundary is the wire.
+
 1. **`ape_pure` and `bfs` variants are retired** (rearch-02 design → rearch-05 D2): no
    structural-purity preset exists; `ape.apePureMode` is a retired key that aborts, and
-   unknown `--ape` values abort. Consistent with D3 (control = minimal `aperv`). Verified
+   unknown `--ape` values abort. **Amended 2026-08-03 (AC1)**: `ape.apePureMode=false` is pushed by
+   23 of the 29 arms via `_BASELINE_ARM_FLAGS`, so retiring the key jar-side alone aborts every
+   campaign arm before step 1. Stage 2 therefore carries one ordered Python edit — the key leaves
+   `APERV_PROPERTY_MAPPING`, `_BASELINE_ARM_FLAGS`, `_APE_PURE_ARM_FLAGS` and `ARM_DEFINING_KEYS`
+   (18 → 17 arm-defining keys) — landing **before** the stage-2 jar; the reverse order is forbidden.
+   `ape_pure` does **not** break at stage 2: it already sets all 17 remaining flags to their off
+   values explicitly, so its purity was structural on the Python side before this work began. Consistent with D3 (control = minimal `aperv`). Verified
    2026-08-02: `bfs` was never an agent type — `ApeAgent.createAgent` accepts only
    `sata`/`random`/`replay` and falls through silently to `SataAgent` (V9), so the `bfs` arm
    always carried the same effective configuration as `sata`. Retiring it removes a duplicate,
@@ -104,15 +137,54 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
 4. **Oracle capture level** (rearch-01 D1): goldens are decision-level
    (`selectNewActionNonnull` on synthetic states), harness-relative — the full device
    loop is not JVM-drivable. The stage-2/3 parity gates mean decision-level parity.
+   **Amended 2026-08-03 (AC5/AC7)**: the consequence must be read strictly. `adjustActionsByGUITree()`
+   runs in `resolveNewAction()` **above** the oracle's entry point (`StatefulAgent.java:1475-1478`),
+   so the goldens execute neither the scoring pipeline nor GUITree building, `Model.release`,
+   `appendToActionHistory`, `recoverCurrentState` or `updateModel`. They are a **decision-ladder
+   regression floor**, never evidence of scoring-weight fidelity (rearch-03 INV-ARCH-12 guards that)
+   nor of retention neutrality (rearch-06 D4: audits + per-path unit tests carry it). A gate that
+   does not execute the changed code is green by construction.
 5. **INV-ARCH-01 disposition split**: the requirement (scoring-pipeline spec) is REMOVED
    by rearch-02 with its subject (apePureMode, per D3); the telemetry-half substitute
    (INV-SNK-07 neutrality + sink-on/off test, R7) is recorded by rearch-04.
 6. **V11 ordering**: rearch-06's ActionRecord snapshot fix is hard-blocked on stages 2+4
    (teardown `saveActionHistory` dies at stage 4; `reducer/` is dead tooling outside the
    Maven build).
-7. **rearch-07 schema**: derived artifact `formatVersion: 1`; `reachability[]` confirmed
-   57.7% of aggregate bytes over the 134 real JSONs; coordinated jar+Python cut, no
+7. **rearch-07 schema**: derived artifact `formatVersion: 1`; coordinated jar+Python cut, no
    fallback window, gated by the full-vs-derived corpus equivalence test (R9).
+   **Amended 2026-08-03**: (a) *AC2* — the schema carries `components.activities[].deepLinkUri`;
+   `IntentFilter.data` was wrongly listed as production-unused, while `SataAgent.buildDeepLinkUri`
+   (`:869`, called at `:543`) reads it and `MonkeySourceApe:993-1002` dispatches on the result.
+   (b) *AC3* — INV-DRV-02 now restates that a flagged widget marks its activity **before** the
+   empty-short-id drop, the rule `MopData.java:428-444` implements and the whole `mopActivities`
+   chain rests on. (c) *AC4* — the corpus is pinned to `<workspace>/rvsec-dataset/static_analysis/`
+   (**345** `.apk.json`, 766 MB, verified 2026-08-03); `data/instrumented_apks/` never existed here.
+   The 57.7 %/5.0 %/10.1 % split came from a different, unreproducible 134-file working set and is
+   re-measured by task 4.1. The gate must also report a non-zero exercise count per relocated rule
+   (coarse presence in the pinned corpus: 229 apps with empty `idName`, 321 with
+   `ExternalSyntheticLambda`, 165 with DIALOG windows).
+8. **rearch-04 telemetry cost is measured, not argued** (2026-08-03, AC8): the `SHALL NOT exceed`
+   per-step cost clause was normative but orphaned — no implementation, no test, none of the 52
+   tasks. It becomes INV-SNK-13 with a steps-per-minute gate (pre-jar twice to establish noise,
+   post-jar once). Separately, INV-SNK-14: rv-platform streams `adb logcat … -s RVSEC:V RVSEC-COV:V`,
+   a strict allowlist, so the D4 heartbeat reaches the joined file only once its tag is added there —
+   deleting `clock_logcat_join.py`'s offset reconstruction is blocked until a captured run shows the
+   lines present.
+
+Cross-repo instrument (owner decision 2026-08-03) — every item of work that belongs to rv-android is
+a change **in rv-android**, opened with `openspec-new-change` per that repo's `docs/WORKFLOW.md`
+(it forbids hand-writing OpenSpec artifacts), while this roadmap holds the order and the checklists
+for both sides. Counterparts, all opened 2026-08-03:
+
+| Stage | rvsec issue | Change | Scope |
+|---|---|---|---|
+| 2 | `rvsec#93` | `gh93-retire-ape-pure-mode` (quick-path) | remove `ape_pure_mode` from `tool.py` — **predecessor** of the stage-2 jar (AC1) |
+| 4 | `rvsec#94` | `gh94-ndjson-trace-reader` | native NDJSON reader, gzip at collection, heartbeat tag in the capture allowlist (INV-SNK-14) |
+| 5 | `rvsec#95` | `gh95-thin-python-arms` | arms as preset + overrides (~95% of the stage) |
+| 7 | `rvsec#96` | `gh96-mop-artifact-derivation` | the derivation generator and the push switch (~45%) |
+| merge | `rvsec#97` | `gh97-rearch-ab-gate` | the empirical A/B gate described above | The
+two `gh<N>` namespaces are independent and already collide (ape at gh15, rvsec at gh92): always
+qualify cross-references as `phtcosta/ape#N` vs `rvsec#N`.
 
 Open coordination items — status 2026-08-02:
 - `telemetry-proof-llm-efficacy` must archive before rearch-03/04 (their deltas are written
@@ -161,4 +233,28 @@ Open coordination items — status 2026-08-02:
   04 `llm-prompt`/`model`/`wtg-navigation`, 05 `run-spec`.
 - 2026-08-03 — Worktree procedure decided and recorded (commit `d74ce6b`): one worktree, branch
   `rearch`, all 7 stages, single merge after stage 7. Pointer added to all seven `tasks.md`.
+  Still 0/309 tasks, no implementation started.
+- 2026-08-03 — **Artifact-vs-code verification (third pass) and its corrections.** The two prior
+  audits worked artifact-against-artifact and artifact-against-roadmap; this one re-derived every
+  claim the artifacts make about the code from `src/main/java`, `src/test/java` and rv-android's
+  `tool.py` (`rv-android/docs/20260803_rearch_artifact_vs_code_verification.md`, 8 findings AC1–AC8,
+  6 new). Owner answered the five open questions; the decisions are in the box above. Corrections
+  applied to the artifacts in §8 order, `openspec validate --strict` clean on all seven:
+  **AC1** rearch-02 (proposal/design/tasks/run-spec/scoring-pipeline) — stage 2 carries the ordered
+  `tool.py` edit, Python first; the `18 baseline flags` fixture becomes 17; the "zero Python changes"
+  premise is retired where it was false. **AC2/AC3/AC4** rearch-07 — `deepLinkUri` added to the wire
+  and to the equivalence gate, INV-DRV-07 introduced, INV-DRV-02 restated, corpus pinned at 345 with
+  a per-rule exercise requirement; a new `component-triggering` delta restores the dispatch paragraph
+  in its post-compaction form. **AC7** rearch-03 (+ rearch-01 guard scope) — INV-ARCH-12 defaults
+  guard, a paired tiebreak test at the `greedyPickLeastVisited` seam, `PipelineParityTest` given an
+  owner (task 5.5a; it compiles against the factory task 5.2 deletes and was named nowhere), the
+  `LlmRouter` test count corrected 40+ → 66 with a per-file destination map. **AC5/AC6** rearch-06 —
+  the goldens relabelled as a ladder regression floor, neutrality re-attributed to the audits and
+  unit tests, the `requireTarget()` guard carried into the recovery-point remap with a contrast test.
+  **AC8** rearch-04 — INV-SNK-13 (measured throughput gate) and INV-SNK-14 (heartbeat tag must be in
+  the capture allowlist; task 8.3 blocked on observing the lines).
+  Two side findings fixed in passing: rearch-03's `component-triggering` MODIFIED had dropped the
+  dispatch paragraph entirely (explicit-intent rule, deep link, pool exclusion), which a MODIFIED
+  block deletes at archive time; and `ape/openspec/config.yaml`'s `references:` field is rejected by
+  the CLI ("must be an array of store ids") — harmless warning, not touched here.
   Still 0/309 tasks, no implementation started.

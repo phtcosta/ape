@@ -4,9 +4,9 @@
 
 The run-spec capability makes the behavioral plan of a run a first-class, validated, echoed value. Before this capability, "what this run is" was scattered across a silent global (`Config`, 113 public static fields loaded from two device files with empty catch blocks and no unknown-key detection), a Python dict in another repository (the `tool.py` arm definitions), three string registries the compiler could not check, and a CLI argument that fell back silently to `SataAgent` on any unrecognized value. Nothing validated the whole; nothing recorded what was actually in effect; a stray `/sdcard/ape.properties` could change the agent type of a scientific run without a trace.
 
-After this capability, every run begins by resolving a single immutable `RunSpec` from `ape.properties` plus the CLI, exactly once, before the first exploration step. The `RunSpec` carries the preset name (informative), the seed, the run identity, the always-present exploration parameters, the set of active `Feature`s, per-feature parameter objects that are null exactly when the feature is absent, and two digests (effective plan; raw properties input). Resolution is total and fail-fast: an unknown key, a retired key, a type-invalid value, a missing feature dependency, or an invalid combination aborts the process with a diagnostic line before step 1. Presets (`aperv`, `mop`, `llm`, `llm_mop`) reside in the jar and are selected by an optional `ape.preset` key; when no preset is named — the case for the entire current Python deployment, which is unchanged by this capability — the plan is derived from the explicit keys exactly as the jar interprets them today, then validated.
+After this capability, every run begins by resolving a single immutable `RunSpec` from `ape.properties` plus the CLI, exactly once, before the first exploration step. The `RunSpec` carries the preset name (informative), the seed, the run identity, the always-present exploration parameters, the set of active `Feature`s, per-feature parameter objects that are null exactly when the feature is absent, and two digests (effective plan; raw properties input). Resolution is total and fail-fast: an unknown key, a retired key, a type-invalid value, a missing feature dependency, or an invalid combination aborts the process with a diagnostic line before step 1. Presets (`aperv`, `mop`, `llm`, `llm_mop`) reside in the jar and are selected by an optional `ape.preset` key; when no preset is named — the case for the entire current Python deployment, which this capability changes by exactly one key — the plan is derived from the explicit keys exactly as the jar interprets them today, then validated.
 
-The plan is echoed as the run's provenance: `RUN_START`, a single JSON object line emitted before any exploration output, carrying the effective plan, both digests, the seed, the run id, and the jar's build stamp. The echo is **level 0 by owner decision D1 (final)**: write-only provenance, no automatic validation anywhere, zero Python changes — drift auditing is post-hoc analysis over the traces. The line's completeness bar is that it alone reconstructs the arm without consulting `tool.py` (report Sec. 9.6).
+The plan is echoed as the run's provenance: `RUN_START`, a single JSON object line emitted before any exploration output, carrying the effective plan, both digests, the seed, the run id, and the jar's build stamp. The echo is **level 0 by owner decision D1 (final)**: write-only provenance, no automatic validation anywhere, no Python reader — drift auditing is post-hoc analysis over the traces. The line's completeness bar is that it alone reconstructs the arm without consulting `tool.py` (report Sec. 9.6).
 
 `RunContext` is introduced as the owner of per-run mutable state. Its stage-2 scope is deliberately small — the `RunSpec`, the run identity, and the seeded RNG — with the rest of the mutable state migrating in stage 3. Purity becomes structural: a feature absent from the plan does not exist in the run — no kill-switch, no forced-off registry, no exempt list. This is the substitute for the dissolved INV-ARCH-06: a sub-parameter of an absent feature has nothing to be inert *about*, because the mechanism it would parameterize was never constructed.
 
@@ -112,18 +112,20 @@ When `ape.preset` is present, explicit keys SHALL override the preset vector, an
 
 ### Requirement: Explicit-Key Resolution When No Preset Is Named
 
-When `ape.preset` is absent — the case for the entire current Python deployment, which this change does not touch — the plan SHALL be derived from the explicit keys exactly as the jar interprets them today (same defaults, same clamps), then validated. The properties files pushed by the current `tool.py` for the four campaign arms (`sata`, `sata_mop_widget`, `sata_llm`, `sata_mop_llm`) SHALL resolve successfully and produce behavior identical to HEAD under the rearch-01 parity goldens. `preset + overrides` becomes the Python-side contract only at stage 5.
+When `ape.preset` is absent — the case for the entire current Python deployment — the plan SHALL be derived from the explicit keys exactly as the jar interprets them today (same defaults, same clamps), then validated. The properties files pushed by the **stage-2 `tool.py`** (today's arm definitions with `ape_pure_mode` removed, the single Python edit of this stage) for the four campaign arms (`sata`, `sata_mop_widget`, `sata_llm`, `sata_mop_llm`) SHALL resolve successfully and produce behavior identical to HEAD under the rearch-01 parity goldens. The `ape_pure` arm SHALL also resolve: its purity comes from the 17 arm-defining flags it already sets to their off values explicitly, not from a kill-switch key. `preset + overrides` becomes the Python-side contract only at stage 5.
 
 #### Scenario: current campaign arm resolves unchanged
 
-- **WHEN** the properties file is byte-identical to the `_push_properties` output of the `sata_mop_widget` arm (MOP path + weights + the 18 baseline flags + throttle)
+- **WHEN** the properties file is byte-identical to the `_push_properties` output of the `sata_mop_widget` arm (MOP path + weights + the 17 baseline flags that survive the `ape_pure_mode` removal + throttle)
 - **THEN** resolution SHALL succeed with `preset="explicit"`, `features` including `MOP`, `WTG`, `MENU_GATEWAY`, and the baseline features
 - **AND** the run's action-selection behavior SHALL match the rearch-01 golden for the `mop` preset
 
-#### Scenario: zero Python changes verified
+#### Scenario: the Python edit precedes the jar
 
-- **WHEN** the stage-2 jar is deployed with the unchanged `tool.py`
-- **THEN** the four campaign arms SHALL run end-to-end with no modification to `APERV_PROPERTY_MAPPING`, the arm dicts, or `_push_properties`
+- **WHEN** the `ape_pure_mode` removal has landed in `tool.py` and the stage-2 jar is deployed after it
+- **THEN** the four campaign arms and `ape_pure` SHALL run end-to-end, with `_push_properties` and every other arm-dict entry untouched
+- **AND WHEN** the stage-2 jar is instead deployed against a `tool.py` that still pushes `ape.apePureMode`
+- **THEN** every arm that pushes the key SHALL abort with `reason=retired_key key=ape.apePureMode` before step 1 — the ordering is a deployment precondition, not a preference
 
 ### Requirement: Total Fail-Fast Validation
 
@@ -165,7 +167,7 @@ When `ape.preset` is absent — the case for the entire current Python deploymen
 
 #### Scenario: retired kill-switch key aborts with its decision
 
-- **WHEN** `ape.properties` contains `ape.apePureMode=true` (the current `ape_pure` arm)
+- **WHEN** `ape.properties` contains `ape.apePureMode=true` (a hand-written file — after the stage-2 Python edit no arm pushes the key, at either value)
 - **THEN** the process SHALL abort with `reason=retired_key key=ape.apePureMode` and a detail referencing structural purity (a feature absent from the plan does not exist)
 
 ### Requirement: Level-0 RUN_START Echo
@@ -201,7 +203,7 @@ The line SHALL be produced by a serializer that escapes quotes, backslashes, and
 
 #### Scenario: self-generated identity when the host supplies none
 
-- **WHEN** the unchanged `tool.py` launches a run (no `ape.runId`)
+- **WHEN** the `tool.py` deployment launches a run (it pushes no `ape.runId`, before or after the stage-2 edit)
 - **THEN** the jar SHALL generate a `run_id` and echo it in `RUN_START`
 
 ### Requirement: RunContext Ownership (stage-2 scope)

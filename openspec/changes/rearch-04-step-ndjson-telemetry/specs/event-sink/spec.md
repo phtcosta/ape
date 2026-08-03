@@ -49,6 +49,8 @@ The stream also carries out-of-step records: `RUN_START` (emitted by the run-spe
 - **INV-SNK-10**: When the heartbeat flag is on (default), exactly one `Log.i` heartbeat line SHALL be written per step, and the jar SHALL NOT read logcat under any configuration.
 - **INV-SNK-11**: Every sink record line SHALL begin with `{`, and the sink SHALL write directly to `System.out`, never through `Logger` (whose lines all begin with `[APE] `). A trace line is a sink record if and only if it begins with `{`.
 - **INV-SNK-12**: A `Throwable` raised inside any sink method SHALL NOT propagate to the caller; after the first such failure the sink SHALL stop emitting for the remainder of the run.
+- **INV-SNK-13**: The sink's per-step cost SHALL NOT reduce step throughput below the pre-change jar's, measured as steps per minute on the same APK, seed and wall-clock budget, with the comparison's own noise established by repeating the pre-change run. This covers the whole per-step write path as shipped — the stdout record, the logcat heartbeat, prompt-dump escaping — not the stdout write alone. It is a measured gate on this stage, not a design argument.
+- **INV-SNK-14**: The heartbeat's logcat tag SHALL be present in the capture-side tag allowlist of every consumer expected to read it. A heartbeat written under a tag the harness filters out is inert, and no analysis-side simplification (in particular deleting `clock_logcat_join.py`'s offset reconstruction) SHALL land before a captured run demonstrates the lines are present.
 
 ## ADDED Requirements
 
@@ -177,6 +179,16 @@ Teardown SHALL emit `{"type":"RUN_END","reason":...,"steps":N,"counters":{...}}`
 
 When `TelemetryParams.heartbeat` is on (property `ape.telemetryHeartbeat`, default `true`), the sink SHALL write one logcat line per step via `Log.i` — `s=<step> t=<tRelMs>` with a fixed tag — at the same point the step envelope is captured. The heartbeat is write-only (INV-SNK-10): it exists so violations and steps share one file and clock for the analysis-side join; the jar never reads logcat, and no runtime APE↔logcat coupling exists.
 
+**The tag is not a free choice, and the capture side must be changed with it.** rv-platform does not dump the ring buffer after the run; it streams `adb logcat -v <format> -s RVSEC:V RVSEC-COV:V` into the task's logcat file for the run's duration, a strict tag allowlist (`LogcatManager.default_tags`; the flag-off command is pinned byte-identical by that repo's INV-PLT-21). A heartbeat under any other tag is filtered out at the device and **never reaches the file the join reads** — the mechanism would be silently inert, exactly the failure mode this change exists to end elsewhere. The heartbeat's tag SHALL therefore be declared here and added to the capture allowlist by the counterpart change in `rvsec` before the heartbeat is credited with anything; until then `clock_logcat_join.py` keeps needing the UTC-offset reconstruction that this change deletes on the strength of the heartbeat.
+
+Because the capture is a live stream with the buffer cleared at start, ring-buffer eviction is not the risk; volume still is, in two forms worth stating: the heartbeat competes for the shared main buffer with everything else the device logs, and Android's "chatty" throttling drops lines from high-rate tags. At the measured step rates — median 209 steps per 300 s task, 446 at the maximum, so roughly 1,250–2,700 steps in an 1800 s campaign run — the heartbeat is on the order of 10⁻¹ MB per run at ~100 bytes per line. That is small in absolute terms and large relative to a default 256 KB buffer, which is why the measurement is required rather than assumed (see the per-step cost requirement).
+
+#### Scenario: heartbeat reaches the captured file
+
+- **WHEN** a run executes with the heartbeat on and rv-platform captures logcat with its tag allowlist
+- **THEN** the heartbeat lines SHALL be present in the task's logcat file
+- **AND** if the heartbeat's tag is absent from the allowlist, the join SHALL fail loudly at analysis time rather than silently producing an unjoined result
+
 #### Scenario: Heartbeat on by default
 
 - **WHEN** a run executes 150 steps with the flag at its default
@@ -203,7 +215,16 @@ Telemetry SHALL be always-on and identical for every experimental arm — no arm
 
 ### Requirement: Volume Rules
 
-The sink SHALL apply the four volume levers of owner decision D2: envelope once per step (never per sub-event); defaults omitted per INV-SNK-05; dictionary IDs for activity/state strings; `run_id` only in border records. The per-step cost SHALL NOT exceed the retired line family's (~1 stdout write per step; reused accumulator).
+The sink SHALL apply the four volume levers of owner decision D2: envelope once per step (never per sub-event); defaults omitted per INV-SNK-05; dictionary IDs for activity/state strings; `run_id` only in border records. The per-step cost SHALL NOT exceed the retired line family's (~1 stdout write per step; reused accumulator) — a requirement about **wall-clock throughput**, since the run budget is wall-clock (`--running-minutes`) and this change's own proposal prices a lost step at 0.037–0.052 pp `cov_mop`.
+
+That clause SHALL be discharged by measurement, not by argument, because the argument available is incomplete: it counts stdout writes and this change also adds a per-step logcat write, keeps prompt dumps on by default while giving them per-character escaping the `key=value` format never performed, and adds a full-trace gzip on the collection path including the timeout path. Whether those net out below the retired family is an empirical question. Conformance is the measurement of INV-SNK-13, and it is a stage gate: a throughput regression beyond the measured noise blocks the stage rather than being accepted as a cost of better telemetry.
+
+#### Scenario: step throughput does not regress
+
+- **WHEN** one arm runs the same APK, seed and wall-clock budget twice on the pre-change jar and once on the post-change jar
+- **THEN** the two pre-change runs SHALL establish the measurement's own variation
+- **AND** the post-change steps-per-minute SHALL NOT fall below the pre-change mean by more than that variation
+- **AND** a larger drop SHALL block the stage, with the measured numbers recorded either way
 
 #### Scenario: Defaults omitted
 

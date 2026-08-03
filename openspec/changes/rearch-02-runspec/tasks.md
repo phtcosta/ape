@@ -11,7 +11,7 @@
      - Critical path: 1 -> 3 -> 4/5 -> 7.
      - This change touches ~25 files — subagent orchestration reasonable (2-3 parallel dispatches max). -->
 
-Gate: this change may only be applied after `rearch-01-parity-oracle` is implemented and its per-preset goldens are green at HEAD (roadmap stage order). Every task below is jar-side only — **zero Python changes** (design D-4; verified explicitly in task 6.4).
+Gate: this change may only be applied after `rearch-01-parity-oracle` is implemented and its per-preset goldens are green at HEAD (roadmap stage order). Every task below is jar-side **except the Python predecessor in group 6**: the `ape_pure_mode` removal lives in a counterpart change of the `rvsec` repo and must land before the stage-2 jar reaches any device (design D-4; task 6.0, verified in task 6.4).
 
 ## 1. RunSpec / Feature / Presets core (pure JVM, no wiring yet)
 
@@ -60,12 +60,13 @@ Gate: this change may only be applied after `rearch-01-parity-oracle` is impleme
 - [ ] 5.8 Unit tests: `StringCache` seeded determinism (same seed ⇒ same string sequence; empty cache never throws); absence guards (no `ThreadLocalRandom` in `src/main`, no `/sdcard/ape.xpath|ape.xpath.actions|ape.strings` literals outside comments)
 - [ ] 5.9 Run `mvn test` (full suite; expect and fix fallout from deleted fields/tests only)
 
-## 6. Python-contract compatibility (fixtures, no Python edits)
+## 6. Python contract: the ordered `ape_pure_mode` removal, then compat fixtures
 
-- [ ] 6.1 Generate per-arm fixture properties files reproducing `_push_properties` output for the 4 campaign arms (`sata`, `sata_mop_widget`, `sata_llm`, `sata_mop_llm`) and for `ape_pure`; commit under the test tree with a note pinning the source (`tool.py` at rvsec HEAD, date)
-- [ ] 6.2 `RunSpecCompatTest`: the 4 campaign fixtures resolve successfully with the expected feature sets/params; the `ape_pure` fixture aborts with `retired_key ape.apePureMode`; a fixture with `ape.mopWeightActivity` aborts with its retired-key message
+- [ ] 6.0 **Predecessor, in the `rvsec` repo** (that repo owns its OpenSpec artifacts; open the change there with `openspec-new-change` per its `docs/WORKFLOW.md`): delete `ape_pure_mode` from `APERV_PROPERTY_MAPPING` (`tool.py:120`), `_BASELINE_ARM_FLAGS` (`:256`), `_APE_PURE_ARM_FLAGS` (`:280`) and `ARM_DEFINING_KEYS` (`:175`), and update the INV-APV-13/14/15 guard tests for 17 arm-defining keys instead of 18. Counterpart: **`rvsec#93`**, change `gh93-retire-ape-pure-mode` (quick-path schema), opened 2026-08-03. **No stage-2 jar reaches a device before this is merged** — the reverse order aborts every campaign arm before step 1 (design D-4)
+- [ ] 6.1 Generate per-arm fixture properties files reproducing the **post-6.0** `_push_properties` output for the 4 campaign arms (`sata`, `sata_mop_widget`, `sata_llm`, `sata_mop_llm`) and for `ape_pure`; no fixture carries `ape.apePureMode`. Commit under the test tree with a note pinning the source (`tool.py` at rvsec HEAD after the counterpart change, with its sha and date)
+- [ ] 6.2 `RunSpecCompatTest`: the 4 campaign fixtures **and the `ape_pure` fixture** resolve successfully with the expected feature sets/params — `ape_pure` resolving as a structurally pure plan, from its 17 explicitly-off flags; two hand-written fixtures, one carrying `ape.apePureMode=true` and one carrying `ape.mopWeightActivity`, abort with their retired-key messages
 - [ ] 6.3 `PresetsTest`: `Presets.resolve(name)` + the deployment-specific keys ≡ the corresponding campaign fixture's resolved plan (same digest) — pins design D-3 until stage 5
-- [ ] 6.4 Verify zero Python changes needed: `git -C <rvsec>/rv-android status --porcelain` clean w.r.t. this change; document in the task log that `APERV_PROPERTY_MAPPING`, arm dicts, and `_push_properties` are untouched and the 4 campaign arms run against the stage-2 jar
+- [ ] 6.4 Verify the ordering held and the blast radius stayed at one key: the 6.0 counterpart change is merged in `rvsec` before this stage's jar is built for deployment; `grep -n ape_pure_mode` over `tool.py` returns nothing; document in the task log that `_push_properties` and every other arm-dict entry are untouched, and that the 4 campaign arms **and `ape_pure`** run end-to-end against the stage-2 jar
 
 ## 7. Gates and checkpoints
 

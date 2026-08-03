@@ -82,31 +82,38 @@ When emitted, the `[APE-STEP]` line SHALL carry a `step=<N>` field, where `<N>` 
 
 ### Requirement: State.greedyPickLeastVisited() — Priority Tiebreaker
 
-`State.greedyPickLeastVisited(ActionFilter filter)` SHALL select the action with the lowest `visitedCount`. Tie-breaking among actions that share the same lowest `visitedCount` is gated by `Config.leastVisitedPriorityTiebreak` (declared by the `scoring-pipeline` capability; default `true`):
+`State.greedyPickLeastVisited(ActionFilter filter, boolean priorityTiebreak)` SHALL select the action with the lowest `visitedCount`. The tiebreak among actions sharing that lowest count is decided by the `priorityTiebreak` **argument**, supplied by the `SataChain` call site from the resolved plan (`leastVisitedPriorityTiebreak`, declared by the `scoring-pipeline` capability, default `true`). `State` SHALL NOT read `Config.leastVisitedPriorityTiebreak`: after this change the value travels as a parameter, and a residual static read would silently override the argument.
 
-- When `leastVisitedPriorityTiebreak` is `true` (default): when multiple actions share the same lowest `visitedCount`, the action with the highest `priority` SHALL be selected. This makes all priority boosts (MOP, WTG, coverage) influence the greedy path (INV-SEL-01: priority is only a tiebreaker, never an override).
-- When `leastVisitedPriorityTiebreak` is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05): ties among the lowest-`visitedCount` actions SHALL be broken by array order (the first such action encountered wins), reproducing upstream APE. No RV priority boost SHALL influence the greedy pick.
+- When the argument is `true` (default): among actions sharing the same lowest `visitedCount`, the one with the highest `priority` SHALL be selected. This is the seam through which every priority boost (MOP, WTG, coverage, frontier, menu, form) becomes a *chosen* action rather than a number — the passes raise `priority`, and this call converts it into a pick (INV-SEL-01: priority is only a tiebreaker, never an override).
+- When the argument is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05): ties among the lowest-`visitedCount` actions SHALL be broken by array order (the first such action encountered wins), reproducing upstream APE. No RV priority boost SHALL influence the greedy pick.
 
-INV-SEL-01 and INV-SEL-02 describe the default (`leastVisitedPriorityTiebreak=true`) behavior.
+Because this is the conversion point for the whole boost mechanism, the two branches SHALL be pinned by a paired unit test over one fixed action set — same visit counts, differing priorities, called once with each argument value, asserting different picks. Structural checks cannot substitute for it: with a wrong argument every stage still assembles, every pass still runs, every boost is still computed, and only the chosen action changes.
+
+INV-SEL-01 and INV-SEL-02 describe the `priorityTiebreak=true` behavior.
 
 #### Scenario: Single least-visited action
 - **WHEN** actions have visitedCounts [0, 3, 5]
 - **THEN** the action with visitedCount=0 SHALL be selected (unchanged behavior, independent of the flag)
 
-#### Scenario: Tie broken by priority (flag on)
-- **WHEN** `Config.leastVisitedPriorityTiebreak` is `true` and actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
+#### Scenario: Tie broken by priority (argument true)
+- **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=true` and actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
 - **THEN** the action with visitedCount=2 and priority=532 SHALL be selected
 - **AND** the MOP boost (+500) on that action effectively influenced the greedy selection
 
-#### Scenario: All actions have same visitedCount (flag on)
-- **WHEN** `Config.leastVisitedPriorityTiebreak` is `true` and all 10 actions have visitedCount=0 and priorities [32, 32, 232, 32, 532, 32, 32, 32, 32, 32]
+#### Scenario: All actions have same visitedCount (argument true)
+- **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=true` and all 10 actions have visitedCount=0 and priorities [32, 32, 232, 32, 532, 32, 32, 32, 32, 32]
 - **THEN** the action with priority=532 (MOP-boosted) SHALL be selected
+
+#### Scenario: the same action set picks differently under the two argument values
+- **WHEN** one fixed action set with visitedCounts [2, 2, 5] and priorities [32, 532, 52] is passed to `greedyPickLeastVisited` twice, with `priorityTiebreak=true` and then `false`
+- **THEN** the two calls SHALL return different actions (priority=532 and priority=32 respectively)
+- **AND** this pairing SHALL exist as a permanent unit test, since no golden, assembly check or pass test observes this decision
 
 #### Scenario: Tie with equal priorities
 - **WHEN** actions have visitedCounts [1, 1, 3] and priorities [52, 52, 32]
 - **THEN** either of the two tied actions MAY be selected (implementation picks the first encountered)
 
-#### Scenario: Tie broken by array order when the flag is off
-- **WHEN** `Config.leastVisitedPriorityTiebreak` is `false` and actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
+#### Scenario: Tie broken by array order when the argument is false
+- **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=false` and actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
 - **THEN** the first action with visitedCount=2 in array order SHALL be selected (priority=32), NOT the priority=532 action
 - **AND** no RV priority boost SHALL influence the greedy pick (upstream APE behavior)

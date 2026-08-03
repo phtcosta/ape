@@ -44,24 +44,36 @@
 - [ ] 4.4 `LlmTelemetry` — all counters/latches (`LlmRouter:68-112`), `[APE-LLM-TEL]`/`[APE-LLM-ERROR]`/`[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]`/ACK, `printSummary`; teardown call site updated
 - [ ] 4.5 `LlmEngine` — the thin 9-step orchestration replacing `selectAction` (`:327-612`): never-throws + finally-nulling preserved (INV-RTR-02/06); repair pipeline untouched (INV-LLM-10/INV-RTR-14 — native `tool_calls` malformations still flow `rawArguments` → `ToolCallParser` Level 1 → shared `parseJsonString`, surfacing as `repair=`)
 - [ ] 4.6 Point the three LLM stages at `LlmEngine`; route the `[APE-OUTCOME]`-site dead-pair feedback (`StatefulAgent:1041`) to `CoordinateMapper` via `RunContext`
-- [ ] 4.7 **Delete `LlmRouter`** (P3 — no facade); migrate its unit tests to the owning units with assertion content unchanged (repair-path and telemetry-field tests must pass unmodified)
+- [ ] 4.7 **Delete `LlmRouter`** (P3 — no facade); migrate its **66** unit tests to the owning units with assertion content unchanged (repair-path and telemetry-field tests must pass unmodified). Write the per-file destination map before moving anything, so no file is dropped for having no obvious home:
+
+  | Test file | `@Test` | Destination unit |
+  |---|---:|---|
+  | `LlmRouterTest` | 31 | split across `LlmEngine` (orchestration, never-throws, outcome classification) and `LlmClient` (transport, breaker) |
+  | `LlmRouterDeadPairTest` | 12 | `CoordinateMapper` (ban key, strikes, `recordLlmOutcome`) |
+  | `LlmRouterCoordinateMappingTest` | 11 | `CoordinateMapper` (containment, snap, boundary bands) |
+  | `LlmRouterMappingTest` | 5 | `CoordinateMapper` (`mapToModelAction`, `fixTextEdit`) |
+  | `LlmRouterToolSchemaTest` | 4 | `LlmClient` (wire schema constants/builders) |
+  | `LlmRouterTelemetryTest` | 3 | `LlmTelemetry` (counters, lines, ACK latch) |
+  | `CoordinateMapIntegrationTest`, `SglangClientTest` | — | keep in place; update their `LlmRouter` references to the new units |
 - [ ] 4.8 Run `/sdd-doc-code` on the new llm units; run `/sdd-test-run`; **goldens green** (LLM presets, stubbed)
 
 ## 5. ScoringPipeline real injection (V10 + finding 3.3-3)
 
 - [ ] 5.1 Create `ScoringParams` (RunSpec-derived: `coverageBoostWeight`, `formCompletionEnabled`, `frontierBoostWeight`, `mopFrontierWeight`, `mopWeightWtg`, `mopWeightDirect`, `mopWeightTransitive`, `mopWeightOpenMenu`)
+- [ ] 5.1a `ScoringParamsDefaultsTest`: assert the eight fields of a default-plan-derived `ScoringParams` against the jar defaults, as literals in the test. This is the **only** drift guard for scoring defaults in the whole rearch set — the goldens never execute scoring (`StatefulAgent.java:1475-1478`), the pass unit tests supply their own params by INV-ARCH-11, the `RUN_START` echo is write-only (D1), and `rearch-01`'s per-preset `Config` guard covers only the values the ladder reads
 - [ ] 5.2 Replace `ScoringPipeline.fromConfig(Config, ScoringContext)` with `fromParams(ScoringParams, ScoringContext)` (P3 — the decorative `cfg` path is deleted); update the sole caller (`StatefulAgent:208`) to pass real params
 - [ ] 5.3 Parameterize the passes (ctor injection; `isEnabled()` logic unchanged) and `MopScorer` (weights as parameters; static `Config` reads deleted)
 - [ ] 5.4 Fix the class javadoc: seven-pass roster (`MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion`), "six passes" wording removed (finding 3.3-3); P4 current-state comments
 - [ ] 5.5 Migrate pass/scorer unit tests to explicit params (no `Config` mutation in tests); injection-contrast test (same context, two params ⇒ different assembly); **goldens green**
+- [ ] 5.5a Migrate `PipelineParityTest` (`src/test/java/.../agent/PipelineParityTest.java`, 5 tests) — it builds the pipeline through `ScoringPipeline.fromConfig(null, ctx)` at `:112` and `:148`, the entry point task 5.2 deletes, so this change breaks its compilation and no other task in any of the seven changes names the file. It is also the file `rearch-01` delegates scoring parity to ("`adjustActionsByGUITree()` scoring parity is already locked by `PipelineParityTest` and stays where it is"), which makes deleting it the wrong reflex. Rebuild both call sites on `fromParams(ScoringParams, ctx)` with explicit params, and while there replace the tautological weight assertions (`assertEquals(..., Config.mopWeightOpenMenu, menu.getMenuBoost())` compares the constant to itself and passes under any value) with the literals `ScoringParamsDefaultsTest` pins
 
 ## 6. Static-Config-read sweep (design D9, INV-DP-12)
 
 - [ ] 6.1 `SataAgent`: replace the 25 `Config.` reads with `ExplorationParams`/stage-injected params via `StepContext` (epsilon family, `backMenuPickCap`, `mopTargetPickCap`, `trivialActivityRankThreshold`, `doBackToTrivialActivity`, `useActionDiffer`, `fillTransitionsByHistory`, `fallbackToGraphTransition`)
 - [ ] 6.2 `StatefulAgent` decision-relevant reads (restart thresholds, budget params, `evolveModel`, throttles) → `ExplorationParams` via `RunContext`; telemetry/save flags → `TelemetryParams` at their emission sites
-- [ ] 6.3 `State.greedyPickLeastVisited`: take the tiebreak flag as a parameter from the SataChain call site; document the `modelMenuEnabled` structural residue at its read site (design D9 — the one accepted exception, with rationale comment)
+- [ ] 6.3 `State.greedyPickLeastVisited`: take the tiebreak flag as a parameter from the SataChain call site; document the `modelMenuEnabled` structural residue at its read site (design D9 — the one accepted exception, with rationale comment). **Add the paired test this seam has never had**: same action set, same visit counts, differing priorities, called once with `true` and once with `false` — the two calls SHALL pick different actions. This is where priority boosts turn into chosen actions (`SataAgent.java:670`; `action-selection`: "This makes all priority boosts (MOP, WTG, coverage) influence the greedy path"), so an argument wired wrong here degrades MOP guidance while every stage still reports the same structure
 - [ ] 6.4 `ApePromptBuilder` variant → `LlmParams`
-- [ ] 6.5 Grep-guard test: zero `Config.` references in the pipeline/stage/llm-unit/scoring packages (allowlist: none; the `State` residue lives outside these packages)
+- [ ] 6.5 Grep-guard test: zero `Config.` references in the pipeline/stage/llm-unit/scoring packages (allowlist: none). `State` lives outside those packages, so guard it explicitly rather than exempting it: assert zero `Config.leastVisitedPriorityTiebreak` reads anywhere in `src/main` after 6.3 — a leftover static read would silently keep the old behavior while the injected parameter travels unused. `Config.modelMenuEnabled` in `State` is the one allowed remaining read (design D9 residue) and is asserted to be exactly one occurrence
 - [ ] 6.6 Run `/sdd-qa-lint-fix` over the touched modules; **goldens green**
 
 ## 7. Wiring completion and cleanup

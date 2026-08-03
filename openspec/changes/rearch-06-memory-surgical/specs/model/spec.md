@@ -35,7 +35,7 @@ The host-side crash minimizer `reducer/ape/Reducer.java` also read rich records,
 2. else if model action → recovery point set to the rich pair, unblocked;
 3. else → no change.
 
-Recovery SHALL occur iff the point exists and is not blocked, and SHALL restore exactly what the HEAD scan restored. After a model rebuild, the recovery point's action reference SHALL be remapped through `Model.update(ModelAction, GUITreeAction)` in `StatefulAgent.updateModel`, the same discipline as the agent's own `currentAction`/`currentGUITreeAction` pairs. The recovery point is the **only** rich retention in the history subsystem, and it retains at most one tree — one that the owning state's `treeHistory` retains anyway.
+Recovery SHALL occur iff the point exists and is not blocked, and SHALL restore exactly what the HEAD scan restored. After a model rebuild, the recovery point's action reference SHALL be remapped through `Model.update(ModelAction, GUITreeAction)` in `StatefulAgent.updateModel` — **iff the action satisfies `requireTarget()`**, which is the condition the deleted remap loop applied (`StatefulAgent.java:308`). A targetless model action (`MODEL_BACK`, `MODEL_MENU`) held as the recovery point SHALL therefore keep referring to the pre-rebuild object, exactly as at HEAD, and a recovery from it SHALL restore that object. Remapping it unconditionally would be a behavior change — plausibly an improvement, since it would remove a stale-recovery path, but not a neutral one, and this change carries no evidence able to evaluate it (INV-MODEL-20). It is left to a change that measures exploration, not to this one. The recovery point is the **only** rich retention in the history subsystem, and it retains at most one tree — one that the owning state's `treeHistory` retains anyway.
 
 #### Scenario: recovery from the most recent model action
 
@@ -47,11 +47,18 @@ Recovery SHALL occur iff the point exists and is not blocked, and SHALL restore 
 - **WHEN** the append sequence ends `…, model action M, start action, fuzz` and the current state is lost
 - **THEN** `recoverCurrentState` SHALL NOT recover (the start action is more recent than M), matching the HEAD scan's early return
 
-#### Scenario: recovery point survives a rebuild
+#### Scenario: a targeted recovery point is remapped across a rebuild
 
-- **WHEN** a naming refinement rebuilds the model while a recovery point is set
+- **WHEN** a naming refinement rebuilds the model while the recovery point holds a model action satisfying `requireTarget()` (a widget click, say)
 - **THEN** the recovery point's model action SHALL be remapped to the rebuilt model's corresponding action
 - **AND** a subsequent recovery SHALL restore non-stale objects
+
+#### Scenario: a targetless recovery point is not remapped, matching HEAD
+
+- **WHEN** a naming refinement rebuilds the model while the recovery point holds `MODEL_BACK` (targetless, so `requireTarget()` is false)
+- **THEN** the recovery point SHALL NOT be remapped
+- **AND** a subsequent recovery SHALL restore the pre-rebuild object — the same stale object the HEAD implementation restores, since its remap loop skipped targetless records while its recovery scan accepted them
+- **AND** this pair of scenarios SHALL exist as a contrast test, so that changing the guard later is a visible, deliberate edit rather than a silent one
 
 ### Requirement: ModelAction Resolved-Object Lifetime
 
@@ -104,4 +111,4 @@ Anything beyond these fixes — bounds or eviction on `Graph` collections, `Stat
 
 - **INV-MODEL-18**: No `ActionRecord` in `Model.actionHistory` SHALL hold a reference to an `Action`, `GUITreeAction`, `GUITree`, or `GUITreeNode`; the history's only rich retention is the depth-1 recovery point, which retains at most one `(ModelAction, GUITreeAction)` pair whose tree is owned by a live state.
 - **INV-MODEL-19**: After `Model.release(tree)` returns, no `ModelAction` of the tree's owning state SHALL hold a resolved reference into the released tree, and every such cleared action SHALL report `isResolvedAt(t) == false` for all `t` while keeping its `resolvedSaturation` unchanged.
-- **INV-MODEL-20**: The stage-6 retention fixes MUST be decision-neutral: same seed ⇒ identical action sequence before and after each fix, verified by the rearch-01 parity goldens; no retention fix may alter a decision input (`resolvedSaturation`, priorities, boosts, provenance) or add a configuration flag.
+- **INV-MODEL-20**: The stage-6 retention fixes MUST be decision-neutral: same seed ⇒ identical action sequence before and after each fix. No retention fix may alter a decision input (`resolvedSaturation`, priorities, boosts, provenance) or add a configuration flag. Neutrality SHALL be evidenced by the caller audits together with unit tests that execute the changed paths (release cycles, history append, recovery, rebuild remap). The rearch-01 parity goldens SHALL be re-run as a regression floor on the decision ladder, and SHALL NOT be cited as evidence for this invariant: their harness enters at `selectNewActionNonnull()` and never runs `GUITreeBuilder.release`, `Model.release`, `Model.appendToActionHistory`, `recoverCurrentState` or `updateModel`, so it is green regardless of what these fixes do.

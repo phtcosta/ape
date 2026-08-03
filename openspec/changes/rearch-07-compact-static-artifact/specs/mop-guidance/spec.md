@@ -43,7 +43,9 @@ Absent-artifact behavior hardens from warn-and-continue to fail-fast: the jar si
 4. **MOP-activity sets**: `mopActivities` and `mopActivitiesAugmented` are read as-is from the wire. `getMopActivities()` / `activityHasMop(activity)` SHALL serve the augmented set when `Config.mopActivitySourceComponents == true` and the widget-derived set otherwise (INV-MOP-27's selection semantics, now between two precomputed sets).
 5. **OPTIONSMENU gateways**: `activityHasMopOptionsMenu(activity)` SHALL be computed at load time from the artifact's `optionsMenus[]` records (`{activity, hasFlaggedWidget}`) and the loaded WTG view: an activity qualifies iff its record has `hasFlaggedWidget == true` OR any WTG click edge from that activity targets an activity in the *selected* MOP-activity set (same two-condition rule as before, INV-MOP-13).
 6. **WTG**: `hasWtgData()` / `getWtgTransitions(activity)` serve the wire `wtg` map (`sourceBaseActivity → [{widget, target}]`, already base-activity-keyed and deduplicated host-side per INV-WTG-04). `WtgTransition` carries `widgetName` and `targetActivity`; the `widgetClass` field is deleted (zero production readers).
-7. **Components**: each entry carries `className`, `componentType` (from the parent array key), `isMain`, `exported`, `permission` (null when no gate), `reachesMop` (wire name — the D7 rename of `reachesTarget`), and for receivers/services `intentFilters` (`actions` + `categories` only) and `hasTargetMethods` (boolean — the only consumed use of the former signature list is an emptiness test); providers additionally carry `authorities`. The D15 `data` block, `readPermission`/`writePermission`, and the `targetMethods` signature list SHALL NOT exist on the wire (they remain in the host-side full JSON).
+7. **Components**: each entry carries `className`, `componentType` (from the parent array key), `isMain`, `exported`, `permission` (null when no gate), `reachesMop` (wire name — the D7 rename of `reachesTarget`); activities additionally carry `deepLinkUri` (null when absent on the wire); receivers/services carry `intentFilters` (`actions` + `categories` only) and `hasTargetMethods` (boolean — the only consumed use of the former signature list is an emptiness test); providers additionally carry `authorities`. The D15 `data` block, `readPermission`/`writePermission`, and the `targetMethods` signature list SHALL NOT exist on the wire (they remain in the host-side full JSON).
+
+   `SataAgent.buildDeepLinkUri` is deleted with the filter structure it walked: the activity launcher SHALL read `ComponentInfo.deepLinkUri` directly and pass it to `ActivityTriggerAction` unchanged, so `MonkeySourceApe`'s dispatch — `Intent.ACTION_VIEW` + `Uri.parse(uri)` when non-null, explicit component otherwise — keeps its exact current behavior with the assembly rule now living in the generator (INV-DRV-07). This is a relocation of *where the string is computed*, not a change to what is dispatched.
 8. **Sanity check**: `package`/`mainActivity` comparison per the "MopData — Package / MainActivity Sanity Check" requirement (unchanged semantics).
 9. **Stats echo**: the artifact's `stats` block (generator-computed diagnostics: `widgetsTotal`, `flagged`, `droppedFlaggedNoId`, `orphanDialogs`, handler-join counters, `wtgEdges`) is carried through to the load status record without recomputation; it SHALL NOT influence any query result or the load outcome (the discipline of the former INV-MOP-31/32).
 
@@ -76,6 +78,13 @@ Unknown JSON keys within a supported `formatVersion` are ignored (INV-MOP-11). T
 - **THEN** with `Config.mopActivitySourceComponents=false`, `activityHasMop("B")==false` and `getMopActivities()` SHALL equal `{"A"}`
 - **AND** with the flag true, `activityHasMop("B")==true` and `getMopActivities()` SHALL equal `{"A","B"}`
 - **AND** the OPTIONSMENU-gateway recompute SHALL use the selected set for its condition-2 test
+
+#### Scenario: Deep-link dispatch reads the wire field
+- **WHEN** the artifact's `components.activities[]` entry for `X` carries `"deepLinkUri": "myapp://detail/x"` and the MOP stagnation launcher selects `X`
+- **THEN** the `ActivityTriggerAction` SHALL carry that string verbatim, and the injected intent SHALL be `ACTION_VIEW` with `Uri.parse("myapp://detail/x")`, targeted at the component (INV-CT-07 dispatch unchanged)
+- **AND WHEN** the entry omits `deepLinkUri`
+- **THEN** the intent SHALL be the explicit-component intent, exactly as when `buildDeepLinkUri` returned null before this change
+- **AND** no jar code path SHALL read an intent-filter `data` block, because none exists on the wire
 
 #### Scenario: Absent metadata stays null and costs zero tokens
 - **WHEN** a wire widget omits `hint`, `prompt`, `entries`

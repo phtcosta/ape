@@ -12,7 +12,7 @@ Invariant dispositions, recorded per the roadmap's dissolution rule:
 - **INV-ARCH-01** (with `apePureMode=true`, selection equivalent to upstream APE) — **removed with its subject**. Owner decision D3 (final) descopes the stock-APE mode entirely: the campaign control is the minimal `aperv` preset, and comparison with original APE stays anchored on the frozen phase-2 data. No upstream-parity claim survives in the specs; the telemetry half of the old blindness argument is addressed at stage 4 by universal, neutrality-tested telemetry (R7).
 - The two "always-on exceptions" the requirement documented (the `ApePinchOrZoomEvent` crash fix; seeding via `RandomHelper.seed(-s)`) are not exceptions to anything anymore — they are plain current behavior, the latter specified by `exploration`'s "Seeded Agent Decision Reproducibility" and run-spec's "Run Identity and Seed".
 
-The `ape_pure` Python arm, which pushes `ape.apePureMode=true`, aborts loudly against the stage-2 jar. This is deliberate (D3; the arm is not part of any campaign preset) and its removal is stage-5 work.
+The `ape_pure` Python arm stops pushing `ape.apePureMode` in this stage — the removal is part of the ordered `tool.py` edit that precedes the jar (run-spec design D-4) — and therefore keeps running against the stage-2 jar. It loses nothing by it: the arm already sets all 17 arm-defining flags to their off values explicitly, so its purity was structural on the Python side before this change and is structural on both sides after it. Owner decision D3 stands: the stock-APE mode stays descoped and deleting the arm itself is stage-5 work.
 
 ## MODIFIED Requirements
 
