@@ -35,6 +35,19 @@ O `mvn package` inicial não é cerimônia: ele é o que separa "a worktree est�
 1 quebrou o build", e essas duas falhas são indistinguíveis se a primeira compilação da worktree só
 acontecer depois da primeira edição.
 
+O `d8` precisa estar no `PATH`: a execução `d8-dex` do `pom.xml` (`:143`) invoca o executável pelo nome
+simples, e o SDK não põe `build-tools/` no `PATH` por conta própria — só `platform-tools`, `emulator` e
+`cmdline-tools`. Num shell que não seja o interativo do dono, prefixar:
+`PATH="$ANDROID_HOME/build-tools/35.0.1:$PATH" mvn package` (35.0.1 é a versão da imagem
+`rvandroid_tools:0.9.1`). Sem isso o build morre na fase `package`, *depois* de compilar — o que se
+parece com uma falha de código e não é.
+
+**Execução de 2026-08-03**: worktree criada em `b7baa68`, `mvn package` e `mvn test` verdes antes de
+qualquer edição. Dois números que valem como linha de base: o `target/ape-rv.jar` da worktree saiu
+sha256 `386ce08d…`, **byte-idêntico ao jar medido na corrida decisiva E3** — o que confirma de uma vez
+que a worktree está completa e que a `rearch` parte exatamente do commit medido; e a suíte pré-mudança
+roda **785 testes, 0 falhas, 19 skipped**. É contra esses dois valores que o estágio 1 se compara.
+
 ## 3. O que a worktree herda, e o que não herda
 
 **Herda** (tudo versionado, nada a copiar):
