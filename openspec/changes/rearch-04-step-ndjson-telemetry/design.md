@@ -13,7 +13,7 @@ Current state, verified at HEAD `5dcf225` (file:line):
 5. **Legacy file outputs and their writer sites**: `sataGraph.dot` / `sataGraph.vis.js` / per-state `step-<ts>-<id>.txt` in `StatefulAgent.saveGraph()` (`:1855-1902`, gated by `Config.saveDotGraph`/`saveVisGraph`/`saveStates`, `Config.java:63/65/69`, defaults `false/true/true`; the `sataModel.obj` branch at `:1863-1870` is removed by rearch-02); `action-history.log` in `saveActionHistory()` (`:1850-1853` → `Model.saveActionHistory`, `Model.java:97`); `produce.log`/`consume.log` opened in the `MonkeySourceApe` constructor (`:270-273`) and written via `ApeRRFormatter.logProduce/logConsume/startLogAction/endLogAction/logDrop` (`MonkeySourceApe.java:704,710,1214,1218,1437`); `sataTimeline.vis.js` generated from `produce.log` in `MonkeySourceApe.tearDown` (`:245-248`, `ApeRRFormatter.toVisTimeline`).
 6. **Teardown** (must stay isolated — INV-EXPL-16/29): `Monkey.run` finally at `Monkey.java:774-799` (individually guarded rotation restore + `MonkeySourceApe.tearDown()`); `MonkeySourceApe.tearDown` 6 safeSteps at `:235-249`; `StatefulAgent.tearDown` 9 safeSteps at `:1802-1814` with `coverageDump` immediately before `saveGraph` (INV-COV-10).
 7. **`ReplayAgent` reads the produce-log line format**: `ReplayAgent.java:63` calls `ApeRRFormatter.readActions(logFile)` on the user-supplied `ape.replayLog`. Deleting the *writers* must not delete the reader.
-8. **Spec reality check**: INV-ARCH-01 does **not** live in `exploration/spec.md`; it lives in `openspec/specs/scoring-pipeline/spec.md:110` (inside "apePureMode Kill-Switch and Parity"), referenced by INV-ARCH-08 (`:240`) and a scenario (`:253`). The `[APE-STEP]` requirement lives in `action-selection/spec.md` ("Per-action decision-source telemetry", INV-SEL-04); `[APE-OUTCOME]` in `scoring-pipeline/spec.md` ("Per-Step Decision Outcome Attribution", INV-ARCH-08/09). The delta set therefore includes `scoring-pipeline` and `action-selection` in addition to the proposal's `exploration`/`llm-routing`/`aperv-tool`.
+8. **Spec reality check**: INV-ARCH-01 does **not** live in `exploration/spec.md`; it lives in `openspec/specs/scoring-pipeline/spec.md:110` (inside "apePureMode Kill-Switch and Parity"), referenced by INV-ARCH-08 (`:240`) and a scenario (`:253`). The `[APE-STEP]` requirement lives in `action-selection/spec.md` ("Per-action decision-source telemetry", INV-SEL-04); `[APE-OUTCOME]` in `scoring-pipeline/spec.md` ("Per-Step Decision Outcome Attribution", INV-ARCH-08/09). The delta set therefore includes `scoring-pipeline` and `action-selection` in addition to the proposal's `exploration`/`llm-routing`/`aperv-tool`. It also includes three requirements that live outside the telemetry capabilities but normatize the retired renderings by name, and would otherwise sync into the main specs demanding formats nothing emits: `model :: Tolerant Action-History Persistence` (whose subject, `Model.saveActionHistory`, task 7.2 deletes), `wtg-navigation :: WTG Frontier Boost for Unvisited Activities` (justified by the `[APE-STEP] ... wtg=` field), and `llm-prompt :: Widget List Generation` (justified in part by the `[APE-LLM-PROMPT]` dump). `llm-routing :: Deterministic Dead-Pair Ban` is the fourth, and rides this change's existing `llm-routing` delta.
 
 Constraints: R4 (no IPC/async/persistence/frameworks), R7 (telemetry never decides — sink on/off, same seed ⇒ same decisions), R9 (frozen metrics come from logcat/instrumented APK, untouched), D5 (no exit contract: `RUN_END` is only the natural last record; zero Python validation or task-status logic), P1/P3 (hand-written serializer, no dependency; legacy paths deleted, not shimmed).
 
@@ -28,7 +28,7 @@ Constraints: R4 (no IPC/async/persistence/frameworks), R7 (telemetry never decid
 - `RUN_END` (reason + counters) as the natural last record; `flushPendingStep` in teardown; max loss 1 step on SIGKILL.
 - Logcat heartbeat (D4): one `Log.i` line per step, plan flag, default on.
 - Deletion of the seven legacy outputs and the `key=value` step family (report Sec. 6.6).
-- Minimal Python work: temporary NDJSON→legacy converter + gzip at collection, nothing else (D5).
+- Minimal Python work: gzip at collection, plus the native NDJSON reader that `clock_logcat_join.py` migrates onto. No format conversion, no validation (D5).
 
 **Non-Goals:**
 
@@ -73,11 +73,12 @@ never through Logger.
 | `StatefulAgent` | Repurposes the join buffer as the record-closure guard; calls `beginStep`/`decision`/`outcome`; teardown gains `flushPendingStep` and `runEnd`; legacy writers deleted | existing selection/outcome state | sink calls |
 | `LlmRouter` (rearch-03: LLM stages) | Emits `llm[]` sub-events (call, error, breaker-episode) instead of `[APE-LLM-TEL]`/`[APE-LLM-ERROR]`; exposes counters to the sink; `printSummary` deleted | existing call pipeline | sink calls |
 | `MonkeySourceApe` | Loses produce/consume loggers and timeline export; teardown chain shrinks | — | — |
-| `tool.py` + `trace_ndjson.py` (new, rv-android) | Post-run: convert NDJSON→legacy line family into `task.result.trace_file`; gzip raw NDJSON alongside. Non-fatal, write-only, no validation (D5) | `.trace` (NDJSON) | `.trace` (legacy format), `.trace.ndjson.gz` |
+| `tool.py` (rv-android) | Post-run: gzip the raw NDJSON alongside the trace. Non-fatal, write-only, no validation (D5); the `.trace` itself is never rewritten | `.trace` (NDJSON) | `<trace>.ndjson.gz` |
+| `trace_ndjson.py` (new, rv-android) | Native NDJSON reader for the analysis side: streams records, resolves the `ACT`/`STATE` dictionaries, materializes omitted defaults, yields one joined row per step | `.trace` (NDJSON) | typed step rows |
 
 ## StepRecord schema and the old-field → new-schema mapping
 
-This table is the heart of the change: **nothing measured today may become unrecordable.** "Derivable" means recoverable by a pure lookup in the same trace (dictionary entries), which the converter performs mechanically.
+This table is the heart of the change: **nothing measured today may become unrecordable.** "Derivable" means recoverable by a pure lookup in the same trace (dictionary entries), which the native reader (D-8) performs mechanically.
 
 Example (one line; wrapped here for reading):
 
@@ -96,7 +97,7 @@ Example (one line; wrapped here for reading):
 | Legacy field | New location | Notes |
 |---|---|---|
 | `[APE-STEP] step=` / `[APE-OUTCOME] step=` / `[APE-LLM-TEL] step=` | `s` | one record = one step; the three-way join by `step=` ceases to exist |
-| `[APE-STEP] clock=` (epoch ms) | `t` (ms since `RUN_START`) | `RUN_START` carries the epoch base `t0`; epoch = `t0 + t`. Volume lever; the converter re-expands to epoch ms |
+| `[APE-STEP] clock=` (epoch ms) | `t` (ms since `RUN_START`) | `RUN_START` carries the epoch base `t0`; epoch = `t0 + t`. Volume lever; the reader re-expands to epoch ms wherever an absolute clock is wanted |
 | `[APE-STEP] activity=` / `[APE-LLM-TEL] activity=` | `act` (int) | defined by `{"type":"ACT","id":17,"name":"...","mop":1}` on first sight |
 | `[APE-STEP] state=` | `st` (int) | defined by `{"type":"STATE","id":231,"key":"...","act":17}` on first sight |
 | `[APE-STEP] activity_has_mop=` / `[APE-OUTCOME] activity_has_mop=` | `ACT` entry field `mop` | static per-activity fact → recorded once on the dictionary entry; outcome-side value = `ACT[STATE[out.target].act].mop` |
@@ -110,7 +111,7 @@ Example (one line; wrapped here for reading):
 | `decision_source=` | `dec.src` | supplied by the rearch-03 stage that selected (`StageResult.Select(action, decisionSource)`) |
 | `pick_channel=` | `dec.ch` | same enum labels (`short_circuit_unvisited`, ..., `sata_other`) |
 | `priority=` | `dec.pri` | model-action records only, always present there |
-| `mop= mop_frontier= wtg= coverage= menu= form=` | `dec.mop dec.mopf dec.wtg dec.cov dec.menu dec.form` | **omitted when 0** (defaults-omitted rule); the converter re-emits explicit zeros |
+| `mop= mop_frontier= wtg= coverage= menu= form=` | `dec.mop dec.mopf dec.wtg dec.cov dec.menu dec.form` | **omitted when 0** (defaults-omitted rule); the reader materializes explicit zeros |
 | `patched=` (tri-state: absent / 0 / 1) | `dec.patched` | tri-state preserved: absent = no resolved target (as today); `0` and `1` are both emitted explicitly — **exempt from default omission** because absence is itself information (O4) |
 | `cf_action= cf_changed=` (only on the 4 MOP-sensitive channels) | `dec.cf` | present exactly on those channels: `{"changed":0}` when unchanged or recomputation failed (cf action = factual action, as today); `{"changed":1,"a":"<counterfactual action>"}` when divergent (A3) |
 | non-model `[APE-STEP]` (8 fields) | record with `dec` = `{a, src, ch}` only | no `pri`/boosts, as today; `dec.src` from `nonModelDecisionSource`, `dec.ch` from `nonModelPickChannel` |
@@ -172,7 +173,7 @@ The outcome of step N only exists during step N+1's `updateGraph()` — the exac
 
 ### D-3 — Dictionary events with run-local integer IDs; static facts live on the entry
 
-`activity` and `state` are the longest, most repeated strings in the trace. First sight of each emits `{"type":"ACT","id":N,"name":...,"mop":0|1}` / `{"type":"STATE","id":N,"key":...,"act":actId}` as its own line, *before* any record references the ID (ordering invariant). `activity_has_mop` — a static per-activity fact — moves onto the `ACT` entry instead of repeating on every step and outcome; the converter re-derives both legacy fields by lookup. IDs are run-local and write-only; no cross-run meaning.
+`activity` and `state` are the longest, most repeated strings in the trace. First sight of each emits `{"type":"ACT","id":N,"name":...,"mop":0|1}` / `{"type":"STATE","id":N,"key":...,"act":actId}` as its own line, *before* any record references the ID (ordering invariant). `activity_has_mop` — a static per-activity fact — moves onto the `ACT` entry instead of repeating on every step and outcome; the reader re-derives both the step-side and the outcome-side value by lookup. IDs are run-local and write-only; no cross-run meaning.
 
 ### D-4 — Neutrality by interface shape (R7)
 
@@ -190,9 +191,19 @@ One write-only line per step — `Log.i("ApeRvHb", "s=<N> t=<tRel>")` — emitte
 
 Deleted (writer sites in Context §5): `saveGraph()`'s dot/vis/per-state branches and the `Graph.printDot`/`Graph.printVis`/`State.saveState` methods they call; `saveActionHistory()` + `Model.saveActionHistory`; the produce/consume `PrintWriter`s, their five `ApeRRFormatter.log*` call sites, and the `sataTimeline.vis.js` export (`toVisTimeline`); Config flags `saveDotGraph`, `saveVisGraph`, `saveStates` (and `stepTelemetryEnabled`, whose gate dies with always-on telemetry); the `[APE-STEP]`/`[APE-OUTCOME]`/`[APE-LLM-TEL]`/`[APE-LLM-ERROR]`/`[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]`/`[APE-LLM-CONFIG]`/`[APE-LLM-CONFIG-ACK]`/`[APE-MOP-DATA]`/`[APE-ARCH]`-passes emitters. **Kept**: `ApeRRFormatter.readActions`/`parseRect` and everything `ReplayAgent` needs (`ReplayAgent.java:63`) — replay consumes externally supplied logs; only the tool's own production of those logs ends. A caller audit decides whether `formatRect`/`ModelAction` JSON helpers (`ModelAction.java:344`) die with the vis output or stay with the replay/xpath paths.
 
-### D-8 — Python side: converter into the trace path itself + gzip alongside (temporary)
+### D-8 — Python side: gzip alongside, and a native NDJSON reader; no format conversion
 
-After the run completes (post `_check_empty_trace`, which is unchanged — a 0-byte NDJSON trace is still 0 bytes), `tool.py`: (1) gzips the raw NDJSON capture to `<trace>.ndjson.gz`; (2) runs `trace_ndjson.convert_to_legacy()` writing the reconstructed legacy line family **to `task.result.trace_file` itself** — so every existing rv-platform/analysis parser keeps reading exactly the file and format it reads today, with zero parser changes during migration. Reconstruction: expand `act`/`st` IDs via the dictionaries, re-emit omitted defaults (`mop=0 ...`), re-expand `t` to epoch `clock=` via `t0`, split `llm[]` back into `[APE-LLM-TEL]`/`[APE-LLM-ERROR]` lines, `RUN_END.counters.llm` back into the `LLM Summary`/`Decision ratio` lines. Both steps are non-fatal (warning on failure, raw trace left in place) and write-only — **no validation, no sentinel check, no status change (D5)**. The converter is explicitly temporary: it dies when the analysis pipeline reads NDJSON natively (rearch-05 or later; not this change's trigger to define). Trade-off accepted: during migration, storage = legacy-format trace (as today) + compressed NDJSON; the raw-volume win lands when the converter is retired.
+After the run completes (post `_check_empty_trace`, which is unchanged — a 0-byte NDJSON trace is still 0 bytes), `tool.py` does exactly one thing: it gzips the raw NDJSON capture to `<trace>.ndjson.gz`. **`task.result.trace_file` is never rewritten** — the `.trace` is the NDJSON, and the NDJSON is the artifact of record. The step is non-fatal (warning on failure, uncompressed trace left in place) and write-only — **no validation, no sentinel check, no status change (D5)**.
+
+There is no NDJSON→legacy converter, and this is the decision rather than an omission. Reconstructing the `key=value` family over the primary artifact would invert which file is authoritative (the `.trace` everyone opens becomes a derived reconstruction while the real data hides in a sidecar `.gz`), would re-impose the unescaped format this change exists to kill — a newline inside a `text=` value breaks the line again, which is exactly the A8 defect class — so the escaping guarantee of INV-SNK-01/02 would hold only where nobody reads, and would defer the volume win indefinitely, since storage would be the legacy-format trace *plus* the compressed NDJSON.
+
+Analysis reads the records natively instead. `trace_ndjson.py` (rv-android, `aperv_tool/analysis/`) is that reader: it streams the trace, resolves the `ACT`/`STATE` dictionaries, materializes the omitted defaults, and yields one typed row per step with its `dec`, `llm[]`, and `out` sections already joined. The single production consumer of the old `[APE-STEP]` family — `clock_logcat_join.py` — migrates onto it in this stage (tasks group 8).
+
+**Migrating that module is a simplification, not a port.** Most of its complexity today reconstructs the device's UTC offset, because the trace stamps `System.currentTimeMillis()` while logcat stamps local time with no year and no zone (three year candidates, rounding to the nearest quarter hour, anchor selection, `alignment_residual_ms`). The D-6 heartbeat puts step and violation in the same file, on the same clock, in the same rendering — the whole offset reconstruction becomes dead code and is deleted along with the regex it fed.
+
+**Carve-out, written here so a future P3 sweep does not delete it.** The 2026-07-24 calibration report and the decisive run stand on **legacy-format** traces, and that corpus will never change again. `clock_logcat_join.py` migrates because it has to read *new* traces; the archived-corpus readers — `scripts/cmpm_stratify.py`, `scripts/analyze_cmpv2_llm.py`, `experimento-cal/scripts/*`, `experimento-20260721/scripts/*`, `calibracao/*` — do not, and stay frozen exactly as they are. They are not compatibility shims for new data: they are the readers of a dataset that is finished. P3 governs superseded *implementation*, not analysis code over frozen data.
+
+Storage after the run: `.trace` = raw NDJSON (the 3–5× reduction the change exists for) plus `<trace>.ndjson.gz` for storage at rest.
 
 ### D-9 — Sink failure policy
 
@@ -215,8 +226,8 @@ Sink methods never propagate a `Throwable` into the exploration loop: each publi
 | Exploration teardown deltas (INV-EXPL-16/29 preserved) | safeStep chain edit | JVM unit: one failing step skips nothing; loop exception preserved |
 | llm-routing sub-events | `LlmRouter`/LLM stages → `sink.llmCall/llmError` | JVM unit where mockable; field parity vs mapping table |
 | scoring-pipeline outcome delta; INV-ARCH-01 removed | `updateGraph` wiring | neutrality test is the recorded substitute |
-| aperv-tool converter + gzip | `trace_ndjson.py`, `tool.py` post-run | pytest: golden NDJSON → byte-expected legacy lines; gzip round-trip; failure is non-fatal |
-| Acceptance Sec. 9.11 | converter + new parser | regenerate the 2026-07-24 calibration tables from a sample new trace |
+| aperv-tool native reader + gzip | `trace_ndjson.py`; `tool.py` post-run gzip | pytest: golden NDJSON → expected typed rows; `clock_logcat_join` over a new-format trace + heartbeat logcat; gzip round-trip; gzip failure is non-fatal |
+| Acceptance Sec. 9.11 (blocked on the native reader) | `trace_ndjson.py` + the migrated `clock_logcat_join.py` | regenerate the 2026-07-24 calibration tables from a sample new trace |
 
 ## API Design
 
@@ -269,7 +280,7 @@ interface EventSink {                    // all void; never throws into the loop
 2. **Step N selection**: `beginStep(N, now-t0, activity, hasMop, stateKey)` (+ heartbeat `Log.i`); LLM stages append `llm[]` entries as attempts happen; `decision(...)` fills `dec` when the action is finalized; the join buffer records `(N, action)` exactly as today.
 3. **Step N+1 `updateGraph`**: when the buffered decision is reference-equal to `currentAction` and a transition was recorded, `outcome(...)` closes and writes record N (one line). Otherwise record N closes without `out` at the next `beginStep`.
 4. **Teardown**: `flushPendingStep` (first agent safeStep) → existing dumps/counters → `runEnd(reason, counters)` (last agent safeStep). Later stdout writes by non-sink teardown steps may follow; `RUN_END` is the last *sink record*, not necessarily the last stdout line.
-5. **Collection** (Python): stdout already captured into `.trace`; post-run, gzip raw NDJSON → `<trace>.ndjson.gz`; converter rewrites `task.result.trace_file` in the legacy format for current parsers. Nothing validates anything (D5).
+5. **Collection** (Python): stdout already captured into `.trace`; post-run, gzip raw NDJSON → `<trace>.ndjson.gz`. The `.trace` stays the raw NDJSON — nothing rewrites it, nothing validates it (D5). Analysis reads the records natively (D-8).
 
 ## Error Handling
 
@@ -278,14 +289,14 @@ interface EventSink {                    // all void; never throws into the loop
 | Sink internal `Throwable` | any `EventSink` method | latch sink disabled; one `[APE] ` warning; method returns normally | run continues untelemetered; run is analyzable from logcat (R9) |
 | SIGKILL mid-run | harness timeout | nothing in-process; pending record lost | max loss 1 StepRecord + `RUN_END`; post-hoc timestamps (D5) |
 | Teardown step throws | safeStep chain | caught + logged per step (INV-EXPL-16/29) | remaining steps incl. `runEnd` still run |
-| Converter failure | `trace_ndjson.py` | warning; raw NDJSON `.trace` left in place | analysis falls back to NDJSON directly; no status change (D5) |
-| gzip failure | `tool.py` post-run | warning; uncompressed trace kept | none needed |
+| gzip failure | `tool.py` post-run | warning; uncompressed `.trace` kept | none needed; the trace is intact either way |
+| Malformed record | `trace_ndjson.py`, at **analysis** time — not on the collection path | the reader skips the line and counts it in its own diagnostics | analysis continues; the `.trace` and its `.gz` are never altered |
 | Heartbeat `Log.i` throws | logcat write | swallowed inside the sink guard | heartbeat absent for that step; join falls back to wall-clock |
 
 ## Risks / Trade-offs
 
 - [Record loss window at SIGKILL] → bounded at 1 step by construction; `flushPendingStep` covers every normal termination; strictly better than the pre-A10 status quo (42.3% lost the whole coverage dump).
-- [Legacy parsers break during migration] → converter writes the legacy format into the very file parsers read today; acceptance test regenerates the calibration report (Sec. 9.11).
+- [The one real `[APE-STEP]` parser stops reading new traces] → `clock_logcat_join.py` migrates to the native reader inside this stage (group 8), which shrinks it rather than porting it (D-8); the frozen-corpus readers are untouched by the carve-out. This is the scope this change absorbs by refusing a converter, and the acceptance gate (Sec. 9.11) is what proves it landed.
 - [Telemetry cost changes step throughput (a measured variable)] → cost target ≤ current: still ~1 stdout write per step, accumulator object reused, dictionary/default omission strictly reduces bytes; prompt dumps unchanged (flag, default on).
 - [Sink accidentally influences decisions] → interface returns `void` only; `NoopSink` neutrality test is a permanent gate (R7).
 - [Deleting produce.log breaks replay] → reader path preserved (D-7); replay consumes externally supplied logs.
@@ -298,10 +309,10 @@ interface EventSink {                    // all void; never throws into the loop
 |-------|------|-----|
 | JVM unit (permanent) | `JsonBuf` escaping round-trip + one-line invariant (Sec. 9.12); StepRecord lifecycle, dictionary ordering, tri-state `patched`, defaults omission; teardown order (`flushPendingStep` first, `runEnd` last); discriminator | `mvn test`, existing suite conventions |
 | Neutrality (permanent gate) | sink on/off, same seed ⇒ identical action sequence (Sec. 9.8) | rearch-01 parity harness with `NdjsonSink` vs `NoopSink` |
-| Python unit | converter golden: NDJSON fixture → expected legacy lines; non-fatal failure; gzip | pytest in aperv-tool |
+| Python unit | reader golden: NDJSON fixture → expected typed rows (dictionary resolution, defaults materialization, `llm[]` and `out` joined onto their step); `clock_logcat_join` over a new-format trace plus a heartbeat logcat; gzip round-trip and non-fatal failure | pytest in aperv-tool |
 | Acceptance | regenerate the 2026-07-24 calibration report tables from a sample new trace (Sec. 9.11) | rv-android side, sample run via rv-platform |
 | Build | `mvn package` green; jar into aperv-tool via `mvn install` | verification group |
 
 ## Open Questions
 
-None. All owner decisions are final (D2/D4/D5, report Sec. 12); the items this design resolved beyond the proposal are: the tri-state `patched` exemption from default omission, static facts on dictionary entries, `t` as run-relative ms with `t0` in `RUN_START`, prompt/response dumps as flagged sub-event fields (default on), the breaker-episode line as an `llm[]` sub-event, LLM summary counters folded into `RUN_END`, and the converter writing into `task.result.trace_file` itself (D-8) — all mechanical consequences of D2/D5 and the recordability acceptance, none reopening an owner decision.
+None. All owner decisions are final (D2/D4/D5, report Sec. 12); the items this design resolved beyond the proposal are: the tri-state `patched` exemption from default omission, static facts on dictionary entries, `t` as run-relative ms with `t0` in `RUN_START`, prompt/response dumps as flagged sub-event fields (default on), the breaker-episode line as an `llm[]` sub-event, LLM summary counters folded into `RUN_END`, and the Python side reduced to gzip plus a native reader with no format conversion (D-8) — all mechanical consequences of D2/D5 and the recordability acceptance, none reopening an owner decision.

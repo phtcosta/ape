@@ -13,8 +13,9 @@ This change is **stage 4 of 7** of the re-architecture selected in `docs/analise
 - Logcat heartbeat (owner decision D4): one write-only line per step (`s=N t=...`) via `Log.i`, behind a flag, **default on** — placing violation and step in the same file/clock, immunizing the analysis-side wall-clock join against clock skew. The violation↔step join itself stays in the Python analysis pipeline (no runtime APE↔logcat coupling).
 - **BREAKING**: telemetry becomes always-on and identical for all arms — deliberately dissolves INV-ARCH-01. Neutrality is testable: sink on/off, same seed ⇒ same decisions (R7).
 - **BREAKING** removal of legacy outputs (report Sec. 6.6): `sataGraph.vis.js`, `sataGraph.dot`, per-state `step-*.txt`, `action-history.log`, `sataTimeline.vis.js`, `produce.log`/`consume.log`, and the `[APE-STEP]`-family `key=value` format itself.
-- Transport unchanged: stdout captured into the `.trace` as today. A temporary NDJSON→legacy converter keeps current rv-platform parsers working during migration.
-- Acceptance (report Sec. 9.11): the 2026-07-24 calibration report must be regenerable from the new trace — easier, since the ~39k LLM calls hang off the right step by construction.
+- Transport unchanged: stdout captured into the `.trace` as today — and the `.trace` *is* the NDJSON, never rewritten into anything else. There is no NDJSON→legacy converter: writing the fragile `key=value` family back over the primary artifact would invert which file is authoritative and re-import the escaping defect this change exists to remove. The analysis side gains a native NDJSON reader, and `clock_logcat_join.py` — the one production parser of `[APE-STEP]` — migrates onto it here.
+- The archived legacy corpus keeps its own frozen readers (`scripts/cmpm_stratify.py`, `experimento-cal/scripts/*`, `calibracao/*`, …). They are not compatibility shims: they read a dataset that is finished, and are deliberately left untouched.
+- Acceptance (report Sec. 9.11): the 2026-07-24 calibration report must be regenerable from the new trace — easier, since the ~39k LLM calls hang off the right step by construction. With no converter, the native reader is what satisfies this gate, so it is a deliverable of this stage rather than a later one.
 
 ## Capabilities
 
@@ -27,13 +28,15 @@ This change is **stage 4 of 7** of the re-architecture selected in `docs/analise
 - `exploration`: legacy output writers removed from the termination path; teardown gains `flushPendingStep` and `RUN_END` emission (INV-EXPL-16/29 mechanism untouched; INV-EXPL-17 artifact defaults unaffected).
 - `action-selection`: the `[APE-STEP]` per-action telemetry requirement (INV-SEL-04) is restated as the `StepRecord` envelope + `dec` section; the `stepTelemetryEnabled` gate dies.
 - `scoring-pipeline`: the `[APE-OUTCOME]` attribution requirement (INV-ARCH-08/09) is restated as the `out` section, join by construction; **INV-ARCH-01 is dissolved here** (verified location: `openspec/specs/scoring-pipeline/spec.md`, not `exploration`), substitute recorded (universal neutral telemetry + neutrality test R7).
-- `llm-routing`: LLM telemetry becomes sub-events of the step record (`[APE-LLM-TEL]`/`[APE-LLM-ERROR]` retired; `[APE-LLM-CONFIG]` subsumed by `RUN_START`; summary counters fold into `RUN_END`).
-- `aperv-tool`: trace collection gzips at pull; temporary converter for existing parsers. No task-status or validation changes (D5).
+- `llm-routing`: LLM telemetry becomes sub-events of the step record (`[APE-LLM-TEL]`/`[APE-LLM-ERROR]` retired; `[APE-LLM-CONFIG]` subsumed by `RUN_START`; summary counters fold into `RUN_END`). `Deterministic Dead-Pair Ban` is re-anchored with them: it is the one requirement outside the telemetry set that normatizes the retired renderings by name, and its data survives untouched as `result:"no_match" reason:"dead_pair"` in the `llm[]` sub-event.
+- `model`: `Tolerant Action-History Persistence` is removed — its whole subject is `Model.saveActionHistory`, which this change deletes along with `action-history.log`. Teardown robustness stays with the `safeStep` isolation (INV-EXPL-16/29) that always carried it.
+- `wtg-navigation`, `llm-prompt`: one sentence each, re-anchored off the retired renderings. The frontier boost's observability moves from `[APE-STEP] ... wtg=` to `dec.wtg`; the widget-list newline flattening keeps its prompt-side reason and drops its `[APE-LLM-PROMPT]` one. No mechanism changes in either.
+- `aperv-tool`: trace collection gzips at pull and leaves the NDJSON `.trace` intact; a native NDJSON reader replaces the `[APE-STEP]` regex in `clock_logcat_join.py`, whose UTC-offset reconstruction dies with the D4 heartbeat. No task-status or validation changes (D5).
 
 ## Impact
 
 - **Java**: new `EventSink`/`StepRecord`/serializer; `StatefulAgent` join buffer repurposed; `Logger` usage retired from the step path; teardown chain (+1 safeStep, isolation INV-EXPL-16/29 untouched); legacy output writers deleted.
-- **Python/rv-android**: converter + gzip at collection only; analysis pipeline gains the NDJSON parser.
+- **Python/rv-android**: gzip at collection; the analysis pipeline gains the native NDJSON reader and `clock_logcat_join.py` migrates onto it (a net simplification — the offset reconstruction is deleted). The frozen-corpus scripts are not touched.
 - **Depends on**: `rearch-02-runspec` (`RUN_START`, flags in plan), `rearch-03-decision-pipeline` (decision sub-events carry `decision_source` from stages).
 - **Frozen metrics untouched** (R9): primary outcomes still come from logcat/instrumented APK.
 - Grounding: report Sec. 6.5, 6.6, Sec. 12 D2/D4/D5, verified V15/V16/V17, Sec. 9.7/9.8/9.11/9.12.

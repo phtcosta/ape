@@ -4,11 +4,12 @@
      - Group 1 (Serializer) must complete first — everything else builds on JsonBuf.
      - Group 2 (Sink core) depends on 1. Groups 3–6 depend on 2 and are largely sequential
        within the jar (they touch StatefulAgent/LlmRouter together).
-     - Group 8 (Python converter) is independent of Groups 3–7 once the schema (Group 2)
-       is frozen — it can run in parallel from that point.
+     - Group 8 (Python native reader) is independent of Groups 3–7 once the schema (Group 2)
+       is frozen — it can run in parallel from that point. It is NOT optional: with no
+       converter, the reader is what satisfies the Sec. 9.11 acceptance gate (task 9.2).
      - Group 7 (legacy deletion) must run after Groups 3–5 (the new producers replace the
        old emitters in the same commits or later, never before).
-     - Critical path: 1 → 2 → 3 → 4 → 7 → 9.
+     - Critical path: 1 → 2 → 3 → 4 → 7 → 8 → 9.
      - Gates (roadmap): neutrality test (Sec. 9.8), calibration-report regeneration
        (Sec. 9.11), round-trip/one-line tests (Sec. 9.12). -->
 
@@ -71,17 +72,19 @@
 - [ ] 7.6 Run `/sdd-qa-lint-fix src/main/java` (bulk-edit cleanup)
 - [ ] 7.7 Run `/sdd-test-run ape` and `mvn package` (jar builds green with deletions)
 
-## 8. Python: Converter + gzip at Collection (rv-android, D5-minimal)
+## 8. Python: Native NDJSON Reader + gzip at Collection (rv-android, D5-minimal)
 
-- [ ] 8.1 Implement `trace_ndjson.py` in `aperv_tool/tools/aperv/`: NDJSON→legacy converter (dictionary expansion, default re-emission, `activity_has_mop` re-derivation, `clock` re-expansion via `t0`, `llm[]` → per-call `[APE-LLM-TEL]`/`[APE-LLM-ERROR]` lines keyed by `s`, `RUN_END.counters` → `LLM Summary`/`Decision ratio` lines, `RUN_START` → `[APE-LLM-CONFIG]` line) — mechanical, write-only, marked temporary
-- [ ] 8.2 Wire `tool.py` post-run collection: gzip raw capture to `<trace>.ndjson.gz`, then convert into `task.result.trace_file`; both non-fatal (WARNING + raw trace left in place); **run on the timeout path too** (before re-raising `RVToolTimeoutError`); `_check_empty_trace` unchanged; zero validation/status logic (D5)
-- [ ] 8.3 pytest: golden NDJSON fixture → expected legacy lines (field-for-field vs the design mapping table); converter failure is non-fatal; gzip round-trips; explicitly assert no code path reads `RUN_END` for control flow
-- [ ] 8.4 Run `/sdd-test-run aperv_tool`
+- [ ] 8.1 Implement `trace_ndjson.py` in `aperv_tool/analysis/`: the **native NDJSON reader** — stream the trace, resolve the `ACT`/`STATE` dictionaries, materialize omitted defaults, re-derive `activity_has_mop` on both the step and the outcome side, expand `t` to epoch via `RUN_START.t0`, and yield one typed row per step with its `dec`, `llm[]`, and `out` sections already joined. Read-only over the trace; no NDJSON→legacy conversion exists (design D-8)
+- [ ] 8.2 Wire `tool.py` post-run collection: gzip the raw capture to `<trace>.ndjson.gz`, non-fatal (WARNING, uncompressed trace kept); **run on the timeout path too** (before re-raising `RVToolTimeoutError`); `task.result.trace_file` is left byte-untouched; `_check_empty_trace` unchanged; zero validation/status logic (D5)
+- [ ] 8.3 Migrate `aperv_tool/analysis/clock_logcat_join.py` onto the reader: replace the `[APE-STEP]` regex (`:62-63`) with reader rows, and **delete `_align_clocks()` and the whole UTC-offset reconstruction** (`:348-384` — year candidates, quarter-hour rounding, anchor choice, `alignment_residual_ms`), which the D4 heartbeat makes dead code. The join now reads step and violation from the same clock
+- [ ] 8.4 **Do not touch the frozen-corpus readers** (design D-8 carve-out): `scripts/cmpm_stratify.py`, `scripts/analyze_cmpv2_llm.py`, `experimento-cal/scripts/*`, `experimento-20260721/scripts/*`, `calibracao/*` keep parsing the legacy format, because the corpus they read is archived and will not change. Record this in the module's docs so a later P3 sweep does not read them as shims
+- [ ] 8.5 pytest: golden NDJSON fixture → expected typed rows (field-for-field vs the design mapping table); `clock_logcat_join` over a new-format trace plus a heartbeat logcat reproduces the join without any offset reconstruction; gzip round-trips and its failure is non-fatal; explicitly assert no code path reads `RUN_END` for control flow
+- [ ] 8.6 Run `/rv-test-run aperv-tool` (rv-android module ⇒ `rv-*` skill)
 
 ## 9. Acceptance and Verification
 
 - [ ] 9.1 Produce a sample new-format trace (smoke run via rv-platform — never manual emulator management) covering MOP boosts, LLM calls (incl. an error and a `no_match reason=dead_pair`), a flushed final step, and `RUN_END`
-- [ ] 9.2 Acceptance Sec. 9.11: regenerate the 2026-07-24 calibration report tables from the sample trace (via the converter + existing parsers, and via a native NDJSON parse) — every quantity the report consumed must be recoverable; file any gap as a schema fix, not an analysis workaround
+- [ ] 9.2 Acceptance Sec. 9.11 (**gated on group 8** — the native reader is the only path to it): regenerate the 2026-07-24 calibration report tables from the sample trace via `trace_ndjson.py` and the migrated `clock_logcat_join.py` — every quantity the report consumed must be recoverable; file any gap as a schema fix, not an analysis workaround
 - [ ] 9.3 Confirm gates: neutrality test green (Sec. 9.8), round-trip/one-line tests green (Sec. 9.12), `RUN_END`-last test green (Sec. 9.7)
 - [ ] 9.4 `mvn test` (full suite) and `mvn package`; `mvn install -Drvsec_home=<path>` to refresh the aperv-tool jar
 - [ ] 9.5 Update `CLAUDE.md` (telemetry section: NDJSON sink, removed flags/outputs, heartbeat key) — current-state wording only (P4)

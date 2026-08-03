@@ -12,6 +12,7 @@ This change is **stage 5 of 7** of the re-architecture selected in `docs/analise
 - INV-APV-14 (constant-vs-constant pytest guards) is retired. **Owner decision D1 stands: no automatic echo-vs-intent validation is added** — drift auditing remains post-hoc analysis of the `RUN_START` line.
 - Migration check (report Sec. 11): deterministic regeneration of the 27 surviving arms' effective property sets, diffed against the pre-change values, to prove the calibrated grid is preserved; the two retirements are recorded as documented removals in the arm report, never as diffs.
 - The Python-side strategy whitelist shrinks to `["sata", "random"]` — the deletion `rearch-02-runspec` delegates to this stage. Keeping `bfs`/`dfs` would let a run pass Python validation and abort on the device, reintroducing the silent degradation stage 2 exists to remove.
+- **Stage 2's transitional scaffolding is retired here**, in the change that invalidates it. `RunSpecCompatTest`, `PresetsTest`'s fixture-equivalence assertions and the per-arm fixtures pinned the jar against the *pre-change* `_push_properties` output so stage 2 could ship without touching Python; this stage rewrites that output, so those pins now freeze a deployment that no longer exists. They are deleted and replaced by tests of the preset+overrides contract itself. The `run-spec` requirement written in the same transitional voice loses its framing, keeping only the behavior that was never transitional: no preset ⇒ resolve from the explicit keys and the jar defaults.
 
 ## Capabilities
 
@@ -22,11 +23,12 @@ _None._
 ### Modified Capabilities
 
 - `aperv-tool`: arm-definition requirements restated as preset + overrides; property-mapping and kill-switch requirements reduced; INV-APV-14 replaced by the regeneration-diff migration check (one-time) and level-0 echo provenance.
+- `run-spec`: `Explicit-Key Resolution When No Preset Is Named` loses stage 2's transitional framing (the "current Python deployment" description and the "zero Python changes verified" scenario, both falsified by this stage) and keeps only the standing behavior.
 
 ## Impact
 
 - **Python/rv-android**: `modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py` (arm dicts, `APERV_PROPERTY_MAPPING`, `ARM_DEFINING_KEYS`, `LLM_ARM_KEYS`), its pytest guards (`test_aperv_tool.py`).
-- **Java**: none (presets already in the jar from stage 2).
+- **Java**: the jar is not modified. The ape repo is edited only to delete stage 2's transitional test scaffolding (`RunSpecCompatTest`, `PresetsTest`'s fixture-equivalence assertions, the per-arm fixtures) and put preset-contract tests in its place — a test-tree deletion, not a jar change.
 - **Depends on**: `rearch-02-runspec` (presets + fail-fast + echo must exist and be deployed).
 - **Comparability**: arms' effective configurations must be diff-identical before/after regeneration; any intentional divergence is a declared new arm, never a silent edit.
 - Grounding: report Sec. 5.1, 6.6, Sec. 12 D1, verified V20/V21, finding 3.3-7.

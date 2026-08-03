@@ -31,3 +31,24 @@
 - **WHEN** any code outside `LlmClient` needs the HTTP client or the breaker
 - **THEN** it SHALL go through `LlmClient`'s methods
 - **AND** no other class SHALL hold a `SglangClient` or `LlmCircuitBreaker` reference
+
+## MODIFIED Requirements
+
+The failure-stage seam is unchanged in mechanism. Only its honesty-boundary note is re-anchored: it attributed the joinable stage+activity pair to "the router's `[APE-LLM-ERROR] cause=screenshot` line", and this change dismantles `LlmRouter` — that line is emitted by `LlmTelemetry`, and the seam is read by `ScreenshotStep` inside `LlmEngine`'s pipeline. No field, no cause value, and no null-return contract moves.
+
+### Requirement: ScreenshotCapture — Failure-Stage Cause Seam
+
+`ScreenshotCapture` SHALL record which capture stage failed when `capture()` returns null, readable by the caller between the null return and the next `capture()` invocation (the same seam pattern as `SglangClient.getLastErrorCause`, INV-LLM-08): `surface_control` when the SurfaceControl reflection path returned null or threw, `uiautomation` when the UiAutomation fallback also produced no bitmap. The cause SHALL be reset at the start of every `capture()` invocation, so a stale stage from an earlier failure can never be attributed to a later call. The null-return contract (INV-LLM-02) is unchanged — the seam adds attribution, not new failure behavior.
+
+Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unavailability, and permission denial without distinguishing them — the seam names the failing **stage**, not the OS-level reason; joining the stage + foreground activity (both carried on the screenshot-failure diagnostic `LlmTelemetry` emits) with the known FLAG_SECURE APK list is an offline step. `OutOfMemoryError` is an `Error` and escapes the `catch (Exception)` blocks — it is NOT conflated into the null return and the seam makes no claim about it.
+
+#### Scenario: FLAG_SECURE failure names its stage
+
+- **WHEN** `capture()` returns null because both the SurfaceControl path and the UiAutomation fallback yielded no bitmap on a FLAG_SECURE window
+- **THEN** the failure-cause seam SHALL report the stage of the last attempted path (`uiautomation`)
+- **AND** the caller (`ScreenshotStep`, within `LlmEngine`'s pipeline) SHALL be able to read it before the next `capture()` call
+
+#### Scenario: cause reset per invocation
+
+- **WHEN** `capture()` fails once and a later `capture()` succeeds
+- **THEN** the seam SHALL NOT report the earlier failure's stage after the successful call

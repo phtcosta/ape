@@ -18,7 +18,7 @@ Absent-artifact behavior hardens from warn-and-continue to fail-fast: the jar si
 - Unchanged `MopData` query API: `getWidget`, `activityHasMop`, `getMopActivities`, `activityHasMopOptionsMenu`, `hasWtgData`/`getWtgTransitions`, `getReceivers`/`getServices`/`getActivities`/`getProviders`/`hasComponents`, `getPackageName`/`getMainActivity`, `extractShortId`.
 
 ### Side-Effects
-- **[Trace]**: one `MOP_DATA` load record per load attempt (the `[APE-MOP-DATA]` status line until the `rearch-04` NDJSON sink lands; the `MOP_DATA` NDJSON record thereafter — same fields either way).
+- **[Trace]**: one `MOP_DATA` NDJSON record per load attempt (the out-of-step sink record introduced by `rearch-04-step-ndjson-telemetry`, which is stage 4 to this change's stage 7 — the sink has landed long before this applies).
 
 ### Error
 - Never propagates any exception to the caller on I/O or parse failure; all failures return null after emitting exactly one status record (INV-MOP-01, INV-MOP-21). `OutOfMemoryError` is no longer caught anywhere in the load path (see REMOVED "Load memory safety").
@@ -47,7 +47,7 @@ Absent-artifact behavior hardens from warn-and-continue to fail-fast: the jar si
 8. **Sanity check**: `package`/`mainActivity` comparison per the "MopData — Package / MainActivity Sanity Check" requirement (unchanged semantics).
 9. **Stats echo**: the artifact's `stats` block (generator-computed diagnostics: `widgetsTotal`, `flagged`, `droppedFlaggedNoId`, `orphanDialogs`, handler-join counters, `wtgEdges`) is carried through to the load status record without recomputation; it SHALL NOT influence any query result or the load outcome (the discipline of the former INV-MOP-31/32).
 
-Unknown JSON keys within a supported `formatVersion` are ignored for forward compatibility (INV-MOP-11). The file is read once with a single pre-sized allocation and parsed once into an `org.json` DOM. No cross-referencing, flag derivation, dialog re-keying, activity augmentation, or transition processing happens on-device (INV-MOP-35) — those semantics are generator requirements (see the `static-analysis-entrypoints` delta).
+Unknown JSON keys within a supported `formatVersion` are ignored (INV-MOP-11). This tolerance is not a compatibility affordance and adds nothing: it is the `org.json` DOM's default behavior — the *absence* of a check — so rejecting unknown keys would mean writing new code, not removing legacy code. Under the coordinated cut (design D8) generator and jar ship together, so an unknown key in a `formatVersion: 1` artifact is a generator↔jar skew signal, visible in the `stats` echo, not a version to accommodate. The file is read once with a single pre-sized allocation and parsed once into an `org.json` DOM. No cross-referencing, flag derivation, dialog re-keying, activity augmentation, or transition processing happens on-device (INV-MOP-35) — those semantics are generator requirements (see the `static-analysis-entrypoints` delta).
 
 #### Scenario: Compact cryptoapp fixture loads every consumed field
 - **WHEN** `MopData.load()` is called on the `cryptoapp.apk.mop.json` fixture derived from `cryptoapp.apk.gh60-fresh.json`
@@ -153,12 +153,12 @@ The production call site (`StatefulAgent` constructor) SHALL pass the runtime pa
 
 ### Requirement: MopData — Load Status Line and Fail-Fast
 
-`MopData.load` SHALL emit exactly one load status record per invocation, on both outcomes. Until the `rearch-04` NDJSON sink lands, the record is the `[APE-MOP-DATA]` key=value trace line; thereafter it is the out-of-step `MOP_DATA` NDJSON record — the field set is the same:
+`MopData.load` SHALL emit exactly one load status record per invocation, on both outcomes. The record is the out-of-step `MOP_DATA` NDJSON record of the event sink (`rearch-04-step-ndjson-telemetry`, stage 4):
 
 - success: `status=loaded formatVersion=<n> sourceDigest=<sha256> package=<pkg> widgets=<n> flagged=<n> droppedNoId=<n> wtgEdges=<n> mopActivities=<n> mopActsAugmented=<n> components=<n> handlersUnmatched=<n> syntheticLambda=<n> recovered=<n>` — counts sourced from the loaded structures and the artifact's generator-computed `stats` echo (`droppedNoId`, handler-join counters, `orphanDialogs` are host facts, echoed not recomputed)
 - failure: `status=rejected reason=<file-missing|parse-error|version-mismatch|package-mismatch>`
 
-The record goes to the standard `Logger` output (the `.trace` stream). It SHALL NOT be written to logcat: the rv-platform logcat parser owns that channel and foreign lines are forbidden. The reject reasons `too-large`, `oom`, and `incomplete` no longer exist (their mechanisms are deleted; incompleteness is a host-side generation precondition).
+The record goes to the `.trace` stream, written by the sink directly to `System.out` and never through `Logger` (INV-SNK-11). It SHALL NOT be written to logcat: the rv-platform logcat parser owns that channel and foreign lines are forbidden. The reject reasons `too-large`, `oom`, and `incomplete` no longer exist (their mechanisms are deleted; incompleteness is a host-side generation precondition).
 
 Fail-fast composition (kills the V21 silent-degradation class end to end):
 

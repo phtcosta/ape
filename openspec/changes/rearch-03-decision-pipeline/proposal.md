@@ -24,8 +24,8 @@ This change is **stage 3 of 7** of the re-architecture selected in `docs/analise
 ### Modified Capabilities
 
 - `action-selection`: the selection ladder requirement is restated as pipeline stages; behavior unchanged (parity-gated).
-- `llm-routing`: router decomposition; stage-owned preconditions and episode state; declared fallback.
-- `llm-infrastructure`: `LlmClient` (HTTP + circuit breaker) extracted as its own unit.
+- `llm-routing`: router decomposition; stage-owned preconditions and episode state; declared fallback. `Deterministic Dead-Pair Ban` is re-anchored with them — it normatizes `LlmRouter` and `selectAction()` by name, both of which this change deletes; the record and the check move onto `CoordinateMapper`, with key material, the k=5 death rule and the input-capable exemption untouched.
+- `llm-infrastructure`: `LlmClient` (HTTP + circuit breaker) extracted as its own unit; the `ScreenshotCapture` failure-stage seam keeps its mechanism and re-anchors its honesty note off the dismantled router.
 - `scoring-pipeline`: real config injection from `RunSpec`; no static `Config` reads in passes.
 - `component-triggering`: trigger expressed as `SideEffect` stage; semantics unchanged.
 - `exploration`: stagnation episode state ownership moves out of `StatefulAgent`.

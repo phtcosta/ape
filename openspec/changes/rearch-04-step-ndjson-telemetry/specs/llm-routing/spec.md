@@ -4,6 +4,8 @@
 
 Delta for `rearch-04-step-ndjson-telemetry`: LLM telemetry stops being its own stdout line family and becomes **sub-events of the step record** (event-sink capability). The `[APE-LLM-TEL]` and `[APE-LLM-ERROR]` lines are retired — each routing attempt appends one entry to the current step's `llm[]` array, so the call↔decision↔outcome join exists by construction instead of by a shared `step=` key. The aggregate summary lines are retired in favor of `RUN_END` counters; the `[APE-LLM-CONFIG]` manifest is subsumed by the `RUN_START` effective-plan echo (run-spec capability); the server-model acknowledgement becomes the `LLM_ACK` record. All counters, fields, and semantics (cause partition, repair provenance, dead-pair overlay, breaker-episode latch) are preserved — only the encoding changes. The `mopWeight*`-style behavior of the router is untouched: telemetry never decides (INV-SNK-07).
 
+`Deterministic Dead-Pair Ban` is restated here for the same reason and no other. It is the one requirement outside this capability's telemetry set that names the retired renderings directly — its outcome-feedback clause is anchored on the `[APE-OUTCOME]` line, and its ban-check clause and one scenario are anchored on `[APE-LLM-TEL]`. Left alone it would sync to the main spec demanding line formats that no longer exist anywhere, since nothing rewrites the trace back into the old family. The data is unaffected: the refusal survives as `result:"no_match"` with `reason:"dead_pair"` in the step's `llm[]` sub-event, and the overlay counter as `RUN_END.counters.llm.dead_pair`. The restatement is layered over `rearch-03-decision-pipeline`'s, which had already moved the record and the check onto `CoordinateMapper`.
+
 ## MODIFIED Requirements
 
 ### Requirement: LLM Telemetry Logging
@@ -84,6 +86,113 @@ The router SHALL emit one `{"type":"LLM_ACK","server_model":"<model>"}` record (
 - **WHEN** the first successful response reports `qwen3-vl-8b` and 200 further calls succeed
 - **THEN** exactly one `LLM_ACK` record SHALL appear in the trace
 - **AND** no `[APE-LLM-CONFIG-ACK]` line SHALL be emitted
+
+### Requirement: Deterministic Dead-Pair Ban
+
+Restated over the `rearch-03-decision-pipeline` text (which moved the record and the check onto `CoordinateMapper`). This stage changes only the *rendering*: the ban's refusal and its counter stop being a `[APE-LLM-TEL]` line and a summary line, and become an `llm[]` sub-event and a `RUN_END` counter. The mechanism, the keys, the k=5 death rule, the input-capable exemption and every measured justification are untouched.
+
+`CoordinateMapper` SHALL maintain a per-run, in-memory record of **dead pairs** — LLM decisions that already executed in this run without producing a new state — and SHALL refuse to return a result that resolves to a dead pair. Measured motivation: 25.6% of LLM calls (10,081/39,341) re-emit an already-executed (state, coordinate) pair, and those repeats produced **0 new states in 10,081 attempts** (Wilson CI [0.00–0.04]); the anti-repetition prompt instruction exists and is ignored. Banning by subtraction (removing the option) is the externally validated mechanism (Guardian: 36% repetition persists under instruction); the detection is deterministic in the harness — the model is never asked to self-reflect.
+
+**Ban keys** (the anchor is always the stable pair, NEVER a list index):
+- an `llm_tap` result is keyed by `(state.getStateKey(), pixelX, pixelY)` — exact emitted-coordinate equality;
+- a `matched` result is keyed by `(state.getStateKey(), widget stable id, eventType)`, where the widget stable id is **the action `Name`'s XPath** (`Name.toXPath()`) — the same widget identity used by `UICoverageTracker.widgetId` and by the MOP revisit cap. It is **not** a per-node identity: `GUITreeNode` exposes no XPath of its own, and a `Name` is an abstraction that may resolve to several nodes.
+
+**Granularity of the `matched` key, stated because it bounds what a ban means.** Since the key is `Name`-level, **banning one pair withdraws that action from every node the `Name` resolves to in that state**. Measured on the calibration corpus: 16.3% of targeted steps (23,441 of 144,174) resolve more than one node. This is accepted rather than avoided — a node-derived alternative such as `(activity, className, resourceId, actionType)` is coarser still, colliding on at least 18.3% of anchors and on 36.3% of those whose `resourceId` is empty, which is 57.6% of clicks — but it constrains interpretation: a dead-pair count is a count of **abstract** pairs, and SHALL NOT be reported as a count of physical widgets withdrawn.
+
+**Death rule (k=5, with input-capable widgets exempt):** a pair becomes dead after **five** executions whose recorded outcome has `new_state=false`. The threshold is uniform across every widget class the ban covers — there is no per-class *threshold* variation. An execution with `new_state=true` does not count toward death, and does not decrement or reset the accumulated count either: the counter only ever grows, and it counts unproductive executions of that exact pair.
+
+**Input-capable targets are exempt at any strike count.** A `matched` pair whose resolved target is input-capable SHALL never become dead, however many unproductive executions it accumulates. Input-capable means the widget class is one of `android.widget.EditText`, `android.widget.AutoCompleteTextView`, `android.widget.SearchView`, `androidx.appcompat.widget.SearchView` — the set the prompt builder already uses to decide whether to offer `type_text` (`ApePromptBuilder.INPUT_CLASS_NAMES`). The ban SHALL NOT carry a second, independently-maintained list of input classes: one definition of "input-capable" serves the prompt, the fixTextEdit conversion, and this exemption.
+
+The exemption is realized by **not recording strikes** for an input-capable target, rather than by filtering at the ban check. The consequences are deliberate and are what the scenarios assert: an exempt pair never enters the dead-pair record at all, so its ban key can never be consulted and found dead; and because the exemption keys on the *widget*, not the event type, it covers the text-entry action that the fixTextEdit conversion ("Coordinate Mapping") produces from a click on that same widget — the two mechanisms act on one widget set, not two.
+
+**The exemption applies to `matched` results only, and this is a property of the evidence, not an oversight.** An `llm_tap` result is an off-tree tap with no matched widget: it carries `matched_class=none` in 1,033 of 1,033 corpus occurrences, so no widget class is knowable at its ban key. No class-based exemption of any design can reach the `llm_tap` half of the ban.
+
+Why five, and what the exemption costs — measured on the 84 `cal_a1` runs of the calibration corpus (`experimento-cal/iter0`), which is the same 70% LLM configuration the decisive run's LLM arm uses.
+
+**The sweep must be read on the keys the ban actually uses.** An earlier reading of this measurement keyed *both* result types by `(state, pixel)`, because the recorded trace does not carry the widget XPath. Only `llm_tap` uses that key, and `llm_tap` is 15.9% of the decision stream; the other 84.1% is `matched`, which ships with the looser `Name`-level key above and therefore bans more. Both columns below come from the same replay:
+
+Every share below is computed against a denominator of **6,500 LLM decisions** — the reconstructed decision stream of the 84 `cal_a1` traces (80 main runs at `timeout=300` plus 4 smoke runs at `timeout=90`). Main-only the denominator is 6,440, which moves the k=5 share to 27.8% and leaves it inside the ceiling.
+
+| k | refused, `(state,pixel)` key | share | **refused, shipped keys** | **share** | new states lost |
+|---|---|---|---|---|---|
+| 1 | 3,161 | 48.6% | 3,847 | **59.2%** | 44 → 80 |
+| 2 | 2,283 | 35.1% | 2,975 | **45.8%** | 16 → 37 |
+| 3 | 1,813 | 27.9% | 2,441 | **37.6%** | 8 → 24 |
+| **5** | 1,305 | 20.1% | **1,788** | **27.5%** | 5 → **9** |
+| 12 | 604 | 9.3% | 881 | 13.6% | 1 → 2 |
+
+- The refused block is nearly unproductive at every threshold, so the death rule is not a close call on evidence; the choice of k is about how much of the arm's decision stream the ban is allowed to take over.
+- k=1 maximizes raw net gain but refuses **59.2%** of the LLM's answers under the shipped keys. At that rate the LLM arm's behavior is substantially the SATA fallback's, and the arm stops being interpretable as "the LLM exploring" — which is the only thing the decisive run exists to measure. **The threshold is an experimental-validity choice, not only an optimization**, and the criterion it enforces is *refusal below 30%*. Under the shipped keys k=3 sits at 37.6% and fails that criterion; **k=5 sits at 27.5% and meets it**, at the cost of 9 new states lost instead of 8.
+- **The table's shares are measured without the input-capable exemption, so 27.5% is now an upper bound.** Exempting a class can only remove pairs from the refused block, never add to it, so the shipped rule refuses *at most* 27.5% and the sub-30% criterion is met a fortiori. **The exact post-exemption share was not re-derived from the corpus** — the bound is what the criterion needs, and the sweep was not re-run for a number that could only move in the safe direction. A reader wanting the realized share must take it from the decisive run's own telemetry, where the `dead_pair` counter in `RUN_END.counters.llm` reports it directly.
+- **k=5 raises the floor under every class the exception list named except `EditText`, which keeps its exemption by name.** The list this rule replaces would have granted `Switch`/`CheckBox`/`RadioButton` a threshold of k=2; k=5 grants them 5, so each is protected at least as well without a class test. Those classes are not rare — at k=1 they account for 81 of 2,586 banned pairs (3.1%) in the calibration corpus, with `Spinner` and `CheckedTextView` adding another 25 — so this is dominance by arithmetic, not by rarity. `EditText` is the one member the arithmetic does not cover: the list exempted it outright, and no finite k reproduces an exemption, which is why it survives as the input-capable carve-out above.
+- The uniform threshold also reaches cases no class-name enumeration can: N-ary selection widgets (`Spinner`, where one coordinate opens many options — 10 banned pairs at k=1, dropping to 2 by k=3 and fewer still at k=5), Material/AppCompat subclasses whose simple names differ from the base classes (`SwitchCompat`, `MaterialCheckBox` — the corpus does show AndroidX simple names such as `LinearLayoutCompat`, `FloatingActionButton` and `CardView` reaching the tree, so the divergence is real), and Compose trees that expose no meaningful widget class name at all. The input-capable exemption is a class-name test and inherits exactly this limitation: an input widget whose class name is not one of the four is banned like any other.
+
+**Scope limit (stated because it bounds what this mechanism can be credited with):** the ban check runs *after* `mapToModelAction` returns — the screenshot, the HTTP call and the parse have already completed. The ban changes which action executes; it does NOT reduce the LLM arm's per-step latency cost. In the calibration corpus that cost is 35% of a 300 s run's budget, and it is the dominant reason the LLM arm executes 0.622× the steps and discovers 0.729× the distinct states of the algorithmic arm on the same wall clock. This mechanism raises yield per decision; it does not address throughput, and it is not expected to close that gap on its own.
+
+**Outcome feedback:** `StatefulAgent` SHALL report the outcome of each executed LLM-originated decision to `CoordinateMapper` — reached through `RunContext`'s LLM units, via `recordLlmOutcome(...)` — at the point where `new_state` is computed for the step record's `out` section, using the same single-shot, reference-equality-guarded buffered-decision discipline that closes the record (`event-sink` INV-SNK-08). The key material and strike semantics are unchanged by the decomposition; only the owner of the record moves. Only LLM-originated decisions feed the ban record; SATA-selected actions are never banned.
+
+**Ban check site and behavior:** the check lives in `CoordinateMapper`, at the end of its mapping step inside `LlmEngine.selectAction()` (step 8 of the Action Selection Pipeline): once a `matched` or `llm_tap` result is mapped and before it is handed back, `CoordinateMapper` SHALL compute the result's ban key; when the key is dead, the engine SHALL return null — the declared fallback, the same caller-visible path as `no_match`, decided by the remainder of the assembled pipeline (`decision-pipeline` INV-DP-11). The banned decision SHALL be recorded as an `llm[]` sub-event on the current step's record carrying `result:"no_match"` and `reason:"dead_pair"` (`event-sink` capability), and SHALL increment both `noMatchCount` and the `dead_pair` overlay counter reported in `RUN_END.counters.llm`. The ban SHALL NOT record a breaker failure through `LlmClient` — the LLM pipeline succeeded; only its answer was refused — so a ban streak can never open the circuit breaker.
+
+**Memory scope:** the ban record is per-run and in-memory only; no persistence, no cross-run state.
+
+**Falsification gate (protocol, recorded here because it defines B1's success criterion):** bucket D (dead-pair repeats) MUST fall to ≈0 in the decisive-run telemetry BEFORE any new-state gain is credited to this mechanism; if bucket D ≈ 0 and new states do not rise, the ban is judged ineffective.
+
+#### Scenario: repeated dead llm_tap is banned
+
+- **WHEN** an `llm_tap` at `(500, 499)` on state S1 executed earlier in the run and its recorded outcome had `new_state=false`
+- **AND** a later `LlmEngine.selectAction()` on state S1 resolves to an `llm_tap` at the same `(500, 499)`
+- **THEN** the engine SHALL return null and the remainder of the pipeline SHALL decide the step
+- **AND** the step's `llm[]` sub-event SHALL carry `result:"no_match"` and `reason:"dead_pair"`
+- **AND** no breaker failure SHALL be recorded through `LlmClient` for this decision
+
+#### Scenario: pair survives four dead executions and dies on the fifth
+
+- **WHEN** a `matched` click on Button "Help" (state S2) executes four times with `new_state=false`
+- **THEN** the pair (S2, that action `Name`'s XPath, click) SHALL NOT yet be dead, and a fifth LLM answer resolving to it SHALL be returned normally
+- **AND** after that fifth execution also records `new_state=false` the pair SHALL be dead
+- **AND** the next LLM answer resolving to it SHALL be banned
+
+#### Scenario: threshold is uniform across the widget classes the ban covers
+
+- **WHEN** one pair targets a `Switch`, another a `Spinner`, and another a plain `Button`, and each executes five times with `new_state=false`
+- **THEN** all three pairs SHALL be dead at the same threshold
+- **AND** no covered widget class SHALL receive a threshold other than five
+
+#### Scenario: an input-capable target is never dead
+
+- **WHEN** a `matched` pair targets an `android.widget.EditText` and executes six times with `new_state=false` — one more than the threshold
+- **THEN** the pair SHALL NOT be dead, and a subsequent LLM answer resolving to it SHALL be returned normally
+- **AND** the pair SHALL NOT appear in the dead-pair record at all, because no strike was ever recorded for it
+- **AND** the same SHALL hold for `android.widget.AutoCompleteTextView`, `android.widget.SearchView` and `androidx.appcompat.widget.SearchView`
+
+#### Scenario: the exemption follows the widget through the fixTextEdit conversion
+
+- **WHEN** an LLM `click` resolves to a `SearchView` and the fixTextEdit conversion ("Coordinate Mapping") turns it into a text-entry action on that widget
+- **THEN** the resulting text-entry decision SHALL also be exempt, because the exemption keys on the target widget rather than on the event type
+- **AND** repeated unproductive executions of it SHALL never produce `reason=dead_pair`
+
+#### Scenario: an off-tree tap cannot be exempted
+
+- **WHEN** an `llm_tap` result is banned after five unproductive executions at the same coordinate on the same state
+- **THEN** the ban SHALL apply regardless of what is rendered at that coordinate
+- **AND** no input-capable exemption SHALL be consulted, because an `llm_tap` has no matched widget and therefore no widget class
+
+#### Scenario: a ban withdraws the action from every node the Name resolves to
+
+- **WHEN** a `matched` pair dies whose action `Name` resolves to three nodes in that state
+- **THEN** subsequent LLM answers resolving to that `Name` and event type SHALL be banned regardless of which of the three nodes the coordinate falls in
+- **AND** the ban count SHALL be reported as one dead pair, never as three widgets withdrawn
+
+#### Scenario: productive execution does not count toward death
+
+- **WHEN** a pair executes with `new_state=false`, then with `new_state=true`, then with `new_state=false`
+- **THEN** the pair's accumulated dead-execution count SHALL be 2 (the productive execution neither counts nor resets the count)
+- **AND** the pair SHALL NOT yet be dead
+
+#### Scenario: ban is per-run
+
+- **WHEN** a new run starts on the same APK
+- **THEN** the ban record SHALL be empty
 
 ## REMOVED Requirements
 

@@ -60,7 +60,7 @@ Each surviving variant SHALL be expressed as **preset + explicit overrides** (IN
 
 Preset assignment: `default`/`sata`/`random` → `aperv`; `sata_mop_widget`/`sata_mop`/`sata_mop_activity`/`sata_mop_act_frontier`/`mop_on_llm_off`/`mop_off_llm_off` → `mop`; `sata_llm` → `llm`; all remaining LLM arms → `llm_mop`. Ablations (e.g. the frontier reach package, the gh90 MOP-off contrast) SHALL be expressed as named override sets, never as new presets.
 
-`sata_mop` SHALL remain the back-compat alias of `sata_mop_widget`, bound to the same object. `default` SHALL remain equivalent to `sata`. The six gh43 arms remain frozen in the sense that matters — their **effective configuration** is preserved (verified by the regeneration migration check) — while their source shape becomes preset + overrides like every other arm; the `_ARM_DEFINING_EXEMPT` machinery is deleted with the guard it exempted from.
+`sata_mop` and `sata_mop_widget` SHALL remain bound to the same object. `sata_mop` is the **primary** of the pair and cannot be renamed or folded away: it is the resume-identity key and the consolidation column key of the frozen corpus — 4,096 `aperv:sata_mop.trace` artifacts and 1,066 files under `results/` carrying the exact token — while `sata_mop_widget` has produced zero artifacts. Renaming `sata_mop` would orphan every one of those runs from resume and every one of those rows from consolidation. This is a data-identity constraint (INV-APV-42), not code compatibility: nothing in the tool adapts to an old shape, and the pair costs one dict binding. `default` SHALL remain equivalent to `sata`. The six gh43 arms remain frozen in the sense that matters — their **effective configuration** is preserved (verified by the regeneration migration check) — while their source shape becomes preset + overrides like every other arm; the `_ARM_DEFINING_EXEMPT` machinery is deleted with the guard it exempted from.
 
 Every arm's effective configuration after re-expression SHALL be identical to its pre-change effective configuration (INV-APV-44); any intentional divergence requires owner approval and a new arm name (INV-APV-42).
 
@@ -83,10 +83,11 @@ Every arm's effective configuration after re-expression SHALL be identical to it
 - **AND** the difference SHALL be exactly the MOP-off deltas (the five zeroed weights and `activity_trigger_enabled=False`), readable from the override dicts without any expansion machinery
 - **AND** `mop_off_llm_off` SHALL keep `mop_data="static_analysis"` (the control removes MOP guidance, not the substrate document or navigation)
 
-#### Scenario: Alias preserved
+#### Scenario: The frozen arm name keeps resolving
 
 - **WHEN** `get_variants()` is read
-- **THEN** `variants["sata_mop"]` SHALL be the same object as `variants["sata_mop_widget"]`
+- **THEN** `variants["sata_mop"]` SHALL be present and SHALL be the same object as `variants["sata_mop_widget"]`
+- **AND** a resume over an existing `aperv:sata_mop` result directory SHALL still match its arm
 
 #### Scenario: Retired variants are absent
 
@@ -139,25 +140,24 @@ The whitelist SHALL shrink from the pre-change `["sata", "random", "bfs", "dfs"]
 6. Push `ape.properties` generated as: `ape.preset=<preset>` first; `ape.mopDataPath=/data/local/tmp/static_analysis.json` when `mop_json_pushed`; then one `ape.<key>=<value>` line per entry of `overrides`, translated through `APERV_PROPERTY_MAPPING`, with Python bools serialized lowercase. The full property expansion of the pre-change mapping loop SHALL NOT be performed
 7. Capture LLM provenance to the sidecar for arms with `llm_url` in effect (unchanged, INV-APV-33)
 8. Build and execute the main command (`--ape <strategy>`, `-s <seed>` when configured), capturing stdout+stderr to `task.result.trace_file` (the captured stream is the NDJSON trace, per `rearch-04-step-ndjson-telemetry`)
-9. On `RVCommandTimeoutError`: log as expected behaviour, run the collection steps 11–12 below, then re-raise as `RVToolTimeoutError` — timeout is the normal exit for exploration runs, so collection MUST NOT be skipped on it
+9. On `RVCommandTimeoutError`: log as expected behaviour, run the collection step 11 below, then re-raise as `RVToolTimeoutError` — timeout is the normal exit for exploration runs, so collection MUST NOT be skipped on it
 10. Run the empty-trace check (`_check_empty_trace`, unchanged — a 0-byte NDJSON trace is still 0 bytes)
 11. **Gzip at collection** (unchanged from `rearch-04-step-ndjson-telemetry`): compress the raw NDJSON capture to `<trace>.ndjson.gz` next to the trace file. On failure, log a WARNING and continue
-12. **Temporary legacy conversion** (unchanged from `rearch-04-step-ndjson-telemetry`): run the NDJSON→legacy converter over the raw capture and write the reconstructed legacy line family (`[APE-STEP]`, `[APE-OUTCOME]`, `[APE-LLM-TEL]`, `[APE-LLM-ERROR]`, `[APE-LLM-CONFIG]`, `[APE-LLM-CONFIG-ACK]`, `[APE-MOP-DATA]`, `[APE-RV] LLM Summary` / `Decision ratio`) to `task.result.trace_file` itself, so existing parsers keep reading exactly the file and format they read today. On failure, log a WARNING and leave the raw NDJSON trace in place
 
-Steps 11–12 SHALL NOT inspect, validate, or act on the trace's content beyond mechanical transformation: no `RUN_START`/`RUN_END` presence check, no exit-code interpretation beyond the existing debug log, no task-status change (owner decision D5). The converter SHALL reconstruct legacy semantics mechanically: expand `act`/`st` dictionary IDs to activity/state strings, re-emit omitted defaults (`mop=0 mop_frontier=0 wtg=0 coverage=0 menu=0 form=0`, `new_state=false`, `activity_changed=false`), re-derive `activity_has_mop` from the `ACT` entries, re-expand `t` to epoch `clock=` via `RUN_START.t0`, split `llm[]` sub-events back into per-call lines keyed by the record's `s`, and expand `RUN_END.counters` into the summary lines. The converter is temporary: it is deleted when the analysis pipeline consumes NDJSON natively (a later change; not triggered here).
+Step 11 SHALL NOT inspect, validate, or act on the trace's content: no `RUN_START`/`RUN_END` presence check, no exit-code interpretation beyond the existing debug log, no task-status change (owner decision D5). `task.result.trace_file` SHALL remain the raw NDJSON capture, byte-for-byte, after collection completes — no NDJSON→legacy conversion step exists (`rearch-04-step-ndjson-telemetry` design D-8), and analysis consumes the records through the native reader instead.
 
 The tool SHALL NOT read back, parse, or validate any jar output (`RUN_START` included) — provenance is write-only in the trace (INV-APV-43, owner decision D1).
 
-#### Scenario: Post-run conversion keeps current parsers working
+#### Scenario: Collection leaves the NDJSON trace intact
 
 - **WHEN** a run completes and the captured `task.result.trace_file` contains NDJSON records
-- **THEN** after step 12, `task.result.trace_file` SHALL contain the legacy `key=value` line family reconstructing every field current parsers consume
-- **AND** `<trace>.ndjson.gz` SHALL contain the compressed raw NDJSON capture
+- **THEN** after step 11, `task.result.trace_file` SHALL still hold exactly the captured NDJSON records, unmodified
+- **AND** `<trace>.ndjson.gz` SHALL contain the compressed copy
 
-#### Scenario: Converter failure is non-fatal and write-only
+#### Scenario: Gzip failure is non-fatal and write-only
 
-- **WHEN** the converter raises on a malformed line
-- **THEN** a WARNING SHALL be logged, the raw NDJSON trace SHALL remain at `task.result.trace_file`, and the task SHALL complete with the same status it would have had otherwise (D5: no validation, no status logic)
+- **WHEN** compression raises
+- **THEN** a WARNING SHALL be logged, the uncompressed NDJSON trace SHALL remain at `task.result.trace_file`, and the task SHALL complete with the same status it would have had otherwise (D5: no validation, no status logic)
 
 #### Scenario: No exit contract
 
