@@ -9,26 +9,26 @@ group.
 
 ## 1. Investigation spike — drive the ladder once on the JVM
 
-- [ ] 1.1 Spike test (temporary, refined into group 2): Unsafe-allocate a `SataAgent` via the
+- [x] 1.1 Spike test (temporary, refined into group 2): Unsafe-allocate a `SataAgent` via the
       `PipelineParityTest.java:56-116` scaffolding, inject the fields
       `selectNewActionNonnull()` reads (`newState`, `newGUITree`, `timestamp`, `model`,
       `_coverageTracker`, `_budgetTracker`, `_mopData=null`, `_llmRouter=null`,
       `scoringContext`, `scoringPipeline`, `epsilon`, `actionCounters`, graph wiring), call it
       once on a synthetic 3-action state, and assert a non-null action returns
-- [ ] 1.2 Enumerate the definitive injected-field + post-step bookkeeping list (design D7):
+- [x] 1.2 Enumerate the definitive injected-field + post-step bookkeeping list (design D7):
       which `markVisited`/timestamp/`graphStableCounter`/`_isNewState` updates the driver must
       replay for multi-step runs; record the list in the spike's javadoc for transfer to
       `OracleScaffold`
-- [ ] 1.3 Map the JVM-safe SATA-chain rungs (design D6): confirm which of the seven rungs
+- [x] 1.3 Map the JVM-safe SATA-chain rungs (design D6): confirm which of the seven rungs
       (`selectNewActionFromBuffer` … `handleNullAction`) execute without
       `NoClassDefFoundError` on synthetic states, and which branches (trivial-activity /
       restart paths reaching `AndroidDevice.getFocusedStack`, `SataAgent.java:1270,1510`)
       scenarios must steer around; record in the spike javadoc
-- [ ] 1.4 Verify the second RNG stream seam: a `SataAgent` test subclass overriding
+- [x] 1.4 Verify the second RNG stream seam: a `SataAgent` test subclass overriding
       `getRandom()` (`ApeAgent.java:322`) reaches the epsilon-greedy draw
       (`SataAgent.java:1330`) and the component-trigger draw (`:548`) without a
       `MonkeySourceApe`
-- [ ] 1.5 Checkpoint: `mvn test` green with the spike in place
+- [x] 1.5 Checkpoint: `mvn test` green with the spike in place
 
 ## 2. Oracle scaffold and synthetic fixtures
 
