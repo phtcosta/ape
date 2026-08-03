@@ -66,18 +66,18 @@ group.
 
 ## 3. Scripted LLM router
 
-- [ ] 3.1 Create `ScriptedLlmRouter extends LlmRouter` (constructor is JVM-safe,
+- [x] 3.1 Create `ScriptedLlmRouter extends LlmRouter` (constructor is JVM-safe,
       `LlmRouter.java:123-161`): overrides `shouldRouteNewState` (honors `isNewState`),
       `shouldRouteStagnation` (honors `firedThisEpisode`), `shouldRouteRandom`, and
       `selectAction` (accept-by-named-selector / decline / timeout); never HTTP, never
       screenshot, never breaker transitions (INV-ORA-03)
-- [ ] 3.2 Script bookkeeping: consumed-entry tracking; exhaustion and unconsumed mandatory
+- [x] 3.2 Script bookkeeping: consumed-entry tracking; exhaustion and unconsumed mandatory
       entries throw with the entry named (spec "Unconsumed script entry fails loudly")
-- [ ] 3.3 `ScriptedLlmRouterTest`: accept returns the deterministic member of the offered
+- [x] 3.3 `ScriptedLlmRouterTest`: accept returns the deterministic member of the offered
       list; decline/timeout both return null and are distinguishable by provenance;
       `firedThisEpisode=true` suppresses a scripted stagnation route; no network syscall
       (constructor + all overrides run with `Config.llmUrl` unset)
-- [ ] 3.4 Checkpoint: `mvn test` green
+- [x] 3.4 Checkpoint: `mvn test` green
 
 ## 4. Golden format: DecisionRecord, GoldenFile, comparator
 
