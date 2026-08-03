@@ -137,7 +137,7 @@ public class OracleSpikeTest {
     // ---- reflection scaffolding (generalized from PipelineParityTest:56-116) -------------
 
     @SuppressWarnings("unchecked")
-    private static <T> T allocate(Class<T> clazz) throws Exception {
+    static <T> T allocate(Class<T> clazz) throws Exception {
         Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
         Field theUnsafe = unsafeClass.getDeclaredField("theUnsafe");
         theUnsafe.setAccessible(true);
@@ -146,7 +146,7 @@ public class OracleSpikeTest {
     }
 
     /** Sets a field declared anywhere in {@code obj}'s class hierarchy. */
-    private static void setField(Object obj, String name, Object value) throws Exception {
+    static void setField(Object obj, String name, Object value) throws Exception {
         Class<?> c = obj.getClass();
         while (c != null) {
             try {
@@ -161,7 +161,7 @@ public class OracleSpikeTest {
         throw new NoSuchFieldException(name);
     }
 
-    private static Object getField(Object obj, String name) throws Exception {
+    static Object getField(Object obj, String name) throws Exception {
         Class<?> c = obj.getClass();
         while (c != null) {
             try {
@@ -185,7 +185,7 @@ public class OracleSpikeTest {
     // ---- synthetic fixtures --------------------------------------------------------------
 
     /** A local {@link Name} whose xpath is its identity — the StateTest/LlmRouterDeadPairTest idiom. */
-    private static Name testName(final String xpath) {
+    static Name testName(final String xpath) {
         return new Name() {
             @Override public Namer getNamer() { return null; }
             @Override public Name getLocalName() { return this; }
@@ -198,12 +198,12 @@ public class OracleSpikeTest {
         };
     }
 
-    private static State syntheticState(String activity, int widgetCount) throws Exception {
+    static State syntheticState(String activity, int widgetCount) throws Exception {
         return syntheticState(activity, widgetCount, false);
     }
 
     /** Marks an action visited the way the model does: a first-visit timestamp and a visit count. */
-    private static void markVisited(ModelAction action) throws Exception {
+    static void markVisited(ModelAction action) throws Exception {
         setField(action, "firstVisitTimestamp", 1);
         Field vc = Class.forName("com.android.commands.monkey.ape.model.GraphElement")
                 .getDeclaredField("visitedCount");
@@ -216,7 +216,7 @@ public class OracleSpikeTest {
      * {@code allVisited}, every action carries a visit, which is what drives the ladder past the
      * EARLY_STAGE rungs (they select unvisited actions) down into EPSILON_GREEDY.
      */
-    private static State syntheticState(String activity, int widgetCount, boolean allVisited)
+    static State syntheticState(String activity, int widgetCount, boolean allVisited)
             throws Exception {
         StateKey sk = allocate(StateKey.class);
         setField(sk, "activity", activity);
@@ -270,7 +270,7 @@ public class OracleSpikeTest {
         return state;
     }
 
-    private static ScoringContext ctxFor(final MopData mopData, final UICoverageTracker tracker,
+    static ScoringContext ctxFor(final MopData mopData, final UICoverageTracker tracker,
                                          final Graph graph) {
         return new ScoringContext() {
             @Override public MopData getMopData() { return mopData; }
@@ -287,7 +287,7 @@ public class OracleSpikeTest {
      * task 1.2.
      */
     /** Wires an already-allocated agent (or subclass) into the `aperv` preset profile. */
-    private static void wireAperv(SataAgent agent, State newState, long seed) throws Exception {
+    static void wireAperv(SataAgent agent, State newState, long seed) throws Exception {
         Graph graph = new Graph();
         Model model = new Model(graph);
         UICoverageTracker tracker = new UICoverageTracker();
@@ -360,7 +360,7 @@ public class OracleSpikeTest {
         Action ladder() { return selectNewActionNonnull(); }
     }
 
-    private static SpikeSataAgent apervAgent(State newState, long seed) throws Exception {
+    static SpikeSataAgent apervAgent(State newState, long seed) throws Exception {
         SpikeSataAgent agent = allocate(SpikeSataAgent.class);
         wireAperv(agent, newState, seed);
         agent.pinned = new Random(seed);
@@ -402,21 +402,22 @@ public class OracleSpikeTest {
     }
 
     /**
-     * Finding 1.4-a, pinned as a test: with the prescribed wiring (null {@code ape}, overridden
-     * {@code getRandom()}), the ladder dies inside {@code egreedy()} — the override does NOT
-     * intercept the epsilon-greedy draw, contradicting design D5 and task 1.4.
+     * Finding 1.4-a, after its resolution. As found, this scenario threw
+     * {@code NullPointerException: ... because "this.ape" is null} inside {@code egreedy()}:
+     * the override did not intercept the epsilon-greedy draw, contradicting design D5 and task
+     * 1.4. Task 1.6 routed that draw through {@code getRandom()}, so the rung now runs with a
+     * null {@code ape}. The permanent guard on the seam is {@link EgreedySeamTest}; this test
+     * stays only until the spike is folded into {@code OracleScaffold}.
      */
     @Test
-    public void spike14_egreedyBypassesTheGetRandomOverride() throws Exception {
+    public void spike14_egreedyReachesTheOverrideAfterTheSeamLanded() throws Exception {
         State state = syntheticState("com.example.MainActivity", 3, true);
         SpikeSataAgent agent = apervAgent(state, 42L); // egreedyOverride left null → real egreedy()
 
-        try {
-            agent.ladder();
-            fail("expected the ape.getRandom() read at SataAgent.java:1330 to NPE");
-        } catch (NullPointerException expected) {
-            assertTrue("NPE names the agent's ape field, not the overridable getRandom()",
-                    String.valueOf(expected.getMessage()).contains("this.ape"));
-        }
+        Action selected = agent.ladder();
+
+        assertNotNull(selected);
+        assertEquals("the production coin flip ran", 1, agent.egreedyCalls);
+        assertTrue("and drew from the overridden stream", agent.getRandomCalls >= 1);
     }
 }

@@ -32,8 +32,13 @@ Current state, verified at `5dcf225` (file:line):
    (report V5) and must be pinned.
 5. **Seeding**: `Monkey.java:697` seeds `mRandom = new Random(mSeed)` and `:731` seeds
    `RandomHelper.seed(mSeed)` — two streams from one seed. Agents draw from **both**:
-   `RandomHelper` statics, and `ape.getRandom()` (`ApeAgent.java:322-323`, e.g.
-   `SataAgent.java:1330`, and the component-trigger draw at `:548`).
+   `RandomHelper` statics, and `ape.getRandom()` (`ApeAgent.java:322-323`, e.g. the
+   component-trigger draw at `SataAgent.java:548`). **Verified 2026-08-03 (spike finding
+   1.4-a)**: the agent-side draws are *not* uniform in how they reach that stream. Most go
+   through the overridable `getRandom()` — the epsilon-greedy roulette (`:681`), the
+   component trigger (`:548`), `handleNullAction` (`StatefulAgent.java:1695,1706,1711`) — but
+   `egreedy()` reads `ape.getRandom()` **directly** at `:1330`, bypassing it. That one line is
+   what this change edits in production (D5, INV-ORA-01).
 6. **LLM seams**: `_llmRouter` is a protected field (`StatefulAgent.java:162`), constructed at
    `:194` only when `Config.llmUrl != null`. `LlmRouter(java.util.Random)`
    (`LlmRouter.java:123-161`) performs no I/O and constructs on the JVM
@@ -119,7 +124,8 @@ GoldenFile (NDJSON, org.json)
 | Deterministic LLM stubbing | `ScriptedLlmRouter` | `ScriptedLlmRouterTest` (no network, honors agent-side arguments, script exhaustion fails loudly) |
 | Deliberate regeneration | capture mode behind `-Dape.oracle.regenerate`, goldens README | `GoldenFileTest` (default mode never writes) + review |
 | INV-ORA-02 determinism | `OracleScaffold` seeding (both streams) | double-capture identity test in `OracleDriverTest` |
-| INV-ORA-01 no production change | change discipline | `git diff --stat src/main/java` empty at verify |
+| INV-ORA-01 test-tree confinement | change discipline | `git diff --stat src/main/java` shows exactly the one-line `egreedy()` seam and nothing else, at verify |
+| INV-ORA-01 seam stays overridable | `SataAgent.egreedy()` calling `getRandom()` | `EgreedySeamTest` (a subclass override intercepts the coin flip; the ladder completes with a null `ape`) |
 
 ## Goals / Non-Goals
 
@@ -248,10 +254,33 @@ format; the oracle must not couple to it).
 
 ### D5 — Determinism: both RNG streams pinned; capture == replay by construction
 
-`RandomHelper.seed(seed)` in `@Before` (per `RandomHelperSeedTest`) pins the static stream;
-`OracleSataAgent.getRandom()` returns a per-run `new Random(seed)` and pins the
-`ape.getRandom()` stream without needing a `MonkeySourceApe` (the field `ape` stays null; the
-override is the only place the ladder reaches it when `componentPercentage > 0`). The
+`RandomHelper.seed(seed)` in `@Before` (per `RandomHelperSeedTest`) pins the static stream —
+which is also what the EARLY_STAGE roulette draws from (`RandomHelper.randomPickWithPriorityRecorded`,
+`SataAgent.java:1645`), the rung a fresh state actually selects through.
+`OracleSataAgent.getRandom()` returns a per-run `new Random(seed)` and pins the agent-side
+stream without needing a `MonkeySourceApe` (the field `ape` stays null). What that override
+reaches, verified in the tree rather than assumed (spike finding 1.4-a): the epsilon-greedy
+roulette (`SataAgent.java:681`), the component-trigger draw (`:548`), and `handleNullAction`
+(`StatefulAgent.java:1695,1706,1711`).
+
+**It did not reach the epsilon-greedy coin flip, and that is why this change touches production
+once.** `egreedy()` reads `ape.getRandom()` directly (`SataAgent.java:1330`) instead of the
+`getRandom()` every other draw goes through, so the prescribed wiring threw
+`NullPointerException: ... because "this.ape" is null` the first time the chain fell past
+EARLY_STAGE — taking with it *both* legs of the rung, the least-visited pick and the roulette.
+The harness cannot answer this with an `ape`: `MonkeySourceApe` does not class-load off device,
+and stubbing `android.*` toward it did not converge in three steps, the last of which would have
+required inventing a `Build.VERSION.SDK_INT` the production code branches on. Owner decision of
+2026-08-03: change the line to `getRandom()`, in this stage. It is behavior-identical in
+production (`ApeAgent.getRandom()` is literally `return ape.getRandom()`) and it follows what
+this codebase already does for testability — `State.beatsLeastVisited`,
+`ForeignActivityGuard.shouldModel` and `SataAgent.requiresSynthesizedResolution` are all pure
+seams extracted for exactly this reason. The carve-out is recorded in INV-ORA-01 and guarded by
+a test that fails if the seam is ever re-inlined. The alternative — leaving the rung outside the
+boundary — was rejected because `State.greedyPickLeastVisited` sits behind that flip, and the
+artifact-vs-code verification (AC7) names it the highest-leverage unguarded surface of stage 3:
+an oracle that cannot reach it would be green by construction across exactly the change most
+likely to break it. The
 double-capture identity test (same scaffold, seed, scenario, preset run twice ⇒ identical
 record lists) is part of the suite, so nondeterminism in the harness itself is a test failure,
 not a mystery diff. `StringCache` state is snapshot/restored if a scenario ever reaches input
@@ -269,6 +298,28 @@ established `Rect.java` pattern; framework stubs mimic AOSP semantics and carry 
 The design accepts that some SATA-chain rungs (`selectNewActionBackToActivity` restart paths,
 trivial-activity navigation reaching `getFocusedStack`) stay uncaptured; the spec names the
 boundary and task 1 verifies exactly which rungs the scenarios exercise.
+
+**Where the boundary actually fell** (task-1 spike, 2026-08-03). `selectNewActionBackToActivity`
+is safe *because of its own guard*: it returns at `SataAgent.java:1267-1269` while
+`backToActivity` is null, before touching `AndroidDevice.getFocusedStack()`. That field is
+therefore a scenario-level control, and a scenario that sets it leaves the boundary — the
+scaffold documents it as such. Buffer, both early-stage rungs, trivial-activity (an empty graph
+has fewer activity nodes than `trivialActivityRankThreshold`) and `handleNullAction` all execute
+unmodified; epsilon-greedy executes once the D5 seam is in place. Two further constraints the
+spike established:
+
+- **1.1-a — the ladder cannot be entered reflectively.** `Class.getDeclaredMethod` runs
+  `getDeclaredMethods0`, which resolves *every* declared signature of the class, and
+  `SataAgent.onActivityBlocked(ComponentName)` makes that die with `NoClassDefFoundError:
+  android/content/ComponentName`. A compiled call from a subclass resolves only the invoked
+  signature. `OracleSataAgent` is therefore not merely the RNG seam — it is the only entry point
+  into `selectNewActionNonnull()`, and its `ladder()` accessor is load-bearing.
+- **1.2-b — action validity and priority are scripted preconditions.** The oracle enters below
+  `adjustActionsByGUITree()`, so nothing has assigned either: `valid` defaults to false and
+  `ENABLED_VALID` excludes it, while `State.countActionPriority` throws `IllegalStateException`
+  on any included action whose priority is ≤ 0. The script declares both per action, which is
+  also precisely what keeps the goldens independent of every scoring weight (the boundary the
+  capture requirement draws in the spec).
 
 ### D7 — Post-step bookkeeping is scripted, minimal, and explicit
 

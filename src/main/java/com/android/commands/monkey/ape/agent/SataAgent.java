@@ -1327,7 +1327,12 @@ public class SataAgent extends StatefulAgent {
 
     protected boolean egreedy() {
         double effectiveEpsilon = computeDynamicEpsilon();
-        double v = ape.getRandom().nextDouble();
+        // The agent's RNG is reached through getRandom() (ApeAgent:322, `return ape.getRandom()`),
+        // the same accessor the roulette (:681), the component trigger (:548) and handleNullAction
+        // already use. Identical stream, and it is what lets a test subclass pin this coin flip:
+        // the harness has no MonkeySourceApe to put in `ape`, so reading the field directly closed
+        // both legs of this rung to the parity oracle (rearch-01, INV-ORA-01).
+        double v = getRandom().nextDouble();
         Logger.iformat("EGreedy value=%f, epsilon=%f.", v, effectiveEpsilon);
         if (v < effectiveEpsilon) {
             return false;

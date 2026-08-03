@@ -2,9 +2,11 @@
 
 **Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. **This stage owns the ordering constraint the shared branch makes easy to violate**: the goldens are captured from pre-change code and MUST be committed on `rearch` before the first production edit of stage 2 — capturing or regenerating them after any stage-2/3 edit makes the oracle validate the migration against itself (procedure doc §5).
 
-Test infrastructure only: every task writes under `src/test/java`, `src/test/resources`, or
-this change's artifacts. **No task touches `src/main/java/`** (INV-ORA-01) — a stage-1 review
-gate, not a hope. Group order is dependency order; `mvn test` is the checkpoint after every
+Test infrastructure, with exactly one exception: every task writes under `src/test/java`,
+`src/test/resources`, or this change's artifacts, and **only task 1.6 touches `src/main/java/`**
+— the one-line `egreedy()` RNG seam carved out in INV-ORA-01, without which the epsilon-greedy
+rung cannot be captured at all. That count is a stage-1 review gate, not a hope: task 9.1 checks
+it against the diff. Group order is dependency order; `mvn test` is the checkpoint after every
 group.
 
 ## 1. Investigation spike — drive the ladder once on the JVM
@@ -27,8 +29,16 @@ group.
 - [x] 1.4 Verify the second RNG stream seam: a `SataAgent` test subclass overriding
       `getRandom()` (`ApeAgent.java:322`) reaches the epsilon-greedy draw
       (`SataAgent.java:1330`) and the component-trigger draw (`:548`) without a
-      `MonkeySourceApe`
+      `MonkeySourceApe`. **Answered no for the epsilon-greedy draw** (finding 1.4-a): `:1330`
+      reads `ape.getRandom()` directly and NPEs on the null `ape`; the override does reach
+      `:548`, the roulette at `:681` and `handleNullAction`. Resolved by task 1.6
 - [x] 1.5 Checkpoint: `mvn test` green with the spike in place
+- [x] 1.6 Land the `egreedy()` RNG seam (owner decision 2026-08-03 on finding 1.4-a, carved out
+      in INV-ORA-01): `SataAgent.egreedy()` (`:1330`) reads `getRandom()` instead of
+      `ape.getRandom()` — this change's only `src/main/java` edit — plus `EgreedySeamTest`
+      pinning that a subclass override intercepts the coin flip and that the ladder completes
+      with a null `ape`. The guard test is what makes a future re-inlining fail loudly instead
+      of silently re-closing the rung
 
 ## 2. Oracle scaffold and synthetic fixtures
 
@@ -135,8 +145,9 @@ group.
 
 ## 9. Verification
 
-- [ ] 9.1 `git diff --stat src/main/java` is empty for this change (INV-ORA-01); no test
-      class shadows a production class (only `android.*` source stubs, if any were added)
+- [ ] 9.1 `git diff --stat src/main/java` shows **exactly one** changed line for this change —
+      the `egreedy()` seam of task 1.6 — and nothing else (INV-ORA-01); no test class shadows a
+      production class (only `android.*` source stubs, if any were added)
 - [ ] 9.2 Full `mvn test` green twice in a row (flake check for the determinism claim); the
       13 pre-existing `@Ignore` skips unchanged
 - [ ] 9.3 Grep the oracle package for forbidden dependencies: no `HttpURLConnection`, no

@@ -89,11 +89,19 @@ why) — never something to silently re-record.
 
 ## Invariants
 
-- **INV-ORA-01**: The oracle SHALL live entirely in the test tree. It SHALL NOT modify any
-  file under `src/main/java/`, SHALL NOT add production seams, and SHALL NOT place a class on
-  the test classpath that shadows a production class. Source stubs under
-  `src/test/java/android/**` (the established `Rect.java` pattern) are permitted for
-  `android.*` framework types only.
+- **INV-ORA-01**: The oracle SHALL live entirely in the test tree, with exactly one carve-out:
+  `SataAgent.egreedy()` SHALL read the agent's RNG through the overridable `getRandom()`
+  (`ApeAgent.java:322-323`) instead of `ape.getRandom()` directly. That single line is
+  behavior-identical in production — `getRandom()` is defined as `return ape.getRandom()` — and
+  it is the only thing standing between the harness and both epsilon-greedy legs, because the
+  harness cannot supply an `ape`: `MonkeySourceApe` does not class-load off device
+  (`MonkeySourceApeForeignGuardTest:19-21`), and stubbing `android.*` toward it does not
+  converge (verified 2026-08-03: `IUiAutomationConnection` → `RemoteException` →
+  `Build$VERSION`, the last of which would require inventing an SDK level the production code
+  branches on). Apart from that line the oracle SHALL NOT modify any file under
+  `src/main/java/`, SHALL NOT add production seams, and SHALL NOT place a class on the test
+  classpath that shadows a production class. Source stubs under `src/test/java/android/**` (the
+  established `Rect.java` pattern) are permitted for `android.*` framework types only.
 - **INV-ORA-02**: Capture and replay SHALL be deterministic: the same harness, seed, preset,
   and scenario SHALL produce an identical decision-record sequence on every execution. Both
   RNG streams (`RandomHelper` and the agent's `getRandom()`) SHALL be seeded from the
@@ -172,6 +180,15 @@ as covering them.
   (e.g. `ape.activityTriggerStagnationStep`)
 - **THEN** the preset's Config guard assertion SHALL fail with the changed key named
 - **AND** the failure SHALL NOT be reported as a golden divergence
+
+#### Scenario: The epsilon-greedy RNG seam stays overridable
+
+- **WHEN** a test subclass of `SataAgent` overrides `getRandom()` and the ladder descends into
+  `selectNewActionEpsilonGreedyRandomly()` on a state whose actions are all saturated
+- **THEN** the epsilon-greedy coin flip in `egreedy()` SHALL draw from the overridden stream,
+  not from `ape.getRandom()`
+- **AND** the run SHALL complete with a null `ape` field, so both legs of the rung — the
+  least-visited pick and the priority roulette — are capturable
 
 #### Scenario: Determinism — double capture is identical
 
