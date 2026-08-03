@@ -131,9 +131,15 @@ Each constant declares, as constructor data the compiler binds: its **activation
 | `LLM_RANDOM` | `ape.llmPercentage > 0` | `LLM` |
 | `MODEL_MENU`, `FORM_COMPLETION`, `STEP_TELEMETRY`, `LEAST_VISITED_TIEBREAK`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `TYPED_FUZZ` (`fuzzInputTyped`), `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `FUZZING` | their boolean/weight key | — |
 
-The exact roster is fixed at apply time against the full 113-field inventory; the design rule is total: **every `ape.*` key is owned by exactly one place** — `ExplorationParams` (base), one `Feature` (activation key or sub-param), or the resolver itself (`ape.preset`, CLI-internal values). The validator derives the feature set, then checks every active feature's dependencies. `rvForcedOffValues`/`rvUnsetKeys`/`rvExemptReasons` and `forceApePureModeInto` are deleted; nothing replaces the *mechanism* because the *need* is structural now (see D-4).
+The design rule is total: **every `ape.*` key is owned by exactly one place** — `ExplorationParams` (base), one `Feature` (activation key or sub-param), or the resolver itself (`ape.preset`, `ape.runId`, `ape.corpusBasis`). The validator derives the feature set, then checks every active feature's dependencies. `rvForcedOffValues`/`rvUnsetKeys`/`rvExemptReasons` and `forceApePureModeInto` are deleted; nothing replaces the *mechanism* because the *need* is structural now (see D-4).
+
+**The roster as measured at apply time** (group 1, 2026-08-03): **25 features** — exactly the table above — and **121 declared keys**: 60 base, 49 feature-owned, 3 resolver-owned, 9 retired. The "113 fields" of the Context section counts `Config`'s public static fields; the key roster is a different number and is now the one that matters, because ownership is asserted over keys rather than over fields.
+
+Two of the 60 base keys were found by the totality scan rather than by this design, and both are read in production today: **`ape.baseNaming`** (`NamingFactory.java:953`, whose fallback is the caller's current naming, so the jar has no single default for it) and **`ape.nopActionThrottle`** (`Action.java:48`, default 1000). Neither appears in any artifact of this re-architecture, in `tool.py`'s mapping, or in the three registries this change deletes. They are the reason the totality test scans the source tree instead of checking a hand-written list: a list would have been written from the same documents that omitted them.
 
 **Inert-key rule** (the substitute for `rvExemptReasons`, and the reason `INV-ARCH-06` dissolves): a sub-parameter key explicitly present while its owning feature is **inactive** is accepted **iff its value is the feature's declared neutral value** (e.g., `ape.llmPercentageNoSubstrate=-1`, which `_BASELINE_ARM_FLAGS` pushes on every arm including non-LLM ones — verified `tool.py:243-261`); it is recorded in the echo's `inert` list and enters no params object. A **non-neutral** value for an inactive feature is a missing-dependency abort (you may state OFF for an absent mechanism; you may not state ON). This keeps every current arm's `ape.properties` valid — checked against the actual `_push_properties` output of all 29 arms in `RunSpecCompatTest`.
+
+**What "neutral" means, uniformly** (settled at apply time; the enum encodes it per key and the rule is stated once in `Feature`'s javadoc). An **activation key**'s neutral is its off value — `false` for a gate, `0` for a weight — which may differ from the jar default: `ape.frontierBoostWeight` defaults to 200 and neutralizes at 0, which is exactly the value `_BASELINE_ARM_FLAGS` pushes. A **sentinel key**'s neutral is its sentinel (`ape.llmPercentageNoSubstrate` at `-1`). Every **other sub-parameter**'s neutral is the jar default — the value at which stating the key is indistinguishable from omitting it. Comparison is by parsed value, not by text, so `0` and `0.0` are the same neutral. An activation key with **no** neutral is a path or a URL (`ape.mopDataPath`, `ape.llmUrl`): stating one is what activates its feature, so it can never be present while the feature is off.
 
 **The rule does not reach `ape.apePureMode`, and must not be stretched to.** It admits a sub-parameter of a *feature*, judged against that feature's declared neutral value. `ape.apePureMode` owns no `Feature` — this change deletes the very mechanism such a key would parameterize — and retired-key classification is evaluated before any value semantics. `ape.apePureMode=false` is therefore not an inert value: it is a retired key, and it aborts. The 23 arms that push it are handled by removing it from `tool.py` (D-4), which is the honest resolution; admitting `false` as inert would keep a key alive for a mechanism the spec says SHALL NOT exist.
 
@@ -145,6 +151,12 @@ The exact roster is fixed at apply time against the full 113-field inventory; th
 - `mop` ≙ arm `sata_mop_widget`: `aperv` + `_MOP_SUBSTRATE` weights (direct 500 / transitive 300 / openMenu 250 / wtg 200; `tool.py:291-297`). `ape.mopDataPath` is **not** part of the preset — it is deployment-specific and must come explicitly (the `MOP` feature therefore activates only when the path is pushed, same as today).
 - `llm` ≙ arm `sata_llm`: `aperv` + the `_LLM_FLAGS` sampling block (`tool.py:299-309`) minus `llm_url`, which is deployment-specific and must come explicitly.
 - `llm_mop` ≙ arm `sata_mop_llm`: `mop` + `llm`.
+
+**No preset carries an agent type** (settled at apply time). "Agent `sata`" above is a property of the resolved plan, not an entry of the vector: `--ape` is a command-line value, `ape.agentType` is retired as a *file* key by D-5, and `sata` is already what an absent `--ape` resolves to. A vector entry for it could therefore only duplicate the default or contradict the command line. The `aperv` preset's agent is `sata` either way — the plan is identical; only the representation is smaller.
+
+**Provenance of the vectors** (group 1): read from `rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py` at rvsec commit `6dc8a0af`, sha256 `660f151709b12dc311e6ddaa221d4af968b2630d235149cd22f94bada7736612`. Read from the code rather than from this document, on the same discipline that settled stage 1's finding 2.1-c: a preset vector asserted from prose is a guess with a citation.
+
+**A consequence worth stating, because it is a fail-fast rather than a fallback**: `ape.preset=llm` with no explicit `ape.llmUrl` **aborts**. The preset states `ape.llmOnNewState=true` and `ape.llmOnStagnation=true`, and the mechanism those gates parameterize is absent. A preset that quietly resolved to "LLM off" would be exactly the silent-degradation class this change exists to end.
 
 Ablation = named override on top of a preset, never a new preset (report Sec. 6.2).
 
@@ -184,7 +196,9 @@ All aborts happen in `Monkey.run` before `MonkeySourceApe` is constructed — i.
 
 ### D-6 — Digests
 
-- `digest` (of the **effective plan**): SHA-256 (hex, first 16 chars) over a canonical rendering — sorted `key=value` lines of every effective parameter (post-preset, post-override, post-clamp), plus `agentType`, `presetName`, and the sorted feature names. Seed and runId are **excluded** (two runs of the same arm share the digest — the digest identifies the *arm as interpreted*, which is what drift auditing joins on).
+- `digest` (of the **effective plan**): SHA-256 (hex, first 16 chars) over a canonical rendering — `agentType`, the sorted feature names, and sorted `key=value` lines of every effective plan value (post-preset, post-override, post-clamp). Keys of features absent from the plan are excluded along with their features: they parameterize nothing, so hashing them would make two identical runs differ over a mechanism neither of them has. Values are canonicalized through their declared type, so `0` and `0.0` — the same number written two ways — cannot produce two digests.
+
+  Four things are **excluded**. **Seed** and **runId**, so two runs of the same arm share a digest: the digest identifies the *arm as interpreted*, which is what drift auditing joins on. **`corpus_basis`**, which is provenance about the run's place in a campaign rather than a parameter of its behavior. And **`presetName`** — corrected at apply time, group 1. The earlier text listed it among the hashed inputs, which contradicts this change's own INV-RUN-04 ("independent of key order, file split, **or preset-vs-explicit expression**") and the digest-determinism test task 1.6 requires: `ape.preset=mop` and the same eighteen keys written out by hand are the same plan, and a digest that separated them would be recording how the plan was *written* instead of what it *is*. D-1 already calls `presetName` informative only. The name is still resolved, still carried on `RunSpec`, and still echoed in `RUN_START` — it is only not hashed.
 - `propertiesDigest` (of the **input actually read**): SHA-256 over the raw bytes of `/data/local/tmp/ape.properties` and `/sdcard/ape.properties` in load order (absent file contributes a fixed sentinel). This is what proves *which file* the run saw.
 
 Both are computed once inside `resolve` and echoed; nothing else consumes them (level 0 — write-only).
@@ -246,6 +260,16 @@ INV-COV-10's boundary is restated on what remains: the coverage dump runs strict
 - Pre: `fileEntries` = union of the two properties files' entries in load order (later file wins), file-loaded keys only; `cli` = `{agentTypeOrNull, seed, replayLogOrNull}`.
 - Post: returns a fully-populated immutable `RunSpec`; every key consumed and classified; digests computed.
 - Throws `RunSpecException(reason, key, detail)` on any D-5 case. Never returns a partially-valid spec.
+
+### `RunSpec.resolve(Map<String,String> fileEntries, CliValues cli, String propertiesDigest)`
+
+Added at apply time (group 1) to satisfy D-6 without changing the shape above. D-6 requires `propertiesDigest` to be a function of the **raw bytes** of the two files, and the parsed entries cannot supply them: a map is blind to comments, ordering and whitespace, which is precisely the difference "which file did this run see" turns on. The bytes are hashed where they are read — by the bootstrap, via `RunSpec.digestProperties(byte[] dataLocalTmp, byte[] sdcard)`, which prefixes each file with its length so two files cannot be confused with one and hashes a fixed sentinel for a file that was not there (so *absent* and *empty* stay distinguishable).
+
+The two-argument form delegates with `PROPERTIES_DIGEST_NONE`, the both-files-absent sentinel — which is the truthful value for a caller that read no files, i.e. every JVM test.
+
+### `RunSpec.digestProperties(byte[] dataLocalTmp, byte[] sdcard) -> String`
+
+- Post: full SHA-256 hex over the two files' raw bytes in load order, each length-prefixed; a null argument contributes the absent-file sentinel. Only `digest` is truncated to 16 characters (D-6); this one is not.
 
 ### `Presets.resolve(String name) -> Map<String,String>`
 
@@ -309,4 +333,4 @@ Post: exactly one `\n`-terminated line; serializer escapes all control character
 
 ## Open Questions
 
-None. Owner decisions D1–D6 are final (report Sec. 12); the two details left to apply time are mechanical: the exact 113-key → owner classification table (D-2, enumerated in code and locked by the totality test) and confirmation that `Graph.printDot`/`printVis` have no callers outside `saveGraph` (D-10).
+None. Owner decisions D1–D6 are final (report Sec. 12). Of the two details left to apply time, the first is **closed**: the key → owner classification is enumerated in code and locked by the totality test (D-2, 121 keys, and it found two the documents had missed). The second is still open and belongs to group 5: confirming that `Graph.printDot`/`printVis` have no callers outside `saveGraph` (D-10).
