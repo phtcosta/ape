@@ -47,6 +47,25 @@ the block returns nothing, so its position cannot change a recorded decision, an
 conjunction short-circuits on the disabled gate it consumes no RNG draw either, so it cannot
 shift the agent stream. Should a future arm enable it, this exclusion must be revisited before
 that arm's comparability is claimed.
+
+One more mechanism sits outside the boundary, for a different reason and at a finer grain: the
+**trivial-action return of the budget block** (`SataAgent.java:468-477`). The block's *gate* is
+captured — a scenario declares an activity's budget exhausted, and the golden pins the block
+being entered and falling through, which is what distinguishes "budget disabled" from "budget
+enabled with nothing trivial to navigate to". The return itself is not captured, because it
+cannot be reached from inside the boundary: `selectNewActionForTrivialActivity()` requires more
+than `Config.trivialActivityRankThreshold` = 3 activity nodes and then searches for a path over
+graph **edges**, and the harness records no `StateTransition` at all — the driver moves between
+screens by injecting `newState`. With `ape.doBackToTrivialActivity` false by default the
+fallback never reaches `AndroidDevice.getFocusedStack()` either, so the call returns null and
+the block falls through. Recording edges to open that path would widen the capture boundary
+rather than fill a gap in it: every rung that reads edges would see a different world, and
+`refillBuffer` would start feeding `actionBufferSize()`, which all three LLM preconditions
+read. Excluding the return costs the precedence claim nothing — the budget block's position
+ahead of every other mechanism is still pinned, by the step that enters it and falls through —
+and it costs exactly one decision shape, said out loud here instead of inferred from an absent
+record.
+
 Within that boundary, the oracle's contract is strict: same preset, same seed, same scenario
 ⇒ identical decision sequence, before and after any stage-2/3 production change. A golden
 that no longer matches is either a migration regression (fix the code) or a deliberately
@@ -158,6 +177,17 @@ the SATA chain fall-through (buffer, early-stage, epsilon-greedy rungs), and —
 preset enables them — MOP-boosted picks, the cadence launcher firing, and all three LLM hooks
 with accept, decline, and timeout verdicts.
 
+Three of those inputs are **declared by the scenario**, for the same reason action validity and
+priority already are: the ladder reads them but nothing below the oracle's entry point assigns
+them. A scenario that wants a MOP-attributed step SHALL declare the widget's `mopBoost` (no
+code below `adjustActionsByGUITree()` writes one, so an undeclared boost is zero and the MOP
+short-circuit is a no-op); a scenario that wants the launcher to fire within a readable number
+of steps SHALL declare the seeded value of the cadence counter (the fire is an exact equality
+against `Config.activityTriggerStagnationStep`); and a scenario that wants the budget block
+entered SHALL declare which activity is exhausted (an unregistered activity reports no
+exhaustion, and registration happens above the entry point). Each declared value SHALL be
+visible in the scenario script, so a golden's reader can tell an input from a decision.
+
 Each preset capture test SHALL guard-assert the jar-default `Config` values the ladder reads
 for that preset (e.g. `activityBudgetEnabled`, `activityTriggerEnabled`,
 `activityTriggerStagnationStep`, `componentPercentage`), so a future default change fails the
@@ -247,8 +277,12 @@ qualify the LLM hooks, the MOP launcher (cadence reached, census candidate avail
 SATA chain, asserting the hard precedence order currently implemented by textual position in
 `selectNewActionNonnull()` (report V1/V4): an accepted LLM result preempts the launcher; the
 launcher, when it fires, preempts the SATA chain; the SATA chain is the fallback. The budget
-block precedes them all and SHALL be pinned in both its outcomes: trivial-action return and
-fall-through. The component-trigger block, which sits between the launcher and the SATA chain,
+block precedes them all and SHALL be pinned **at its gate**: a scenario declaring the current
+activity's budget exhausted SHALL show the block entered and falling through, and a scenario
+declaring no exhaustion SHALL show it not entered at all. Its trivial-action return is outside
+the capture boundary — see Purpose for why reaching it would widen the boundary rather than
+close a gap in it — and SHALL NOT be claimed by any golden.
+The component-trigger block, which sits between the launcher and the SATA chain,
 is excluded — see the capture boundary in Purpose for why that costs no precedence coverage:
 it returns nothing, so no ordering it participates in is observable in a decision record.
 
@@ -291,14 +325,15 @@ The preemption golden SHALL additionally pin, as current behavior:
 - **AND** the later step SHALL NOT consult the stagnation hook (the stub honors the
   `firedThisEpisode` argument)
 
-#### Scenario: Budget-exhausted trivial return precedes every other mechanism
+#### Scenario: Budget exhaustion is pinned at the gate, not at the trivial return
 
-- **WHEN** the budget tracker reports the current activity exhausted and a trivial navigation
-  action exists, while the same step qualifies the LLM hooks
-- **THEN** the selected action SHALL be the budget-trivial action and no LLM hook SHALL be
-  consulted
-- **AND** when no trivial action exists the step SHALL fall through to the LLM hooks
-  (fall-through pinned, report finding on the budget gate)
+- **WHEN** a scenario declares the current activity's budget exhausted and the same step
+  qualifies the LLM hooks, with no trivial navigation action available — and none can be, since
+  the trivial-activity path search walks graph edges the harness never records
+- **THEN** the step SHALL fall through the budget block to the LLM hooks, and the golden SHALL
+  record the hook's outcome for that step
+- **AND** the trivial-action return SHALL be documented as outside the capture boundary, so its
+  absence from every golden reads as a stated exclusion rather than as untested behavior
 
 ### Requirement: Deterministic LLM Stubbing
 

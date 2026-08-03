@@ -80,7 +80,16 @@ import java.util.Set;
  *   <tr><td>{@code epsilon}</td><td>SataAgent</td><td>{@code computeDynamicEpsilon()} floor; set to {@code Config.defaultEpsilon}, the value the production constructor passes</td></tr>
  *   <tr><td>{@code backToActivity}</td><td>SataAgent</td><td>null keeps {@code selectNewActionBackToActivity()} out of {@code AndroidDevice} (see the boundary below)</td></tr>
  *   <tr><td>{@code _isNewState}, {@code graphStableCounter}, {@code stagnationHookFired}</td><td>StatefulAgent</td><td>the LLM hooks' agent-side arguments and episode state; the driver rewrites them per step</td></tr>
+ *   <tr><td>{@code _stepsSinceLauncherFiring}</td><td>SataAgent</td><td>the launcher's cadence counter; <b>seeded once here</b> from the scenario and never touched again (design D2, INV-ORA-05)</td></tr>
  * </table>
+ *
+ * <p>Two of those are <b>declared scenario inputs rather than defaults</b> (design D2), because the
+ * production values are the product of dozens of steps and a golden that had to spend them would be
+ * too long to review: {@code _stepsSinceLauncherFiring}, and the registration plus iteration count
+ * inside {@code _budgetTracker}. Both are seeded at construction; neither is advanced per step. The
+ * distinction matters for the second one especially — {@code ActivityBudgetTracker.isBudgetExhausted}
+ * answers false for an <i>unregistered</i> activity, so an untouched tracker is not "budget off", it
+ * is a ladder whose first block is never entered at all.
  *
  * <p><b>Deliberately left null, and why that is safe.</b>
  * <ul>
@@ -182,6 +191,41 @@ import java.util.Set;
  *       conjunction consumes no RNG draw, so it can shift neither a decision nor the agent
  *       stream. Should a future arm enable it, this must be revisited before that arm's
  *       comparability is claimed.</li>
+ * </ul>
+ *
+ * <h2>Group-6 findings</h2>
+ * <ul>
+ *   <li><b>6.1-a — a MOP-attributed step needs a declared boost, and the state that carries it is a
+ *       documented stand-in.</b> {@code selectUnvisitedMopTarget} ranks by
+ *       {@code ModelAction.getMopBoost()} ({@code SataAgent.java:727-732}) and
+ *       {@code attributeByLargestBoost} ({@code :293}) reads the same fields to decide the source.
+ *       Those fields are written in exactly one place ({@code MopWidgetPass}, inside
+ *       {@code adjustActionsByGUITree()}) and cleared in exactly one other
+ *       ({@code ScoringPipeline}'s {@code resetBoosts()}) — both <i>above</i> this oracle's entry
+ *       point, so a boost declared here persists for the whole run and an undeclared one is 0,
+ *       which makes the short-circuit a no-op. {@link ScenarioScript.Widget#getMopBoost()} declares
+ *       it and {@link #buildState} writes it through the public {@code ModelAction.setMopBoost}, on
+ *       the precedent of finding 1.2-b. <b>The honest half</b>: reaching the short-circuit also
+ *       needs the action declared <i>unvisited and saturated at once</i>, and per action that pair
+ *       does not occur in production — {@code ModelAction.resolveAt} ({@code :243-246}) derives
+ *       {@code resolvedSaturation} from {@code visitedCount}. In production the pair arises one
+ *       level up, in the differ: {@code StateActionDiffer.getUnsaturated(from,to)} ({@code :74})
+ *       drops a matched pair when <i>either</i> side is saturated, so a NamingFactory-refined
+ *       sibling offers an action unvisited in {@code to} whose counterpart in {@code from} is
+ *       saturated — verbatim what the production comment at {@code SataAgent.java:641-643} calls
+ *       re-arming the short-circuit. The harness has no {@code currentState} and no refinement, so
+ *       it declares the pair on the action itself, as a stand-in for that path.</li>
+ *   <li><b>6.1-b — the budget block's trivial-action return is outside the boundary; its gate is
+ *       not.</b> With the exhaustion declared the block is entered, and what it calls next —
+ *       {@code selectNewActionForTrivialActivity()} — needs more than
+ *       {@code Config.trivialActivityRankThreshold} = 3 activity nodes and then searches a path
+ *       over graph <b>edges</b>, of which this harness has none by design ({@link OracleDriver}'s
+ *       ledger). {@code ape.doBackToTrivialActivity} is false by default, so the fallback never
+ *       reaches {@code AndroidDevice.getFocusedStack()} either: the call simply returns null and the
+ *       block falls through. Recording edges to open that path would widen the capture boundary
+ *       rather than fill a gap in it — every rung that reads edges would see a different world, and
+ *       {@code refillBuffer} would start feeding {@code actionBufferSize()}, which all three LLM
+ *       preconditions read. So the gate is pinned and the return is documented as uncaptured.</li>
  * </ul>
  *
  * <h2>Jar-default {@code Config} values the ladder reads</h2>
@@ -311,6 +355,7 @@ public final class OracleScaffold {
             ModelAction click = new ModelAction(state, names[i], ActionType.MODEL_CLICK);
             click.setValid(true);
             click.setPriority(widget.getPriority());
+            click.setMopBoost(widget.getMopBoost()); // finding 6.1-a
             setField(click, "resolvedSaturation", widget.getSaturation());
             if (widget.isVisited()) {
                 markVisited(click);
@@ -438,8 +483,7 @@ public final class OracleScaffold {
         setField(agent, "_coverageTracker", coverageTracker);
         // Config.activityBudgetEnabled defaults true, so the constructor builds a real tracker and
         // the ladder's first block dereferences it unconditionally (SataAgent.java:468).
-        setField(agent, "_budgetTracker", new ActivityBudgetTracker(
-                Config.activityBaseBudget, Config.activityBudgetPerWidget));
+        setField(agent, "_budgetTracker", budgetTracker(script));
         setField(agent, "_llmRouter", router);
         final MopData contextMopData = mopData;
         ScoringContext scoringContext = new ScoringContext() {
@@ -466,10 +510,53 @@ public final class OracleScaffold {
         setField(agent, "stagnationHookFired", false);
         setField(agent, "backToActivity", null);
         setField(agent, "epsilon", Config.defaultEpsilon);
+        // The launcher's cadence counter is seeded once, here, and never touched again: the ladder
+        // owns every later write (SataAgent.java:522,529) and the driver is forbidden from touching
+        // it at all (INV-ORA-05). See ScenarioScript.getStepsSinceLauncherFiring().
+        setField(agent, "_stepsSinceLauncherFiring", script.getStepsSinceLauncherFiring());
 
         RandomHelper.seed(script.getSeed());
         agent.pinned = new Random(script.getSeed());
         return agent;
+    }
+
+    /**
+     * The budget tracker the constructor would have built, advanced to the state the production
+     * loop would have reached for every activity the scenario declares exhausted (design D2).
+     *
+     * <p>Registration and the iteration count are replayed here rather than per step because both
+     * production sites sit above the oracle's entry point — {@code registerActivity} in
+     * {@code updateStateInternal} ({@code StatefulAgent.java:765}), {@code recordIteration} in
+     * {@code moveForward} ({@code :1410}) — and because exhaustion takes
+     * {@code activityBaseBudget + widgets * activityBudgetPerWidget} iterations, far more than a
+     * readable scenario has steps. Iterating until {@code isBudgetExhausted} answers true reaches
+     * exactly the count that production would have, rather than a number written down here.
+     */
+    private static ActivityBudgetTracker budgetTracker(ScenarioScript script) {
+        ActivityBudgetTracker tracker = new ActivityBudgetTracker(
+                Config.activityBaseBudget, Config.activityBudgetPerWidget);
+        for (String activity : script.getExhaustedActivities()) {
+            tracker.registerActivity(activity, targetedActionCount(script, activity));
+            while (!tracker.isBudgetExhausted(activity)) {
+                tracker.recordIteration(activity);
+            }
+        }
+        return tracker;
+    }
+
+    /**
+     * The widget count production would have registered for {@code activity}: the number of
+     * target-carrying actions of the first screen declared on it, which is the screen whose first
+     * visit would have registered the activity ({@code registerActivity} is idempotent, so later
+     * states never revise the budget).
+     */
+    private static int targetedActionCount(ScenarioScript script, String activity) {
+        for (ScenarioScript.Screen screen : script.getScreens()) {
+            if (screen.getActivity().equals(activity)) {
+                return screen.getWidgets().size();
+            }
+        }
+        throw new IllegalArgumentException("no screen runs on " + activity);
     }
 
     /**

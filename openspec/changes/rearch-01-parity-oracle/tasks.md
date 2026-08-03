@@ -108,28 +108,35 @@ group.
 
 ## 6. Per-preset baseline scenarios and goldens
 
-- [ ] 6.1 Write the `aperv` baseline scenario (SATA chain fall-through: buffer, early-stage,
-      epsilon-greedy rungs; budget both outcomes) in `ParityOracleApervTest`, with the
-      preset's Config guard assertions (design D2); capture and commit
-      `goldens/aperv/baseline.ndjson`
-- [ ] 6.2 Write the `mop` baseline scenario (MOP-boosted picks, launcher cadence fire)
+- [x] 6.1 Write the `aperv` baseline scenario (SATA chain fall-through: buffer, early-stage,
+      epsilon-greedy rungs; the budget gate pinned in both its reachable states — not entered,
+      and entered-then-falling-through from a declared exhausted activity, design D2. Its
+      trivial-action return is outside the capture boundary, finding 6.1-b) in
+      `ParityOracleApervTest`, with the preset's Config guard assertions (design D2); capture
+      and commit `goldens/aperv/baseline.ndjson`
+- [x] 6.2 Write the `mop` baseline scenario (a MOP-boosted pick through the declared-boost
+      short-circuit, finding 6.1-a; the launcher cadence fire reached from the declared seed of
+      `_stepsSinceLauncherFiring`, design D2 — the scenario's screens must not borrow the
+      fixture's census activity names, or the launcher starves on its own visited set)
       in `ParityOracleMopTest` against
       `cryptoapp.apk.gh60-fresh.json` via the production `MopData.load` path; capture and
       commit `goldens/mop/baseline.ndjson`
-- [ ] 6.3 Write the `llm` baseline scenario (all three hooks; accept, decline, and timeout
+- [x] 6.3 Write the `llm` baseline scenario (all three hooks; accept, decline, and timeout
       verdicts; `not_routed` steps) in `ParityOracleLlmTest`; capture and commit
       `goldens/llm/baseline.ndjson`
-- [ ] 6.4 Write the `llm_mop` baseline scenario (LLM verdicts interleaved with MOP launcher
+- [x] 6.4 Write the `llm_mop` baseline scenario (LLM verdicts interleaved with MOP launcher
       and MOP-boosted SATA picks) in `ParityOracleLlmMopTest`; capture and commit
       `goldens/llm_mop/baseline.ndjson`
-- [ ] 6.5 Re-run each preset test in compare mode against its committed golden — all green
+- [x] 6.5 Re-run each preset test in compare mode against its committed golden — all green
       (spec "aperv preset golden compares green at HEAD" and siblings)
-- [ ] 6.6 Checkpoint: `mvn test` green (full suite, goldens included)
+- [x] 6.6 Checkpoint: `mvn test` green (full suite, goldens included)
 
 ## 7. Preemption golden
 
-- [ ] 7.1 Write the simultaneous-qualification scenario (`llm_mop` profile): budget both
-      outcomes; LLM accept preempting a due launcher; LLM decline falling through to the
+- [ ] 7.1 Write the simultaneous-qualification scenario (`llm_mop` profile): the budget gate
+      entered from a declared exhausted activity and falling through, ahead of every other
+      mechanism (its trivial-action return is outside the boundary, finding 6.1-b); LLM accept
+      preempting a due launcher; LLM decline falling through to the
       launcher; SATA fallback — in `PreemptionGoldenTest`; capture and commit
       `goldens/llm_mop/preemption.ndjson`. The component trigger is out of scope
       (finding 2.1-c) and its absence costs no precedence coverage: the block returns nothing

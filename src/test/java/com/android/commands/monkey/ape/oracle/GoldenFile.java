@@ -174,6 +174,27 @@ public final class GoldenFile {
         return Paths.get(GOLDEN_ROOT, preset, scenario + GOLDEN_SUFFIX);
     }
 
+    /**
+     * What every capture test does with a replayed decision sequence: write it in capture mode,
+     * compare it against the committed golden otherwise. The header names the file, so a preset test
+     * states its identity once and cannot accidentally compare one preset's run against another's
+     * golden — a header mismatch is reported as its own failure for exactly that reason.
+     *
+     * <p>Composed here rather than in each of the four preset tests because it is the same one line
+     * in all of them; group 4 deliberately left it unwritten until this group could see whether the
+     * presets wanted the same shape. They do.
+     */
+    public static void captureOrCompare(Header header, List<DecisionRecord> records)
+            throws IOException {
+        GoldenFile actual = new GoldenFile(header, records);
+        Path golden = path(header.getPreset(), header.getScenario());
+        if (captureRequested()) {
+            actual.write(golden);
+        } else {
+            compare(golden, actual);
+        }
+    }
+
     // ---- writer ------------------------------------------------------------------------------
 
     /**

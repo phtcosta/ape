@@ -1,0 +1,5 @@
+{"kind":"header","preset":"mop","scenario":"baseline","seed":5150,"fixture":"cryptoapp.apk.gh60-fresh.json","capturedAt":"58d0b40a98cb301ab5576db9b3a1f2207bbef58a"}
+{"step":0,"actionType":"MODEL_CLICK","target":"//*[@resource-id='h0']","decisionSource":"SATA","pickChannel":"roulette_early"}
+{"step":1,"actionType":"EVENT_TRIGGER_ACTIVITY","target":"br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"}
+{"step":2,"actionType":"MODEL_CLICK","target":"//*[@resource-id='m_boost']","decisionSource":"MOP","pickChannel":"short_circuit_unvisited"}
+{"step":3,"actionType":"MODEL_CLICK","target":"//*[@resource-id='m1']","decisionSource":"SATA","pickChannel":"roulette_greedy"}

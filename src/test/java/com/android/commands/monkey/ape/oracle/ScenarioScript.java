@@ -58,17 +58,28 @@ public final class ScenarioScript {
         private final int priority;
         private final boolean visited;
         private final float saturation;
+        private final int mopBoost;
 
-        Widget(String xpath, int priority, boolean visited, float saturation) {
+        Widget(String xpath, int priority, boolean visited, float saturation, int mopBoost) {
             this.xpath = xpath;
             this.priority = priority;
             this.visited = visited;
             this.saturation = saturation;
+            this.mopBoost = mopBoost;
         }
 
         public String getXPath() { return xpath; }
         public int getPriority() { return priority; }
         public boolean isVisited() { return visited; }
+
+        /**
+         * The MOP boost the scoring pipeline would have written, declared here because that
+         * pipeline runs above the oracle's entry point (finding 6.1-a). Without a declared boost
+         * every synthetic action carries 0, the MOP short-circuit is a no-op, and no step can be
+         * attributed {@code MOP} — so a scenario that wants a MOP-attributed step declares it,
+         * exactly as it declares validity and priority (finding 1.2-b).
+         */
+        public int getMopBoost() { return mopBoost; }
 
         /**
          * {@code ModelAction.isSaturated()} is visit-based for targetless actions but
@@ -155,9 +166,15 @@ public final class ScenarioScript {
     private final Map<String, Screen> screensByName;
     private final Map<String, String> transitions;
     private final List<Step> steps;
+    private final int stepsSinceLauncherFiring;
+    private final List<String> exhaustedActivities;
 
     private ScenarioScript(String name, long seed, List<Screen> screens,
-                           Map<String, String> transitions, List<Step> steps) {
+                           Map<String, String> transitions, List<Step> steps,
+                           int stepsSinceLauncherFiring, List<String> exhaustedActivities) {
+        this.stepsSinceLauncherFiring = stepsSinceLauncherFiring;
+        this.exhaustedActivities =
+                Collections.unmodifiableList(new ArrayList<>(exhaustedActivities));
         this.name = name;
         this.seed = seed;
         this.screens = Collections.unmodifiableList(new ArrayList<>(screens));
@@ -177,6 +194,27 @@ public final class ScenarioScript {
 
     public List<Screen> getScreens() { return screens; }
     public List<Step> getSteps() { return steps; }
+
+    /**
+     * The value {@code _stepsSinceLauncherFiring} starts the run at (design D2). The launcher fires
+     * on an exact equality against {@code Config.activityTriggerStagnationStep} (50 by default) and
+     * the counter's increment is the block's first statement, so a run that starts at 0 reaches the
+     * fire on its 50th non-preempted pass. Declaring the starting value is how a scenario puts that
+     * fire on a step a reviewer can actually read. The driver never touches the counter afterwards —
+     * that prohibition is what finding 3.3-1 and INV-ORA-05 rest on.
+     */
+    public int getStepsSinceLauncherFiring() { return stepsSinceLauncherFiring; }
+
+    /**
+     * Activities whose iteration budget is declared exhausted (design D2), so the ladder's first
+     * block is actually entered. {@code ActivityBudgetTracker.isBudgetExhausted} answers false for
+     * an unregistered activity, and both registration ({@code StatefulAgent.java:765}) and the
+     * iteration count ({@code :1410}) live above the oracle's entry point — so without this
+     * declaration the block is never entered and a golden cannot tell "budget disabled" from
+     * "budget enabled with nothing trivial to navigate to". What the open gate leads to is a
+     * separate matter: the trivial-action return is outside the capture boundary (finding 6.1-b).
+     */
+    public List<String> getExhaustedActivities() { return exhaustedActivities; }
 
     /** The screen the run starts on: the first declared. */
     public Screen getEntryScreen() { return screens.get(0); }
@@ -204,13 +242,19 @@ public final class ScenarioScript {
 
     // ---- authoring API --------------------------------------------------------------------
 
-    /** An unvisited, unsaturated widget at the default priority. */
+    /** An unvisited, unsaturated widget at the default priority, carrying no MOP boost. */
     public static Widget widget(String xpath) {
-        return new Widget(xpath, DEFAULT_PRIORITY, false, 0.0F);
+        return new Widget(xpath, DEFAULT_PRIORITY, false, 0.0F, 0);
     }
 
     public static Widget widget(String xpath, int priority, boolean visited, float saturation) {
-        return new Widget(xpath, priority, visited, saturation);
+        return new Widget(xpath, priority, visited, saturation, 0);
+    }
+
+    /** A widget carrying a declared MOP boost — see {@link Widget#getMopBoost()}. */
+    public static Widget widget(String xpath, int priority, boolean visited, float saturation,
+                                int mopBoost) {
+        return new Widget(xpath, priority, visited, saturation, mopBoost);
     }
 
     /** A screen whose BACK and MENU actions are unvisited, at the default priority. */
@@ -260,10 +304,24 @@ public final class ScenarioScript {
         private final List<Screen> screens = new ArrayList<>();
         private final Map<String, String> transitions = new HashMap<>();
         private final List<Step> steps = new ArrayList<>();
+        private final List<String> exhaustedActivities = new ArrayList<>();
+        private int stepsSinceLauncherFiring;
 
         private Builder(String name, long seed) {
             this.name = name;
             this.seed = seed;
+        }
+
+        /** See {@link ScenarioScript#getStepsSinceLauncherFiring()}. */
+        public Builder stepsSinceLauncherFiring(int seeded) {
+            this.stepsSinceLauncherFiring = seeded;
+            return this;
+        }
+
+        /** See {@link ScenarioScript#getExhaustedActivities()}. */
+        public Builder budgetExhausted(String... activities) {
+            Collections.addAll(exhaustedActivities, activities);
+            return this;
         }
 
         public Builder screens(Screen... declared) {
@@ -302,7 +360,18 @@ public final class ScenarioScript {
                             + " targets an undeclared screen: " + transition.getValue());
                 }
             }
-            return new ScenarioScript(name, seed, screens, transitions, steps);
+            for (String activity : exhaustedActivities) {
+                boolean known = false;
+                for (Screen screen : screens) {
+                    known = known || screen.getActivity().equals(activity);
+                }
+                if (!known) {
+                    throw new IllegalStateException("scenario " + name + " declares the budget of "
+                            + activity + " exhausted, but no screen runs on that activity");
+                }
+            }
+            return new ScenarioScript(name, seed, screens, transitions, steps,
+                    stepsSinceLauncherFiring, exhaustedActivities);
         }
     }
 }

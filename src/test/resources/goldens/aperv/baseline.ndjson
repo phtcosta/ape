@@ -1,0 +1,6 @@
+{"kind":"header","preset":"aperv","scenario":"baseline","seed":4242,"capturedAt":"58d0b40a98cb301ab5576db9b3a1f2207bbef58a"}
+{"step":0,"actionType":"MODEL_CLICK","target":"//*[@resource-id='e1']","decisionSource":"SATA","pickChannel":"roulette_early"}
+{"step":1,"actionType":"MODEL_CLICK","target":"//*[@resource-id='s0']","decisionSource":"SATA","pickChannel":"roulette_greedy"}
+{"step":2,"actionType":"MODEL_CLICK","target":"//*[@resource-id='b0']","decisionSource":"SATA","pickChannel":"sata_other"}
+{"step":3,"actionType":"MODEL_CLICK","target":"//*[@resource-id='b1']","decisionSource":"SATA","pickChannel":"sata_other"}
+{"step":4,"actionType":"MODEL_CLICK","target":"//*[@resource-id='b2']","decisionSource":"SATA","pickChannel":"sata_other"}

@@ -201,6 +201,34 @@ per preset with `systemPropertyVariables` — deferred; it buys nothing while th
 router owns the only preset-divergent ladder-read key, and it stays available (documented in
 the goldens README) if a future preset diverges on a non-LLM key.
 
+**Two further profile fields are declared scenario inputs rather than defaults** (owner
+decisions of 2026-08-03, taken at the start of group 6). Both are agent state a production run
+reaches only after dozens of steps, and declaring them at construction is what lets a scenario
+reach the mechanism they gate inside a golden short enough to be read — and a golden nobody
+reads is a golden nobody can defend.
+
+- **`_stepsSinceLauncherFiring`, the launcher's cadence counter.** `shouldFireLauncher` is an
+  exact equality — `stepsSinceFiring == cadence` (`SataAgent.java:779-783`) against the jar
+  default 50 — and `_stepsSinceLauncherFiring++` is the block's first statement (`:522`), so a
+  run reaches the fire on its 50th non-preempted pass. Seeding the counter at construction puts
+  the fire on a chosen step; the seeded value is a scenario input exactly like the seed itself
+  and is declared as one. The prohibition that matters is untouched: the **driver** still never
+  reads or writes the counter between steps, which is what finding 3.3-1 and INV-ORA-05 rest
+  on. Seeding happens once, in the scaffold, before the first step. The alternative — lowering
+  `ape.activityTriggerStagnationStep` through a forked surefire execution — was rejected
+  because a preset is *defined* as jar-default Config here, and the per-preset guard assertions
+  assert those same defaults.
+- **The budget tracker's registration and iteration counts.**
+  `ActivityBudgetTracker.isBudgetExhausted` returns false for an unregistered activity;
+  registration happens in `updateStateInternal` (`StatefulAgent.java:765`) and the iteration
+  count advances in `moveForward` (`:1410`) — both above this oracle's entry point, and neither
+  replayed by the driver. Left alone the budget block (`SataAgent.java:468-477`) is therefore
+  never *entered*, and a golden could not tell "budget disabled" from "budget enabled and no
+  trivial action available". A scenario declares which activity is exhausted instead, and the
+  scaffold registers it and records iterations up to its budget — the state the production loop
+  would have reached — so the golden pins the gate. What the gate opens onto is a separate
+  question, answered by finding 6.1-b in D6.
+
 ### D3 — LLM stub: scripted routing verdicts AND scripted results, honoring agent-side arguments
 
 `ScriptedLlmRouter extends LlmRouter` (constructor is JVM-safe; `Config.llmUrl` may stay null
@@ -364,6 +392,50 @@ spike established:
   have cost a forked surefire execution, a new fixture, and a dispatch override — three
   concessions for a block no experiment runs.
 
+**Two group-6 findings** (2026-08-03), established before the first golden was captured and
+recorded in `OracleScaffold`'s ledger:
+
+- **6.1-a — a MOP-attributed step needs a declared boost, and the state carrying it is a
+  documented stand-in.** `selectUnvisitedMopTarget` ranks candidates by
+  `ModelAction.getMopBoost()` (`SataAgent.java:727-732`), and `attributeByLargestBoost` (`:293`)
+  reads the same boost fields to decide the decision source. Those fields are written in exactly
+  one place — `MopWidgetPass`, inside `adjustActionsByGUITree()` — and cleared in exactly one
+  other — `ScoringPipeline`'s `resetBoosts()`; both sit **above** this oracle's entry point
+  (`StatefulAgent.java:1475-1478`). Every synthetic action therefore carries `mopBoost=0`, the
+  short-circuit is a no-op, and no step can be attributed `MOP` unless the scenario says so.
+  `ScenarioScript.Widget` declares the boost and `OracleScaffold.buildState` writes it through
+  the public `ModelAction.setMopBoost`, on the precedent of finding 1.2-b: declaring the inputs
+  the ladder reads is what keeps the goldens independent of every scoring weight, and a declared
+  boost survives the whole run precisely because the pass that would reset it never executes
+  here. The honest half: reaching the short-circuit also requires the scenario to declare an
+  action **unvisited and saturated at once**, and per action that pairing does not occur in
+  production — `ModelAction.resolveAt` (`:243-246`) derives `resolvedSaturation` from
+  `visitedCount`, so an unvisited action is unsaturated. In production the pairing arises one
+  level up, in the differ: `StateActionDiffer.getUnsaturated(from,to)` (`:74`) drops a matched
+  pair when *either* side is saturated, so a NamingFactory-refined sibling state offers an
+  action that is unvisited in `to` while its counterpart in `from` is saturated. That is
+  verbatim what the production comment at `SataAgent.java:641-643` describes as re-arming the
+  "unvisited" short-circuit for the same physical widget. The harness has neither a
+  `currentState` nor refinement, so it declares the pair on the action directly, as a stand-in
+  for that path — stated here rather than left for a reader to reconstruct from a golden.
+  Verified in the tree, not assumed: with the pair declared the ladder returns
+  `decisionSource=MOP` / `pickChannel=short_circuit_unvisited` deterministically under every
+  seed tried.
+- **6.1-b — the budget block's trivial-action return is outside the boundary; its gate is not.**
+  With the exhaustion declared (D2) the block is entered, and what it does next is
+  `selectNewActionForTrivialActivity()`, which needs `collectTrivialActivities()` to be
+  non-empty — more than `Config.trivialActivityRankThreshold` = 3 activity nodes — and then
+  searches for a path over graph **edges**. The driver records no `StateTransition` at all: it
+  moves between screens by injecting `newState`, which is the boundary this design already draws
+  (D7). With `ape.doBackToTrivialActivity` false by default the fallback never reaches
+  `AndroidDevice.getFocusedStack()` either, so the call simply returns null and the block falls
+  through. Making the return reachable would mean recording edges, and that is not a harness
+  detail but a widening of the capture boundary: every rung that reads edges (early-stage
+  backward greedy, the path search itself) would see a different world, and `refillBuffer` would
+  begin feeding `actionBufferSize()`, which all three LLM preconditions read. So the gate is
+  pinned — entered and fell through — and the return is documented as uncaptured rather than
+  quietly dropped.
+
 ### D7 — Post-step bookkeeping is scripted, minimal, and explicit
 
 Between steps the production loop performs model/graph bookkeeping the ladder observes
@@ -374,6 +446,13 @@ increment, scripted `graphStableCounter` values (the counter's real update logic
 expressible), and `_isNewState` per the script. The exact injected-field and bookkeeping list
 is enumerated by the task-1 spike and frozen in `OracleScaffold` javadoc; anything the ladder
 reads that the driver fakes is listed there — the honesty ledger of the harness.
+
+Two pieces of production bookkeeping are deliberately **not** in that per-step subset and are
+declared at construction instead (D2): the budget tracker's registration and iteration counts,
+and the launcher's cadence counter. The reason differs from "the ladder does not read them" —
+it reads both. They are constructed state rather than replayed state because the production
+values are the product of dozens of steps, and a driver that advanced them per step would be
+writing the very counters whose ladder-owned updates the goldens exist to pin (INV-ORA-05).
 
 ### D8 — Regeneration is a deliberate, documented act
 

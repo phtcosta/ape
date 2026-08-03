@@ -1,0 +1,5 @@
+{"kind":"header","preset":"llm","scenario":"baseline","seed":6060,"capturedAt":"58d0b40a98cb301ab5576db9b3a1f2207bbef58a"}
+{"step":0,"actionType":"MODEL_CLICK","target":"//*[@resource-id='h0']","decisionSource":"LLM","pickChannel":"llm","llm":"accepted"}
+{"step":1,"actionType":"MODEL_CLICK","target":"//*[@resource-id='s0']","decisionSource":"SATA","pickChannel":"roulette_early","llm":"declined"}
+{"step":2,"actionType":"MODEL_CLICK","target":"//*[@resource-id='s0']","decisionSource":"SATA","pickChannel":"roulette_early","llm":"timeout"}
+{"step":3,"actionType":"MODEL_MENU","decisionSource":"SATA","pickChannel":"roulette_early","llm":"not_routed"}
