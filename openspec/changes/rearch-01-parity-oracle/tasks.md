@@ -81,19 +81,19 @@ group.
 
 ## 4. Golden format: DecisionRecord, GoldenFile, comparator
 
-- [ ] 4.1 Create `DecisionRecord` (step, actionType, target, decisionSource, pickChannel,
+- [x] 4.1 Create `DecisionRecord` (step, actionType, target, decisionSource, pickChannel,
       llm; absent-not-null field semantics — no `componentTrigger`, finding 2.1-c) and NDJSON
       serialization via org.json — one physical line per record; header record with
       preset/scenario/seed/fixture/capturedAt
-- [ ] 4.2 Create `GoldenFile`: reader, writer (capture mode gated on
+- [x] 4.2 Create `GoldenFile`: reader, writer (capture mode gated on
       `-Dape.oracle.regenerate=true`), and `compare()` with first-divergence report
       (preset, scenario, step, field, golden, actual + divergent-record count) (INV-ORA-06)
-- [ ] 4.3 Missing-golden behavior: compare mode fails with regeneration instructions, never
+- [x] 4.3 Missing-golden behavior: compare mode fails with regeneration instructions, never
       auto-captures (spec "Missing golden never auto-captures")
-- [ ] 4.4 `GoldenFileTest`: round-trip fidelity; one-line-per-record; comparator catches a
+- [x] 4.4 `GoldenFileTest`: round-trip fidelity; one-line-per-record; comparator catches a
       changed field, a missing record, and an extra record at the right step; default mode
       writes nothing under `src/test/resources/goldens/` (INV-ORA-04)
-- [ ] 4.5 Checkpoint: `mvn test` green
+- [x] 4.5 Checkpoint: `mvn test` green
 
 ## 5. OracleDriver and harness-integrity tests
 
