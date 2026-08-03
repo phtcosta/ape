@@ -103,6 +103,18 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   `openspec/changes/archive/2026-08-02-telemetry-proof-llm-efficacy/`; task 17.4 was closed by the
   decisive-run evidence, commit `99dded5`). Its telemetry format is superseded by stage 4
   (acceptance Sec. 9.11 protects the transition).
+- `gh88-cal-llm-control` (rvsec) is **archived** 2026-08-03 at **47/58**, with specs synced —
+  `rv-android/openspec/changes/archive/2026-08-03-gh88-cal-llm-control/`, commit `c9dfb704`. Not a
+  `--skip-specs` closure like gh10: the nine `cal_a*` arms, the `LLM_ARM_KEYS` guard, the two
+  `APERV_PROPERTY_MAPPING` entries and the eight-state `experimento-cal/` scaffold are all built and
+  in use, so the deltas describe real code (sync created the `calibration-control` capability, 9
+  requirements, and extended `aperv`'s variant tiers). **Phase A ran** — `experimento-cal/iter0`,
+  11 arms × 40 APKs × 2 reps × 300 s = 880 tasks, VERIFY `ADMISSIBLE`, `analysis.md` complete across
+  four gates; only its DECIDE record was never written, and it would have promoted nothing (no LLM
+  arm separated from either anchor; best arm `cal_a3`, Δ`cov_mop` vs ANC2 +0.85 pp, CI95
+  [-2.52, 4.35]). **Phases B and C are superseded by the E3 decisive run**, which answers the
+  keep-or-drop question at phase-C scale. The 11 open tasks are left unchecked, with the disposition
+  recorded in the archived proposal and tasks.
 
 ## Cross-change decisions recorded during artifact drafting (owner ratifies at approval)
 
@@ -186,12 +198,17 @@ for both sides. Counterparts, all opened 2026-08-03:
 two `gh<N>` namespaces are independent and already collide (ape at gh15, rvsec at gh92): always
 qualify cross-references as `phtcosta/ape#N` vs `rvsec#N`.
 
-Open coordination items — status 2026-08-02:
+Open coordination items — status 2026-08-03:
 - `telemetry-proof-llm-efficacy` must archive before rearch-03/04 (their deltas are written
   against its post-sync text; rearch-03 task 8.6) — **satisfied**: archived 2026-08-02.
-- rv-android changes touching the same arms must merge before rearch-05 (task 1.3):
-  `gh90-e3-decisive-run-setup` is **archived**; **`gh88-cal-llm-control` (47/58, untouched since
-  2026-07-24) is the only live blocker** for stage 5.
+- rv-android changes touching the same arms must merge before rearch-05 (task 1.3) — **satisfied**:
+  `gh90-e3-decisive-run-setup` and `gh88-cal-llm-control` are both **archived**. Stage 5 has no
+  remaining arm-level blocker. gh88's block ran through its task 12.1, which would have added
+  `cal_b*` arms to `get_variants()` in the pre-migration format; retiring phase B released it.
+- **Reciprocal debt created by that archive** (2026-08-03): syncing gh88's deltas put the
+  calibration arm tier and `LLM_ARM_KEYS` into rv-android's main `aperv` spec, so `gh95` must now
+  REMOVE both — its group 8 already deletes `LLM_ARM_KEYS` from `tool.py`, but the delta spec does
+  not exist yet (gh95 is still an empty directory). Whoever writes gh95's artifacts owns this.
 - `gh92-emulator-boot-gating` (rv-android) blocks no **gate**: all seven stage gates are
   host/JVM-level (the parity goldens are decision-level, cross-change decision 4). It blocks only
   the device *smokes* routed through rv-platform — rearch-03 t8.4, rearch-04 t9.1, rearch-05
@@ -258,3 +275,12 @@ Open coordination items — status 2026-08-02:
   block deletes at archive time; and `ape/openspec/config.yaml`'s `references:` field is rejected by
   the CLI ("must be an array of store ids") — harmless warning, not touched here.
   Still 0/309 tasks, no implementation started.
+- 2026-08-03 — **`gh88-cal-llm-control` archived (rvsec commit `c9dfb704`, `closes #88`), with spec
+  sync.** Investigated on the owner's prompt after this roadmap had recorded it as stage 5's only
+  live blocker: `experimento-cal/status.py` derives Phase A at 7/8 of its loop — the campaign ran
+  23–24/07 (880 tasks, VERIFY `ADMISSIBLE`) and only DECIDE was never written. The journal's next
+  two entries are the 2026-08-01 `FREEZE-PREREGISTRO` of the decisive run, so phases B and C were
+  superseded in fact before they were retired on paper. Archived at 47/58 with the 11 open tasks
+  left unchecked and their disposition recorded in the change. **Stage 5 is unblocked**; the
+  reciprocal debt it creates for gh95 is listed under Open coordination items. No ape-side artifact
+  changed — still 0/309 tasks.
