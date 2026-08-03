@@ -42,20 +42,20 @@ group.
 
 ## 2. Oracle scaffold and synthetic fixtures
 
-- [ ] 2.1 Create `src/test/java/com/android/commands/monkey/ape/oracle/OracleScaffold.java`:
+- [x] 2.1 Create `src/test/java/com/android/commands/monkey/ape/oracle/OracleScaffold.java`:
       generalized `allocate()`/`setField()` (hierarchy-walking), synthetic
       `StateKey`/`State`/`GUITree` builders with `TestName`-targeted `ModelAction`s, and the
       per-preset injection profiles (design D2 table); javadoc carries the frozen
       injected-field + bookkeeping ledger from tasks 1.2/1.3
-- [ ] 2.2 Create `OracleSataAgent extends SataAgent` overriding `getRandom()` with a
+- [x] 2.2 Create `OracleSataAgent extends SataAgent` overriding `getRandom()` with a
       per-run seeded `Random`; no other override
-- [ ] 2.3 Create `ScenarioScript`: ordered screens, transition table, per-step scripted
+- [x] 2.3 Create `ScenarioScript`: ordered screens, transition table, per-step scripted
       `_isNewState`/`graphStableCounter`, per-step LLM entries (routing verdicts + result
       verdict), and scenario metadata (name, seed)
-- [ ] 2.4 Unit tests for the scaffold: synthetic state builds with N targeted actions; both
+- [x] 2.4 Unit tests for the scaffold: synthetic state builds with N targeted actions; both
       RNG streams seeded from one declared seed (`RandomHelper.seed` + agent override);
       injection profile for each of the four presets wires the expected field combination
-- [ ] 2.5 Checkpoint: `mvn test` green
+- [x] 2.5 Checkpoint: `mvn test` green
 
 ## 3. Scripted LLM router
 
