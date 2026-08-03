@@ -149,12 +149,12 @@ group.
 
 ## 8. Regeneration procedure and docs
 
-- [ ] 8.1 Write `src/test/resources/goldens/README.md`: when regeneration is legitimate
+- [x] 8.1 Write `src/test/resources/goldens/README.md`: when regeneration is legitimate
       (a decided behavior change — never a red comparison one wants green), the exact command,
       what to review in the diff, commit-message requirement (state the decision), the CI
       prohibition (INV-ORA-04), and the stage-2/3 freeze (INV-ORA-07) with the
       forked-surefire escape hatch for future non-default-Config presets (design D2)
-- [ ] 8.2 Run `/sdd-doc-code` on the new oracle classes (`OracleScaffold`, `OracleDriver`,
+- [x] 8.2 Run `/sdd-doc-code` on the new oracle classes (`OracleScaffold`, `OracleDriver`,
       `ScriptedLlmRouter`, `GoldenFile`) — javadoc must carry the honesty ledger (D7) and the
       capture boundary (D6)
 
