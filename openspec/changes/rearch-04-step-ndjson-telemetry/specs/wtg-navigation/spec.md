@@ -16,6 +16,8 @@ When `ape.frontierBoostWeight > 0` and WTG data is present, the WTG scoring pass
 
 The unvisited check SHALL be evaluated live on every scoring pass: once the target activity has been visited, subsequent passes SHALL NOT apply the frontier term for it. With `ape.frontierBoostWeight = 0` the pass SHALL be byte-identical to the frontier term being absent. When at least one action receives the frontier term in a pass, the agent SHALL log `[APE-RV] Frontier boost: state=<activity>#<stateKey>, boosted=<n>/<total>, maxBoost=<b>`.
 
+**Each writer SHALL stamp its identity, so the accumulated field stays attributable.** Because `wtgBoost` has two producers and only one rendering, the emitted `dec.wtg` cannot be traced to either one by its value alone whenever the two weights coincide — and they do coincide as configured: with `mopWeightWtg = 200` and `frontierBoostWeight = 200`, the decisive campaign realises `{0, 200, 400}` where only 400 is unambiguous, leaving 10,231 steps at 200 that could have come from either pass and 91 that prove both fired. Each write site SHALL therefore record which pass wrote, accumulating into `dec.wtgsrc` ∈ `wtg` | `frontier` | `both` (event-sink capability): the WTG-MOP write stamps `wtg`, the frontier write stamps `frontier`, and a step where both applied carries `both`. The stamp is a compile-time constant at each of the two write sites, so it needs no accessor on the scoring context and no plumbing through the pipeline. **The stamp is telemetry about a telemetry field: it SHALL NOT change the accumulated value, the priority increments, or the order in which they are applied.**
+
 - **INV-WTG-06**: The frontier term SHALL only ever be applied to actions whose WTG transition target has no `ActivityNode` in the model at scoring time, and SHALL be applied as a `setPriority` increment (the steering mechanism) AND recorded in the action's `wtgBoost` field via read-modify-write accumulation (`setWtgBoost(getWtgBoost() + frontierBoostWeight)`), mirroring the existing WTG-MOP pass. Because `wtgBoost` is telemetry-only (never read by `getPriority()`), applying the term through `wtgBoost` alone would leave priority — and therefore roulette weight — unchanged; the `setPriority` increment is mandatory for the boost to steer.
 - **INV-WTG-07**: With `ape.frontierBoostWeight = 0`, scoring SHALL be identical to the pre-change WTG pass. With both boosts applicable, the action's priority gain from the WTG pass SHALL be `mopWeightWtg + frontierBoostWeight` (two `setPriority` increments), and its `wtgBoost` telemetry field SHALL likewise equal `mopWeightWtg + frontierBoostWeight` (accumulated by read-modify-write, not overwritten).
 
@@ -31,6 +33,12 @@ The unvisited check SHALL be evaluated live on every scoring pass: once the targ
 #### Scenario: stacking with the MOP-reach WTG boost
 - **WHEN** the transition target is both MOP-reachable (`activityHasMop == true`) and unvisited, with `mopWeightWtg = 200` (the default) and `frontierBoostWeight = 200`
 - **THEN** the action SHALL receive both terms (+400 total from the WTG pass, accumulated into `wtgBoost`)
+- **AND** the step record SHALL carry `dec.wtg:400` and `dec.wtgsrc:"both"`
+
+#### Scenario: the two producers are distinguishable at equal weights
+- **WHEN** `mopWeightWtg = 200` and `frontierBoostWeight = 200`, and on one step only the frontier term applies while on another only the MOP-reach term applies
+- **THEN** both step records SHALL carry `dec.wtg:200`, the first with `dec.wtgsrc:"frontier"` and the second with `dec.wtgsrc:"wtg"`
+- **AND** the two steps SHALL be indistinguishable in every other recorded field, which is the condition this stamp exists to end
 
 #### Scenario: disabled
 - **WHEN** `ape.frontierBoostWeight = 0`

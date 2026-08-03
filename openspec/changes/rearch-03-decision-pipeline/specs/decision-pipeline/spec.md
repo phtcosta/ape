@@ -89,6 +89,10 @@ public interface DecisionStage {
 
 Assembly SHALL happen exactly once per run and SHALL emit one `[APE-ARCH] stages=[...]` line listing the assembled stages' `name()` values in order (INV-DP-01). Every parameter a stage reads SHALL be injected at assembly from the `RunSpec` (INV-DP-12); a stage SHALL NOT read static `Config` in `decide()`.
 
+**The echo SHALL also name the candidate stages, as a static list.** Beside the assembled stages, assembly SHALL emit the full fixed candidate order with, for each, whether it was assembled — carried by the stage-4 `PIPELINE` record as `stages` and `candidates`. On the stage side this costs nothing beyond the list itself and needs no reason field: a stage is absent exactly when its gating feature is absent from the plan (INV-DP-03), which `RUN_START.features` already states. The list SHALL be a static declaration of names — never a constructed no-op stage object to enumerate, which INV-DP-03 forbids and which this requirement must not be read as reintroducing.
+
+It matters on the *pass* side, and that is where the evidence is. The scoring passes become absent for a reason nothing in the plan reveals — `WtgPass`, `FrontierPass` and `MopFrontierPass` each gate on run-time data — and over the decisive campaign the whole family is never constructed in 25 of the 40 applications. Making the stage census static and the pass census data-bearing is the distinction; the pass half is specified in the scoring-pipeline capability.
+
 #### Scenario: full llm_mop plan assembles all stages
 - **WHEN** the plan carries the activity-budget, LLM (all three modes), MOP, activity-trigger, and component-trigger features
 - **THEN** the pipeline SHALL be `[Budget, LlmNewState, LlmStagnation, LlmRandom, MopLauncher, ComponentTrigger, SataChain]`

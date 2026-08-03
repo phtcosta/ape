@@ -172,7 +172,9 @@ When `ape.preset` is absent — the case for the entire current Python deploymen
 
 ### Requirement: Level-0 RUN_START Echo
 
-Immediately after successful resolution and before any exploration output, the jar SHALL emit `RUN_START` as a single JSON object line to stdout: `type`, format version `v`, `run_id`, `t0` (device epoch milliseconds at emission — the base against which the stage-4 step records' relative `t` offsets resolve), `seed`, `agent`, `preset` (name or `"explicit"`), `features` (sorted names), `params` (every effective non-default parameter plus every active feature's activation key, as `ape.*` keys with effective values), `inert` (accepted neutral keys of inactive features), `digest`, `props_digest`, and `build` (`sha`, `time` from the build stamp).
+Immediately after successful resolution and before any exploration output, the jar SHALL emit `RUN_START` as a single JSON object line to stdout: `type`, format version `v`, `run_id`, `t0` (device epoch milliseconds at emission — the base against which the stage-4 step records' relative `t` offsets resolve), `seed`, `agent`, `preset` (name or `"explicit"`), `features` (sorted names), `params` (every effective non-default parameter plus every active feature's activation key, as `ape.*` keys with effective values), `inert` (accepted neutral keys of inactive features), optional `corpus_basis`, `digest`, `props_digest`, and `build` (`sha`, `time` from the build stamp).
+
+The format version `v` is not decoration and is worth one sentence of justification, because its absence has already cost something. Traces from different campaigns of this study carry materially different `[APE-STEP]` schemas — the earlier calibration corpus has no `mop_frontier`, `pick_channel`, `patched` or counterfactual fields, and its `mop=` realises `{0,300}` where the decisive campaign realises `{0,500}` — and nothing in either trace says which schema it is. `v` is what makes a cross-campaign comparison fail loudly instead of quietly comparing incomparable fields.
 
 The line SHALL be produced by a serializer that escapes quotes, backslashes, and control characters and never emits a raw newline inside the record (one-record-one-line by construction) — the same serializer the stage-4 NDJSON sink will grow from, so `RUN_START`'s format survives stage 4 unchanged. The echo is write-only provenance (owner decision D1, level 0, definitive): no validation of the line anywhere, no Python change, no new communication channel — the physical flow remains `adb push` + stdout capture. In stage 2 the line precedes every APE-RV record and all exploration output; pre-existing AOSP Monkey banner lines may still precede it until the stage-4 sink replaces the remaining emitters.
 
@@ -201,10 +203,28 @@ The line SHALL be produced by a serializer that escapes quotes, backslashes, and
 
 `RunSpec.seed` SHALL be the Monkey `-s` value, and `RunContext.initialize` SHALL be the single point that calls `RandomHelper.seed(seed)` (INV-EXPL-14 unchanged). `runId` SHALL be the `ape.runId` value when present (a recognized key; no current deployment pushes it) and otherwise self-generated, deterministic in format (`<utc-compact>-<seed>-<digest-prefix>`), and echoed in `RUN_START`.
 
+**Recording the seed and having one are two different things, and today only the first is in hand.** The harness appends `-s <seed>` only when a seed is configured, and none was: across the decisive campaign's 360 traces the string appears nowhere except as a widget resource id in one application, and none of the 115 `ape.*` keys in the configuration echo is a seed, RNG or determinism key. So a `RUN_START` that faithfully records the seed will, for a deployment unchanged in this respect, faithfully record its absence. Two consequences follow and neither is this capability's to fix alone: the parity oracle's premise — the same decisions *under the same seed* — has no counterpart in any existing artifact, and the harness change that supplies one belongs to the thin-arms stage.
+
+**When that change is made, a single constant seed across the campaign SHALL NOT be it.** The three replicas per (application, arm) are today the only estimator of run-to-run variation the design has; pinning one seed for all runs would collapse that estimator to zero and buy per-run reproducibility with the loss of the noise floor every effect size is read against. The seed SHALL be a deterministic function of the run's identity — application, arm and replica — so that each run is individually reproducible while replicas still sample the nondeterminism. Note also that reproducibility is bounded from the other side regardless: `RandomHelper` is not the only source of variation, since the trajectory depends on the observed GUI tree and therefore on device timing, and at least one unseeded `Random` exists in the tree (INV-RUN-08 is what closes that second hole, and it is specified here precisely because the seed alone does not).
+
+**`corpus_basis`.** `RUN_START` SHALL carry `corpus_basis` — an identifier plus a `sha256` of the application name-list the run was drawn from — when the `ape.corpusBasis` key is present. It is a recognized key like `ape.runId`, supplied by the harness and echoed unread, and it is omitted when absent rather than defaulted. Two strings once per run retire a class of error this corpus has already produced: the same study has counted its analysis basis as 163, 181 and 219 applications in different documents, and the reconciliation cost falls out of every analysis that has to re-derive which list a run belonged to. This is deliberately *not* a per-application block of frozen static facts: the basis is a property of the corpus, one hash identifies it, and freezing per-app copies would put the same truth in forty places.
+
 #### Scenario: self-generated identity when the host supplies none
 
 - **WHEN** the `tool.py` deployment launches a run (it pushes no `ape.runId`, before or after the stage-2 edit)
 - **THEN** the jar SHALL generate a `run_id` and echo it in `RUN_START`
+
+#### Scenario: no seed configured
+
+- **WHEN** the harness launches a run without `-s`, as every run of the decisive campaign was launched
+- **THEN** `RUN_START` SHALL record the seed as it resolved, so that the absence is legible in the trace rather than inferable from a grep that returns nothing
+- **AND** no component SHALL substitute a default seed to make the field look populated
+
+#### Scenario: corpus basis echoed when supplied
+
+- **WHEN** the harness pushes `ape.corpusBasis=subset40:<sha256>`
+- **THEN** `RUN_START` SHALL carry `corpus_basis` with that value, and no runtime component SHALL read it (INV-RUN-03)
+- **AND** when the key is absent the member SHALL be omitted entirely
 
 ### Requirement: RunContext Ownership (stage-2 scope)
 
