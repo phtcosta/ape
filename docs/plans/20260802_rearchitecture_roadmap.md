@@ -30,7 +30,9 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
 - [ ] **4. `rearch-04-step-ndjson-telemetry`** — `EventSink` step-grouped NDJSON (D2) +
       escaping serializer + heartbeat (D4) + `RUN_END` write-only (D5) + legacy outputs
-      deleted + temporary converter + gzip at collection. Dissolves INV-ARCH-01.
+      deleted + native NDJSON reader on the analysis side + gzip at collection. Dissolves
+      INV-ARCH-01. **No NDJSON→legacy converter** (P3 sweep, 2026-08-03): the `.trace` is the
+      NDJSON and is never rewritten.
       *Gates: neutrality test (sink on/off, same seed ⇒ same decisions); calibration report
       2026-07-24 regenerable (Sec. 9.11); round-trip/one-line tests (Sec. 9.12).*
   - [ ] artifacts approved · [ ] apply · [ ] verify · [ ] archive
@@ -59,6 +61,19 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   dissolves them*, with the substitute recorded.
 - Portuguese in conversation, English in artifacts. No implementation before the owner
   approves the change's artifacts.
+- **P3 (rv-android CLAUDE.md): no strategy that keeps legacy code alive** — no adapter, shim,
+  alias, converter, fallback window or speculative tolerance. Every change overwrites what it
+  replaces, in the same landing. Swept 2026-08-03
+  (`docs/20260802_verificacao_p3_rearch.md`); the surviving legacy-shaped constructs are
+  legitimate and each says in the artifact why (07's old parser is the equivalence *oracle*,
+  deleted in the same commit as its replacement; the frozen-corpus readers parse an archived
+  dataset that will not change).
+- **Execution happens in one git worktree**, branch `rearch`, for all 7 stages; merged into
+  `master` once, after stage 7 (decided 2026-08-03). Procedure, inheritance, the
+  `mvn install -Drvsec_home` caveat and the cross-repo carve-out:
+  `docs/20260803_procedimento_worktree_rearch.md`. The constraint the shared branch makes easy
+  to violate: stage 1's goldens are captured from pre-change code and MUST be committed before
+  stage 2's first production edit.
 
 ## Related state
 
@@ -130,6 +145,20 @@ Open coordination items — status 2026-08-02:
   eight orphaned requirements that referenced deleted mechanisms ported into the stage that
   invalidates them; the `Feature`-model substitutes re-recorded in 03 and 07; INV-SEL-01/04/05/06
   dispositioned; the preserved `type_text` defect declared in 03; corpus provenance of 07 flagged
-  for pinning; cross-repo OpenSpec instrument tasks added to 05 and 07. Three requirements still
-  need delta files that do not exist yet (`ui-coverage`, `form-completion`, `activity-budget`) —
-  see the verification document §4.1.
+  for pinning; cross-repo OpenSpec instrument tasks added to 05 and 07. The three missing delta
+  files flagged by §4.1 were created in the same commit (`ui-coverage` and `activity-budget` in
+  02, `form-completion` in 04) — that item is closed.
+- 2026-08-03 — P3 sweep applied (`docs/20260802_verificacao_p3_rearch.md`, commit `52965ae`).
+  **A1**: stage 4's NDJSON→legacy converter is removed — the `.trace` is the NDJSON, the analysis
+  side gains a native reader, `clock_logcat_join.py` migrates onto it (deleting the UTC-offset
+  reconstruction the D4 heartbeat makes dead), and the frozen-corpus scripts keep their own
+  readers as a stated carve-out. Sec. 9.11 acceptance becomes gated on that reader.
+  **D1/D2**: `Deterministic Dead-Pair Ban` and the `ScreenshotCapture` cause seam re-anchored off
+  the dismantled `LlmRouter` (onto `CoordinateMapper` / `LlmTelemetry`, mechanism untouched);
+  `Tolerant Action-History Persistence` removed with its subject (`saveActionHistory`).
+  **C1**: stage 2's transitional test scaffolding gets an owner — stage 5 group 10 deletes it.
+  **B1–B3**: wording corrected where the construct was already legitimate. New delta specs:
+  04 `llm-prompt`/`model`/`wtg-navigation`, 05 `run-spec`.
+- 2026-08-03 — Worktree procedure decided and recorded (commit `d74ce6b`): one worktree, branch
+  `rearch`, all 7 stages, single merge after stage 7. Pointer added to all seven `tasks.md`.
+  Still 0/309 tasks, no implementation started.
