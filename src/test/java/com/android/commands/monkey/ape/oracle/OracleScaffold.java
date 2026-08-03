@@ -43,6 +43,10 @@ import java.util.Set;
  * a stage-2/3 rename forces an adaptation, this is the one file that changes — the goldens and the
  * scenario scripts do not (INV-ORA-07).
  *
+ * <p>This is the ledger's <b>injection</b> half: what the harness fakes before the first call into
+ * the ladder. Its <b>replay</b> half — what the driver does between two calls, which is what makes a
+ * multi-step golden more than a repeated first step — is {@link OracleDriver}'s javadoc.
+ *
  * <h2>Why the constructor cannot run (finding 1.1-b)</h2>
  * {@code StatefulAgent}'s constructor takes a {@code MonkeySourceApe}, which does not class-load
  * off device ({@code MonkeySourceApeForeignGuardTest:19-21} — its {@code UiAutomation} field), and
@@ -125,7 +129,16 @@ import java.util.Set;
  *   <li>{@code selectNewActionEpsilonGreedyRandomly} — safe since the task-1.6 seam; both legs
  *       (the least-visited pick and the priority roulette) draw from the overridden
  *       {@code getRandom()}.</li>
- *   <li>{@code handleNullAction} — reachable; draws from the overridable {@code getRandom()}.</li>
+ *   <li>{@code handleNullAction} — <b>entered, but not survivable</b> (finding 5.2-a, correcting the
+ *       task-1 reading). Its first expression draws from the overridable {@code getRandom()}, which
+ *       is what the spike observed, but the same expression passes {@code validatedActionFilter} —
+ *       null here, and even reconstructed it calls {@code validateNewAction}
+ *       ({@code StatefulAgent.java:1454-1466}), which dereferences the null {@code ape}. A state
+ *       with nothing selectable therefore raises a {@code NullPointerException} from the filter, not
+ *       the {@code BadStateException} the rung is written to raise. <b>Consequence</b>: no scenario
+ *       can capture that exception, so the spec's {@code BadStateException} error case is a
+ *       driver-side contract (the run aborts) rather than a reachable ladder outcome; scenarios must
+ *       leave an action selectable above this rung, which they were already required to do.</li>
  * </ul>
  * <p>Descending past EARLY_STAGE requires <i>saturated</i>, not merely visited, actions:
  * {@code isSaturated()} is visit-based for targetless actions but

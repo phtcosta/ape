@@ -97,14 +97,14 @@ group.
 
 ## 5. OracleDriver and harness-integrity tests
 
-- [ ] 5.1 Create `OracleDriver.run(agent, script)`: per step — inject scripted state, invoke
+- [x] 5.1 Create `OracleDriver.run(agent, script)`: per step — inject scripted state, invoke
       `selectNewActionNonnull()`, build the `DecisionRecord` (target via `Name.toXPath()`;
       launcher steps as `EVENT_TRIGGER_ACTIVITY` + candidate class), apply the bookkeeping
       ledger, advance
-- [ ] 5.2 `OracleDriverTest`: double-capture identity (same seed twice ⇒ identical record
+- [x] 5.2 `OracleDriverTest`: double-capture identity (same seed twice ⇒ identical record
       lists, INV-ORA-02); `BadStateException` fails the run; a scenario reaching a device-only
       branch surfaces `NoClassDefFoundError` (assert the failure is loud, not swallowed)
-- [ ] 5.3 Checkpoint: `mvn test` green
+- [x] 5.3 Checkpoint: `mvn test` green
 
 ## 6. Per-preset baseline scenarios and goldens
 
