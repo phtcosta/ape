@@ -133,19 +133,19 @@ group.
 
 ## 7. Preemption golden
 
-- [ ] 7.1 Write the simultaneous-qualification scenario (`llm_mop` profile): the budget gate
+- [x] 7.1 Write the simultaneous-qualification scenario (`llm_mop` profile): the budget gate
       entered from a declared exhausted activity and falling through, ahead of every other
       mechanism (its trivial-action return is outside the boundary, finding 6.1-b); LLM accept
       preempting a due launcher; LLM decline falling through to the
       launcher; SATA fallback — in `PreemptionGoldenTest`; capture and commit
       `goldens/llm_mop/preemption.ndjson`. The component trigger is out of scope
       (finding 2.1-c) and its absence costs no precedence coverage: the block returns nothing
-- [ ] 7.2 Direct field assertions alongside the golden: finding 3.3-1 —
+- [x] 7.2 Direct field assertions alongside the golden: finding 3.3-1 —
       `_stepsSinceLauncherFiring` unchanged across an LLM-accepted step and cadence resuming
       from the pre-preemption value (INV-ORA-05); stagnation single-shot burn on decline
       (`stagnationHookFired` true, `graphStableCounter` unchanged); counter reset on accept
       only; hook consultation order new-state → stagnation → random
-- [ ] 7.3 Checkpoint: `mvn test` green
+- [x] 7.3 Checkpoint: `mvn test` green
 
 ## 8. Regeneration procedure and docs
 

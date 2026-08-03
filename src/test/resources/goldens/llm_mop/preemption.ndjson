@@ -1,0 +1,5 @@
+{"kind":"header","preset":"llm_mop","scenario":"preemption","seed":8080,"fixture":"cryptoapp.apk.gh60-fresh.json","capturedAt":"ee26650be562b8904d1102bdd0ab0b5a86ef6674"}
+{"step":0,"actionType":"MODEL_CLICK","target":"//*[@resource-id='e0']","decisionSource":"LLM","pickChannel":"llm","llm":"accepted"}
+{"step":1,"actionType":"EVENT_TRIGGER_ACTIVITY","target":"br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity","llm":"declined"}
+{"step":2,"actionType":"MODEL_CLICK","target":"//*[@resource-id='p1']","decisionSource":"SATA","pickChannel":"roulette_early","llm":"not_routed"}
+{"step":3,"actionType":"MODEL_CLICK","target":"//*[@resource-id='p2']","decisionSource":"SATA","pickChannel":"roulette_early","llm":"not_routed"}
