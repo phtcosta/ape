@@ -15,14 +15,14 @@ Gate: this change may only be applied after `rearch-01-parity-oracle` is impleme
 
 ## 1. RunSpec / Feature / Presets core (pure JVM, no wiring yet)
 
-- [ ] 1.1 Create `Feature` enum (`ape.runtime` package): constants per design D-2 with activation rule, owned keys, `EnumSet` dependencies (`MENU_GATEWAY→{MODEL_MENU,MOP}`, MOP family→`MOP`, LLM modes→`LLM`), and neutral values as constructor data
-- [ ] 1.2 Create the key-ownership table: every `ape.*` key owned by exactly one of `ExplorationParams` / one `Feature` / the resolver (`ape.preset`, `ape.runId`); include the retired-key constant with per-key reason strings (`ape.apePureMode`, `ape.modelFile`, `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.enableXPathAction`, `ape.mopWeightActivity`, file-borne `ape.agentType`/`ape.replayLog`)
-- [ ] 1.3 Create `RunSpec` + nested `ExplorationParams`/`MopParams`/`LlmParams`/`TelemetryParams` (final classes, private constructors, hand-rolled immutability; params null iff feature absent) and `RunSpecException(reason, key, detail)`
-- [ ] 1.4 Implement `RunSpec.resolve(fileEntries, cli)`: preset merge → type parsing (strict booleans, aborting numerics; existing clamps preserved as clamps) → feature derivation (defaults never activate an impossible feature) → dependency/combination validation → inert-neutral rule → digest + propertiesDigest (SHA-256, design D-6)
-- [ ] 1.5 Implement `Presets.resolve("aperv"|"mop"|"llm"|"llm_mop")` with vectors translated from the current `tool.py` arm dicts (design D-3; deployment-specific keys excluded)
-- [ ] 1.6 Unit tests: key-ownership totality (every Config-known key owned; test fails on unowned key); feature derivation and dependency matrix; neutral-inert vs non-neutral-abort (incl. `ape.llmPercentageNoSubstrate=-1` on a non-LLM plan); preset+override merge; unknown preset; digest determinism (key order / file split / preset-vs-explicit invariance; seed excluded)
-- [ ] 1.7 Unit tests: abort matrix — unknown key, non-`ape.` key, each retired key with its message, bad int, bad boolean (`ture`), `llmOnNewState=true` without `llmUrl`, `activityTriggerEnabled=true` without `mopDataPath`, `mopWeightOpenMenu>0` with `modelMenuEnabled=false`, replay without log
-- [ ] 1.8 Run `mvn test` (new tests green, suite unbroken)
+- [x] 1.1 Create `Feature` enum (`ape.runtime` package): constants per design D-2 with activation rule, owned keys, `EnumSet` dependencies (`MENU_GATEWAY→{MODEL_MENU,MOP}`, MOP family→`MOP`, LLM modes→`LLM`), and neutral values as constructor data
+- [x] 1.2 Create the key-ownership table: every `ape.*` key owned by exactly one of `ExplorationParams` / one `Feature` / the resolver (`ape.preset`, `ape.runId`); include the retired-key constant with per-key reason strings (`ape.apePureMode`, `ape.modelFile`, `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.enableXPathAction`, `ape.mopWeightActivity`, file-borne `ape.agentType`/`ape.replayLog`)
+- [x] 1.3 Create `RunSpec` + nested `ExplorationParams`/`MopParams`/`LlmParams`/`TelemetryParams` (final classes, private constructors, hand-rolled immutability; params null iff feature absent) and `RunSpecException(reason, key, detail)`
+- [x] 1.4 Implement `RunSpec.resolve(fileEntries, cli)`: preset merge → type parsing (strict booleans, aborting numerics; existing clamps preserved as clamps) → feature derivation (defaults never activate an impossible feature) → dependency/combination validation → inert-neutral rule → digest + propertiesDigest (SHA-256, design D-6)
+- [x] 1.5 Implement `Presets.resolve("aperv"|"mop"|"llm"|"llm_mop")` with vectors translated from the current `tool.py` arm dicts (design D-3; deployment-specific keys excluded)
+- [x] 1.6 Unit tests: key-ownership totality (every Config-known key owned; test fails on unowned key); feature derivation and dependency matrix; neutral-inert vs non-neutral-abort (incl. `ape.llmPercentageNoSubstrate=-1` on a non-LLM plan); preset+override merge; unknown preset; digest determinism (key order / file split / preset-vs-explicit invariance; seed excluded)
+- [x] 1.7 Unit tests: abort matrix — unknown key, non-`ape.` key, each retired key with its message, bad int, bad boolean (`ture`), `llmOnNewState=true` without `llmUrl`, `activityTriggerEnabled=true` without `mopDataPath`, `mopWeightOpenMenu>0` with `modelMenuEnabled=false`, replay without log
+- [x] 1.8 Run `mvn test` (new tests green, suite unbroken)
 
 ## 2. Build provenance stamp (independent of group 1)
 
