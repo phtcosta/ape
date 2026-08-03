@@ -14,10 +14,10 @@ keeps the system runnable and results comparable on its own.
 Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner →
 `[apply]` implemented → `[verify]` `/opsx:verify` clean + gates below → `[archive]`.
 
-- [ ] **1. `rearch-01-parity-oracle`** — golden capture of current per-preset decision
+- [x] **1. `rearch-01-parity-oracle`** — golden capture of current per-preset decision
       sequences + preemption golden (incl. finding 3.3-1). Pure test infra, no production change.
       *Gate for stages 2–3.*
-  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [x] apply · [x] verify · [x] archive (2026-08-03)
 - [ ] **2. `rearch-02-runspec`** — `RunSpec` + presets in jar + `Feature` enum + total
       fail-fast + level-0 `RUN_START` echo (D1) + removal of `/sdcard` readers (D6) and of
       `saveGraph`/`readGraph`/`--ape-model`. **One ordered Python edit** (AC1): the counterpart change
@@ -216,6 +216,12 @@ Open coordination items — status 2026-08-03:
   calibration arm tier and `LLM_ARM_KEYS` into rv-android's main `aperv` spec, so `gh95` must now
   REMOVE both — its group 8 already deletes `LLM_ARM_KEYS` from `tool.py`, but the delta spec does
   not exist yet (gh95 is still an empty directory). Whoever writes gh95's artifacts owns this.
+- **The stage-1 goldens are frozen for stages 2 and 3** (INV-ORA-07, in the synced
+  `openspec/specs/parity-oracle/spec.md`). The five golden files and the scenario scripts SHALL NOT
+  change while those two stages are in flight; the only layer that may adapt is `OracleScaffold`'s
+  injection profile, and only to a renamed or relocated field. From stage 2 on,
+  `git diff <capturedAt> HEAD -- src/main/java` stops being empty — that is expected and is not a
+  reason to recapture. A golden that moves with the code it measures measures nothing.
 - `gh92-emulator-boot-gating` (rv-android) blocks no **gate**: all seven stage gates are
   host/JVM-level (the parity goldens are decision-level, cross-change decision 4). It blocks only
   the device *smokes* routed through rv-platform — rearch-03 t8.4, rearch-04 t9.1, rearch-05
@@ -299,3 +305,38 @@ Open coordination items — status 2026-08-03:
   left unchecked and their disposition recorded in the change. **Stage 5 is unblocked**; the
   reciprocal debt it creates for gh95 is listed under Open coordination items. No ape-side artifact
   changed — still 0/309 tasks.
+- 2026-08-03 — **Stage 1 closed: `rearch-01-parity-oracle` applied, verified and archived** (39/39,
+  commit `2b6098b`, `closes rearch-01`; archived to
+  `openspec/changes/archive/2026-08-03-rearch-01-parity-oracle/`). Suite at closure: **843 tests,
+  0 failures, 19 skipped** — 13 `@Ignore` plus 6 environment-dependent `Assume` in `SglangLiveTest`,
+  which run and reach the network when `SGLANG_URL` is exported, so the total is comparable only at a
+  constant environment. The delta was a pure `## ADDED` block and synced to
+  `openspec/specs/parity-oracle/spec.md` (6 requirements, INV-ORA-01..07); `openspec/specs/README.md`
+  was deliberately left alone, its domain map already listing 10 of 20 capability directories.
+  `src/main/java` differs from the pre-stage baseline `b7baa68` by exactly one file — `SataAgent`'s
+  `egreedy()` seam. Two review fixes landed in the closing commit: `ScenarioScript.Builder.build()`
+  now rejects a transition whose *source* screen is undeclared, and `OracleScaffold`'s Config ledger
+  enumerates the same 18 keys `LadderConfigGuard` asserts, up from 9. **Stage 2 may begin**; its gate
+  (task 7.1) is these five goldens green against the stage-2 jar. This entry and the stage-1
+  checkboxes were written after the fact: the closing commit updated the change, not this roadmap.
+- 2026-08-03 — **Artifact revisions from the telemetry-opportunity analysis** (14 files across
+  `rearch-02/03/04/07`, +121/−15). Owner-commissioned in a session that audited
+  `rv-android/docs/20260803_propostas_telemetria_rearch.md` against the code and the E3 decisive
+  corpus (360 traces) with verification subagents, and applied the surviving items — the owner's
+  "A + B, without C". Substance: `RUN_START` gains `corpus_basis` (recognized key `ape.corpusBasis`,
+  echoed and read by nothing) and records that the current deployment configures **no seed**, with
+  the design constraint that a future one be a function of (application, arm, replica) rather than a
+  campaign constant, which would zero the three-replica variance estimator; `MOP_DATA` carries the
+  full load census with **`wtgEdges` replacing `transitions`** — the flat list was being read as the
+  frontier gate and is not it (14 of 40 applications report 9–29 transitions with the whole family
+  disabled); `PIPELINE` gains a sibling `candidates` census, without which "the arm turned it off"
+  and "this application's data could not support it" stay indistinguishable, and the family is never
+  constructed in 25 of 40 applications; `RUN_END` gains `t_first_step`/`t_last_step`; three per-step
+  fields (`dec.wtgsrc`, `dec.mopx`, `dec.comp`) enter under the INV-SNK-13 measurement gate, with
+  `mopx` named as the first to drop if it binds; stage 7 restores `windows` and gains INV-CT-14 (the
+  launch result is an observation and SHALL NOT govern control flow). `openspec validate --strict`
+  clean on all four. The revisions were applied with direct edits rather than through
+  `openspec-update-change` — the content is owner-commissioned and verified against the tree, the
+  deviation is in the mechanism, and it is recorded here rather than left implicit. One item binds
+  stage 2 group 1: task 4.3a makes `ape.corpusBasis` a third resolver-owned key, so task 1.2's
+  key-ownership table is `ape.preset`, `ape.runId`, `ape.corpusBasis`.
