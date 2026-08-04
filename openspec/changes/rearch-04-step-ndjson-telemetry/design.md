@@ -66,7 +66,7 @@ never through Logger.
 
 | Component | Responsibility | Input | Output |
 |-----------|---------------|-------|--------|
-| `ape.telemetry.JsonBuf` (new, ~80 LOC) | JSON serialization into a reused `StringBuilder`; full escaping; one-line guarantee | primitive values, strings | one NDJSON line (no raw newline ever) |
+| `ape.runtime.Json.Buf` (**extends** the class `rearch-02` shipped, not a new one) | JSON serialization into a reused `StringBuilder`; full escaping; one-line guarantee | primitive values, strings | one NDJSON line (no raw newline ever) |
 | `ape.telemetry.EventSink` (new interface) | Observation surface; all methods `void`, never throw into the loop | step/decision/LLM/outcome data as primitives+strings | NDJSON lines on `System.out` |
 | `ape.telemetry.NdjsonSink` (new) | Record lifecycle (open→append→close at N+1), ID tables, run-level records, counters for `RUN_END` | sink calls | trace records |
 | `ape.telemetry.NoopSink` (new) | Neutrality-test double; every method a no-op | sink calls | nothing |
@@ -170,9 +170,11 @@ One entry per routing attempt in the step, in occurrence order (a `BadStateExcep
 
 The outcome of step N only exists during step N+1's `updateGraph()` — the exact fact the join buffer (`StatefulAgent.java:117-124`) already encodes. The sink keeps **one** pending record: `beginStep` opens it (lazily, at selection start, so LLM sub-events occurring before the final action is known still land in it), `decision` fills `dec` when `resolveNewAction` finalizes, `outcome` closes+writes it under the same single-shot, reference-equality guard the `[APE-OUTCOME]` line uses today (`:1024-1045`). If the next `beginStep` arrives with the previous record still pending (non-model action, restart, refinement discard — the cases where today no `[APE-OUTCOME]` is emitted), the pending record is closed **without** an `out` member and written. Nothing is deferred beyond what is already deferred; cost stays ~1 stdout write per step. Alternative considered: write two records (decision at N, outcome at N+1) — rejected: it re-creates the analyst-side join D2 exists to kill.
 
-### D-2 — Hand-written serializer, not `org.json`
+### D-2 — Hand-written serializer, not `org.json`; one class, extended rather than duplicated
 
-`org.json.JSONObject` is available on-device, but: (i) it is hash-ordered — field order would be non-deterministic across runs, hurting goldens, diffs, and gzip ratio; (ii) its escaping behavior varies across Android releases and is not under test here; (iii) per-record object graphs allocate. `JsonBuf` (~80 LOC) appends into one reused `StringBuilder`, escapes `"` `\` and all of U+0000–U+001F (shorthands `\n \r \t \b \f`, ` ` for NUL, plus U+2028/U+2029 — the JS line separators), passes non-ASCII through (the stream is UTF-8), and **never emits a raw newline** — the record terminator is the single `\n` written by the sink around the record. `org.json` is used only in JVM tests, as the round-trip parser (it is already on the test classpath).
+`org.json.JSONObject` is available on-device, but: (i) it is hash-ordered — field order would be non-deterministic across runs, hurting goldens, diffs, and gzip ratio; (ii) its escaping behavior varies across Android releases and is not under test here; (iii) per-record object graphs allocate.
+
+The serializer this decision calls for **already exists**: `rearch-02` shipped `ape.runtime.Json` for the `RUN_START` line, and its javadoc states the contract — this stage grows the writer, not the format. What stage 4 adds to it is the nested `Json.Buf` (the streaming writer; `Json.object(Map)` builds a value tree per call, the wrong shape for one record per step across a run) and the two code points the escape set was missing. It does **not** add a second class: two implementations of how a control character leaves this process is how they drift, and the trace would then have two answers for the same byte depending on which record it sat in (P3). The permanent test that keeps the single format honest is the agreement assertion — the same value tree through `Json.object(Map)` and through `Json.Buf` renders the same line. `Json.Buf` appends into one reused `StringBuilder`, escapes `"` `\` and all of U+0000–U+001F (shorthands `\n \r \t \b \f`, ` ` for NUL, plus U+2028/U+2029 — the JS line separators), passes non-ASCII through (the stream is UTF-8), and **never emits a raw newline** — the record terminator is the single `\n` written by the sink around the record. `org.json` is used only in JVM tests, as the round-trip parser (it is already on the test classpath).
 
 ### D-3 — Dictionary events with run-local integer IDs; static facts live on the entry
 
@@ -216,8 +218,8 @@ Sink methods never propagate a `Throwable` into the exploration loop: each publi
 
 | Requirement / Invariant | Implementation | Test |
 |-------------|---------------|------|
-| INV-SNK-01 one line per record | `JsonBuf` + `NdjsonSink.write` | permanent JVM unit: no raw `\n` for adversarial inputs |
-| INV-SNK-02 escaping round-trip | `JsonBuf.val(String)` | JVM round-trip via `org.json` parse (newline, quotes, backslash, NUL, spaces, non-ASCII) — Sec. 9.12 |
+| INV-SNK-01 one line per record | `Json.Buf` + `NdjsonSink.write` | permanent JVM unit: no raw `\n` for adversarial inputs |
+| INV-SNK-02 escaping round-trip | `Json.Buf.value(String)`, shared with `Json.object(Map)` | JVM round-trip via `org.json` parse (newline, quotes, backslash, NUL, spaces, non-ASCII) — Sec. 9.12 |
 | INV-SNK-03 exactly one StepRecord per step | `NdjsonSink` lifecycle | JVM unit: scripted step sequence → record count == step count |
 | INV-SNK-04/05 envelope 1×, defaults omitted, tri-state exemptions | record writer | JVM unit: zero boosts absent; `patched` tri-state preserved |
 | INV-SNK-06 dictionary-before-reference | `NdjsonSink` ID tables | JVM unit: first-sight ordering |
@@ -234,17 +236,21 @@ Sink methods never propagate a `Throwable` into the exploration loop: each publi
 
 ## API Design
 
-### `JsonBuf`
+### `Json.Buf` (nested in the class `rearch-02` shipped)
 
 ```java
-final class JsonBuf {                    // zero deps, reused via reset()
-    JsonBuf reset();
-    JsonBuf beginObject();  JsonBuf endObject();
-    JsonBuf beginArray();   JsonBuf endArray();
-    JsonBuf name(String key);
-    JsonBuf value(String s);             // full escaping; null → JSON null
-    JsonBuf value(long n);  JsonBuf value(double d);  JsonBuf value(boolean b);
-    String  toLine();                    // completed record; contains no '\n'
+public final class Json {                       // ape.runtime.Json, zero deps
+    public static String object(Map<String, ?> members);   // value tree; RunSpecEcho's entry point
+
+    public static final class Buf {             // streaming writer, reused via reset()
+        public Buf reset();
+        public Buf beginObject();  public Buf endObject();
+        public Buf beginArray();   public Buf endArray();
+        public Buf name(String key);
+        public Buf value(String s);             // full escaping; null → JSON null
+        public Buf value(long n);  public Buf value(double d);  public Buf value(boolean b);
+        public String toLine();                 // completed record; contains no '\n'
+    }
 }
 ```
 
@@ -312,7 +318,7 @@ interface EventSink {                    // all void; never throws into the loop
 
 | Layer | What | How |
 |-------|------|-----|
-| JVM unit (permanent) | `JsonBuf` escaping round-trip + one-line invariant (Sec. 9.12); StepRecord lifecycle, dictionary ordering, tri-state `patched`, defaults omission; teardown order (`flushPendingStep` first, `runEnd` last); discriminator | `mvn test`, existing suite conventions |
+| JVM unit (permanent) | `Json.Buf` escaping round-trip, and its agreement with `Json.object(Map)`, + one-line invariant (Sec. 9.12); StepRecord lifecycle, dictionary ordering, tri-state `patched`, defaults omission; teardown order (`flushPendingStep` first, `runEnd` last); discriminator | `mvn test`, existing suite conventions |
 | Neutrality (permanent gate) | sink on/off, same seed ⇒ identical action sequence (Sec. 9.8) | rearch-01 parity harness with `NdjsonSink` vs `NoopSink` |
 | Python unit | reader golden: NDJSON fixture → expected typed rows (dictionary resolution, defaults materialization, `llm[]` and `out` joined onto their step); `clock_logcat_join` over a new-format trace plus a heartbeat logcat; gzip round-trip and non-fatal failure | pytest in aperv-tool |
 | Acceptance | regenerate the 2026-07-24 calibration report tables from a sample new trace (Sec. 9.11) | rv-android side, sample run via rv-platform |
