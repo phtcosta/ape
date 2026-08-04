@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.android.commands.monkey.ape.runtime.RunContext;
+
 /**
  * Typed model of the static-analysis JSON produced by rv-android, plus the
  * activity → shortWidgetId → reachability index used for MOP-guided scoring.
@@ -303,7 +305,7 @@ public class MopData {
                         + "' but JSON has '" + mainActivity + "'");
                 mismatch = true;
             }
-            if (mismatch && Config.mopStrictPackageMatch) {
+            if (mismatch && RunContext.current().spec().mop().strictPackageMatch()) {
                 Logger.wprintln("MopData: strict package match enabled — rejecting " + path);
                 Logger.iprintln("[APE-MOP-DATA] status=rejected reason=package-mismatch");
                 return null;

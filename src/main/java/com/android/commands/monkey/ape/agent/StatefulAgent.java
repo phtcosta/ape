@@ -17,17 +17,12 @@ package com.android.commands.monkey.ape.agent;
 
 import static com.android.commands.monkey.ape.utils.Config.activityStableRestartThreshold;
 import static com.android.commands.monkey.ape.utils.Config.baseThrottle;
-import static com.android.commands.monkey.ape.utils.Config.enableXPathAction;
 import static com.android.commands.monkey.ape.utils.Config.evolveModel;
 import static com.android.commands.monkey.ape.utils.Config.fuzzingActivityVisitThreshold;
 import static com.android.commands.monkey.ape.utils.Config.graphStableRestartThreshold;
 import static com.android.commands.monkey.ape.utils.Config.maxExtraPriorityAliasedActions;
 import static com.android.commands.monkey.ape.utils.Config.maxThrottle;
-import static com.android.commands.monkey.ape.utils.Config.saveDotGraph;
 import static com.android.commands.monkey.ape.utils.Config.saveGUITreeToXmlEveryStep;
-import static com.android.commands.monkey.ape.utils.Config.saveObjModel;
-import static com.android.commands.monkey.ape.utils.Config.saveStates;
-import static com.android.commands.monkey.ape.utils.Config.saveVisGraph;
 import static com.android.commands.monkey.ape.utils.Config.stateStableRestartThreshold;
 import static com.android.commands.monkey.ape.utils.Config.takeScreenshot;
 import static com.android.commands.monkey.ape.utils.Config.takeScreenshotForEveryStep;
@@ -66,7 +61,6 @@ import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.GraphListener;
 import com.android.commands.monkey.ape.model.Model;
 import com.android.commands.monkey.ape.model.Model.ActionRecord;
-import com.android.commands.monkey.ape.model.xpathaction.XPathActionController;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
@@ -477,12 +471,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
      * @return
      */
     protected ModelAction selectNewActionFromBuffer() {
-        if (enableXPathAction) {
-            ModelAction xpathAction = XPathActionController.selectAction(newState, newGUITree);
-            if (xpathAction != null) {
-                return xpathAction;
-            }
-        }
         if (actionBuffer.isEmpty()) {
             return null;
         }
@@ -1805,7 +1793,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         });
         safeStep("superTearDown", super::tearDown);
         safeStep("coverageDump", this::dumpCoverage);
-        safeStep("saveGraph", this::saveGraph);
         safeStep("saveActionHistory", this::saveActionHistory);
         safeStep("actionCounters", () -> actionCounters.print());
         safeStep("activityNodes", () -> getGraph().printActivityNodes());
@@ -1814,21 +1801,25 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     /**
-     * The teardown step that emits the UI-coverage dump, run immediately before the model
-     * serialization (INV-COV-10). No-op here: only {@code SataAgent} can supply the dump's
-     * {@code mopReach} predicate, so it overrides this.
+     * The teardown step that emits the UI-coverage dump (INV-COV-10). No-op here: only
+     * {@code SataAgent} can supply the dump's {@code mopReach} predicate, so it overrides this.
      *
-     * <p>Ordering is the whole mechanism. The dump used to be the last instruction of the whole
-     * teardown, after {@code saveGraph} had written the model to {@code /sdcard} — and 338 of the
-     * 800 calibration runs (42.3%) lost it, 330 of them cut on the very line {@code saveGraph}
-     * prints. Emitting before that write recovers 333 of the 338. The remaining 5 never reached
-     * teardown at all, and no teardown-side mechanism can reach them.
+     * <p>Ordering is the whole mechanism, and the boundary is <b>first among the writers</b>: this
+     * step runs before {@code saveActionHistory}, the only remaining teardown step that writes to
+     * {@code /sdcard}. It lands third in the chain, after {@code llmSummary} and
+     * {@code superTearDown}, neither of which writes anything. The boundary is stated on chain
+     * position among writers rather than on a fixed index, so it stays verifiable as later stages
+     * add and remove steps.
+     *
+     * <p>The reason the property exists is measured. Across 800 {@code aperv} calibration runs the
+     * dump was the last instruction of the whole teardown, behind the {@code /sdcard} writes, and
+     * 338 of those runs (42.3%) carry no dump — 330 of them cut mid-write. Emitting the dump ahead
+     * of the writes recovers 333 of the 338; the remaining 5 never reached teardown at all, and no
+     * teardown-side mechanism can reach them.
      *
      * <p>A shutdown hook cannot substitute for this: the trace is the host's {@code adb} stdout,
      * which the harness SIGKILLs and closes, so anything the device writes afterwards has nowhere
-     * to land. The boundary that matters is therefore "before the model serialization", not "first
-     * in the chain" — this step lands third, after {@code llmSummary} and {@code superTearDown},
-     * neither of which writes to {@code /sdcard}.
+     * to land.
      */
     protected void dumpCoverage() {
     }
@@ -1850,55 +1841,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     protected void saveActionHistory() {
         File actionHistoryFile = new File(checkOutputDir(), "action-history.log");
         Model.saveActionHistory(actionHistoryFile, getActionHistory());
-    }
-
-    protected void saveGraph() {
-        if (!(saveDotGraph || saveObjModel || saveVisGraph)) {
-            return;
-        }
-        Graph graph = getGraph();
-        File graphOutputDir = checkOutputDir();
-        Logger.println("Save graph data to " + graphOutputDir);
-        File file = null;
-        if (saveObjModel) {
-            file = new File(graphOutputDir, "sataModel.obj");
-            try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(file))) {
-                oos.writeObject(model);
-            } catch (IOException e) {
-                e.printStackTrace();
-                Logger.println("Fail to write model into " + file);
-            }
-        }
-        if (saveDotGraph) {
-            file = new File(graphOutputDir, "sataGraph.dot");
-            try (PrintWriter pw = new PrintWriter(new FileOutputStream(file))) {
-                graph.printDot(pw);
-            } catch (IOException e) {
-                e.printStackTrace();
-                Logger.println("Fail to write dot graph into " + file);
-            }
-        }
-        if (saveVisGraph) {
-            file = new File(graphOutputDir, "sataGraph.vis.js");
-            try (PrintWriter pw = new PrintWriter(new FileOutputStream(file))) {
-                graph.printVis(pw);
-            } catch (IOException e) {
-                e.printStackTrace();
-                Logger.println("Fail to write vis graph into " + file);
-            }
-        }
-        if (saveStates) {
-            for (State state : graph.getStates()) {
-                file = new File(graphOutputDir,
-                        String.format("step-%d-%s.txt", state.getFirstVisitedTimestamp(), state.getGraphId()));
-                try (PrintWriter pw = new PrintWriter(new FileOutputStream(file))) {
-                    state.saveState(pw);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    Logger.println("Fail to write state into " + file);
-                }
-            }
-        }
     }
 
 }

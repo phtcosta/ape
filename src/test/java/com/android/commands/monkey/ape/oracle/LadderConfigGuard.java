@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.utils.Config;
 
 import static org.junit.Assert.assertEquals;
@@ -10,8 +11,9 @@ import static org.junit.Assert.assertTrue;
  * rearch-01 task group 6 — the per-preset Config guard the spec requires ("Config default drift is
  * caught by the guard, not the golden").
  *
- * <p>A preset is realized by its injection profile over <b>jar-default</b> Config (design D2), so
- * every golden silently depends on those defaults. Without a guard, changing one would surface as
+ * <p>A preset is realized by its injection profile over <b>jar-default</b> Config and a
+ * jar-default {@link com.android.commands.monkey.ape.runtime.RunSpec} (design D2), so every golden
+ * silently depends on those defaults. Without a guard, changing one would surface as
  * an unexplained golden divergence — the reader would go hunting through the ladder for a decision
  * that changed, when what changed is an input. Each assertion here names the key, so the failure
  * says which default moved.
@@ -63,7 +65,12 @@ final class LadderConfigGuard {
      * the deterministic MOP short-circuit.
      */
     static void assertMopDefaults() {
-        assertTrue("ape.activityTriggerEnabled", Config.activityTriggerEnabled);
+        // The launcher gate is the one ladder value that lives in the run plan rather than in
+        // Config, so it is asserted against the plan the scaffold installed. The assertion is
+        // unchanged in substance: a MOP arm at its jar defaults has the launcher enabled, which is
+        // the condition every MOP golden was captured under.
+        assertTrue("ape.activityTriggerEnabled",
+                RunContext.current().spec().mop().activityTriggerEnabled());
         assertEquals("ape.activityTriggerStagnationStep", 50, Config.activityTriggerStagnationStep);
         assertEquals("ape.activityTriggerMaxPerRun", 0, Config.activityTriggerMaxPerRun);
         assertEquals("ape.mopTargetPickCap", 3, Config.mopTargetPickCap);

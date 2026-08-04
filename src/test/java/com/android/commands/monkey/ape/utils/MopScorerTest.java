@@ -1,11 +1,16 @@
 package com.android.commands.monkey.ape.utils;
 
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -34,6 +39,18 @@ import static org.junit.Assert.*;
  * uses, so the short-id → {@code getWidget} resolution runs without an Android runtime.
  */
 public class MopScorerTest {
+
+    /** The menu-gateway boost is a plan value, so the scorer needs a plan in effect. */
+    @Before
+    public void installMopPlan() {
+        TestRunSpecs.installMop();
+    }
+
+    @After
+    public void clearPlan() {
+        RunContext.resetForTest();
+    }
+
 
     // -------------------------------------------------------------------------
     // Helpers
@@ -271,7 +288,8 @@ public class MopScorerTest {
     @Test // 17.1
     public void testScoreOpenMenuBoostsWhenOptionsMenuHasMopWidget() throws Exception {
         MopData d = loadMenuMopFixture();
-        assertEquals(Config.mopWeightOpenMenu, MopScorer.scoreOpenMenu("C", d));
+        RunSpec spec = TestRunSpecs.installMop("ape.mopWeightOpenMenu", "250");
+        assertEquals(spec.mop().weightOpenMenu(), MopScorer.scoreOpenMenu("C", d));
     }
 
     @Test // 17.2

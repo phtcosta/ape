@@ -14,6 +14,7 @@ import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -471,6 +472,21 @@ public final class OracleScaffold {
         if (preset.hasLlmRouter() != (router != null)) {
             throw new IllegalArgumentException("preset " + preset + " requires an LLM router "
                     + (preset.hasLlmRouter() ? "but none was supplied" : "but one was supplied"));
+        }
+
+        // The plan the ladder reads. One ladder value moved out of Config and into the run plan
+        // (the launcher gate, SataAgent.selectNewActionNonnull), so a preset must now also state
+        // itself as a RunSpec — this is the injection scaffold adapting to a relocated field,
+        // which is the one adaptation INV-ORA-07 permits while stages 2 and 3 are in flight.
+        //
+        // The values are the jar defaults, deliberately: the goldens were captured over
+        // jar-default Config (design D2), so a MOP arm at its defaults reproduces exactly the
+        // launcher gate the capture ran under (activityTriggerEnabled true). A non-MOP preset gets
+        // no MopParams at all, which closes the same gate the absent MopData already closed.
+        if (preset.hasMopData()) {
+            TestRunSpecs.installMop();
+        } else {
+            TestRunSpecs.install();
         }
 
         OracleSataAgent agent = allocate(OracleSataAgent.class);

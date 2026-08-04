@@ -163,7 +163,6 @@ public final class KeyOwnership {
         base("ape.restartThresholdMax", ValueType.INT, "300");
         base("ape.restartThresholdMin", ValueType.INT, "100");
         base("ape.saveGUITreeToXmlEveryStep", ValueType.BOOLEAN, "false");
-        base("ape.saveStates", ValueType.BOOLEAN, "true");
         base("ape.stateStableRestartThreshold", ValueType.INT, "50");
         base("ape.swipeDuration", ValueType.LONG, "200");
         base("ape.takeScreenshot", ValueType.BOOLEAN, "true");
@@ -262,6 +261,10 @@ public final class KeyOwnership {
                 "the graph writers are removed; sataGraph.dot is not produced.");
         RETIRED.put("ape.saveVisGraph",
                 "the graph writers are removed; sataGraph.vis.js is not produced.");
+        RETIRED.put("ape.saveStates",
+                "the per-state dump was written only from inside the deleted saveGraph step; "
+                        + "step-<timestamp>-<id>.txt is not produced. State detail belongs to the "
+                        + "stage-4 trace, not to a /sdcard file nothing reads back.");
         RETIRED.put("ape.enableXPathAction",
                 "the /sdcard XPath action-injection channel is removed (owner decision D6); the "
                         + "jar reads no behavioral input from /sdcard other than ape.properties.");

@@ -1,7 +1,11 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Collections;
@@ -22,6 +26,21 @@ import static org.junit.Assert.*;
  * inline interleaved loop is parity-safe only with that guard).
  */
 public class ScoringPassGateTest {
+
+    /**
+     * The pass roster is plan-controlled, so every case needs a plan in effect. A MOP arm at its
+     * jar defaults is the neutral starting point; a case that needs another weight installs its own.
+     */
+    @Before
+    public void installDefaultMopPlan() {
+        TestRunSpecs.installMop();
+    }
+
+    @After
+    public void clearPlan() {
+        RunContext.resetForTest();
+    }
+
 
     private static StubScoringContext ctxWithMop(MopData mopData) {
         StubScoringContext ctx = new StubScoringContext();
@@ -71,27 +90,24 @@ public class ScoringPassGateTest {
         assertTrue("MopData with WTG data", new FrontierPass(ctxWithMop(mopWithWtg())).isEnabled());
     }
 
-    // ---- MopFrontierPass: gated on mopFrontierWeight>0 && mopData+WTG (Lever B) ----
-    // mopFrontierWeight is non-final, so unlike the static-final weights above this JVM CAN
-    // exercise both the weight-off (default 0 → disabled, INV-MFP-03) and weight-on branches.
+    // ---- MopFrontierPass: gated on the plan's frontier weight > 0 && mopData+WTG (Lever B) ----
+    // The weight is a plan value, so both the weight-off (default 0 → disabled, INV-MFP-03) and
+    // weight-on branches are reachable by installing two plans.
 
     @Test
     public void mopFrontierPassRequiresWeightAndMopDataAndWtgData() {
         // Default weight 0 → disabled even with full MopData+WTG (byte-identical to absent).
+        TestRunSpecs.installMop();
         assertFalse("default weight 0",
                 new MopFrontierPass(ctxWithMop(mopWithWtg())).isEnabled());
-        int saved = com.android.commands.monkey.ape.utils.Config.mopFrontierWeight;
-        try {
-            com.android.commands.monkey.ape.utils.Config.mopFrontierWeight = 200;
-            assertFalse("weight>0 but no MopData",
-                    new MopFrontierPass(ctxWithMop(null)).isEnabled());
-            assertFalse("weight>0 but no WTG data",
-                    new MopFrontierPass(ctxWithMop(mopNoWtg())).isEnabled());
-            assertTrue("weight>0 with MopData+WTG",
-                    new MopFrontierPass(ctxWithMop(mopWithWtg())).isEnabled());
-        } finally {
-            com.android.commands.monkey.ape.utils.Config.mopFrontierWeight = saved;
-        }
+
+        TestRunSpecs.installMop("ape.mopFrontierWeight", "200");
+        assertFalse("weight>0 but no MopData",
+                new MopFrontierPass(ctxWithMop(null)).isEnabled());
+        assertFalse("weight>0 but no WTG data",
+                new MopFrontierPass(ctxWithMop(mopNoWtg())).isEnabled());
+        assertTrue("weight>0 with MopData+WTG",
+                new MopFrontierPass(ctxWithMop(mopWithWtg())).isEnabled());
     }
 
     // ---- CoveragePass / FormCompletionPass: on at default config -------------

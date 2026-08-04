@@ -15,9 +15,6 @@
  */
 package com.android.commands.monkey.ape.model;
 
-import java.io.FileInputStream;
-import java.io.ObjectInputStream;
-import java.io.PrintWriter;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -633,167 +630,6 @@ public class Graph implements Serializable {
         node.visitedAt(timestamp);
     }
 
-    public void printDot(PrintWriter pw) {
-        pw.format("digraph GSTG {\n", 1);
-        for (State sd : keyToState.values()) {
-            String stateID = sd.getGraphId();
-            pw.format("\t%s [label=\"%s\"];\n", stateID, stateID);
-        }
-        for (StateTransition edge : edges.keySet()) {
-            String sourceID = edge.source.getGraphId();
-            String targetID = edge.target.getGraphId();
-            ModelAction action = edge.action;
-            String actionID = action.getGraphId();
-            String edgeID = edge.getGraphId();
-            String style = "solid";
-            if (edge.getStrength() < 1) {
-                style = "dashed";
-            } else if (edge.getMissingCount() > 0) {
-                style = "bold";
-            }
-
-            pw.format("\t%s -> %s [style=%s, label=\"%s[%s]\"];\n", sourceID, targetID, style, edgeID, actionID);
-        }
-        pw.format("}\n", 1);
-    }
-
-    String getColor(int value, int min, int max) {
-        if (value < min || value > max) {
-            throw new IllegalArgumentException();
-        }
-
-        if (max < min) {
-            throw new IllegalArgumentException();
-        }
-
-        int range = max - min;
-        int delta = value - min;
-
-        if (range == 0) {
-            range = 1;
-        }
-
-        int r, g, b;
-        r = 255 - (int) (255 * (1.0 * delta / range));
-        b = g = r;
-        return String.format("#%02X%02X%02X", r, g, b);
-    }
-
-    public void printVis(PrintWriter pw) {
-        int maxVisited = Integer.MIN_VALUE;
-        for (State state : keyToState.values()) {
-            if (state.getVisitedCount() > maxVisited) {
-                maxVisited = state.getVisitedCount();
-            }
-        }
-
-        // System.out.format("%d %d %d", maxVisited, maxStrength, minStrength);
-        pw.println("var nodes = new vis.DataSet([");
-        for (State sd : keyToState.values()) {
-            String stateID = sd.getGraphId();
-            pw.format(
-                    "\t{ id: \"%s\", label: \"%s\", title: \"%s\", screenURL: \"%s\", color: {background: \"%s\", border: \"#000000\"}},\n",
-                    stateID, stateID, getNodeTitle(sd), String.format("step-%d.png", sd.getFirstVisitedTimestamp()),
-                    getColor(sd.getVisitedCount(), 0, maxVisited));
-        }
-        pw.println("]);");
-
-        int minStrength = Integer.MAX_VALUE;
-        int maxStrength = Integer.MIN_VALUE;
-        maxVisited = Integer.MIN_VALUE;
-        for (StateTransition e : edges.keySet()) {
-            if (e.getStrength() > maxStrength) {
-                maxStrength = e.getStrength();
-            }
-            if (e.getStrength() < minStrength) {
-                minStrength = e.getStrength();
-            }
-            if (e.getVisitedCount() > maxVisited) {
-                maxVisited = e.getVisitedCount();
-            }
-        }
-
-        pw.println("var edges = new vis.DataSet([");
-        for (StateTransition edge : edges.keySet()) {
-            String sourceID = edge.source.getGraphId();
-            String targetID = edge.target.getGraphId();
-            ModelAction action = edge.action;
-            String actionID = action.getGraphId();
-            pw.format("\t{from: \"%s\", to: \"%s\", label: \"%s\", title: \"%s\", color: {border: \"%s\"}%s},\n",
-                    sourceID, targetID, actionID, getStateTransitionTitle(edge),
-                    getColor(edge.getVisitedCount(), 0, maxVisited), getStateTransitionType(edge));
-        }
-        pw.println("]);");
-    }
-
-    private String getStateTransitionType(StateTransition edge) {
-        if (edge.isStrong()) {
-            return "";
-        }
-        return ", dashes: true";
-    }
-
-    static String escape(String javaString) {
-        return javaString.replace("\\", "\\\\").replace("\n", "\\n").replace("'", "\\'").replace("\"", "\\\"");
-    }
-
-    private Object getStateTransitionTitle(StateTransition edge) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("<table><tbody><tr>");
-        sb.append("<td>Visited</td>" + "<td>First Visited</td>" + "<td>Last Visited</td>" + "<td>Strength</td>"
-                + "<td>Hitting</td>" + "<td>Missing</td>" + "<td>Action</td>");
-        sb.append("</tr><tr><td>");
-        sb.append(edge.action.getVisitedCount());
-        sb.append("</td><td>");
-        sb.append(edge.action.getFirstVisitedTimestamp());
-        sb.append("</td><td>");
-        sb.append(edge.action.getLastVisitedTimestamp());
-        sb.append("</td><td>");
-        sb.append(edge.getStrength());
-        sb.append("</td><td>");
-        sb.append(edge.getHittingCount());
-        sb.append("</td><td>");
-        sb.append(edge.getMissingCount());
-        sb.append("</td><td>");
-        sb.append(escape(edge.action.toFullString()));
-        sb.append("</td></tr></tbody></table>");
-        return escape(sb.toString());
-    }
-
-    private Object getNodeTitle(State sd) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("<table border='1'><tbody><tr><td colspan='6'>");
-        sb.append(sd.getActivity());
-        sb.append("</td></tr><tr>");
-        sb.append(
-                "<td>Visited</td><td>First Visited</td><td>Last Visited</td><td>Theta</td><td>One step Theta</td><td>Actions</td><td>Widgets</td>");
-        sb.append("</tr><tr><td>");
-        sb.append(sd.getVisitedCount());
-        sb.append("</td><td>");
-        sb.append(sd.getFirstVisitedTimestamp());
-        sb.append("</td><td>");
-        sb.append(sd.getLastVisitedTimestamp());
-        sb.append("</td><td>");
-        sb.append(sd.getCountOfActions());
-        sb.append("</td><td>");
-        sb.append(sd.getCountOfWidgets());
-        sb.append("</td></tr></tbody></table>");
-
-        sb.append("<ol>");
-        for (Name w : sd.getWidgets()) {
-            sb.append("<li>");
-            sb.append(w);
-        }
-        sb.append("</ol>");
-        sb.append("<ol>");
-        for (ModelAction a : sd.getActions()) {
-            sb.append("<li>");
-            sb.append(escape(a.toFullString()));
-        }
-        sb.append("</ol>");
-        return escape(sb.toString());
-    }
-
     public int getWeakOutStateTransitions(State state, int threshold) {
         Map<StateTransition, StateTransition> ret = stateToOutStateTransitions.get(state);
         if (ret == null) {
@@ -1161,16 +997,6 @@ public class Graph implements Serializable {
             throw new IllegalArgumentException("Cannot update a non-existing edge");
         }
         return edge;
-    }
-
-    public static Graph readGraph(String modelFile) {
-        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(modelFile))) {
-            return (Graph) ois.readObject();
-        } catch (Exception e) {
-            e.printStackTrace();
-            Logger.println("Fail to load graph from " + modelFile);
-        }
-        return new Graph();
     }
 
     public int getCountOfUnvisitedActions() {

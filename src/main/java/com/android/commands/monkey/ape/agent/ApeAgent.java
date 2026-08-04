@@ -35,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import com.android.commands.monkey.MonkeySourceApe;
 import com.android.commands.monkey.MonkeyUtils;
 import com.android.commands.monkey.ape.Agent;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.events.ApeEvent;
@@ -230,10 +231,10 @@ public abstract class ApeAgent implements Agent {
      * Generate input text for an EditText node. gh13 T1.3: when static-analysis MOP data is
      * available and carries a non-empty inputType/hint for the widget, use the type-aware
      * generator; otherwise fall back to the legacy heuristic / random generator (no regression
-     * on non-instrumented apps). Bypassed entirely when Config.fuzzInputTyped is false.
+     * on non-instrumented apps). Bypassed entirely when the plan's fuzzInputTyped is false.
      */
     protected String generateInputText(GUITreeNode node) {
-        if (Config.fuzzInputTyped) {
+        if (RunContext.current().spec().exploration().fuzzInputTyped()) {
             MopData md = getMopData();
             if (md != null) {
                 String activity = ape.getTopActivityClassName();

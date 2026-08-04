@@ -48,6 +48,8 @@ import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.SubsequenceFilter;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -520,7 +522,12 @@ public class SataAgent extends StatefulAgent {
         // attributed Component in resolveNewAction, no graph edge (INV-CT-05/06/07). Evaluated after
         // the LLM hooks, so an enabled LLM hook at a shared step takes precedence.
         _stepsSinceLauncherFiring++;
-        if (shouldFireLauncher(Config.activityTriggerEnabled, getMopData() != null,
+        // MopParams is null on an arm whose plan carries no MOP feature. Such an arm has no MOP
+        // data either, so the gate was already closed by the second argument; reading the absence
+        // as "not enabled" keeps that outcome without a second, redundant guard.
+        RunSpec.MopParams mopParams = RunContext.current().spec().mop();
+        if (shouldFireLauncher(mopParams != null && mopParams.activityTriggerEnabled(),
+                getMopData() != null,
                 _stepsSinceLauncherFiring, Config.activityTriggerStagnationStep,
                 _activityTriggerLaunchCount, Config.activityTriggerMaxPerRun)) {
             // Reset at the firing point regardless of candidate outcome (keeps firing periodic and

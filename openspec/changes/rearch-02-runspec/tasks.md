@@ -52,15 +52,15 @@ Gate: this change may only be applied after `rearch-01-parity-oracle` is impleme
 
 ## 5. Removals (D6 readers, persistence protocol, kill-switch, non-final fields)
 
-- [ ] 5.1 `StringCache`: delete the `/sdcard/ape.strings` static initializer (and its `RuntimeException` path); `maxStringListSize = Config.maxStringListSize`; `nextString()` index drawn from seeded `RandomHelper` (delete the `ThreadLocalRandom` import/use — V23)
-- [ ] 5.2 `GUITreeBuilder`: delete the `xPathlets` static block, field, and uses (`/sdcard/ape.xpath`)
-- [ ] 5.3 Delete the `ape.model.xpathaction` package (6 files), the `enableXPathAction` branch in `StatefulAgent` (`:480-482`), and `Config.enableXPathAction`
-- [ ] 5.4 Delete `StatefulAgent.saveGraph()` + its `safeStep`; delete `Graph.readGraph`; delete `Config.saveObjModel/saveDotGraph/saveVisGraph`; delete now-caller-less `Graph.printDot`/`printVis` (verify no other caller first); teardown chain becomes `llmSummary → superTearDown → coverageDump → saveActionHistory → actionCounters → activityNodes → namingDump → modelCounters`
-- [ ] 5.5 Update/replace the teardown-order test: coverage dump strictly before `saveActionHistory` (restated INV-COV-10 boundary)
-- [ ] 5.6 `Config`: delete `apePureMode` field, the static-block forcing call, `forceApePureModeInto`, `rvForcedOffValues`, `rvUnsetKeys`, `rvExemptReasons`; update/delete the registry guard tests (superseded by the key-ownership totality test of task 1.6)
-- [ ] 5.7 Make the five non-final fields final-or-gone: delete `mopWeightOpenMenu`, `fuzzInputTyped`, `mopStrictPackageMatch`, `activityTriggerEnabled`, `mopFrontierWeight` from `Config`; read sites (MopScorer, ApeFuzzer, MopData.load, SataAgent/StatefulAgent launcher gate, MopFrontierPass) consult `RunContext.current().spec()`; migrate the tests that toggled them to `RunSpec` test-factory + `installForTest`
-- [ ] 5.8 Unit tests: `StringCache` seeded determinism (same seed ⇒ same string sequence; empty cache never throws); absence guards (no `ThreadLocalRandom` in `src/main`, no `/sdcard/ape.xpath|ape.xpath.actions|ape.strings` literals outside comments)
-- [ ] 5.9 Run `mvn test` (full suite; expect and fix fallout from deleted fields/tests only)
+- [x] 5.1 `StringCache`: delete the `/sdcard/ape.strings` static initializer (and its `RuntimeException` path); `maxStringListSize = Config.maxStringListSize`; `nextString()` index drawn from seeded `RandomHelper` (delete the `ThreadLocalRandom` import/use — V23)
+- [x] 5.2 `GUITreeBuilder`: delete the `xPathlets` static block, field, and uses (`/sdcard/ape.xpath`)
+- [x] 5.3 Delete the `ape.model.xpathaction` package (6 files), the `enableXPathAction` branch in `StatefulAgent` (`:480-482`), and `Config.enableXPathAction`
+- [x] 5.4 Delete `StatefulAgent.saveGraph()` + its `safeStep`; delete `Graph.readGraph`; delete `Config.saveObjModel/saveDotGraph/saveVisGraph`; delete now-caller-less `Graph.printDot`/`printVis` (verify no other caller first); teardown chain becomes `llmSummary → superTearDown → coverageDump → saveActionHistory → actionCounters → activityNodes → namingDump → modelCounters`
+- [x] 5.5 Update/replace the teardown-order test: coverage dump strictly before `saveActionHistory` (restated INV-COV-10 boundary)
+- [x] 5.6 `Config`: delete `apePureMode` field, the static-block forcing call, `forceApePureModeInto`, `rvForcedOffValues`, `rvUnsetKeys`, `rvExemptReasons`; update/delete the registry guard tests (superseded by the key-ownership totality test of task 1.6)
+- [x] 5.7 Make the five non-final fields final-or-gone: delete `mopWeightOpenMenu`, `fuzzInputTyped`, `mopStrictPackageMatch`, `activityTriggerEnabled`, `mopFrontierWeight` from `Config`; read sites (MopScorer, ApeFuzzer, MopData.load, SataAgent/StatefulAgent launcher gate, MopFrontierPass) consult `RunContext.current().spec()`; migrate the tests that toggled them to `RunSpec` test-factory + `installForTest`
+- [x] 5.8 Unit tests: `StringCache` seeded determinism (same seed ⇒ same string sequence; empty cache never throws); absence guards (no `ThreadLocalRandom` in `src/main`, no `/sdcard/ape.xpath|ape.xpath.actions|ape.strings` literals outside comments)
+- [x] 5.9 Run `mvn test` (full suite; expect and fix fallout from deleted fields/tests only)
 
 ## 6. Python contract: the ordered `ape_pure_mode` removal, then compat fixtures
 

@@ -161,17 +161,6 @@ public class ConfigTest {
     }
 
     // ---------------------------------------------------------------------------
-    // mop-reach-strategies 1.2: mopFrontierWeight — MOP-conditioned twin of
-    // frontierBoostWeight, gates MopFrontierPass. Default 0 = off (byte-identical
-    // to pre-change; the widget arm does not use it). Static field captured at
-    // class load, so only the default is asserted here.
-    // ---------------------------------------------------------------------------
-    @Test
-    public void testMopFrontierWeight_defaultIsZero() {
-        assertEquals(0, Config.mopFrontierWeight);
-    }
-
-    // ---------------------------------------------------------------------------
     // mop-reach-strategies 1.4: llmPercentageNoSubstrate — F′ LLM-routing override
     // used when the substrate is widgetless. Default -1 sentinel = "no override"
     // (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt

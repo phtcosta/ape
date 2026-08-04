@@ -24,8 +24,6 @@ import static com.android.commands.monkey.ape.utils.Config.ignoreWebViewThreshol
 import static com.android.commands.monkey.ape.utils.Config.patchGUITree;
 import static com.android.commands.monkey.ape.utils.Config.treeEnhancementsEnabled;
 
-import java.io.File;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,9 +38,6 @@ import java.util.regex.Pattern;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.xpath.XPathConstants;
-import javax.xml.xpath.XPathExpression;
-import javax.xml.xpath.XPathExpressionException;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -51,8 +46,6 @@ import org.w3c.dom.NodeList;
 
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
-import com.android.commands.monkey.ape.model.xpathaction.XPathlet;
-import com.android.commands.monkey.ape.model.xpathaction.XPathletReader;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
 import com.android.commands.monkey.ape.naming.Naming.NamingResult;
@@ -83,45 +76,12 @@ public class GUITreeBuilder {
     public static final String GUI_TREE_NODE_PROP_NAME = "GUITreeNode";
     public static final String GUI_TREE_PROP_NAME = "GUITree";
 
-    /**
-     * User configured rules to create GUI trees.
-     */
-    private static final List<XPathlet> xPathlets;
-    static {
-        File jsonFile = new File("/sdcard/ape.xpath");
-        XPathletReader reader = new XPathletReader();
-        if (jsonFile.exists()) {
-            xPathlets = reader.read(jsonFile);
-        } else {
-            xPathlets = Collections.emptyList();
-        }
-    }
-
     public static GUITree getGUITree(Document document) {
         return (GUITree) document.getUserData(GUI_TREE_PROP_NAME);
     }
 
     public static GUITreeNode getGUITreeNode(Node domNode) {
         return (GUITreeNode) domNode.getUserData(GUI_TREE_NODE_PROP_NAME);
-    }
-
-    private static void applyXPathlets(Document document) {
-        for (XPathlet xpathlet : xPathlets) {
-            XPathExpression expr = xpathlet.getExpr();
-            try {
-                NodeList e = (NodeList) expr.evaluate(document, XPathConstants.NODESET);
-                Logger.iformat("Select %d nodes by %s", e.getLength(), xpathlet.getExprStr());
-                for (int i = 0; i < e.getLength(); i++) {
-                    org.w3c.dom.Node domNode = e.item(i);
-                    GUITreeNode n = getGUITreeNode(domNode);
-                    n.resetActions(xpathlet.getActions());
-                    n.setExtraThrottle(xpathlet.getThrottle());
-                    n.setInputText(xpathlet.getText());
-                }
-            } catch (XPathExpressionException e) {
-                Logger.wprintln("Evaluating XPath " + xpathlet.getExprStr() + " failed ..");
-            }
-        }
     }
 
     static Rect parseRect(String bounds) {
@@ -221,7 +181,6 @@ public class GUITreeBuilder {
         GUITreeNode root = buildNodeAndXmlFromNodeInfo(null, document, info, 0);
         if (document != null) {
             document.appendChild(root.getDomNode());
-            applyXPathlets(document);
         }
         if (patchGUITree) {
             patchGUITree(root);

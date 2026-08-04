@@ -41,11 +41,6 @@ public class StatefulAgentTearDownTest {
         }
 
         @Override
-        protected void saveGraph() {
-            // no-op: keeps the pre-failure steps quiet so the assertions read unambiguously
-        }
-
-        @Override
         public void onBadState(int lastBadStateCount, int badStateCounter) {
         }
 

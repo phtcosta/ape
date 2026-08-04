@@ -1,5 +1,11 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -22,6 +28,18 @@ import static org.junit.Assert.*;
  * {@code org.json} rather than {@code android.util.JsonReader} (design D21).
  */
 public class MopDataTest {
+
+    /** The strict-package gate is a plan value, so loading needs a plan in effect. */
+    @Before
+    public void installMopPlan() {
+        TestRunSpecs.installMop();
+    }
+
+    @After
+    public void clearPlan() {
+        RunContext.resetForTest();
+    }
+
 
     // -------------------------------------------------------------------------
     // Helpers
@@ -403,13 +421,8 @@ public class MopDataTest {
     // 15.8
     @Test
     public void testPackageMismatchRejectsWhenStrict() {
-        boolean prev = Config.mopStrictPackageMatch;
-        Config.mopStrictPackageMatch = true;
-        try {
-            assertNull(MopData.load(fixturePath(FRESH), "x.y.z.OTHER", null));
-        } finally {
-            Config.mopStrictPackageMatch = prev;
-        }
+        TestRunSpecs.installMop("ape.mopStrictPackageMatch", "true");
+        assertNull(MopData.load(fixturePath(FRESH), "x.y.z.OTHER", null));
     }
 
     // -------------------------------------------------------------------------
@@ -476,14 +489,9 @@ public class MopDataTest {
 
     @Test
     public void testStatusLinePackageMismatchReason() {
-        boolean prev = Config.mopStrictPackageMatch;
-        Config.mopStrictPackageMatch = true;
-        try {
-            String out = captureLoad(fixturePath(FRESH), "x.y.z.OTHER", null);
-            assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=package-mismatch"));
-        } finally {
-            Config.mopStrictPackageMatch = prev;
-        }
+        TestRunSpecs.installMop("ape.mopStrictPackageMatch", "true");
+        String out = captureLoad(fixturePath(FRESH), "x.y.z.OTHER", null);
+        assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=package-mismatch"));
     }
 
     // 5.3 — unset path stays silent (spec: no status line required when MOP disabled)
@@ -706,17 +714,16 @@ public class MopDataTest {
 
     // 15.23
     @Test
-    public void testConfigFlagsLoadFromProperties() {
-        // Defaults bind correctly and the rollback knobs are assignable at runtime.
-        assertEquals(250, Config.mopWeightOpenMenu);
-        assertTrue(Config.fuzzInputTyped);
-        assertFalse(Config.mopStrictPackageMatch);
-        // activity-frontier: default flipped to true (repurposed to gate the stagnation launcher).
-        assertTrue(Config.activityTriggerEnabled);
-        boolean prev = Config.activityTriggerEnabled;
-        Config.activityTriggerEnabled = false;
-        try { assertFalse(Config.activityTriggerEnabled); }
-        finally { Config.activityTriggerEnabled = prev; }
+    public void testPlanControlledFlagsBindTheirJarDefaults() {
+        // The four parameters below are resolved into the plan, not held in a mutable static. A
+        // MOP arm that states none of them inherits the jar defaults; a different value is a
+        // different plan, which is why there is no assignment to observe here.
+        RunSpec spec = TestRunSpecs.installMop();
+        assertEquals(250, spec.mop().weightOpenMenu());
+        assertTrue(spec.exploration().fuzzInputTyped());
+        assertFalse(spec.mop().strictPackageMatch());
+        // activity-frontier: default true (it gates the stagnation launcher).
+        assertTrue(spec.mop().activityTriggerEnabled());
     }
 
     // 15.24

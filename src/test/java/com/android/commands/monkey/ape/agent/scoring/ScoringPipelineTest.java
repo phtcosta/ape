@@ -4,7 +4,11 @@ import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -26,6 +30,21 @@ import static org.junit.Assert.*;
  * constructor and on device (task 7.6).
  */
 public class ScoringPipelineTest {
+
+    /**
+     * The pass roster is plan-controlled, so every case needs a plan in effect. A MOP arm at its
+     * jar defaults is the neutral starting point; a case that needs another weight installs its own.
+     */
+    @Before
+    public void installDefaultMopPlan() {
+        TestRunSpecs.installMop();
+    }
+
+    @After
+    public void clearPlan() {
+        RunContext.resetForTest();
+    }
+
 
     /** A stub pass that records that it ran, in order, and optionally mutates the actions. */
     static final class RecordingPass implements ScoringPass {
@@ -124,20 +143,16 @@ public class ScoringPipelineTest {
     @Test
     public void fromConfigInsertsMopFrontierAfterFrontierBeforeCoverageWhenWeighted() {
         // Task 4.3 / INV-MFP registration position: MopFrontierPass joins the roster only when
-        // mopFrontierWeight>0, immediately after the generic FrontierPass and before CoveragePass —
+        // the plan states a positive frontier weight, immediately after the generic FrontierPass
+        // and before CoveragePass —
         // the frontier family stays contiguous (INV-ARCH-03 relative order preserved).
         StubScoringContext ctx = new StubScoringContext();
         ctx.mopData = mopWithWtg();
-        int saved = com.android.commands.monkey.ape.utils.Config.mopFrontierWeight;
-        try {
-            com.android.commands.monkey.ape.utils.Config.mopFrontierWeight = 200;
-            ScoringPipeline p = ScoringPipeline.fromConfig(null, ctx);
-            assertEquals(Arrays.asList(
-                    "MopWidgetPass", "MenuGatewayPass", "WtgPass", "FrontierPass",
-                    "MopFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
-        } finally {
-            com.android.commands.monkey.ape.utils.Config.mopFrontierWeight = saved;
-        }
+        TestRunSpecs.installMop("ape.mopFrontierWeight", "200");
+        ScoringPipeline p = ScoringPipeline.fromConfig(null, ctx);
+        assertEquals(Arrays.asList(
+                "MopWidgetPass", "MenuGatewayPass", "WtgPass", "FrontierPass",
+                "MopFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
     }
 
     @Test

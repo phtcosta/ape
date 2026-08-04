@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -15,7 +16,7 @@ import java.util.List;
  * Weights are read from Config (configurable via ape.properties):
  *   directMop              → Config.mopWeightDirect     (default 500)
  *   transitiveMop (only)   → Config.mopWeightTransitive (default 300)
- *   OPTIONSMENU gateway    → Config.mopWeightOpenMenu   (default 250)
+ *   OPTIONSMENU gateway    → mop().weightOpenMenu()     (default 250)
  *   no match               → 0 (discriminative-only; no activity-level fallback)
  */
 public class MopScorer {
@@ -87,7 +88,7 @@ public class MopScorer {
 
     /**
      * Boost for opening the options menu of the given activity (T1.2). Returns
-     * {@code Config.mopWeightOpenMenu} when the activity's OPTIONSMENU is a MOP gateway
+     * the plan's {@code mop().weightOpenMenu()} when the activity's OPTIONSMENU is a MOP gateway
      * (INV-MOP-13), else 0. O(1) over the precomputed set.
      *
      * @param data may be null (returns 0)
@@ -96,7 +97,8 @@ public class MopScorer {
         if (data == null || activity == null) {
             return 0;
         }
-        return data.activityHasMopOptionsMenu(activity) ? Config.mopWeightOpenMenu : 0;
+        return data.activityHasMopOptionsMenu(activity)
+                ? RunContext.current().spec().mop().weightOpenMenu() : 0;
     }
 
     /**

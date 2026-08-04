@@ -8,10 +8,15 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
@@ -45,6 +50,18 @@ import static org.junit.Assert.assertEquals;
  * their provenance fields by {@code ModelActionTest} (tasks 1.2/1.3).
  */
 public class PipelineParityTest {
+
+    /** The pipeline and its boosts are plan-controlled, so every case needs a plan in effect. */
+    @Before
+    public void installMopPlan() {
+        TestRunSpecs.installMop();
+    }
+
+    @After
+    public void clearPlan() {
+        RunContext.resetForTest();
+    }
+
 
     // getActionBasePriority(non-target) == 1, so base priority == 1 << 3 == 8 (cf. the golden pinned
     // by BasePriorityCharacterizationTest for MODEL_BACK/MODEL_MENU).
@@ -176,10 +193,11 @@ public class PipelineParityTest {
 
         agent.adjustActionsByGUITree();
 
+        int menuBoost = RunContext.current().spec().mop().weightOpenMenu();
         assertEquals("menuBoost == MopScorer.scoreOpenMenu for a gateway activity",
-                Config.mopWeightOpenMenu, menu.getMenuBoost());
+                menuBoost, menu.getMenuBoost());
         assertEquals("priority == base(1<<3) + menu-gateway boost",
-                NON_TARGET_BASE + Config.mopWeightOpenMenu, menu.getPriority());
+                NON_TARGET_BASE + menuBoost, menu.getPriority());
     }
 
     @Test

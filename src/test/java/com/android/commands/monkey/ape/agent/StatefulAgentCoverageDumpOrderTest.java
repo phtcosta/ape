@@ -17,13 +17,14 @@ import java.lang.reflect.Field;
 import static org.junit.Assert.*;
 
 /**
- * A10 (ui-coverage INV-COV-10): the coverage dump is emitted before the model serialization.
+ * A10 (ui-coverage INV-COV-10): the coverage dump is emitted before the first teardown step that
+ * writes output — {@code saveActionHistory}, the only remaining {@code /sdcard} writer.
  *
- * <p>That boundary is the mechanism, not a preference. The dump used to be the last instruction of
- * the whole teardown, and 338 of the 800 calibration runs (42.3%) lost it — 330 of them cut on the
- * line {@code saveGraph} prints while writing to {@code /sdcard}. Emitting before that write
- * recovers 333. The assertion below is exactly that ordering; it is deliberately not "the dump runs
- * first", which the chain does not do (it lands third, after two steps that write nothing).
+ * <p>That boundary is the mechanism, not a preference. Across 800 calibration runs the dump was the
+ * last instruction of the whole teardown, behind the {@code /sdcard} writes, and 338 of them
+ * (42.3%) lost it — 330 cut mid-write. Emitting ahead of the writes recovers 333. The assertion
+ * below is exactly that ordering; it is deliberately not "the dump runs first", which the chain
+ * does not do (it lands third, after two steps that write nothing).
  *
  * <p>Built with the {@code sun.misc.Unsafe} idiom of {@link StatefulAgentTearDownTest}: no
  * constructor runs, the steps needing collaborators fail into their own isolated {@code safeStep},
@@ -32,9 +33,9 @@ import static org.junit.Assert.*;
 public class StatefulAgentCoverageDumpOrderTest {
 
     private static final String DUMP_MARKER = "[TEST] coverage dump";
-    private static final String SAVE_MARKER = "Save graph data to /sdcard/sata-test";
+    private static final String SAVE_MARKER = "[TEST] action-history write";
 
-    /** A StatefulAgent whose model serialization is observable, without a dump of its own. */
+    /** A StatefulAgent whose first output write is observable, without a dump of its own. */
     public static class NoDumpAgent extends StatefulAgent {
         /** Never invoked — the instance is Unsafe-allocated; declared only to satisfy javac. */
         public NoDumpAgent() {
@@ -42,7 +43,7 @@ public class StatefulAgentCoverageDumpOrderTest {
         }
 
         @Override
-        protected void saveGraph() {
+        protected void saveActionHistory() {
             System.out.println(SAVE_MARKER);
         }
 
@@ -116,7 +117,7 @@ public class StatefulAgentCoverageDumpOrderTest {
     }
 
     @Test
-    public void dumpPrecedesTheModelSerialization() throws Exception {
+    public void dumpPrecedesTheFirstTeardownWrite() throws Exception {
         DumpingAgent agent = allocateInstance(DumpingAgent.class);
 
         agent.tearDown();
@@ -125,7 +126,7 @@ public class StatefulAgentCoverageDumpOrderTest {
         int dumpAt = log.indexOf(DUMP_MARKER);
         int saveAt = log.indexOf(SAVE_MARKER);
         assertTrue("the dump must be emitted: " + log, dumpAt >= 0);
-        assertTrue("the model serialization must be reached: " + log, saveAt >= 0);
+        assertTrue("the first teardown write must be reached: " + log, saveAt >= 0);
         assertTrue("the dump must precede the /sdcard write that swallows lossy runs: " + log,
                 dumpAt < saveAt);
     }

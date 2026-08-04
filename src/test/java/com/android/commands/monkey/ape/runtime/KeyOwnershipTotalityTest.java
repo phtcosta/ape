@@ -176,8 +176,8 @@ public class KeyOwnershipTotalityTest {
     public void retiredKeysCarryAReasonNamingWhatReplacedThem() {
         Set<String> expected = new LinkedHashSet<>(java.util.Arrays.asList(
                 "ape.apePureMode", "ape.modelFile", "ape.saveObjModel", "ape.saveDotGraph",
-                "ape.saveVisGraph", "ape.enableXPathAction", "ape.mopWeightActivity",
-                "ape.agentType", "ape.replayLog"));
+                "ape.saveVisGraph", "ape.saveStates", "ape.enableXPathAction",
+                "ape.mopWeightActivity", "ape.agentType", "ape.replayLog"));
         assertEquals(expected, KeyOwnership.retiredKeys());
         for (String key : expected) {
             String reason = KeyOwnership.retiredReason(key);

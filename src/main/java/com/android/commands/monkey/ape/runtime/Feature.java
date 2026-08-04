@@ -24,11 +24,10 @@ import java.util.Set;
 /**
  * The optional mechanisms of a run, with their metadata as data the compiler binds.
  *
- * <p>This enum replaces three string registries — {@code rvForcedOffValues}, {@code rvUnsetKeys}
- * and {@code rvExemptReasons} — that listed property names as literals the compiler could not
- * relate to the fields they named. Each constant here declares four things instead: how it is
- * activated, which keys it owns, which other features it requires, and what the neutral value of
- * each owned key is.
+ * <p>Each constant declares four things: how it is activated, which keys it owns, which other
+ * features it requires, and what the neutral value of each owned key is. Ownership is therefore a
+ * relation the compiler binds to the enum, not a list of property-name literals maintained beside
+ * the fields they name.
  *
  * <p><b>Activation.</b> A feature is active when its activation key says so — present for a path
  * or a URL, {@code true} for a gate, non-zero or positive for a weight. Activation is evaluated
