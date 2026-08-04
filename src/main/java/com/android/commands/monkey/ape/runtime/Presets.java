@@ -36,6 +36,13 @@ import java.util.Map;
  * rather than from the design document on purpose — a preset vector asserted from prose is a
  * guess with a citation.
  *
+ * <p>That read predates the harness edit retiring {@code ape_pure_mode}, so the vectors were
+ * translated from a source that still carried the key, minus the key. {@code PresetsTest} closes
+ * the gap: it resolves each preset against a fixture captured from the harness <em>after</em> the
+ * edit (rvsec {@code d8f1df0a}, {@code tool.py} sha256 {@code aba920ea…c93ae8}) and requires the
+ * same plan digest. The vectors are therefore pinned against the file a device actually receives,
+ * not against a translation of it.
+ *
  * <p><b>What a preset deliberately omits.</b> Three kinds of value stay out:
  * <ul>
  * <li><b>Deployment-specific</b> — {@code ape.mopDataPath} and {@code ape.llmUrl} name a file and

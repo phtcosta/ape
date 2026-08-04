@@ -23,7 +23,8 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
       `saveGraph`/`readGraph`/`--ape-model`. **One ordered Python edit** (AC1): the counterpart change
       in rv-android removes `ape_pure_mode` from `tool.py` and lands *before* this jar — stage 2, not
       stage 5, is where the cross-repo coupling starts.
-      *Gate: parity oracle green per preset; counterpart merged before any device deploy.*
+      *Gate: parity oracle green per preset; the counterpart line merged into `modules` before the
+      first `mvn install` of a post-stage-2 jar (D-4, restated 2026-08-04).*
   - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
 - [ ] **3. `rearch-03-decision-pipeline`** — `DecisionPipeline` stages + `StageResult` sum
       type + episode state relocated + `LlmRouter` sliced + `ScoringPipeline` real injection.
@@ -97,9 +98,19 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   (owner decision 2026-08-03). It mirrors the ape worktree's shape — one isolated line, one merge —
   and keeps `modules` free of intermediate re-architecture state while the E3 analysis and the
   `master` jar deploy continue to run from it. The five counterparts `gh93`…`gh97` land there.
-  The cost this choice accepts is explicit: **`gh93` must be merged into `modules` before the
-  stage-2 jar reaches any device** (23 of 29 arms push `ape.apePureMode`, which that jar aborts on),
-  so its merge is early and separate from the line's final merge.
+  The cost this choice accepts is explicit: **the line must be merged into `modules` before the
+  first `mvn install` of a post-stage-2 jar** (23 of 29 arms push `ape.apePureMode`, which that jar
+  aborts on).
+
+  **Amended 2026-08-04.** This entry originally carved `gh93` out for an early, separate merge ahead
+  of the rest of the line. The owner withdrew that carve-out: `rearch-counterparts` merges into
+  `modules` only after all five counterparts (`gh93`…`gh97`) are finished, so `gh93` lands with the
+  line. The safety argument is unchanged, because the hazard was never the merge itself — it is a
+  post-stage-2 jar meeting a `tool.py` that still pushes the key, and that meeting happens at
+  `mvn install` (`copy-jar-to-aperv-tool`). Both the counterpart merge and the `rearch` → `master`
+  merge are end-of-line acts, so the constraint orders two deliberate decisions and gates no
+  stage-2 group: group 6 deploys nothing, and the group-8 device smoke is where it binds. See
+  `rearch-02-runspec` design D-4.
 
 ## Related state
 
@@ -379,3 +390,57 @@ Open coordination items — status 2026-08-03:
   compat-test half that follow 6.0) is skipped, not done; groups 8 (owner-executed device smoke) and
   9 (change hygiene) remain. "Stage 2's gates are green" is the claim this entry makes; "stage 2 is
   done" is not, and the `apply` box above stays open.
+
+  > **Superseded in part, later the same day (2026-08-04).** The sentence above that reads design
+  > D-4's precondition as "the counterpart **merged into `modules`**" was the roadmap's own proxy for
+  > D-4, not D-4's text, and the owner has since withdrawn the early-merge carve-out it rested on.
+  > The precondition now reads: the `rearch-counterparts` → `modules` merge precedes the first
+  > `mvn install` of a post-stage-2 jar. The entry's *conclusion* survives — stage 2 is still not
+  > deployable and the `apply` box stays open — but its stated reason does not, and group 6 was not
+  > in fact blocked. See D-4 and the group-6 entry below.
+
+- 2026-08-04 — **Stage 2 group 6 (the Python contract) implemented: `rearch-02-runspec` 45/49.**
+  Tasks 6.0–6.4 all closed; only groups 8 (owner-executed device smoke) and 9 (change hygiene)
+  remain. Suite **956 tests, 0 failures, 19 skipped** (up from 937 by the +19 this group added:
+  13 `RunSpecCompatTest`, 6 `PresetsTest`). Skip decomposition unchanged and re-observed before
+  the change: 13 `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4,
+  `ApePinchOrZoomEventTest` 3, `GUITreeBuilderPasswordTest` 1) + 6 `Assume` in `SglangLiveTest`
+  with `SGLANG_URL` unset. Goldens untouched (INV-ORA-07 holds; `git status --short` on them is
+  empty) and the parity gate is green on all four presets (14 tests). `target/ape-rv.jar` holds
+  one entry, `classes.dex`, at **641564 bytes — byte-identical to `54fddb7`**, which is the proof
+  that this group's single `src/main` edit (a `Presets` javadoc) was comment-only and that group 6
+  changed no production behavior.
+
+  **D-4's precondition was restated, on owner instruction, and this is the substantive decision of
+  the session.** The roadmap had encoded it as "`gh93` merged into `modules`", resting on a
+  carve-out granting that counterpart an early, separate merge. The owner withdrew the carve-out —
+  `rearch-counterparts` merges only after all five counterparts finish — which made the old
+  phrasing self-defeating: task 6.0 could never tick, because the merge that gated it now follows
+  the work it gated. Reading D-4's own text settled it: the design says *"a hard predecessor of the
+  stage-2 jar **deploy**"*, so the binding event is the first `mvn install` of a post-stage-2 jar
+  (`copy-jar-to-aperv-tool`), and what must hold then is that the deployed `tool.py` carries the
+  removal. The merge is the durable guarantee, not the hazard boundary. Restated: **the
+  `rearch-counterparts` → `modules` merge precedes the first `mvn install` of a post-stage-2 jar**
+  — two end-of-line acts, gating no stage-2 group. Folded into design D-4, the stage Gate line,
+  tasks 6.0/6.4, a new gate at group 8 (where it actually binds), and this document's stage-2 gate
+  and branch-decision entries.
+
+  **Task 6.4's findings.** Blast radius verified from the diff of `d8f1df0a`, not asserted: the
+  only value lines it removes from `tool.py` are the three `ape_pure_mode` entries plus its
+  `ARM_DEFINING_KEYS` membership; everything else in that file's diff is comment text.
+  `_push_properties` is untouched and no other arm-dict entry moved. `tool.py` pinned at sha256
+  `aba920ea…c93ae8`, re-derived at capture time rather than copied from the brief. The ordering
+  clause is **recorded, not discharged**: both its events are owner acts still pending, and the
+  end-to-end device run of the five arms is group 8's.
+
+  **Two findings worth carrying, both discovered by a test going red.** First, feature activation
+  reads *effective* values, so three features activate on the campaign arms from jar defaults that
+  no arm dictionary states: `COVERAGE_BOOST` (`ape.coverageBoostWeight`=100) and `FUZZING`
+  (`ape.doFuzzing`=true) on every arm, and `LLM_RANDOM` on both LLM arms — `ape.llmPercentage`
+  defaults to 0.02, so `sata_llm` and `sata_mop_llm` route to the LLM at a 2% random rate that is
+  invisible from the harness side (`_LLM_FLAGS` omits the key and it is not arm-defining). None is
+  arm-defining, so all three cancel in a paired comparison; they are pinned in `RunSpecCompatTest`
+  and now stated out loud in `RUN_START` rather than left implicit in `Config`. Second, `ape_pure`
+  is therefore pure in the precise sense that *nothing it states turns anything on* — its resolved
+  feature set is exactly that arm-neutral inheritance, not the empty set. The empty-set assertion
+  the task text implies is false, and the test asserts the true form instead of being loosened.

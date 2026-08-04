@@ -12,6 +12,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * The four jar-resident presets, pinned against the harness arm dictionaries they were translated
@@ -21,9 +22,13 @@ import static org.junit.Assert.assertTrue;
  * {@code modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py} (sha256
  * {@code 660f151709b12dc311e6ddaa221d4af968b2630d235149cd22f94bada7736612}) — from the code rather
  * than from the design document, because a preset vector asserted from prose is a guess with a
- * citation. Group 6 of this stage adds the other half of the pin: that each preset plus the
- * deployment-specific keys resolves to the same digest as the harness's own generated properties
- * file for the corresponding arm.
+ * citation.
+ *
+ * <p>The other half of the pin is the group of tests at the bottom of this class: each preset,
+ * plus the deployment-specific keys it deliberately omits, resolves to the same digest as the
+ * harness's own generated properties file for the corresponding arm. The vector assertions above
+ * check that the jar says what we think it says; those check that what it says still matches what
+ * the harness sends. A vector can be internally consistent and still have drifted.
  *
  * <p>Until stage 5 makes {@code preset + overrides} the harness contract, these vectors are the
  * only thing keeping the jar's idea of an arm and the harness's idea of an arm in agreement.
@@ -162,5 +167,101 @@ public class PresetsTest {
     public void theFourNamesAreTheWholeSet() {
         assertEquals(Arrays.asList(Presets.APERV, Presets.MOP, Presets.LLM, Presets.LLM_MOP),
                 Presets.names());
+    }
+
+    // --- The other half of the pin: preset ≡ what the harness actually pushes (task 6.3). --------
+
+    /**
+     * Resolves a plan stated as a preset name plus the deployment-specific keys the preset
+     * deliberately omits — the form stage 5 will make the harness contract.
+     */
+    private static RunSpec fromPreset(String preset, String... deploymentKeys) {
+        Map<String, String> entries = new LinkedHashMap<>();
+        entries.put(KeyOwnership.KEY_PRESET, preset);
+        for (int i = 0; i < deploymentKeys.length; i += 2) {
+            entries.put(deploymentKeys[i], deploymentKeys[i + 1]);
+        }
+        return RunSpec.resolve(entries, RunSpec.CliValues.of("sata", 42L, null));
+    }
+
+    /**
+     * The equivalence this class exists to protect: naming a preset and naming every key by hand
+     * must produce <em>the same plan</em>, not merely a similar one.
+     *
+     * <p>The digest is the assertion because it is the strongest available — it covers the resolved
+     * values and the feature set together, so a preset that drifted by one flag fails here even
+     * though both plans still resolve. The two forms are comparable at all only because the plan
+     * digest excludes {@code presetName} by design (INV-RUN-04's invariance clause): they are
+     * genuinely the same run stated two ways, and the digest says so.
+     *
+     * <p>The deployment keys are added back explicitly, and that is the point rather than a
+     * workaround — a path and a URL belong to the machine, so the preset cannot carry them while
+     * the harness's file necessarily does. When one of these fails, suspect a missing deployment
+     * key before suspecting the vector.
+     */
+    @Test
+    public void apervResolvesToTheSataArmTheHarnessPushes() {
+        RunSpec preset = fromPreset(Presets.APERV);
+        RunSpec pushed = CompatFixtures.resolve("sata.properties");
+
+        assertEquals(pushed.features(), preset.features());
+        assertEquals(pushed.digest(), preset.digest());
+    }
+
+    @Test
+    public void mopResolvesToTheSataMopWidgetArmTheHarnessPushes() {
+        RunSpec preset = fromPreset(Presets.MOP,
+                "ape.mopDataPath", CompatFixtures.MOP_DATA_PATH);
+        RunSpec pushed = CompatFixtures.resolve("sata_mop_widget.properties");
+
+        assertEquals(pushed.features(), preset.features());
+        assertEquals(pushed.digest(), preset.digest());
+    }
+
+    @Test
+    public void llmResolvesToTheSataLlmArmTheHarnessPushes() {
+        RunSpec preset = fromPreset(Presets.LLM, "ape.llmUrl", CompatFixtures.LLM_URL);
+        RunSpec pushed = CompatFixtures.resolve("sata_llm.properties");
+
+        assertEquals(pushed.features(), preset.features());
+        assertEquals(pushed.digest(), preset.digest());
+    }
+
+    @Test
+    public void llmMopResolvesToTheSataMopLlmArmTheHarnessPushes() {
+        RunSpec preset = fromPreset(Presets.LLM_MOP,
+                "ape.mopDataPath", CompatFixtures.MOP_DATA_PATH,
+                "ape.llmUrl", CompatFixtures.LLM_URL);
+        RunSpec pushed = CompatFixtures.resolve("sata_mop_llm.properties");
+
+        assertEquals(pushed.features(), preset.features());
+        assertEquals(pushed.digest(), preset.digest());
+    }
+
+    @Test
+    public void thePresetFormIsStillDistinguishableFromTheExplicitOne() {
+        // The digests match, but the two plans are not indistinguishable: presetName records which
+        // form was used and RUN_START echoes it. That is exactly why presetName is excluded from
+        // the digest — a run stated as `ape.preset=mop` and the same run stated key by key are the
+        // same experiment and must compare equal, while still being told apart in the trace.
+        RunSpec preset = fromPreset(Presets.MOP, "ape.mopDataPath", CompatFixtures.MOP_DATA_PATH);
+        RunSpec explicit = CompatFixtures.resolve("sata_mop_widget.properties");
+
+        assertEquals(Presets.MOP, preset.presetName());
+        assertEquals(RunSpec.PRESET_EXPLICIT, explicit.presetName());
+        assertEquals(explicit.digest(), preset.digest());
+    }
+
+    @Test
+    public void theLlmPresetAbortsWithoutTheDeploymentUrl() {
+        // Stated in D-3 as a fail-fast rather than a fallback: the preset turns the routing gates
+        // on, so resolving it without a server is a plan whose mechanism is absent. Quietly
+        // resolving to "LLM off" would be the silent degradation this change exists to end.
+        try {
+            fromPreset(Presets.LLM);
+            fail("ape.preset=llm without ape.llmUrl must abort");
+        } catch (RunSpecException e) {
+            assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, e.getReason());
+        }
     }
 }
