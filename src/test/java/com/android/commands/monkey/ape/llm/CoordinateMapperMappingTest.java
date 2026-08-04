@@ -8,6 +8,7 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 
 import org.junit.Test;
 
@@ -17,20 +18,29 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 /**
- * Coordinate mapping in {@link LlmRouter#mapToModelAction} — the ActionType filter (B6(i)), the
+ * Coordinate mapping in {@link CoordinateMapper#map} — the ActionType filter (B6(i)), the
  * fixTextEdit conversion (B6(iv)) and edge-based snapping (B4).
  *
  * <p>Runs on the JVM: the surefire classpath carries the {@code android.graphics.Rect} stub instead
  * of the framework jar, so resolved widget bounds are real and both matching passes execute exactly
  * as they do on a device.
  */
-public class LlmRouterCoordinateMappingTest {
+public class CoordinateMapperMappingTest {
+
+    /**
+     * A mapper wired from a plan carrying only the LLM feature, so the snap floor and the two
+     * boundary bands are the jar defaults every assertion here was written against.
+     */
+    private static CoordinateMapper newMapper() {
+        return new CoordinateMapper(
+                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm());
+    }
 
     private static final int W = 1080;
     private static final int H = 1794;
 
-    private static LlmRouter router() {
-        return new LlmRouter(new java.util.Random(42));
+    private static CoordinateMapper router() {
+        return newMapper();
     }
 
     /** Minimal {@link Name}: the mapping only ever asks it for an XPath. */
@@ -74,7 +84,7 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction longClick = action(ActionType.MODEL_LONG_CLICK, "android.widget.TextView",
                 new Rect(100, 200, 300, 250));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 200, 230, "click", null, actions(longClick), null, W, H);
 
         assertNotSame("a click answer must never resolve to a MODEL_LONG_CLICK", longClick, result);
@@ -88,7 +98,7 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction scroll = action(ActionType.MODEL_SCROLL_TOP_DOWN, "android.widget.ListView",
                 new Rect(0, 100, 1080, 900));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 540, 500, "click", null, actions(scroll), null, W, H);
 
         assertNotSame(scroll, result);
@@ -102,7 +112,7 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction longClick = action(ActionType.MODEL_LONG_CLICK, "android.widget.Button",
                 new Rect(100, 200, 300, 250));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 200, 230, "click", null, actions(longClick, click), null, W, H);
 
         assertSame("the filter must not cost the click its own match", click, result);
@@ -113,7 +123,7 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction click = action(ActionType.MODEL_CLICK, "android.widget.Button",
                 new Rect(100, 200, 300, 250));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 200, 230, "long_click", null, actions(click), null, W, H);
 
         assertSame("long_click keeps its documented fallback to MODEL_CLICK", click, result);
@@ -138,7 +148,7 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction click = action(ActionType.MODEL_CLICK, "android.widget.EditText",
                 new Rect(50, 300, 400, 350));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 225, 325, "click", null, actions(click), null, W, H);
 
         assertSame(click, result);
@@ -162,7 +172,7 @@ public class LlmRouterCoordinateMappingTest {
         click.resolveAt(1, 0, null, field, new GUITreeNode[]{field});
         click.setValid(true);
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 225, 325, "long_click", null, actions(longClick, click), null, W, H);
 
         assertSame("the press is converted to the action that can carry text", click, result);
@@ -175,7 +185,7 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction longClick = action(ActionType.MODEL_LONG_CLICK, "android.widget.EditText",
                 new Rect(50, 300, 400, 350));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 225, 325, "long_click", null, actions(longClick), null, W, H);
 
         assertSame(longClick, result);
@@ -186,7 +196,7 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction click = action(ActionType.MODEL_CLICK, "android.widget.EditText",
                 new Rect(50, 300, 400, 350));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 225, 325, "type_text", "user@example.com", actions(click), null, W, H);
 
         assertSame("a well-behaved type_text answer keeps its existing path", click, result);
@@ -203,7 +213,7 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction bar = action(ActionType.MODEL_CLICK, "android.widget.Button",
                 new Rect(0, 200, 1080, 350));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 540, 180, "click", null, actions(bar), null, W, H);
 
         assertSame("edge distance 20 is within the 75 px tolerance", bar, result);
@@ -220,7 +230,7 @@ public class LlmRouterCoordinateMappingTest {
                 new Rect(0, 200, 1080, 350));
 
         // 300 px below the bar's bottom edge — well past the 75 px tolerance.
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 540, 650, "click", null, actions(bar), null, W, H);
 
         assertTrue("no snap, so the coordinate becomes an off-tree tap", result instanceof LlmTapAction);
@@ -233,9 +243,55 @@ public class LlmRouterCoordinateMappingTest {
         ModelAction click = action(ActionType.MODEL_CLICK, "android.widget.Button",
                 new Rect(100, 200, 300, 250));
 
-        ModelAction result = router().mapToModelAction(
+        ModelAction result = router().map(
                 200, 230, "long_click", null, actions(longClick, click), null, W, H);
 
         assertSame("only input-capable widgets are converted", longClick, result);
+    }
+
+    // -------------------------------------------------------------------------
+    // Nearest-widget geometry, which describes the screen rather than the decision
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void nearestReportsTheClosestTargetableWidgetByCentreDistance() {
+        // Centre distance, not the edge distance the snap pass uses: this answers "how far off was
+        // the model" offline, where a centre is the stable anchor across widget shapes.
+        ModelAction near = action(ActionType.MODEL_CLICK, "android.widget.Button",
+                new Rect(100, 200, 300, 300));   // centre (200, 250)
+        ModelAction far = action(ActionType.MODEL_CLICK, "android.widget.TextView",
+                new Rect(100, 900, 300, 1000));  // centre (200, 950)
+
+        CoordinateMapper.Nearest nearest = router().nearest(actions(near, far), 200, 260);
+
+        assertEquals("Button", nearest.className);
+        assertEquals(10.0, nearest.distance, 0.001);
+        assertEquals("both are targetable and both are counted", 2, nearest.widgetCount);
+    }
+
+    @Test
+    public void nearestIsNotFilteredByTheToolTheModelCalled() {
+        // Deliberately unfiltered: the report describes the screen, so a click answer's nearest
+        // widget may be one no click could ever have matched. Filtering it would make the field
+        // answer a different question from the one an offline reader asks of it.
+        ModelAction longClickOnly = action(ActionType.MODEL_LONG_CLICK, "android.widget.TextView",
+                new Rect(100, 200, 300, 300));
+
+        CoordinateMapper.Nearest nearest = router().nearest(actions(longClickOnly), 200, 250);
+
+        assertEquals("TextView", nearest.className);
+        assertEquals(1, nearest.widgetCount);
+    }
+
+    @Test
+    public void nearestOnAScreenWithNoTargetableWidgetSaysSo() {
+        // The sentinel is -1 rather than 0, because 0 is a real distance: a coordinate landing dead
+        // centre on a widget. An offline reader must be able to tell "nothing to measure against"
+        // from "measured, and it was exact".
+        CoordinateMapper.Nearest nearest = router().nearest(actions(), 200, 250);
+
+        assertEquals("none", nearest.className);
+        assertEquals(-1.0, nearest.distance, 0.001);
+        assertEquals(0, nearest.widgetCount);
     }
 }

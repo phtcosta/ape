@@ -40,7 +40,7 @@
 
 - [x] 4.1 `LlmClient` — compose `SglangClient` + `LlmCircuitBreaker`; move `breakerAllows()` (`LlmRouter:292-302`) as `allows()` with the open-episode latch; move the `[APE-LLM-CONFIG]` manifest emission and tools-schema constants; construct from `LlmParams` in `RunContext`
 - [x] 4.2 `ScreenshotStep` — device-dimension probing (`:337-353`) + capture (`:362-385`) + encode (`:388-395`), failure-stage seam intact
-- [ ] 4.3 `CoordinateMapper` — `CoordinateNormalizer` wrap, boundary bands, `mapToModelAction` + `fixTextEdit`, dead-pair ban (`banKey`/`isDeadPair`/strikes/`recordLlmOutcome`), nearest-widget calc; snap/boundary params injected (`llmSnapTolerancePx`, `llmBoundaryTopPct/BottomPct`)
+- [x] 4.3 `CoordinateMapper` — `CoordinateNormalizer` wrap, boundary bands, `mapToModelAction` + `fixTextEdit`, dead-pair ban (`banKey`/`isDeadPair`/strikes/`recordLlmOutcome`), nearest-widget calc; snap/boundary params injected (`llmSnapTolerancePx`, `llmBoundaryTopPct/BottomPct`)
 - [ ] 4.4 `LlmTelemetry` — all counters/latches (`LlmRouter:68-112`), `[APE-LLM-TEL]`/`[APE-LLM-ERROR]`/`[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]`/ACK, `printSummary`; teardown call site updated
 - [ ] 4.5 `LlmEngine` — the thin 9-step orchestration replacing `selectAction` (`:327-612`): never-throws + finally-nulling preserved (INV-RTR-02/06); repair pipeline untouched (INV-LLM-10/INV-RTR-14 — native `tool_calls` malformations still flow `rawArguments` → `ToolCallParser` Level 1 → shared `parseJsonString`, surfacing as `repair=`)
 - [ ] 4.6 Point the three LLM stages at `LlmEngine`; route the `[APE-OUTCOME]`-site dead-pair feedback (`StatefulAgent:1041`) to `CoordinateMapper` via `RunContext`

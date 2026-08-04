@@ -6,6 +6,7 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 
 import org.junit.Test;
 
@@ -15,7 +16,7 @@ import static org.junit.Assert.*;
  * B1 dead-pair ban (llm-routing INV-RTR-15/16) — the record, the death rule and the input-capable
  * exemption, exercised on the two key shapes the ban ships with.
  *
- * <p>Everything here is pure JVM logic: {@link LlmRouter#recordLlmOutcome} and the ban check take
+ * <p>Everything here is pure JVM logic: {@link CoordinateMapper#recordLlmOutcome} and the ban check take
  * {@code ModelAction}s, and a {@code ModelAction} can be built and resolved without a device (a
  * {@code GUITreeNode} carrying a class name is enough — the ban never reads bounds). The state is
  * left null, so every action in a test shares one state key, which is exactly the single-state
@@ -28,10 +29,19 @@ import static org.junit.Assert.*;
  * breaker is the property the ban record itself must have: consulting or feeding it never touches
  * the breaker at all.
  */
-public class LlmRouterDeadPairTest {
+public class CoordinateMapperDeadPairTest {
 
-    private static LlmRouter router() {
-        return new LlmRouter(new java.util.Random(42));
+    /**
+     * A mapper wired from a plan carrying only the LLM feature, so the snap floor and the two
+     * boundary bands are the jar defaults every assertion here was written against.
+     */
+    private static CoordinateMapper newMapper() {
+        return new CoordinateMapper(
+                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm());
+    }
+
+    private static CoordinateMapper router() {
+        return newMapper();
     }
 
     /** Minimal {@link Name} whose only meaningful behavior is the XPath the ban keys on. */
@@ -67,13 +77,13 @@ public class LlmRouterDeadPairTest {
     }
 
     /** Feed the pair {@code n} unproductive executions. */
-    private static void strike(LlmRouter router, ModelAction action, int n) {
+    private static void strike(CoordinateMapper router, ModelAction action, int n) {
         for (int i = 0; i < n; i++) {
             router.recordLlmOutcome(action, false);
         }
     }
 
-    private static boolean dead(LlmRouter router, ModelAction action) {
+    private static boolean dead(CoordinateMapper router, ModelAction action) {
         return router.isDeadPair(router.banKey(action));
     }
 
@@ -83,7 +93,7 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void tapKeyIsTheExactCoordinate() {
-        LlmRouter router = router();
+        CoordinateMapper router = router();
         String at499 = router.banKey(new LlmTapAction(null, 500, 499, false));
         String again = router.banKey(new LlmTapAction(null, 500, 499, false));
         String at500 = router.banKey(new LlmTapAction(null, 500, 500, false));
@@ -94,7 +104,7 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void matchedKeyIsNameXPathPlusEventType() {
-        LlmRouter router = router();
+        CoordinateMapper router = router();
         String clickHelp = router.banKey(
                 matched("//Button[@text='Help']", ActionType.MODEL_CLICK, "android.widget.Button"));
         String clickHelpAgain = router.banKey(
@@ -122,7 +132,7 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void pairSurvivesFourDeadExecutionsAndDiesOnTheFifth() {
-        LlmRouter router = router();
+        CoordinateMapper router = router();
         ModelAction help = matched("//Button[@text='Help']", ActionType.MODEL_CLICK,
                 "android.widget.Button");
 
@@ -135,7 +145,7 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void thresholdIsUniformAcrossTheClassesTheBanCovers() {
-        LlmRouter router = router();
+        CoordinateMapper router = router();
         ModelAction aSwitch = matched("//Switch[1]", ActionType.MODEL_CLICK, "android.widget.Switch");
         ModelAction spinner = matched("//Spinner[1]", ActionType.MODEL_CLICK, "android.widget.Spinner");
         ModelAction button = matched("//Button[1]", ActionType.MODEL_CLICK, "android.widget.Button");
@@ -151,7 +161,7 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void productiveExecutionNeitherKillsNorResets() {
-        LlmRouter router = router();
+        CoordinateMapper router = router();
         ModelAction help = matched("//Button[@text='Help']", ActionType.MODEL_CLICK,
                 "android.widget.Button");
 
@@ -169,12 +179,12 @@ public class LlmRouterDeadPairTest {
     public void banRecordIsPerRun() {
         ModelAction help = matched("//Button[@text='Help']", ActionType.MODEL_CLICK,
                 "android.widget.Button");
-        LlmRouter firstRun = router();
+        CoordinateMapper firstRun = router();
         strike(firstRun, help, 5);
         assertTrue(dead(firstRun, help));
 
         // The record lives on the router, which lives exactly one run: a fresh router starts empty.
-        LlmRouter secondRun = router();
+        CoordinateMapper secondRun = router();
         assertFalse("a new run must not inherit the previous run's bans", dead(secondRun, help));
         assertEquals(0, secondRun.deadPairRecordSize());
     }
@@ -185,7 +195,7 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void banCoversEveryNodeTheNameResolvesTo() {
-        LlmRouter router = router();
+        CoordinateMapper router = router();
         GUITreeNode first = node("android.widget.Button");
         GUITreeNode second = node("android.widget.Button");
         GUITreeNode third = node("android.widget.Button");
@@ -215,7 +225,7 @@ public class LlmRouterDeadPairTest {
                 "androidx.appcompat.widget.SearchView"
         };
         for (String className : inputClasses) {
-            LlmRouter router = router();
+            CoordinateMapper router = router();
             ModelAction field = matched("//" + className, ActionType.MODEL_CLICK, className);
 
             strike(router, field, 6);   // one more than the threshold
@@ -229,7 +239,7 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void exemptionFollowsTheWidgetThroughTheTextEntryConversion() {
-        LlmRouter router = router();
+        CoordinateMapper router = router();
         // fixTextEdit converts a click that resolves to an input widget into a text-entry action on
         // that same widget (the text is generated by APE's typed-input path). The exemption keys on
         // the widget, not on the event type, so the converted decision is exempt too.
@@ -246,7 +256,7 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void offTreeTapIsBannedWithNoExemptionConsulted() {
-        LlmRouter router = router();
+        CoordinateMapper router = router();
         // An llm_tap has no matched widget — matched_class=none in 1,033 of 1,033 corpus
         // occurrences — so there is no class to exempt, whatever is rendered at the coordinate.
         LlmTapAction tap = new LlmTapAction(null, 500, 499, false);
@@ -264,10 +274,16 @@ public class LlmRouterDeadPairTest {
 
     @Test
     public void feedingAndConsultingTheBanNeverTouchesTheBreaker() {
-        LlmRouter router = router();
+        // The ban and the breaker now live in different units, which states INV-RTR-16
+        // structurally: this mapper holds no breaker reference and could not open one if it tried.
+        // The assertion survives anyway, across the seam a run actually has — an engine holding
+        // both — where a ban storm must leave the client's breaker exactly as it found it.
+        CoordinateMapper router = router();
+        LlmClient client = new LlmClient(
+                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm(), 100);
         ModelAction help = matched("//Button[@text='Help']", ActionType.MODEL_CLICK,
                 "android.widget.Button");
-        LlmCircuitBreaker breaker = router.getBreaker();
+        LlmCircuitBreaker breaker = client.getBreaker();
         String stateBefore = breaker.getStateName();
 
         strike(router, help, 10);
