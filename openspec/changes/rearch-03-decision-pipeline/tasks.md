@@ -32,7 +32,7 @@
 ## 3. Permanent architectural tests (promoted from rearch-01 fixtures)
 
 - [x] 3.1 Permanent preemption golden (report Sec. 9.4): synthetic step qualifying LLM + launcher-firing-point + component-coin + SATA simultaneously ⇒ order confirmed (`LLM` wins; no trigger; no rung)
-- [ ] 3.2 Permanent 3.3-1 pin (INV-DP-08): LLM-preempted step leaves the launcher cadence counter unchanged; next fall-through step advances it by exactly 1
+- [x] 3.2 Permanent 3.3-1 pin (INV-DP-08): LLM-preempted step leaves the launcher cadence counter unchanged; next fall-through step advances it by exactly 1
 - [x] 3.3 Permanent structural-fallback test (report Sec. 9.5): scripted decline/timeout/breaker-open ⇒ step decided by the configured remainder with correct non-`LLM` `decision_source`; breaker-open line once per episode
 - [x] 3.4 Feature-absent = stage-absent assembly matrix per preset (INV-DP-03): `aperv` ⇒ `[Budget, SataChain]`; `mop` adds launcher/trigger per its plan; `llm`/`llm_mop` add the enabled LLM stages; echo line asserted
 

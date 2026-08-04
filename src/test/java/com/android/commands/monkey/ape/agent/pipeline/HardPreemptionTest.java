@@ -119,4 +119,49 @@ public class HardPreemptionTest {
         assertSame("and the step was decided below it, by the chain", fromTheChain, decided);
         assertEquals(1, agent.chainCalls);
     }
+
+    /**
+     * Finding 3.3-1, read within one run at two points (INV-DP-08).
+     *
+     * <p>The cadence counter increments at the launcher stage's entry, so a step an earlier stage
+     * decided never touches it — no compensation, no catch-up. The oracle asserts the same fact as a
+     * contrast between two agents run from the same seeded cadence; what it cannot show is one run
+     * carrying its counter across a preempted step and an ordinary one, which is the form the
+     * invariant is written in.
+     *
+     * <p>The reading is behavioural rather than reflective, the way {@code MopLauncherStageTest}
+     * reads these counters: with a cadence of two, the launcher fires on the second step it is
+     * <i>evaluated</i> on. Firing on the third step of the run and not the second says both halves at
+     * once — the preempted step contributed nothing, and each evaluated step contributed exactly one.
+     * A counter that advanced during preemption, or advanced by two, would fire a step early.
+     */
+    @Test
+    public void aPreemptedStepDoesNotAdvanceTheLauncherCadence() throws Exception {
+        ModelAction answer = new ModelAction(null, ActionType.MODEL_CLICK);
+        ModelAction fromTheChain = PipelineFixture.chainAction();
+        PipelineFixture.StubRouter router = new PipelineFixture.StubRouter(true, answer);
+        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(router, fromTheChain);
+        DecisionPipeline pipeline =
+                DecisionPipeline.fromSpec(PipelineFixture.llmWithLauncherPlan(2), agent);
+
+        Action preempted = pipeline.decide(launcherStep());
+        router.answersFrom(null); // from here the model declines and the step falls through
+
+        Action first = pipeline.decide(launcherStep());
+        Action second = pipeline.decide(launcherStep());
+
+        assertSame("step 1 was decided by the LLM, above the launcher", answer, preempted);
+        assertSame("step 2 is the launcher's first evaluated step: one short of the cadence,"
+                + " so the chain decides", fromTheChain, first);
+        assertEquals("step 3 is its second, and the firing point is reached there",
+                ActivityTriggerAction.class, second.getClass());
+    }
+
+    /** The contended step without the component trigger, which this plan does not assemble. */
+    private static FakeStepContext launcherStep() throws Exception {
+        FakeStepContext ctx = PipelineFixture.routableStep();
+        ctx.mopData = PipelineFixture.census();
+        ctx.graph = PipelineFixture.emptyGraph();
+        return ctx;
+    }
 }
