@@ -571,3 +571,75 @@ Open coordination items — status 2026-08-03:
   the requirement sentence backing it, because the artifact it named was gone. Restored. Note for
   stage 4: `rearch-04-step-ndjson-telemetry` also MODIFIES `Output Persistence on Termination`, so
   it inherits the same discipline and must carry forward the scenario set as it now stands.
+
+- 2026-08-04 — **Stage 3 group 1 (the scaffolding) implemented: `rearch-03-decision-pipeline` 5/53,
+  and task 1.3 is deliberately left open.** Four new files under a new package, one new test package,
+  **no existing `.java` touched** — `git status --short` after the work listed exactly two untracked
+  directories, which is the cheap proof that a group promising to wire nothing wired nothing.
+  Gate observed *before* the change rather than trusted from the handoff: **959 tests, 0 failures,
+  19 skipped**, BUILD SUCCESS, decomposition 13 `@Ignore` (`ImageProcessorIntegrationTest` 5,
+  `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3, `GUITreeBuilderPasswordTest` 1) + 6 `Assume`
+  in `SglangLiveTest` with `SGLANG_URL` unset. After: **984 / 0 / 19**, the +25 being this group's
+  own tests (`StageResultTest` 10, `DecisionPipelineTest` 15) and the decomposition unchanged.
+  Parity gate green on all four presets (`ParityOracle{Aperv,Mop,Llm,LlmMop}Test` + 
+  `PreemptionGoldenTest`, 14 tests); `git status --short src/test/resources/goldens` empty
+  (INV-ORA-07 holds). No `mvn install`, no `mvn package`, no Python — stage 3 has no counterpart.
+
+  **The package name was a decision, not a reading.** No stage-3 artifact names the home of these
+  types (verified by grep over the whole change directory). Chosen:
+  **`com.android.commands.monkey.ape.agent.pipeline`**, the parallel of the sibling
+  `agent.scoring` that this change's own `scoring-pipeline` delta names explicitly. It still reads
+  correctly as "the pipeline package" for task 6.5's grep-guard, which asserts zero `Config.`
+  references in the pipeline/stage/llm-unit/scoring packages. Group 2's stage classes belong in the
+  same package unless it decides otherwise.
+
+  **Why 1.3 stays open, and what landed in its place.** The task bundles
+  `fromSpec(RunSpec, RunContext)` with the `decide` loop, but `fromSpec` constructs stages and **no
+  stage class exists until task 2.1** — and the design's own postcondition for it ("never returns an
+  empty pipeline, `SataChain` always present") is unachievable before **2.7** lands the terminal
+  stage. Writing it now would mean either an unconditional throw or a method that ignores both
+  parameters; both are worse than the honest gap, so it is recorded as a gap rather than ticked
+  (the group-9 precedent). What *did* land is everything in 1.3 that does not need a stage:
+  the roster-fixing constructor with the one `[APE-ARCH] stages=[...]` echo (package-private, so a
+  run's roster comes from its plan and an arbitrary stage list is a test fixture — the
+  `ScoringPipeline` shape); the `decide` loop with all four invariants (INV-DP-01/02/05/06); and the
+  **plan-to-roster mapping as a static `Candidate` table** — the seven candidates in fixed order,
+  each with the leaf feature that assembles it, plus `assembledCandidates(RunSpec)`. That table is
+  also the static candidate census the `decision-pipeline` delta requires for the stage-4 `PIPELINE`
+  record, and separating it from construction is what makes "which stages does this plan imply"
+  assertable per preset with no device, model or live stage. Group 2 needs only to add the
+  construction step; the mapping tested here is the one that ships. The gating conjuncts name the
+  leaf feature only (`LLM_NEW_STATE`, not `LLM ∧ LLM_NEW_STATE`): `Feature` declares those
+  dependencies and plan resolution enforces them, so the root would be a second guard for a fact the
+  plan already guarantees.
+
+  **Two members were added beyond the task text, on purpose.** `DecisionPipeline.onStateTransition`
+  fans a visited edge over the roster once, in order — the roster is the only thing that knows the
+  stages, and without it the `DecisionStage.onStateTransition` hook of task 1.2 has no possible
+  caller; the fan-out is tested here, its wiring is 2.3/7.1's. And `lastStepSideEffects()` is the
+  observable form of INV-DP-05's "the pipeline SHALL record it": per-step, cleared at each `decide`,
+  and deliberately **not** a new trace line — the dispatch already logs itself, and a line invented
+  here is a format stage 4 immediately restructures.
+
+  **A wrong premise, caught by a red test rather than patched.** The assembly matrix was first
+  written asserting that a bare plan assembles `[SataChain]` alone. It assembles
+  **`[Budget, SataChain]`**: `ape.activityBudgetEnabled` defaults to `true`
+  (`Config.java:252`), so `ACTIVITY_BUDGET` is in every plan that does not turn it off — and that
+  two-stage roster is exactly the `aperv` scenario the delta spec states. The trap is that
+  `Feature`'s constant table carries the **neutral** value ("false"), not the jar default, so the
+  enum reads like an off-by-default gate and is not one. The assertion was corrected to the true
+  behavior and paired with its contrast (budget explicitly off ⇒ `[SataChain]`). This is learning 35
+  in a second costume: read configuration off the resolved plan and `Config`'s defaults, never off a
+  table that happens to be adjacent.
+
+  Task 1.5 was followed by hand — the `sdd-*` skills are on disk but absent from the Skill registry
+  of an rv-android-rooted session (the stage-2 task 4.5 precedent). `sdd-doc-code`'s own INV-CODE-01
+  makes most of it a no-op here, since the files were written with substantive Javadoc; the pass added
+  `@param`/`@return`/`@throws` tags to the non-trivial API and skipped them on the accessors, where
+  the convention's tag would only restate the summary line (P1). Its step-7 checks: no promotional
+  term outside the upstream licence header, no migration-history phrasing, suite green. Task 1.6 ran
+  `mvn test`, which is what the skill's own Priority-4 (Maven) branch resolves to.
+
+  **Group 2 is not started.** It extracts the ladder block by block with the goldens as the gate
+  after *every* task (INV-DP-09), which is why the session boundary is here: group 1 is the last
+  point at which a green golden proves nothing about one's own edit.

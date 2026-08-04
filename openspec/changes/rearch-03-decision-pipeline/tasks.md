@@ -8,12 +8,12 @@
 
 ## 1. StageResult + DecisionStage + pipeline skeleton
 
-- [ ] 1.1 Create `StageResult` (single final class, private ctor, `Kind` enum `SELECT|CONTINUE|SIDE_EFFECT`, static factories `select(Action, String)`/`continueChain()` singleton/`sideEffect(String)`, wrong-variant accessors throw `IllegalStateException`) — design D1
-- [ ] 1.2 Create `DecisionStage` interface (`name()`, `decide(StepContext)`, default no-op `onStateTransition(StateTransition)`) and `StepContext` (read surface per design; single write method `resetGraphStableCounter()`) — design D2
+- [x] 1.1 Create `StageResult` (single final class, private ctor, `Kind` enum `SELECT|CONTINUE|SIDE_EFFECT`, static factories `select(Action, String)`/`continueChain()` singleton/`sideEffect(String)`, wrong-variant accessors throw `IllegalStateException`) — design D1
+- [x] 1.2 Create `DecisionStage` interface (`name()`, `decide(StepContext)`, default no-op `onStateTransition(StateTransition)`) and `StepContext` (read surface per design; single write method `resetGraphStableCounter()`) — design D2
 - [ ] 1.3 Create `DecisionPipeline` (`fromSpec(RunSpec, RunContext)` assembly + `[APE-ARCH] stages=[...]` echo; `decide(StepContext)` loop: first `SELECT` wins, `SIDE_EFFECT` recorded and continues, terminal stage never `CONTINUE`s) — INV-DP-01/02/05/06
-- [ ] 1.4 Unit tests: `StageResult` totality and accessor contract; pipeline loop preemption/side-effect/terminal semantics with stub stages; assembly echo content
-- [ ] 1.5 Run `/sdd-doc-code` on the three new files
-- [ ] 1.6 Run `/sdd-test-run` (new tests green; suite untouched otherwise)
+- [x] 1.4 Unit tests: `StageResult` totality and accessor contract; pipeline loop preemption/side-effect/terminal semantics with stub stages; assembly echo content
+- [x] 1.5 Run `/sdd-doc-code` on the three new files
+- [x] 1.6 Run `/sdd-test-run` (new tests green; suite untouched otherwise)
 
 ## 2. Extract the stages one by one (goldens after EACH task)
 
