@@ -33,11 +33,11 @@ Gate: this change may only be applied after `rearch-01-parity-oracle` is impleme
 
 ## 3. Bootstrap wiring + fail-fast
 
-- [ ] 3.1 `Monkey.processOptions`: `--ape` stores the raw value for the resolver (no `Config.set`); **delete** the `--ape-model` branch; `--ape-replay` stores the log path for the resolver
-- [ ] 3.2 `Monkey.run` (`mUseApe` branch): call `RunSpec.resolve` before `MonkeySourceApe` construction; on `RunSpecException` print `[APE-RUNSPEC-ABORT] reason=<class> key=<key> detail=<msg>` to stderr and stdout and return nonzero — no agent, no device interaction, no step
-- [ ] 3.3 `ApeAgent.createAgent(MonkeySourceApe, RunSpec)`: switch on the validated `agentType` (`sata`/`random`/`replay`); delete the silent `SataAgent` fallback and the replay `System.exit(1)`; always `new Graph()` (no model file)
+- [x] 3.1 `Monkey.processOptions`: `--ape` stores the raw value for the resolver (no `Config.set`); **delete** the `--ape-model` branch; `--ape-replay` stores the log path for the resolver
+- [x] 3.2 `Monkey.run` (`mUseApe` branch): call `RunSpec.resolve` before `MonkeySourceApe` construction; on `RunSpecException` print `[APE-RUNSPEC-ABORT] reason=<class> key=<key> detail=<msg>` to stderr and stdout and return nonzero — no agent, no device interaction, no step
+- [x] 3.3 `ApeAgent.createAgent(MonkeySourceApe, RunSpec)`: switch on the validated `agentType` (`sata`/`random`/`replay`); delete the silent `SataAgent` fallback and the replay `System.exit(1)`; always `new Graph()` (no model file)
 - [ ] 3.4 Unit tests: `--ape bfs`/`dfs`/`ape`/garbage abort naming `{sata, random, replay}`; absent `--ape` defaults to `sata`; `ape.agentType` in a file aborts (retired key)
-- [ ] 3.5 Run `mvn test`
+- [x] 3.5 Run `mvn test`
 
 ## 4. RunContext + RUN_START echo
 

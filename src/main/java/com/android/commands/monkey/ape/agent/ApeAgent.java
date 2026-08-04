@@ -47,6 +47,7 @@ import com.android.commands.monkey.ape.model.CrashAction;
 import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -65,19 +66,21 @@ import android.view.accessibility.AccessibilityNodeInfo;
 
 public abstract class ApeAgent implements Agent {
 
-    public static ApeAgent createAgent(MonkeySourceApe ape) {
-        String type = Config.get("ape.agentType");
-        String modelFile = Config.get("ape.modelFile");
-        Graph graph = null;
-        if (modelFile == null) {
-            graph = new Graph();
-        } else {
-            Logger.format("Loading graph model from %s", modelFile);
-            graph = Graph.readGraph(modelFile);
-        }
-        if (type == null) {
-            return new SataAgent(ape, graph);
-        }
+    /**
+     * Build the agent the resolved plan asks for.
+     *
+     * <p>The agent type and the replay log arrive already validated, so this method has no default
+     * branch and no error path: an unrecognized type aborted the run at resolution, and a replay
+     * run without a log did too. What it replaced was a chain that fell through to
+     * {@code SataAgent} for a null or unknown type — the shape that let {@code --ape bfs} run a
+     * full campaign as SATA while the operator believed otherwise — and a {@code System.exit(1)}
+     * inside a constructor path for the missing replay log.
+     *
+     * <p>The graph always starts empty. There is no model file to load from.
+     */
+    public static ApeAgent createAgent(MonkeySourceApe ape, RunSpec spec) {
+        Graph graph = new Graph();
+        String type = spec.agentType();
         if (type.equals("sata")) {
             return new SataAgent(ape, graph);
         }
@@ -85,14 +88,11 @@ public abstract class ApeAgent implements Agent {
             return new RandomAgent(ape, graph);
         }
         if (type.equals("replay")) {
-            String replayLog = Config.get("ape.replayLog");
-            if (replayLog == null) {
-                Logger.wformat("Replay agent requires a replay log.");
-                System.exit(1);
-            }
-            return new ReplayAgent(ape, graph, replayLog);
+            return new ReplayAgent(ape, graph, spec.replayLog());
         }
-        return new SataAgent(ape, graph);
+        // Unreachable through RunSpec, and it fails loudly rather than defaulting: a type that
+        // escaped validation must not quietly become the agent whose behavior everyone assumes.
+        throw new IllegalStateException("Unvalidated agent type: " + type);
     }
 
 

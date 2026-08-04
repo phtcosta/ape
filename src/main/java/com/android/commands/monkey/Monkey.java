@@ -20,7 +20,10 @@ package com.android.commands.monkey;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -30,12 +33,17 @@ import java.io.Writer;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 
 import com.android.commands.monkey.ape.Agent;
 import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.runtime.RunSpecException;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 
@@ -250,6 +258,7 @@ public class Monkey {
     private boolean mUseApe;
     private boolean mApeCleanApp;
     private String mApeAgent;
+    private String mApeReplayLog;
     private File mOutputDirectory;
     private HashSet<Integer> mUids = new HashSet<Integer>();
     private long mRunningMillis = -1;
@@ -723,6 +732,21 @@ public class Monkey {
             }
             mCount = Integer.MAX_VALUE;
         } else if (mUseApe) {
+            // INV-RUN-01: the run plan is resolved exactly once, here, and every rejection lands
+            // before the first line of device interaction below. A plan that cannot be resolved
+            // must cost nothing — no agent, no device state touched, no step 1 — so that the
+            // supervisor sees a failed task instead of a run that silently explored under a
+            // different configuration than the one it was asked for.
+            RunSpec runSpec;
+            try {
+                runSpec = resolveRunSpec();
+            } catch (RunSpecException e) {
+                // stdout because the trace is host-captured stdout; stderr for interactive use.
+                String abort = "[APE-RUNSPEC-ABORT] " + e.toDiagnostic();
+                System.err.println(abort);
+                System.out.println(abort);
+                return -6;
+            }
             AndroidDevice.initializeAndroidDevice(mAm, mWm, mPm);
             AndroidDevice.checkInteractive();
             // INV-EXPL-14: seed APE's RandomHelper with the same seed as mRandom so a run is
@@ -730,7 +754,7 @@ public class Monkey {
             // (which receives the already-constructed Random, from which the seed is unrecoverable).
             com.android.commands.monkey.ape.utils.RandomHelper.seed(mSeed);
             mEventSource = new MonkeySourceApe(mRandom, mMainApps, mThrottle,
-                    mRandomizeThrottle, mPermissionTargetSystem, mOutputDirectory);
+                    mRandomizeThrottle, mPermissionTargetSystem, mOutputDirectory, runSpec);
             mEventSource.setVerbose(mVerbose);
             if (mApeCleanApp) {
                 for (ComponentName cn : mMainApps) {
@@ -881,6 +905,64 @@ public class Monkey {
     }
 
     /**
+     * Resolve the run plan from the two properties files and the command line.
+     *
+     * <p>The files are read as raw bytes rather than through {@link Config}: the digest that
+     * proves <em>which</em> file this run saw is taken over the bytes, and a parsed map is blind to
+     * the comments, ordering and whitespace that difference turns on. Only keys actually present in
+     * a file are handed to the resolver — the ambient system properties {@code Config} layers
+     * underneath its own load are not part of the plan.
+     *
+     * @throws RunSpecException if the plan is not resolvable; the caller aborts the run
+     */
+    private RunSpec resolveRunSpec() {
+        byte[] dataLocalTmp = readPropertiesFile("/data/local/tmp/ape.properties");
+        byte[] sdcard = readPropertiesFile("/sdcard/ape.properties");
+        Map<String, String> entries = new LinkedHashMap<String, String>();
+        // Load order, later file wins — the same precedence Config applies.
+        mergeProperties(entries, dataLocalTmp);
+        mergeProperties(entries, sdcard);
+        RunSpec.CliValues cli = RunSpec.CliValues.of(mApeAgent, mSeed, mApeReplayLog);
+        return RunSpec.resolve(entries, cli, RunSpec.digestProperties(dataLocalTmp, sdcard));
+    }
+
+    /** The file's bytes, or null when it is absent — which the digest keeps distinct from empty. */
+    private static byte[] readPropertiesFile(String path) {
+        File file = new File(path);
+        if (!file.exists()) {
+            return null;
+        }
+        try (FileInputStream in = new FileInputStream(file)) {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] chunk = new byte[4096];
+            int read;
+            while ((read = in.read(chunk)) != -1) {
+                buffer.write(chunk, 0, read);
+            }
+            return buffer.toByteArray();
+        } catch (IOException e) {
+            // A properties file that exists and cannot be read is not a plan we can resolve, and
+            // guessing past it is how a run ends up exploring under a configuration nobody chose.
+            throw new RuntimeException("Fail to read the configuration file at " + path, e);
+        }
+    }
+
+    private static void mergeProperties(Map<String, String> into, byte[] raw) {
+        if (raw == null) {
+            return;
+        }
+        Properties parsed = new Properties();
+        try {
+            parsed.load(new ByteArrayInputStream(raw));
+        } catch (IOException e) {
+            throw new RuntimeException("Fail to parse a configuration file", e);
+        }
+        for (String name : parsed.stringPropertyNames()) {
+            into.put(name, parsed.getProperty(name));
+        }
+    }
+
+    /**
      * Process the command-line options
      *
      * @return Returns true if options were parsed with no apparent errors.
@@ -920,14 +1002,12 @@ public class Monkey {
                     mGenerateHprof = true;
                 } else if (opt.equals("--ape")) {
                     mUseApe = true;
+                    // Held raw for the resolver. Validating here would put a second authority on
+                    // the agent type, and an unrecognized value has to abort the run rather than
+                    // fall through to a default.
                     mApeAgent = nextOptionData();
-                    Config.set("ape.agentType", mApeAgent);
-                } else if (opt.equals("--ape-model")) {
-                    String modelFile = nextOptionData();
-                    Config.set("ape.modelFile", modelFile);
                 } else if (opt.equals("--ape-replay")) {
-                    String logFile = nextOptionData();
-                    Config.set("ape.replayLog", logFile);
+                    mApeReplayLog = nextOptionData();
                 } else if (opt.equals("--ape-clean")) {
                     mApeCleanApp = true;
                 } else if (opt.equals("--running-minutes")) {

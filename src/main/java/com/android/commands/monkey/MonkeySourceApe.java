@@ -56,6 +56,7 @@ import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StartAction;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.RandomHelper;
@@ -250,7 +251,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     public MonkeySourceApe(Random random,
             List<ComponentName> MainApps, long throttle, boolean randomizeThrottle, boolean permissionTargetSystem,
-            File outputDirectory) {
+            File outputDirectory, RunSpec runSpec) {
         mRandom = random;
         mMainApps = MainApps;
         packagePermissions = new HashMap<>();
@@ -272,7 +273,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
         mEventConsumeLoggerFile = new File(mOutputDirectory, "consume.log");
         mEventConsumeLogger = openWriter(mEventConsumeLoggerFile);
 
-        mAgent = ApeAgent.createAgent(this);
+        mAgent = ApeAgent.createAgent(this, runSpec);
         connect();
     }
 
