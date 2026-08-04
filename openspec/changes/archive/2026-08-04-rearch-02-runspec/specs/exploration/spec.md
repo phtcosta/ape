@@ -67,23 +67,33 @@ On termination — normal (when `StopTestingException` is caught) or abnormal (a
 
 The teardown chain in `StatefulAgent.tearDown` SHALL be, in order: LLM summary, `super.tearDown()`, **coverage dump**, action-history save, action counters, activity nodes, naming dump, model counters — each step isolated via `safeStep` (INV-EXPL-29). The coverage dump SHALL run strictly before the first teardown artifact write (the action-history save, the only remaining `/sdcard`-writing step) — this restates INV-COV-10's boundary now that the model serialization it was originally ordered against no longer exists; the protected property (the fragile emission precedes the expensive write) is unchanged.
 
+The isolation at the *outer* level is untouched by this change and is restated because the step list it referenced moved: in `MonkeySourceApe.tearDown`, a `Throwable` from `disconnect()` SHALL NOT prevent `mAgent.tearDown()` — which persists the action history and the remaining teardown outputs — nor the writer/logger shutdown and timeline export that follow. What this change removed from that chain is the graph-save step, not the isolation around it.
+
 The `finally` block in `Monkey.run` SHALL guard each of its throw-capable statements individually: the rotation restore (`MonkeyRotationEvent.injectEvent`) and the `MonkeySourceApe.tearDown()` call each run inside their own catch that logs the failure with a full stack trace. A failure in the rotation restore SHALL NOT skip teardown, and a failure anywhere in teardown SHALL NOT replace the exception that terminated the loop (INV-EXPL-16): after the `finally` completes, the original loop exception SHALL propagate to `Monkey.main`'s outermost handler and be the stack trace reported for the run.
 
-#### Scenario: normal termination writes no graph artifacts
+#### Scenario: Normal termination with defaults
 
 - **WHEN** `StopTestingException` is caught after the time limit expires
-- **THEN** no `sataModel.obj`, `sataGraph.dot`, or `sataGraph.vis.js` SHALL exist in the output directory
+- **AND** every key is at its jar default (the `save*` keys no longer exist to be set)
+- **THEN** no `sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`, or `step-<timestamp>-<id>.txt` SHALL exist in the output directory
 - **AND** the coverage dump and `action-history.log` SHALL be produced as before
+
+#### Scenario: saveObjModel disabled
+
+- **WHEN** `ape.properties` contains `ape.saveObjModel=false`
+- **THEN** resolution SHALL abort with a retired-key diagnostic before step 1, and no run SHALL start — the flag no longer selects between writing and not writing a file, because the file and its writer no longer exist
+- **AND** the same SHALL hold for `ape.saveDotGraph`, `ape.saveVisGraph` and `ape.saveStates`
 
 #### Scenario: coverage dump precedes the first artifact write
 
 - **WHEN** a run reaches teardown
 - **THEN** the `[APE-RV] UICOV` / `UICOV-ACT` lines SHALL appear in the trace before any output of the action-history save
 
-#### Scenario: abnormal termination still runs teardown
+#### Scenario: abnormal termination still persists outputs
 
 - **WHEN** a `RuntimeException` escapes the exploration loop
-- **THEN** `tearDown()` SHALL still run (via `finally`) and the exception SHALL still propagate (the run is reported as failed)
+- **THEN** `tearDown()` SHALL still run (via `finally`) and write the run's remaining outputs — coverage dump, action history, counters, activity nodes, naming dump — before the process exits
+- **AND** the exception SHALL still propagate (the run is reported as failed)
 
 #### Scenario: teardown failure does not mask the loop exception
 
@@ -97,6 +107,12 @@ The `finally` block in `Monkey.run` SHALL guard each of its throw-capable statem
 - **WHEN** the exploration loop terminates and `MonkeyRotationEvent.injectEvent` throws (e.g. a binder failure)
 - **THEN** the failure SHALL be logged
 - **AND** `MonkeySourceApe.tearDown()` SHALL still execute
+
+#### Scenario: disconnect failure does not lose the model
+
+- **WHEN** `MonkeySourceApe.tearDown()` runs and `disconnect()` throws `IllegalStateException`
+- **THEN** the failure SHALL be logged
+- **AND** `mAgent.tearDown()` SHALL still execute, persisting the action history and the remaining teardown outputs. *(The scenario's subject narrows rather than disappears: the serialized model it originally named is gone with the persistence protocol, but the isolation it pins — a throwing `disconnect()` must not cost the run its outputs — is untouched by this change.)*
 
 #### Scenario: one failing agent-teardown step does not skip the rest
 

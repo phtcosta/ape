@@ -23,9 +23,6 @@ The model enables three agent capabilities: (1) exhaustive coverage — the agen
 
 - `State` — the abstract state assigned to the current `GUITree`; returned by `Model.getState(GUITree)`
 - `StateTransition` — the recorded edge; returned by `Model.addTransition(source, action, target, ...)`
-- `sataModel.obj` — Java-serialized `Model` object written to `graphOutputDir` on normal termination when `Config.saveObjModel = true`
-- `sataGraph.dot` — Graphviz DOT representation of the exploration graph written on termination when `Config.saveDotGraph = true`
-- `sataGraph.vis.js` — vis.js JSON representation for browser visualization written on termination when `Config.saveVisGraph = true`
 
 ### Side-Effects
 
@@ -33,7 +30,7 @@ The model enables three agent capabilities: (1) exhaustive coverage — the agen
 - **[Graph mutation]**: `Graph.addTransition(source, action, target, ...)` inserts a new `StateTransition` or updates the `visitedCount` of an existing one.
 - **[Graph mutation]**: `Model.rebuild()` removes stale `State`s and `StateTransition`s from the graph and re-inserts them under the updated `Naming`, incrementing `Model.version`.
 - **[Graph listener]**: `Graph` fires `GraphListener` callbacks when states or transitions are added or removed; `SataAgent` subscribes to maintain its own priority queues.
-- **[Filesystem]**: `StatefulAgent.tearDown()` writes serialized model artifacts (`sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`) under `graphOutputDir` using `ObjectOutputStream` and `PrintWriter`.
+- **[Filesystem]**: none. `StatefulAgent.tearDown()` writes no model artifact: the serialization protocol (`sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`) is deleted, and the model exists only for the lifetime of the process (R1/R3 — clean runs, no read-back).
 
 ### Error
 
@@ -78,9 +75,7 @@ The model enables three agent capabilities: (1) exhaustive coverage — the agen
 - **INV-MODEL-16**: The ephemeral-action quarantine SHALL survive a model rebuild. An ephemeral edge (a `StateTransition` whose action `isEphemeral()`) SHALL NOT be replayed by `Model.rebuild`: it is observational and does not survive the refinement that removed its states — its `GUITreeTransition`s are dropped from the replay set **and** from the graph's tree-transition history (so `rebuildHistory` cannot resurrect a dangling edge). A post-refinement re-anchor of an agent action reference (`Model.update(ModelAction, GUITreeAction)`) SHALL return an ephemeral action unchanged — its identity is its payload (INV-MODEL-13), not `State.getActions()` membership, so a membership lookup is a category error, not a recoverable miss. Neither path SHALL throw for an ephemeral action; non-ephemeral behavior is unchanged.
 
 - **INV-MODEL-17**: `Graph.addTransition` SHALL NOT construct a `StateTransition` for an ephemeral action whose `getState()` differs from the transition source (a stale anchor left by a rebuild). It SHALL log one `[APE-RV] stale ephemeral edge dropped` line and return `null`; it SHALL NOT throw. Behavior for non-ephemeral actions is unchanged (a mismatch still throws `IllegalStateException`).
-
 ## Requirements
-
 ### Requirement: State Creation on Novel Abstract State
 
 When the model encounters a `GUITree` whose `StateKey` has not been seen before, it MUST allocate a new `State`, populate its action set from the `StateKey.widgets`, add the `MODEL_BACK` action unconditionally, and register the state in the `Graph`.
@@ -177,26 +172,6 @@ Every `State` MUST have a designated back action of type `MODEL_BACK` with no wi
 - **WHEN** `State.resolveAction(agent, backAction, throttle)` is called with `action = state.getBackAction()`
 - **THEN** `action.requireTarget()` MUST return `false`
 - **AND** `action.resolveAt(timestamp, throttle, tree, null, null)` MUST complete without throwing an exception
-
----
-
-### Requirement: Model Serialization on Normal Termination
-
-On normal process termination, the `Model` object MUST be serialized to the filesystem when `Config.saveObjModel = true`, preserving the full exploration graph for offline analysis and replay.
-
-#### Scenario: serialization on graceful shutdown
-- **WHEN** `StatefulAgent.tearDown()` is called during normal termination and `Config.saveObjModel = true`
-- **THEN** `StatefulAgent` MUST write the `Model` object to a file named `sataModel.obj` under `graphOutputDir` using `java.io.ObjectOutputStream`
-- **AND** the file MUST be written before the method returns
-- **AND** the serialized bytes MUST be deserializable back into a `Model` instance via `java.io.ObjectInputStream`
-
-#### Scenario: visualization output on graceful shutdown
-- **WHEN** `StatefulAgent.tearDown()` is called and `Config.saveDotGraph = true`
-- **THEN** `StatefulAgent` MUST write a Graphviz DOT file named `sataGraph.dot` under `graphOutputDir`
-
-#### Scenario: no serialization on disabled flag
-- **WHEN** `StatefulAgent.tearDown()` is called and `Config.saveObjModel = false`
-- **THEN** no `sataModel.obj` file MUST be written
 
 ---
 
@@ -426,3 +401,23 @@ mismatched source keeps the existing throwing behavior.
 #### Scenario: state saturation
 - **WHEN** every `ModelAction` in `State.actions` that passes `ActionFilter.ENABLED_VALID` has `action.isSaturated() = true`
 - **THEN** `State.isSaturated()` MUST return `true`
+
+### Requirement: No Model Deserialization and No XPath Action Injection
+
+The model layer SHALL have no deserialization entry point and no external action-injection channel:
+
+1. `Graph.readGraph` SHALL NOT exist; no code path SHALL construct a `Graph` or `Model` from a serialized artifact. Every run starts from an empty graph (R1: no operational state survives a session; R3: no artifact is read back).
+2. The XPath action-injection channel SHALL NOT exist: the `ape.model.xpathaction` package (`XPathActionController`, `XPathAction`, `XPathActionSequence`, `XPathActionReader`, and helpers), its static-initializer read of `/sdcard/ape.xpath.actions`, the consuming branch in `StatefulAgent` (`enableXPathAction` gate), and the `ape.enableXPathAction` key are all deleted (owner decision D6: no arm uses the channel and `tool.py` never pushes the file). Action selection is exclusively the agent's decision over the model's own actions.
+
+#### Scenario: no run reads a previous run's model
+
+- **WHEN** a run terminates and a subsequent run starts on the same device
+- **THEN** the second run SHALL construct an empty `Graph`
+- **AND** no file produced by the first run SHALL be opened by the second run's explorer
+
+#### Scenario: xpath action file has no effect
+
+- **WHEN** a legacy `/sdcard/ape.xpath.actions` file exists on the device
+- **THEN** no code SHALL read it and no injected action SHALL enter selection
+- **AND** setting `ape.enableXPathAction=true` in `ape.properties` SHALL abort resolution as a retired key
+

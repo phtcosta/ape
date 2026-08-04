@@ -63,10 +63,8 @@ The coverage boost is **per-action**, not uniform. Each action receives a boost 
 - **INV-COV-05**: `stateData` SHALL be bounded. When the bound is reached, the tracker SHALL evict entries but SHALL preserve the per-Activity rollup so that already-counted coverage is not zeroed mid-run.
 - **INV-COV-06**: The coverage key for a target action SHALL incorporate the action type, so two distinct action types on the same target widget are tracked as distinct coverage elements.
 - **INV-COV-07**: The coverage dump SHALL be read-only and SHALL run at most once per tracked state at teardown (with an optional additional emission at LRU eviction for that state). It SHALL NOT alter `stateData`, `activityRollup`, registered-widget sets, or any interaction count; `getTotalElements()` and `getTotalInteractions()` SHALL be invariant across the dump.
-- **INV-COV-10**: The teardown coverage dump SHALL be emitted exactly once per run, strictly before the model-serialization step (`saveGraph`) of the teardown chain; the emission SHALL be read-only (INV-COV-07 applies). It has exactly one call site, so no cross-path idempotence guard is required. This invariant governs the teardown dump only; it makes no claim about the optional per-state emission at LRU eviction that INV-COV-07 and "UICoverageTracker — Coverage Dump" permit.
-
+- **INV-COV-10**: The teardown coverage dump SHALL be emitted exactly once per run, strictly before every other teardown step that writes output (re-anchored, not dissolved: the pre-change phrasing bound it to the `saveGraph` model-serialization step, which no longer exists, so the binding is now to chain position among writers — today the action-history save); the emission SHALL be read-only (INV-COV-07 applies). It has exactly one call site, so no cross-path idempotence guard is required. This invariant governs the teardown dump only; it makes no claim about the optional per-state emission at LRU eviction that INV-COV-07 and "UICoverageTracker — Coverage Dump" permit.
 ## Requirements
-
 ### Requirement: UICoverageTracker — Widget Registration
 
 `UICoverageTracker.registerScreenElements(State state, List<ModelAction> actions)` SHALL register all actions of the state as trackable widgets. The widget ID for each action SHALL incorporate the action type for ALL actions:
@@ -314,34 +312,35 @@ The aggregated dump SHALL be read-only: no registration, recording, eviction, or
 - **WHEN** the teardown dump aggregates multiple Activities
 - **THEN** the `UICOV-ACT` lines SHALL be emitted in lexicographic activity-name order, identical across runs with the same tracked data
 
-### Requirement: Coverage Dump Emitted Before Model Serialization
+### Requirement: Coverage Dump Emitted First Among Teardown Writers
 
-The coverage dump (the per-state `[APE-RV] UICOV` and per-Activity `[APE-RV] UICOV-ACT` emissions specified by "UICoverageTracker — Coverage Dump" and "UICoverageTracker — Per-Activity Coverage Dump") SHALL be emitted **before the model serialization step (`saveGraph`)** of the agent teardown chain.
+The coverage dump (the per-state `[APE-RV] UICOV` and per-Activity `[APE-RV] UICOV-ACT` emissions specified by "UICoverageTracker — Coverage Dump" and "UICoverageTracker — Per-Activity Coverage Dump") SHALL be emitted **before any other teardown step that produces output**.
 
-The boundary is the model serialization, not chain position. The chain is `llmSummary → superTearDown → saveGraph → saveActionHistory → actionCounters → activityNodes → namingDump → modelCounters` (`StatefulAgent.java:1694-1704`), so the hoisted emission lands third; the two steps that precede it write nothing to `/sdcard`. Stating the requirement on the `saveGraph` boundary keeps it aligned with what recovers the lost dumps and with what the tests actually assert — a requirement written on chain position would promise a property nothing verifies.
+The boundary is "first among writers", not a fixed index. Before this change the boundary was the model serialization step (`saveGraph`), which this change deletes together with `sataModel.obj`, `readGraph` and `--ape-model` (V14, finding 3.3-6; R1/R3 — clean runs, no read-back). The post-change chain is `llmSummary → superTearDown → coverage dump → action-history save → action counters → activity nodes → naming dump → model counters` (this change's `exploration` delta, INV-EXPL-29): the dump lands third, and the two steps preceding it write nothing. Stating the requirement on "first among writers" keeps it aligned with what recovers the lost dumps and with what the tests assert, and keeps it verifiable as later stages remove further steps from the chain — a requirement written on a chain index would break at stage 4.
 
-Today it is the **last** step: `StatefulAgent.tearDown()` runs the eight-step chain above, and only then does `SataAgent.tearDown()` reach `getCoverageTracker().dump(...)`. The most fragile item is emitted after the most expensive write.
+Before the fix that introduced this requirement, the dump was the **last** step: `StatefulAgent.tearDown()` ran its full chain and only then did `SataAgent.tearDown()` reach `getCoverageTracker().dump(...)`. The most fragile item was emitted after the most expensive write.
 
-The consequence is measured: **338 of the 800 `aperv` calibration runs (42.3%) carry no dump**, and **330 of those 338 end on the line `Save graph data to /sdcard/sata-…`** — cut *during* the `/sdcard` serialization, three steps before the dump would have run. A further 3 are cut after `saveGraph` but before the dump. Emitting the dump first recovers **333 of the 338**.
+The consequence is measured: **338 of the 800 `aperv` calibration runs (42.3%) carry no dump**, and **330 of those 338 end on the line `Save graph data to /sdcard/sata-…`** — cut *during* the `/sdcard` serialization, three steps before the dump would have run. A further 3 are cut after that write but before the dump. Emitting the dump first recovers **333 of the 338**. This measurement is the historical justification for the ordering and is retained as the record of why the requirement exists; the specific write it names is deleted by this change, which removes that failure mode at its source rather than weakening the ordering.
 
 **Why not a shutdown hook.** An idempotent JVM shutdown hook was the original design for this requirement and is explicitly **not** adopted, because on the measured failure path it recovers nothing. The constraint is not which signal reaches the JVM — it is that the destination is already gone. `Logger` writes only to `System.out`; the trace file is the host-side `adb` stdout opened by the harness; on timeout the harness sends `SIGKILL` to the `adb` process and closes that file. Anything the device process emits afterwards — from a hook or otherwise, and regardless of whether the device itself received `SIGTERM` — cannot reach the trace. There is no second sink: the `.logcat` sibling of a lossy run contains zero `APE` lines. A requirement written on the signal axis ("orderly termination yes, SIGKILL no") would describe a boundary that is not the operative one.
 
 **Scope of the guarantee, stated honestly.** This requirement recovers runs whose teardown *began*. It does not recover a run killed before teardown — in the calibration corpus, 5 of the 338. No teardown-side mechanism can reach those, and this specification does not claim otherwise.
 
-**Partial dumps are valid output.** Hoisting the emission does not make it atomic: 3 of the 462 runs that do dump today are truncated mid-`UICOV-ACT`. A consumer SHALL treat a truncated final line as a partial dump of an otherwise valid run, not as a corrupt run, and SHALL NOT discard the complete lines that precede it.
+**Partial dumps are valid output.** Emitting first does not make the dump atomic: 3 of the 462 runs that do dump today are truncated mid-`UICOV-ACT`. A consumer SHALL treat a truncated final line as a partial dump of an otherwise valid run, not as a corrupt run, and SHALL NOT discard the complete lines that precede it.
 
 The dump remains read-only with respect to tracker state (INV-COV-07). Because the teardown dump has exactly one call site, no idempotence flag is required. This says nothing about the optional per-state emission at LRU eviction that "UICoverageTracker — Coverage Dump" permits (`MAY additionally emit one line for a state at the moment that state is evicted`): that emission is a distinct, mid-run, per-state path, it is not part of the teardown dump this requirement orders, and it is not currently implemented.
 
 #### Scenario: dump precedes model serialization
 
 - **WHEN** a run reaches teardown
-- **THEN** the `[APE-RV] UICOV` and `[APE-RV] UICOV-ACT` lines SHALL appear in the trace **before** the `Save graph data to …` line
+- **THEN** the `[APE-RV] UICOV` and `[APE-RV] UICOV-ACT` lines SHALL appear in the trace before any output produced by a later step of the teardown chain — the model serialization this scenario originally ordered against is deleted by this change, so the boundary is now the first *surviving* writer, the action-history save
 - **AND** the dump SHALL be read-only (tracker counts unchanged by the emission)
 
 #### Scenario: run cut during model serialization still has its dump
 
-- **WHEN** the harness terminates the process while `saveGraph` is writing to `/sdcard`, so the trace's last line is `Save graph data to /sdcard/sata-…`
-- **THEN** the trace SHALL nonetheless contain the complete coverage dump, emitted earlier in the chain
+- **WHEN** a run is cut short after teardown has begun
+- **THEN** the dump SHALL already be in the trace, because it precedes every writer of the chain
+- **AND** the specific window this scenario was written for SHALL no longer exist: no `Save graph data to …` line, `sataModel.obj`, `sataGraph.dot` or `sataGraph.vis.js` is produced, so there is no model serialization left to be cut during. The protection strengthens rather than lapses — the most expensive write the dump used to race is gone, and the ordering still holds against whatever writes first
 
 #### Scenario: run killed before teardown has no dump
 
@@ -353,3 +352,4 @@ The dump remains read-only with respect to tracker state (INV-COV-07). Because t
 - **WHEN** the capture ends mid-way through the `UICOV-ACT` block, leaving an incomplete final line
 - **THEN** the run SHALL be treated as carrying a partial dump
 - **AND** every complete line preceding the truncation SHALL remain usable
+

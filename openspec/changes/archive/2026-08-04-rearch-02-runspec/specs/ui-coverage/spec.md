@@ -35,17 +35,17 @@ The consequence is measured: **338 of the 800 `aperv` calibration runs (42.3%) c
 
 The dump remains read-only with respect to tracker state (INV-COV-07). Because the teardown dump has exactly one call site, no idempotence flag is required. This says nothing about the optional per-state emission at LRU eviction that "UICoverageTracker — Coverage Dump" permits (`MAY additionally emit one line for a state at the moment that state is evicted`): that emission is a distinct, mid-run, per-state path, it is not part of the teardown dump this requirement orders, and it is not currently implemented.
 
-#### Scenario: dump precedes every other teardown writer
+#### Scenario: dump precedes model serialization
 
 - **WHEN** a run reaches teardown
-- **THEN** the `[APE-RV] UICOV` and `[APE-RV] UICOV-ACT` lines SHALL appear in the trace before any output produced by a later step of the teardown chain
+- **THEN** the `[APE-RV] UICOV` and `[APE-RV] UICOV-ACT` lines SHALL appear in the trace before any output produced by a later step of the teardown chain — the model serialization this scenario originally ordered against is deleted by this change, so the boundary is now the first *surviving* writer, the action-history save
 - **AND** the dump SHALL be read-only (tracker counts unchanged by the emission)
 
-#### Scenario: no graph artifact exists to order against
+#### Scenario: run cut during model serialization still has its dump
 
-- **WHEN** a run completes normally after this change
-- **THEN** no `Save graph data to …` line, `sataModel.obj`, `sataGraph.dot` or `sataGraph.vis.js` SHALL exist
-- **AND** the ordering requirement SHALL still be verifiable against the first surviving writer of the chain
+- **WHEN** a run is cut short after teardown has begun
+- **THEN** the dump SHALL already be in the trace, because it precedes every writer of the chain
+- **AND** the specific window this scenario was written for SHALL no longer exist: no `Save graph data to …` line, `sataModel.obj`, `sataGraph.dot` or `sataGraph.vis.js` is produced, so there is no model serialization left to be cut during. The protection strengthens rather than lapses — the most expensive write the dump used to race is gone, and the ordering still holds against whatever writes first
 
 #### Scenario: run killed before teardown has no dump
 

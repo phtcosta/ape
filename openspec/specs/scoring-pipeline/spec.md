@@ -49,7 +49,7 @@ The fixed order SHALL equal the order of the pre-refactor inline scoring blocks 
 - **THEN** the pipeline order SHALL be `MopWidgetPass, MenuGatewayPass, WtgPass, FrontierPass, CoveragePass, FormCompletionPass`
 
 #### Scenario: empty pipeline under the pure arm
-- **WHEN** `fromConfig` runs with `apePureMode=true` (all pass gates forced off)
+- **WHEN** `fromConfig` runs on a plan whose every pass gate is off — no MOP substrate, `coverageBoostWeight=0`, `formCompletionEnabled=false` (the `ape_pure` arm's shape; the `apePureMode` switch that used to force this state is retired, so the arm reaches it by stating the flags rather than by a kill-switch)
 - **THEN** the pipeline SHALL contain zero passes
 - **AND** the emitted line SHALL be `[APE-ARCH] passes=[]`
 
@@ -77,7 +77,7 @@ This preserves `INV-EXPL-11` (adjustActionsByGUITree is called after base priori
 
 ### Requirement: Scoring Pass Roster and Gates
 
-The extraction SHALL yield exactly these six passes, each extracting the inline block named, each gated by the flag named. The roster is the extraction set, not a closed list: subsequent changes MAY introduce additional passes through the same `ScoringPass` interface and `ScoringPipeline.fromConfig` assembly point, subject to INV-ARCH-02/04 and to registering any new RV flag in the `apePureMode` registry (INV-ARCH-06). (`MopFrontierPass`, strategy B, is introduced by the change `mop-reach-strategies`, not by this one.)
+The extraction SHALL yield exactly these six passes, each extracting the inline block named, each gated by the flag named. The roster is the extraction set, not a closed list: subsequent changes MAY introduce additional passes through the same `ScoringPass` interface and `ScoringPipeline.fromConfig` assembly point, subject to INV-ARCH-02/04 and to declaring any new RV key's ownership in the run-spec `Feature` model (a new pass's gate key must be owned by a feature or by `ExplorationParams`; the key-ownership totality test enforces this). (`MopFrontierPass`, strategy B, is introduced by the change `mop-reach-strategies`, not by this one.)
 
 | Pass | Extracted inline block | `isEnabled()` gate |
 |---|---|---|
@@ -91,55 +91,19 @@ The extraction SHALL yield exactly these six passes, each extracting the inline 
 Each pass's scoring semantics (what boost it computes and where it writes provenance) SHALL remain exactly as its originating capability specifies; this capability SHALL NOT alter those semantics. Six passes reuse a pre-existing weight/data gate; only `FormCompletionPass` introduces a new boolean gate (`formCompletionEnabled`), because the form-completion block had no off switch before this change.
 
 #### Scenario: FormCompletionPass gated by the new flag
+
 - **WHEN** `Config.formCompletionEnabled=false`
 - **THEN** `FormCompletionPass.isEnabled()` SHALL return `false` and the pass SHALL be absent from the pipeline
 - **AND** the form-completion boost and deterministic fill SHALL NOT occur (form-completion spec's flag scenario)
 
 #### Scenario: weight-gated pass off via its existing knob
+
 - **WHEN** `Config.coverageBoostWeight=0`
 - **THEN** `CoveragePass.isEnabled()` SHALL return `false` and the pass SHALL be absent from the pipeline
 
----
-
-### Requirement: apePureMode Kill-Switch and Parity
-
-`Config.apePureMode` (`ape.apePureMode`, boolean, default `false`) SHALL be a kill-switch enforced in `Config.load`: after the normal property load, when `apePureMode` is `true`, `load` SHALL overwrite **every** RV-defining flag to its off/inert value — boolean flags to `false`, weight/boost integers to `0`, and RV-activated thresholds to their upstream-inert value (in particular `activityStableRestartThreshold` to `Integer.MAX_VALUE`) — and SHALL emit one `[APE-ARCH] apePureMode forced <key>=<value>` line per overwritten flag. The set of RV-defining flags SHALL be a single registry that both `Config.load` and the completeness guard test consult, so that a newly added RV flag that is not registered is detected by the guard.
-
-With `apePureMode=true`, APE-RV action selection SHALL be equivalent to upstream APE (`8f51b99`). Two behaviors SHALL remain on as documented exceptions, because neither changes what the agent *selects*: the `ApePinchOrZoomEvent` array-sizing/emit crash fix (a crash is not a selection behavior) and seed handling via `RandomHelper.seed(-s)` (reproducibility infrastructure, arm-neutral).
-
-- **INV-ARCH-01**: With `apePureMode=true`, the sequence of selected actions for a given APK, seed, and configuration SHALL be equivalent to upstream APE's selection, except for the two documented always-on behaviors (the `ApePinchOrZoomEvent` crash fix and seed handling). Concretely, under `apePureMode=true`: the scoring pipeline SHALL be empty; `State.getActions()` SHALL contain no `MODEL_MENU`; the epsilon SHALL be the fixed `Config.defaultEpsilon`; input SHALL use the legacy `StringCache` generator; and zero `[APE-STEP]` lines SHALL be emitted.
-- **INV-ARCH-06**: Every RV-defining `Config` flag SHALL be a member of the kill-switch registry, and `apePureMode=true` SHALL force each registered flag to its off/inert value. A registered flag that `load` fails to force, or an RV flag absent from the registry, SHALL be a guard-test failure.
-
-#### Scenario: kill-switch forces the RV flags off and logs them
-- **WHEN** `ape.properties` sets `ape.apePureMode=true` (and, redundantly, some RV flags to non-default values)
-- **THEN** after `Config.load`, `formCompletionEnabled`, `stepTelemetryEnabled`, `modelMenuEnabled`, `leastVisitedPriorityTiebreak`, `treeEnhancementsEnabled`, and `activityBudgetEnabled` SHALL all be `false`
-- **AND** every RV weight/boost integer (`frontierBoostWeight`, `coverageBoostWeight`, `mopWeightWtg`, `mopWeightOpenMenu`, ...) SHALL be `0`
-- **AND** `activityStableRestartThreshold` SHALL be `Integer.MAX_VALUE`
-- **AND** one `[APE-ARCH] apePureMode forced <key>=<value>` line SHALL be emitted per overwritten flag
-
-#### Scenario: pure arm selects like upstream APE
-- **WHEN** a run is launched with `apePureMode=true` on a fixed APK and seed
-- **THEN** the scoring pipeline SHALL be empty
-- **AND** `State.getActions()` SHALL contain no `MODEL_MENU` action
-- **AND** the epsilon-greedy epsilon SHALL be the fixed `Config.defaultEpsilon`
-- **AND** input generation SHALL use the legacy `StringCache` path
-- **AND** zero `[APE-STEP]` lines SHALL be emitted for the run
-
-#### Scenario: always-on exceptions survive the pure arm
-- **WHEN** `apePureMode=true`
-- **THEN** the `ApePinchOrZoomEvent` fix SHALL remain active (a malformed points array SHALL be rejected, never dereferenced)
-- **AND** `RandomHelper` SHALL still be seeded from the Monkey `-s` value
-
-#### Scenario: unregistered RV flag fails the completeness guard
-- **WHEN** a new RV-defining `Config` flag is added but not registered in the kill-switch registry
-- **THEN** the completeness guard test SHALL fail
-- **AND** the failure SHALL identify the unregistered flag
-
----
-
 ### Requirement: Parity Configuration Flags
 
-`Config.java` SHALL declare the following flags, loaded from `ape.properties` at class-loading time. Every default SHALL preserve current aperv behavior; this change SHALL NOT alter any default.
+`Config.java` SHALL declare the following flags, loaded from `ape.properties` at class-loading time. Every default SHALL preserve current aperv behavior. Each flag is the activation key of the corresponding `Feature` in the run-spec capability's feature model; with a flag `false`, the feature is absent from the resolved plan and its mechanism is not constructed.
 
 | Flag | Property Key | Type | Default | Gate |
 |------|-------------|------|---------|------|
@@ -149,19 +113,29 @@ With `apePureMode=true`, APE-RV action selection SHALL be equivalent to upstream
 | `leastVisitedPriorityTiebreak` | `ape.leastVisitedPriorityTiebreak` | boolean | `true` | the priority tiebreak in `State.greedyPickLeastVisited()` |
 | `treeEnhancementsEnabled` | `ape.treeEnhancementsEnabled` | boolean | `true` | the three `GUITreeBuilder` perception enhancements (WebView-prune actionable count, AndroidX actionability, ViewPager scrollable) |
 | `activityBudgetEnabled` | `ape.activityBudgetEnabled` | boolean | `true` | `ActivityBudgetTracker` instantiation + the budget check in `SataAgent.selectNewActionNonnull()` |
-| `apePureMode` | `ape.apePureMode` | boolean | `false` | kill-switch (see "apePureMode Kill-Switch and Parity") |
 
-- **INV-ARCH-07**: With none of these keys set in `ape.properties`, `formCompletionEnabled`, `stepTelemetryEnabled`, `modelMenuEnabled`, `leastVisitedPriorityTiebreak`, `treeEnhancementsEnabled`, and `activityBudgetEnabled` SHALL be `true` and `apePureMode` SHALL be `false`, and the agent's action-selection behavior SHALL be identical to the pre-change aperv.
+The `apePureMode` row no longer exists (`ape.apePureMode` is a retired key that aborts resolution — see the REMOVED requirement above).
+
+- **INV-ARCH-07**: With none of these keys set in `ape.properties`, `formCompletionEnabled`, `stepTelemetryEnabled`, `modelMenuEnabled`, `leastVisitedPriorityTiebreak`, `treeEnhancementsEnabled`, and `activityBudgetEnabled` SHALL be `true`, and the agent's action-selection behavior SHALL be identical to the pre-change aperv.
 
 #### Scenario: defaults preserve current behavior
+
 - **WHEN** `ape.properties` sets none of the parity flags
-- **THEN** the six behavior gates SHALL be `true` and `apePureMode` SHALL be `false`
-- **AND** the pipeline, telemetry, menu action, tiebreak, tree perception, and activity budget SHALL all be active as before this change
+- **THEN** the six behavior gates SHALL be `true`
+- **AND** the pipeline, telemetry, menu action, tiebreak, tree perception, and activity budget SHALL all be active as before
 
 #### Scenario: a single gate overridden without the kill-switch
+
 - **WHEN** `ape.properties` sets only `ape.stepTelemetryEnabled=false`
 - **THEN** `Config.stepTelemetryEnabled` SHALL be `false` and no `[APE-STEP]` line SHALL be emitted
 - **AND** all other gates SHALL retain their `true` defaults
+
+#### Scenario: retired kill-switch key aborts
+
+- **WHEN** `ape.properties` sets `ape.apePureMode=true`
+- **THEN** resolution SHALL abort with a retired-key diagnostic before step 1
+
+---
 
 ### Requirement: MopFrontierPass — Frontier Boost Toward Unvisited MOP Activities
 
@@ -175,7 +149,7 @@ The boost SHALL be applied as a `setPriority` increment (`action.setPriority(act
 
 `MopFrontierPass.isEnabled()` SHALL be true only when `Config.mopFrontierWeight > 0` AND `MopData` is non-null with WTG data present. With `Config.mopFrontierWeight == 0` (default) the pass SHALL be byte-identical to being absent from the pipeline. The pass is independent of and additive to the generic `frontierBoostWeight` (which requires only unvisited, not MOP) — B is the strictly narrower predicate (unvisited AND MOP).
 
-`Config.mopFrontierWeight` SHALL be declared in `Config.java`, loaded via `ape.mopFrontierWeight`, default `0`, and SHALL be registered in the `apePureMode` RV-flag registry (INV-ARCH-06), forced to `0` when `apePureMode=true`. `ScoringPipeline.fromConfig` SHALL assemble `MopFrontierPass` immediately after the generic `FrontierPass` and before `CoveragePass` — the frontier family stays contiguous and the relative-order contracts of INV-ARCH-03 are preserved.
+`Config.mopFrontierWeight` SHALL be declared in `Config.java`, loaded via `ape.mopFrontierWeight`, default `0`, and SHALL be declared in the run-spec `Feature` model as the activation key of the `MOP_FRONTIER` feature, which requires `MOP`: an explicit non-zero weight on a plan without MOP data aborts resolution as a missing dependency, and with the feature absent the pass is not constructed (`run-spec` INV-RUN-05 — the recorded substitute for the dissolved INV-ARCH-06 registry). `ScoringPipeline.fromConfig` SHALL assemble `MopFrontierPass` immediately after the generic `FrontierPass` and before `CoveragePass` — the frontier family stays contiguous and the relative-order contracts of INV-ARCH-03 are preserved.
 
 - **INV-MFP-01**: `MopFrontierPass` SHALL add `mopFrontierWeight` to an action **only** when its matched WTG transition target satisfies both `activityHasMop(target) == true` AND `Graph.getActivityNode(target) == null` at scoring time. An action failing either condition SHALL receive nothing from this pass.
 - **INV-MFP-02**: The boost SHALL be applied as a `setPriority` increment AND recorded into `mopFrontierBoost` by read-modify-write; because `mopFrontierBoost` is never read by `getPriority()`, the `setPriority` increment is mandatory for the boost to steer. `MopFrontierPass` SHALL NOT write `wtgBoost`; when `mopWeightWtg` and/or `frontierBoostWeight` co-apply to the same action, `wtgBoost` SHALL reflect only those WTG-family contributions and `mopFrontierBoost` only the MOP-frontier contribution.
@@ -202,8 +176,6 @@ The boost SHALL be applied as a `setPriority` increment (`action.setPriority(act
 #### Scenario: disabled
 - **WHEN** `ape.mopFrontierWeight=0`
 - **THEN** the scoring pipeline SHALL behave exactly as without `MopFrontierPass`, with no boost recorded in either field
-
----
 
 ### Requirement: Per-Step Decision Outcome Attribution
 
@@ -240,7 +212,7 @@ Example:
 [APE-OUTCOME] step=42 decision_source=LLM new_state=true target_state=S7 activity_changed=true activity_has_mop=1
 ```
 
-- **INV-ARCH-08**: The `[APE-OUTCOME]` line SHALL be gated by `stepTelemetryEnabled` exactly as the `[APE-STEP]` line is. Under `apePureMode=true` — which forces `stepTelemetryEnabled=false` per the `apePureMode Kill-Switch and Parity` requirement (INV-ARCH-06) — zero `[APE-OUTCOME]` lines SHALL be emitted, preserving upstream-APE parity (INV-ARCH-01: zero telemetry lines).
+- **INV-ARCH-08**: The `[APE-OUTCOME]` line SHALL be gated by `stepTelemetryEnabled` exactly as the `[APE-STEP]` line is. With `ape.stepTelemetryEnabled=false` — which an arm now states directly, the `apePureMode` switch that used to force it having been retired with its registry (INV-ARCH-06 dissolved; substitute `run-spec` INV-RUN-05) — zero `[APE-OUTCOME]` lines SHALL be emitted.
 - **INV-ARCH-09**: The `step` on an `[APE-OUTCOME]` line SHALL equal the `step` on the `[APE-STEP]` line of the action whose transition it reports. Every emitted `[APE-OUTCOME]` line SHALL have a matching `[APE-STEP]` line with the same `step`, and at most one `[APE-OUTCOME]` line SHALL be emitted per `step` value. An `[APE-STEP]` line MAY have no matching `[APE-OUTCOME]` line — when the selected action produced no recorded transition (restart, refinement discard, run end) — which is a legitimate, informative absence, not an error.
 
 #### Scenario: LLM decision attributed to a new-state discovery on a MOP screen
@@ -256,9 +228,9 @@ Example:
 
 #### Scenario: Outcome line suppressed under pure mode
 
-- **WHEN** `apePureMode=true` (so `stepTelemetryEnabled=false`)
+- **WHEN** an arm states `ape.stepTelemetryEnabled=false` (the `ape_pure` arm does; the retired `apePureMode` key can no longer force it)
 - **THEN** zero `[APE-OUTCOME]` lines SHALL be emitted for the run
-- **AND** zero `[APE-STEP]` lines SHALL be emitted (INV-ARCH-01 unchanged)
+- **AND** zero `[APE-STEP]` lines SHALL be emitted
 
 #### Scenario: Selected action with no recorded transition
 

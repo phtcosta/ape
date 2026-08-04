@@ -18,14 +18,14 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
       sequences + preemption golden (incl. finding 3.3-1). Pure test infra, no production change.
       *Gate for stages 2–3.*
   - [x] artifacts approved (2026-08-03) · [x] apply · [x] verify · [x] archive (2026-08-03)
-- [ ] **2. `rearch-02-runspec`** — `RunSpec` + presets in jar + `Feature` enum + total
+- [x] **2. `rearch-02-runspec`** — `RunSpec` + presets in jar + `Feature` enum + total
       fail-fast + level-0 `RUN_START` echo (D1) + removal of `/sdcard` readers (D6) and of
       `saveGraph`/`readGraph`/`--ape-model`. **One ordered Python edit** (AC1): the counterpart change
       in rv-android removes `ape_pure_mode` from `tool.py` and lands *before* this jar — stage 2, not
       stage 5, is where the cross-repo coupling starts.
       *Gate: parity oracle green per preset; the counterpart line merged into `modules` before the
       first `mvn install` of a post-stage-2 jar (D-4, restated 2026-08-04).*
-  - [x] artifacts approved (2026-08-03) · [ ] apply · [ ] verify · [ ] archive
+  - [x] artifacts approved (2026-08-03) · [x] apply · [x] verify · [x] archive (2026-08-04)
 - [ ] **3. `rearch-03-decision-pipeline`** — `DecisionPipeline` stages + `StageResult` sum
       type + episode state relocated + `LlmRouter` sliced + `ScoringPipeline` real injection.
       Hard preemption preserved exactly (Q1).
@@ -109,8 +109,10 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   post-stage-2 jar meeting a `tool.py` that still pushes the key, and that meeting happens at
   `mvn install` (`copy-jar-to-aperv-tool`). Both the counterpart merge and the `rearch` → `master`
   merge are end-of-line acts, so the constraint orders two deliberate decisions and gates no
-  stage-2 group: group 6 deploys nothing, and the group-8 device smoke is where it binds. See
-  `rearch-02-runspec` design D-4.
+  stage-2 group: group 6 deploys nothing, and — since the device smoke was descoped on 2026-08-04
+  (design D-13) — **no stage-2 task installs the jar at all**, so the condition holds vacuously
+  across the whole stage and the binding event sits outside it, at the coordinated end-to-end run.
+  See `rearch-02-runspec` design D-4 and D-13.
 
 ## Related state
 
@@ -510,3 +512,62 @@ Open coordination items — status 2026-08-03:
   the deployed one, which every other task of this workstream forbids — so it needs the owner's
   explicit go-ahead, with the previous jar's `ls -l`/`sha256sum` captured first (the jar is
   gitignored, so git will not restore it).
+
+- 2026-08-04 — **Stage 2 archived as `2026-08-04-rearch-02-runspec`. `rearch-02-runspec` 48/48.**
+  Two owner decisions closed the stage, and the archive itself turned up a class of defect worth
+  recording.
+
+  **The device smoke is skipped (design D-13).** Group 8 is descoped and its validation folded into
+  a **single coordinated end-to-end run once every planned change on both sides has landed** — the
+  seven `ape` stages and the five `rvsec` counterparts. Owner's reason as given: the Python side is
+  still being implemented, so a stage-2 device smoke would validate a moving jar against a moving
+  harness, and each later stage overwrites the jar it installed. The two tasks were **removed, not
+  ticked**; section 8 of `tasks.md` is now a disposition block enumerating the four deferred
+  assertions (the abort composition in `Monkey.run`; `RUN_START` preceding every `[APE-*]` line at
+  runtime; the after-state of a real run; the end-to-end run of the five arms). **Stage 2 therefore
+  ships validated by 959 JVM tests and the per-preset parity goldens, and by nothing that ran on a
+  device** — stated plainly rather than left for a reader to infer from "48/48, archived".
+  Consequence for D-4: no stage-2 task installs the jar at all, so the ordering holds *vacuously*
+  across the stage and its binding event moves outside the change. That strengthens the argument —
+  there is no stage-2 act capable of violating it. The constraint's text is unchanged.
+
+  **The two coverage gaps 9.2 reported are closed (task 9.3).** The owner chose to write the guards
+  before archiving. Three scans added to `DeviceInputChannelAbsenceTest`:
+  `noCodePathReadsBackAnArtifactOfAPreviousRun` (INV-RUN-07), `noOtherUnseedableGenerator…`
+  (`Math.random`) and `theOnlyUnseededRandomIsTheOneTheContextReplaces`. The third is deliberately
+  **not** an absence assertion: a bare `new Random()` does survive, in `RandomHelper`'s field
+  initializer, and is genuinely unseeded — what makes it harmless is that `RunContext.initialize`
+  reseeds before any exploration component exists. Asserting *exactly one*, in that file, is what
+  makes a second one a failure instead of a silent second stream. All three passed on first run, so
+  9.2's manual audit was correct rather than optimistic. Suite **959 / 0 / 19** (956 + 3; skip
+  decomposition unchanged), goldens untouched, parity gate green (14 tests).
+
+  **The archive's spec sync silently drops `## Invariants` and `## Data Contracts`, and that cost
+  four fixes.** `openspec archive` applies `## Requirements` blocks and nothing else, so a delta's
+  invariant section is written, validated, archived — and never reaches the main spec. Caught by
+  grepping the synced specs rather than by any tool: `run-spec` landed with its nine requirements
+  but **without INV-RUN-01..08** (the capability's core) and without its Data Contracts;
+  `exploration` kept a live INV-EXPL-03 describing the deleted `sataModel.obj` and an INV-EXPL-29
+  step list still naming the graph save; `heuristic-input` never gained INV-INP-07; `ui-coverage`'s INV-COV-10 was
+  still anchored to `saveGraph`. All four were applied to `openspec/specs/` by hand after the
+  archive. Two further stale sites were the *change's own* omission rather than the tool's: the
+  `model` and `exploration` Data Contracts still listed `sataModel.obj`/`sataGraph.*` as live
+  outputs, because no delta rewrote those sections; and `scoring-pipeline` carried three dangling
+  `apePureMode` references (INV-ARCH-08 and two scenarios) that the proposal had promised to
+  re-ground for four other capabilities but never enumerated for this one. **Lesson for stages 3–7:
+  after every archive, grep the synced main specs for the mechanisms the change deleted — a green
+  `openspec validate --specs` says nothing about whether a deleted mechanism is still described as
+  live.**
+
+  **The archive also aborted twice before succeeding, and both aborts were correct.** `openspec
+  archive` refuses a MODIFIED requirement whose block omits a scenario the current spec has — the
+  guard against learning 7's failure mode (a MODIFIED block replaces the whole requirement). It
+  named `exploration`, then `heuristic-input`; a scan of all twelve deltas found **five** blocks
+  affected, in two classes. Most were scenario *renames* the exact-title matcher cannot recognise
+  (`dump precedes model serialization` → `dump precedes every other teardown writer`, and four
+  others) — restored to their original titles with post-change bodies. One was a genuine loss:
+  `exploration`'s `disconnect failure does not lose the model`, whose property **survives** — a
+  throwing `disconnect()` must not skip `mAgent.tearDown()` — and which had been dropped along with
+  the requirement sentence backing it, because the artifact it named was gone. Restored. Note for
+  stage 4: `rearch-04-step-ndjson-telemetry` also MODIFIES `Output Persistence on Termination`, so
+  it inherits the same discipline and must carry forward the scenario set as it now stands.

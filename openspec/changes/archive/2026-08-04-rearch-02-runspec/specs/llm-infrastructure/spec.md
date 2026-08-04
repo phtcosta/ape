@@ -84,6 +84,12 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 - **THEN** `Config.llmMaxTokens` SHALL be `2048` and `Config.llmSnapTolerancePx` SHALL be `80`
 - **AND** the values SHALL flow into the request body / euclidean tolerance without any code change
 
+#### Scenario: New keys classified in the apePureMode registry
+
+- **WHEN** the four J1b/J1c keys are looked for in the `apePureMode` kill-switch registry
+- **THEN** no such registry SHALL exist — `rvForcedOffValues`, `rvUnsetKeys` and `rvExemptReasons` are deleted along with the mechanism they served, and INV-ARCH-06 is dissolved (`scoring-pipeline` capability)
+- **AND** the classification this scenario asked for SHALL instead be made by the `Feature` model, where the compiler can check it rather than a string literal naming a field (next scenario)
+
 #### Scenario: LLM sub-parameters owned by the Feature model
 
 - **WHEN** the run-spec key-ownership totality test runs

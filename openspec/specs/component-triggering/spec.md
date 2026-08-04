@@ -166,7 +166,7 @@ When a candidate exists, the agent SHALL increment the per-run launch counter an
 
 `Config.activityTriggerMaxPerRun` (int, loaded via `ape.activityTriggerMaxPerRun`, default `0` = unlimited) SHALL cap the number of `EVENT_TRIGGER_ACTIVITY` actions emitted in a run. A configured value `< 0` SHALL be clamped to `0` at load time (logged). Only actually returned `EVENT_TRIGGER_ACTIVITY` actions consume budget; a firing whose candidate scan comes up empty does not.
 
-Both flags SHALL be registered in the `apePureMode` kill-switch registry (INV-ARCH-06 of `scoring-pipeline`) as exempt sub-params (`rvExemptReasons()`): they are inert when `activityTriggerEnabled` is forced false by the kill-switch. `Config.triggerMopFirst` SHALL NOT exist (deleted) and SHALL NOT appear in the kill-switch forced list.
+Both keys SHALL be declared in the run-spec `Feature` model as sub-parameters owned by the `ACTIVITY_TRIGGER` feature (which requires `MOP`): when the feature is absent from the resolved plan, no launcher mechanism exists and the two keys are accepted only at their neutral values (INV-RUN-05 of `run-spec`). `Config.triggerMopFirst` SHALL NOT exist (deleted).
 
 Event generation SHALL dispatch the action as an explicit intent (`ComponentName(MopData.getPackageName(), className)`, `FLAG_ACTIVITY_NEW_TASK`) via `AndroidDevice.startActivity`; the package component SHALL be `MopData.getPackageName()` and SHALL NOT be derived from the target class name (main-spec INV-CT-04, ComponentName Package Derivation). When the candidate's intent-filters contain an `ACTION_VIEW` filter with non-empty `data.schemes`, the intent SHALL instead be `ACTION_VIEW` with a best-effort URI assembled from the filter's first scheme, host and path, still targeted at the component. Activities SHALL NOT participate in the `componentPercentage` probabilistic pool under any configuration.
 
@@ -219,8 +219,9 @@ Event generation SHALL dispatch the action as an explicit intent (`ComponentName
 
 #### Scenario: invalid values clamped at load
 - **WHEN** `ape.properties` sets `ape.activityTriggerStagnationStep=0` and `ape.activityTriggerMaxPerRun=-3`
-- **THEN** `Config.load` SHALL clamp them to `50` and `0` respectively and log each clamp
+- **THEN** the load SHALL clamp them to `50` and `0` respectively and log each clamp (documented value semantics — clamps, not aborts)
 
 #### Scenario: launcher disabled
 - **WHEN** `ape.activityTriggerEnabled=false`
 - **THEN** no `EVENT_TRIGGER_ACTIVITY` step SHALL ever be produced regardless of cadence/cap values, and the probabilistic pool SHALL contain no activities
+

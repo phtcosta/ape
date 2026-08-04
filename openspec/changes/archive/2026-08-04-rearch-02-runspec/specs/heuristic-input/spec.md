@@ -19,6 +19,11 @@ When the cache is non-empty, the selection index SHALL be drawn from the seeded 
 - **THEN** it SHALL return a non-null formatted random string
 - **AND** no exception SHALL be thrown
 
+#### Scenario: populated cache unchanged
+
+- **WHEN** the cache holds at least one string
+- **THEN** `nextString()` SHALL return one of the cached strings, as before — what this change alters is where the index comes from, not what the method returns (next scenario)
+
 #### Scenario: populated cache draws from the seeded stream
 
 - **WHEN** the cache holds at least one string

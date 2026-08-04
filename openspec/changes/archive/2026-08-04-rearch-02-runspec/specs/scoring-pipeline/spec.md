@@ -39,7 +39,7 @@ The `apePureMode` row no longer exists (`ape.apePureMode` is a retired key that 
 - **THEN** the six behavior gates SHALL be `true`
 - **AND** the pipeline, telemetry, menu action, tiebreak, tree perception, and activity budget SHALL all be active as before
 
-#### Scenario: a single gate overridden
+#### Scenario: a single gate overridden without the kill-switch
 
 - **WHEN** `ape.properties` sets only `ape.stepTelemetryEnabled=false`
 - **THEN** `Config.stepTelemetryEnabled` SHALL be `false` and no `[APE-STEP]` line SHALL be emitted

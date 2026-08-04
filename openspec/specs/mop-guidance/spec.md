@@ -677,7 +677,7 @@ If `OutOfMemoryError` is nonetheless thrown anywhere in the load body — read, 
 
 The read of the JSON `reachesTarget` fields (on `components.activities[]` and on `reachability[].methods[]`) is confined to the JSON-parsing boundary (`Target` vocabulary on the JSON side); the values populate `mopActivities` (`MOP` vocabulary on the Java side), preserving the `MopData` javadoc naming boundary (gh13 D7). The scorer arithmetic SHALL NOT change — this requirement widens only the extent of the `activityHasMop` predicate.
 
-`Config.mopActivitySourceComponents` SHALL be declared in `Config.java` and loaded via `ape.mopActivitySourceComponents`, default `false`, and SHALL be registered in the `apePureMode` RV-flag registry (INV-ARCH-06 of `scoring-pipeline`), forced to `false` when `apePureMode=true`.
+`Config.mopActivitySourceComponents` SHALL be declared in `Config.java` and loaded via `ape.mopActivitySourceComponents`, default `false`. In the run-spec `Feature` model, the key activates the `MOP_ACTIVITY_SOURCE` feature, which depends on `MOP`: an explicit `true` on a plan without `ape.mopDataPath` aborts resolution as a missing dependency, and with the feature absent the widget-only source is the only one that exists (INV-RUN-05 of `run-spec` replaces the former kill-switch registration).
 
 - **INV-MOP-27**: `activityHasMop(activity)` SHALL return `true` for an activity contributed by a component-level or reachability-level source **only** when `Config.mopActivitySourceComponents == true` AND EITHER that activity's `ComponentInfo.reachesTarget == true` OR its `reachability[]` class (`componentType=="activity"`) has ≥1 method with `reachesTarget == true`. With the flag `false`, both non-widget sources SHALL contribute nothing and the `mopActivities` set SHALL equal the pre-change widget-derived set exactly.
 
@@ -701,7 +701,9 @@ The read of the JSON `reachesTarget` fields (on `components.activities[]` and on
 - **WHEN** `Config.mopActivitySourceComponents=true` AND activity `com.x.CryptoActivity` has `components.activities[].reachesTarget=false` and no MOP-flagged widget, BUT its `reachability[]` class (`componentType="activity"`) has ≥1 method with `reachesTarget=true`
 - **THEN** `activityHasMop("com.x.CryptoActivity")` SHALL return `true` (source 3 — immune to the component-level lambda call-graph gap)
 
----
+#### Scenario: explicit activation without MOP data aborts
+- **WHEN** `ape.properties` sets `ape.mopActivitySourceComponents=true` and no `ape.mopDataPath`
+- **THEN** resolution SHALL abort with a missing-dependency diagnostic naming `MOP_ACTIVITY_SOURCE` and `MOP`
 
 ### Requirement: MopData — Widget MOP Flag Recovery for Desugared-Lambda Handlers (FIX 2)
 

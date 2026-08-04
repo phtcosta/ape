@@ -365,7 +365,7 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 | `ape.llmBoundaryTopPct` | double | `0.05` | Top boundary reject band as a fraction of screen height (J1b; policy lever, default not swept) |
 | `ape.llmBoundaryBottomPct` | double | `0.94` | Bottom boundary reject band as a fraction of screen height (J1b; policy lever, default not swept) |
 
-The four J1b/J1c keys carry no clamping logic (researcher-facing knobs, like `llmTimeoutMs`/`llmTopK`); their defaults SHALL reproduce the previously hard-coded behavior bit-for-bit. All four SHALL be registered as **exempt** in the `apePureMode` RV-flag registry (`rvExemptReasons`, INV-ARCH-06 of `scoring-pipeline`) as LLM sub-params, inert when the LLM masters are forced off.
+The four J1b/J1c keys carry no clamping logic (researcher-facing knobs, like `llmTimeoutMs`/`llmTopK`); their defaults SHALL reproduce the previously hard-coded behavior bit-for-bit. In the run-spec `Feature` model, `ape.llmUrl` is the activation key of the `LLM` feature and every other key in this table is a sub-parameter owned by the `LLM` feature family: when `LLM` is absent from the resolved plan, `LlmParams` is null, no LLM object is constructed, and an explicitly-set LLM sub-parameter is accepted only at its neutral value (INV-RUN-05 of `run-spec`) — an explicitly enabled mode (`ape.llmOnNewState=true`, `ape.llmOnStagnation=true`, or `ape.llmPercentage>0`) without `ape.llmUrl` aborts resolution as a missing dependency.
 
 When `Config.llmPercentage` is `0.0`, no random LLM calls SHALL occur — only new-state and stagnation modes apply. When `Config.llmPercentage` is `0.02` (default), approximately 2% of non-event steps SHALL attempt LLM calls.
 
@@ -427,8 +427,20 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 
 #### Scenario: New keys classified in the apePureMode registry
 
-- **WHEN** the `apePureMode` kill-switch registry completeness guard runs (INV-ARCH-06)
-- **THEN** `llmMaxTokens`, `llmSnapTolerancePx`, `llmBoundaryTopPct`, and `llmBoundaryBottomPct` SHALL each be present in `rvExemptReasons` with an LLM sub-param reason
+- **WHEN** the four J1b/J1c keys are looked for in the `apePureMode` kill-switch registry
+- **THEN** no such registry SHALL exist — `rvForcedOffValues`, `rvUnsetKeys` and `rvExemptReasons` are deleted along with the mechanism they served, and INV-ARCH-06 is dissolved (`scoring-pipeline` capability)
+- **AND** the classification this scenario asked for SHALL instead be made by the `Feature` model, where the compiler can check it rather than a string literal naming a field (next scenario)
+
+#### Scenario: LLM sub-parameters owned by the Feature model
+
+- **WHEN** the run-spec key-ownership totality test runs
+- **THEN** `llmMaxTokens`, `llmSnapTolerancePx`, `llmBoundaryTopPct`, and `llmBoundaryBottomPct` SHALL each be owned by the `LLM` feature as sub-parameters
+- **AND** with `LLM` absent from the plan, none of them SHALL parameterize any constructed mechanism
+
+#### Scenario: LLM mode without a URL aborts
+
+- **WHEN** `ape.properties` contains `ape.llmOnStagnation=true` and no `ape.llmUrl`
+- **THEN** resolution SHALL abort with a missing-dependency diagnostic naming `LLM` (instead of silently loading a mode that can never fire)
 
 ### Requirement: SglangClient — Per-Request Tool Schema
 
@@ -463,3 +475,4 @@ Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unava
 
 - **WHEN** `capture()` fails once and a later `capture()` succeeds
 - **THEN** the seam SHALL NOT report the earlier failure's stage after the successful call
+
