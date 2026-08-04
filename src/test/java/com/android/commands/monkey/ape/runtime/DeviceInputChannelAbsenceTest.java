@@ -46,6 +46,19 @@ public class DeviceInputChannelAbsenceTest {
 
     private static final Pattern UNSEEDED_RANDOM = Pattern.compile("\\bThreadLocalRandom\\b");
 
+    /** {@code Math.random()} — the second mechanism INV-RUN-08 names; unseedable like the first. */
+    private static final Pattern MATH_RANDOM = Pattern.compile("\\bMath\\s*\\.\\s*random\\s*\\(");
+
+    /** A no-argument {@code new Random()} — the third. See the test for why one is expected. */
+    private static final Pattern BARE_RANDOM = Pattern.compile("\\bnew\\s+Random\\s*\\(\\s*\\)");
+
+    /**
+     * A read-back of any artifact of a previous run (INV-RUN-07). The persistence protocol wrote a
+     * {@code Model} and read it with a {@code Graph} cast; group 5 deleted both halves.
+     */
+    private static final Pattern DESERIALIZATION = Pattern.compile(
+            "\\bObjectInputStream\\b|\\breadObject\\s*\\(|\\breadGraph\\s*\\(");
+
     /** The one {@code /sdcard} path that is still a legal read (run-spec capability). */
     private static final Pattern ALLOWED_PROPERTIES = Pattern.compile("/sdcard/ape\\.properties\\b");
 
@@ -61,6 +74,43 @@ public class DeviceInputChannelAbsenceTest {
         List<String> hits = scanForPattern(UNSEEDED_RANDOM);
         assertEquals("all run-scoped randomness derives from the seeded stream (INV-RUN-08); "
                 + "ThreadLocalRandom cannot be seeded: " + hits, Collections.emptyList(), hits);
+    }
+
+    @Test
+    public void noOtherUnseedableGeneratorSurvivesInProductionCode() throws IOException {
+        // The other two mechanisms INV-RUN-08 names. Kept apart from the ThreadLocalRandom scan so
+        // a failure says which one came back.
+        List<String> hits = scanForPattern(MATH_RANDOM);
+        assertEquals("Math.random() cannot be seeded, so a decision drawn from it is outside the "
+                + "run's stream (INV-RUN-08): " + hits, Collections.emptyList(), hits);
+    }
+
+    @Test
+    public void theOnlyUnseededRandomIsTheOneTheContextReplaces() throws IOException {
+        // Asserting the true state rather than an empty set, which would be false. Exactly one bare
+        // `new Random()` exists: RandomHelper's field initializer. It is unseeded, but nothing draws
+        // from that instance in a real run — RunContext.initialize calls RandomHelper.seed before
+        // any exploration component exists, replacing it with a seeded generator. Pinning the site
+        // is what makes a *second* bare Random a failure instead of a silent second stream; an
+        // empty-set assertion would have to delete a legitimate initializer to pass, and a
+        // "contains at most N" weakening would stop naming which site is new.
+        List<String> hits = scanForPattern(BARE_RANDOM);
+        assertEquals("exactly one unseeded Random is expected, RandomHelper's field initializer, "
+                + "which RunContext.initialize replaces before any component draws (INV-RUN-08); "
+                + "found: " + hits, 1, hits.size());
+        assertTrue("the one bare Random must be RandomHelper's, but was " + hits.get(0),
+                hits.get(0).contains("RandomHelper.java"));
+    }
+
+    @Test
+    public void noCodePathReadsBackAnArtifactOfAPreviousRun() throws IOException {
+        // INV-RUN-07. The retired keys (ape.modelFile and the save-flags) abort in RunSpecAbortTest
+        // and the deleted API is compile-enforced, but neither guards the *absence* of a new
+        // deserialization path — which is what this invariant asserts and what a future "resume"
+        // feature would reintroduce. Retry after failure belongs to the Python supervisor (R3).
+        List<String> hits = scanForPattern(DESERIALIZATION);
+        assertEquals("no artifact of a previous run may be read back (INV-RUN-07): " + hits,
+                Collections.emptyList(), hits);
     }
 
     @Test
