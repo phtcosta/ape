@@ -1028,3 +1028,78 @@ Open coordination items — status 2026-08-03:
   **Group 4 is three of eight: 4.1–4.3 ticked, 4.4–4.8 open.** The remaining work is `LlmTelemetry`
   (4.4), the engine that composes the five (4.5), the wiring and the oracle rework above (4.6), the
   deletion and the residual test migration (4.7), and the doc pass (4.8). Group 5 was not begun.
+
+- 2026-08-04 — **Stage 3, task 4.4 (`LlmTelemetry`) landed. `rearch-03-decision-pipeline` is
+  23/53.** Suite **1074 tests, 0 failures, 19
+  skipped** (13 `@Ignore`: `ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4,
+  `ApePinchOrZoomEventTest` 3, `GUITreeBuilderPasswordTest` 1; + 6 `Assume` in `SglangLiveTest`
+  with `SGLANG_URL` unset), BUILD SUCCESS. The baseline was observed at 1057/0/19 *before* the
+  change, so the delta is exactly −3 migrated + 20 new. Parity gate 14/14; `git status --short
+  src/test/resources/goldens` empty (INV-ORA-07 holds); no scenario script changed. `openspec
+  validate --strict` clean, `--specs --strict` 21 passed, task count 53 throughout.
+
+  **`LlmRouter` is still the production path.** 4.4 built the fourth unit beside it, as 4.1–4.3
+  built the first three. Nothing constructs any of them yet; that is 4.6.
+
+  - **What the unit owns.** The seventeen counters and their getters, the `[APE-LLM-PROMPT]` pair,
+    `[APE-LLM-RESPONSE]`, the once-per-run `[APE-LLM-CONFIG-ACK]` latch (INV-RTR-12), the four
+    `[APE-LLM-ERROR]` emissions with their cause counters, the `[APE-LLM-TEL]` builder, and
+    `printSummary`. Counting and emission stayed together because they are the same act: the
+    invariant that the seven causes partition the abandoned attempts (INV-RTR-11) is now a property
+    of one file's control flow rather than of two files agreeing. The engine keeps the *judgement*
+    (which outcome an answer is, per D7) and hands the verdict over; the unit records it.
+
+  - **`breaker_trips` is asked for, not mirrored.** D5 assigns the trip count to `LlmClient`, and
+    the router's field was refreshed at every site that could raise it — a `recordFailure()` is the
+    only thing that can — so a mirror and a live read are value-identical. It arrives as an
+    `IntSupplier` (production binds `client::getTripCount`), which also keeps the unit constructible
+    in a test without a client. This answers the open question the group-4 handoff left at §6.1.
+
+  - **The repair overlay still increments inside the emission**, where it always has. It is a
+    property of the line — counted only when the line carries `repair=` — and moving it out would
+    have made INV-RTR-13 a convention instead of a mechanism.
+
+  - **The prompt variant is read once at construction from `LlmParams`**, the same move 4.1 made for
+    the manifest, rather than per decision from `ApePromptBuilder.getPromptVariant()`. `Config`'s
+    field is `final` for the run, so a per-line read could only ever produce the same string. Note
+    for group 6: `ApePromptBuilder:143` still reads it statically for the prompt body itself, which
+    is 6.4's, not this unit's.
+
+  - **The three migrated tests kept their assertion content, including the reflective counter poke**
+    — `LlmTelemetry` keeps `matchedCount`/`llmTapCount` as private field names, so the helper works
+    unchanged (learning 68: migrating at extraction time is the evidence). **Seventeen tests are
+    new, and most were not previously writable**: the `[APE-LLM-TEL]` line was built inside
+    `selectAction`, which loads `AndroidDevice`, so the per-decision line was device-gated and
+    validated only by the smoke. It is now a pure function of the verdict handed in, so the cause
+    partition, the ACK latch, the `dead_pair` overlay, the two other `no_match` reasons and the
+    repair overlay are all pinned in the JVM. `LlmRouterToolSchemaTest` was **not** touched: its 4
+    assertions already exist verbatim in `LlmClientTest`, so it is 4.7's deletion, not 4.4's.
+
+  - **One artifact correction, through `openspec-update-change`.** Task 4.4 ended with "teardown
+    call site updated", which is not completable at 4.4 — nothing constructs the unit until 4.6, and
+    4.6's own text already names that move together with the `_llmRouter == null` guard above it
+    (learning 47). The clause now says so instead of promising it twice. One line edited, no line
+    added; 53 tasks before and after.
+
+  **What the reconnaissance established, so the next session does not re-derive it.** Three
+  read-only sweeps ran before any code was written, and their findings bind 4.5–4.7:
+
+  1. **The 4.7 destination table is stale on 28 of its 67 tests** — `LlmRouterDeadPairTest`,
+     `LlmRouterCoordinateMappingTest` and `LlmRouterMappingTest` no longer exist (4.3 migrated
+     them). Of the rest, `LlmRouterToolSchemaTest`'s 4 and `LlmRouterTest`'s
+     `breakerOpenIsLoggedOncePerOpenEpisode` are deletions, not moves.
+  2. **`LlmRouterTest`'s 32 do not split "across `LlmEngine` and `LlmClient`" as the table says.**
+     By assertion content: 11 belong to the three *stages* (the trigger predicates 4.6 moves there,
+     including the five pure `stagnationMidpointReached` tests), 7 to `CoordinateMapper`, 3 to
+     `LlmTelemetry`, 3 to `LlmClient`, 2 to `LlmEngine`, 1 to `ToolCallParser`, and 5 are already
+     covered elsewhere or vacuous. **Three of them read `LlmRouter.java` off disk as a string** and
+     therefore fail at *runtime*, not at compile time, when the file is deleted — a `mvn compile`
+     sweep will not surface them.
+  3. **The LLM decision path reads static `Config` at exactly two files**: `LlmRouter` (25 reads,
+     14 keys) and `ApePromptBuilder:62`. All of `agent/pipeline/` is already clean. Fourteen of the
+     fifteen keys are available injected; `ape.graphStableRestartThreshold` is the one that is not,
+     being exploration-scope — which is why `LlmClient` takes it as a separate argument, and why
+     `LlmStagnationStage` will need the same channel at 4.6. A live divergence to carry into 4.6:
+     the router's own predicates read `Config.llmOnNewState`/`llmOnStagnation`/`llmPercentage`
+     **unguarded**, so they read the jar default even for a plan that does not carry the feature;
+     today assembly masks it, and 4.6's deletion of those conjuncts removes it.
