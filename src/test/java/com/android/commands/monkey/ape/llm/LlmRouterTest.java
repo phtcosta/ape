@@ -338,6 +338,72 @@ public class LlmRouterTest {
         }
     }
 
+    /**
+     * The breaker-OPEN line is emitted once per open episode, not once per declined step.
+     *
+     * <p>This is the half of the LLM's structural fallback (INV-DP-11) that the decision pipeline
+     * cannot see. A stage returns Continue whether its trigger was denied by the breaker, by a
+     * disabled mode or by a coin, and that is by design — one path for every refusal. So the only
+     * place the breaker's own contract is observable is here, in the predicate that consults it.
+     *
+     * <p>An open episode that logged per step would flood a run's trace: the breaker stays open for
+     * a 60-second window, which at a normal step rate is dozens of declines. The latch makes the
+     * line mean "the breaker just opened", and re-arming it when the breaker next allows an attempt
+     * is what lets a second trip say so again.
+     */
+    @Test
+    public void breakerOpenIsLoggedOncePerOpenEpisode() {
+        LlmRouter router = new LlmRouter(new java.util.Random(42));
+        LlmCircuitBreaker breaker = router.getBreaker();
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream originalOut = System.out;
+        String trace;
+        try {
+            System.setOut(new java.io.PrintStream(captured, true));
+
+            trip(breaker);
+            // shouldRouteNewState reaches the breaker deterministically: its other conjuncts are
+            // the caller's flag and Config.llmOnNewState, which defaults to true.
+            for (int i = 0; i < 5; i++) {
+                assertFalse(router.shouldRouteNewState(true));
+            }
+
+            // The breaker allows again, which is what re-arms the latch — a fresh episode may say
+            // so, and the same episode may not.
+            breaker.recordSuccess();
+            assertTrue(router.shouldRouteNewState(true));
+
+            trip(breaker);
+            for (int i = 0; i < 5; i++) {
+                assertFalse(router.shouldRouteNewState(true));
+            }
+        } finally {
+            System.setOut(originalOut);
+            trace = captured.toString();
+        }
+
+        assertEquals("ten declined steps across two open episodes must log twice, not ten times",
+                2, countOccurrences(trace, "LLM circuit breaker OPEN"));
+        assertTrue("the second line reports the second trip; got: " + trace,
+                trace.contains("(trips=1)") && trace.contains("(trips=2)"));
+    }
+
+    /** Three consecutive failures, which is the default threshold. */
+    private static void trip(LlmCircuitBreaker breaker) {
+        breaker.recordFailure();
+        breaker.recordFailure();
+        breaker.recordFailure();
+        assertEquals("OPEN", breaker.getStateName());
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+            count++;
+        }
+        return count;
+    }
+
     @Test
     public void shouldRouteRandom_differentSeeds_differentResults() {
         // Different seeds should (very likely) produce different sequences
