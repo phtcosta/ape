@@ -1,6 +1,6 @@
 package com.android.commands.monkey.ape.oracle;
 
-import com.android.commands.monkey.ape.llm.LlmRouter;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.Graph;
@@ -34,6 +34,12 @@ import static org.junit.Assert.fail;
 public class OracleScaffoldTest {
 
     private static final long SEED = 42L;
+
+    /** The three stages an LLM preset's plan assembles, and a non-LLM preset's plan does not. */
+    private static final List<String> LLM_STAGE_NAMES = java.util.Arrays.asList(
+            DecisionPipeline.Candidate.LLM_NEW_STATE.stageName(),
+            DecisionPipeline.Candidate.LLM_STAGNATION.stageName(),
+            DecisionPipeline.Candidate.LLM_RANDOM.stageName());
 
     private static ScenarioScript oneScreenScript(int widgetCount) {
         ScenarioScript.Widget[] widgets = new ScenarioScript.Widget[widgetCount];
@@ -133,11 +139,11 @@ public class OracleScaffoldTest {
     @Test
     public void eachPresetWiresItsFieldCombination() throws Exception {
         for (OracleScaffold.Preset preset : OracleScaffold.Preset.values()) {
-            LlmRouter router = preset.hasLlmRouter() ? new LlmRouter(new Random(SEED)) : null;
-            OracleSataAgent agent = OracleScaffold.newAgent(preset, oneScreenScript(3), router);
+            ScenarioScript script = oneScreenScript(3);
+            ScriptedLlm llm = preset.hasLlm() ? new ScriptedLlm(script) : null;
+            OracleSataAgent agent = OracleScaffold.newAgent(preset, script, llm);
 
             MopData mopData = (MopData) OracleScaffold.getField(agent, "_mopData");
-            Object wiredRouter = OracleScaffold.getField(agent, "_llmRouter");
             if (preset.hasMopData()) {
                 assertNotNull(preset + " wires MopData", mopData);
                 assertEquals(preset + " loads the committed fixture",
@@ -145,8 +151,16 @@ public class OracleScaffoldTest {
             } else {
                 assertNull(preset + " leaves MopData null", mopData);
             }
-            assertEquals(preset + " wires the router iff the preset declares one",
-                    preset.hasLlmRouter(), wiredRouter != null);
+            // The LLM axis is a roster fact rather than a field: the run's units reach the ladder as
+            // the three stages the plan assembled, so a preset without the axis is one whose
+            // pipeline has no LLM stage at all (INV-DP-03). A field read would ask a weaker
+            // question — a wired collaborator no stage consults changes nothing.
+            DecisionPipeline pipeline =
+                    (DecisionPipeline) OracleScaffold.getField(agent, "decisionPipeline");
+            for (String llmStage : LLM_STAGE_NAMES) {
+                assertEquals(preset + " assembles " + llmStage + " iff it declares the LLM axis",
+                        preset.hasLlm(), pipeline.stageNames().contains(llmStage));
+            }
 
             // Common to every profile: what the ladder dereferences unconditionally.
             assertNotNull(preset + " wires the budget tracker",
@@ -165,17 +179,17 @@ public class OracleScaffoldTest {
     }
 
     @Test
-    public void presetAndRouterArgumentMustAgree() throws Exception {
+    public void presetAndScriptedLlmArgumentMustAgree() throws Exception {
+        ScenarioScript script = oneScreenScript(3);
         try {
-            OracleScaffold.newAgent(OracleScaffold.Preset.APERV, oneScreenScript(3),
-                    new LlmRouter(new Random(SEED)));
-            fail("a router supplied to a non-LLM preset must fail loudly");
+            OracleScaffold.newAgent(OracleScaffold.Preset.APERV, script, new ScriptedLlm(script));
+            fail("a scripted LLM supplied to a non-LLM preset must fail loudly");
         } catch (IllegalArgumentException expected) {
             assertTrue(expected.getMessage().contains("APERV"));
         }
         try {
-            OracleScaffold.newAgent(OracleScaffold.Preset.LLM, oneScreenScript(3), null);
-            fail("an LLM preset without a router must fail loudly");
+            OracleScaffold.newAgent(OracleScaffold.Preset.LLM, script, null);
+            fail("an LLM preset without a scripted LLM must fail loudly");
         } catch (IllegalArgumentException expected) {
             assertTrue(expected.getMessage().contains("LLM"));
         }

@@ -16,9 +16,11 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
 import com.android.commands.monkey.ape.agent.SataAgent.SataEventType;
-import com.android.commands.monkey.ape.llm.LlmRouter;
+import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ModelAction;
+
+import java.util.Random;
 
 /**
  * The agent behaviours assembly binds into stages.
@@ -113,12 +115,35 @@ public interface StageCollaborators {
     void logActionSelected(Action action, SataEventType type);
 
     /**
-     * The run's LLM router, or {@code null} on a plan with no LLM feature — in which case no stage
-     * asks for it, because no LLM stage was assembled.
+     * The run's LLM orchestrator, or {@code null} on a plan with no LLM feature — in which case no
+     * stage asks for it, because no LLM stage was assembled.
      *
-     * @return the router the LLM stages call
+     * @return the engine the LLM stages call
      */
-    LlmRouter llmRouter();
+    LlmEngine llmEngine();
+
+    /**
+     * The run's single breaker consultation, asked once by whichever LLM hook reached it.
+     *
+     * <p>A method rather than a handle on the client because consulting the breaker has a side
+     * effect — the OPEN&rarr;HALF_OPEN probe and the once-per-open-episode log latch — so a caller
+     * holding the client could spend the probe twice on one step. One call site per hook, and no
+     * way to ask a second time.
+     *
+     * @return whether an LLM attempt may be made on this step
+     */
+    boolean llmBreakerAllows();
+
+    /**
+     * The agent's own generator — {@code ape.getRandom()}, Monkey's {@code mRandom}.
+     *
+     * <p>Named here rather than taken from the step's view because the probabilistic hook holds it
+     * for the run, exactly as the predicate it replaced did, and because which of the run's two
+     * streams a coin comes from is a parity constraint rather than a convenience (INV-DP-10).
+     *
+     * @return the agent-side stream
+     */
+    Random agentRandom();
 
     /**
      * Resolves an LLM-synthesized tap against the current state, so the action carries the

@@ -13,7 +13,7 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * rearch-01 task 6.1 — the {@code aperv} preset's baseline golden: the SATA chain with neither
- * MOP data nor an LLM router, which is the arm 90.2% of the phase-2 decisions came from.
+ * MOP data nor an LLM, which is the arm 90.2% of the phase-2 decisions came from.
  *
  * <h2>What the scenario is built to walk</h2>
  * Three screens, chosen so the chain descends rather than repeating its first rung:
@@ -145,7 +145,7 @@ public class ParityOracleApervTest {
         assertTrue("the golden pins the least-visited leg", leastVisited);
         assertTrue("the golden pins the priority-roulette leg", roulette);
         for (DecisionRecord record : records) {
-            assertNull("a preset without a router has no llm axis at all", record.getLlm());
+            assertNull("a preset without an LLM has no llm axis at all", record.getLlm());
             assertFalse("the budget block's trivial return is outside the boundary (6.1-b)",
                     "Budget".equals(record.getDecisionSource()));
         }

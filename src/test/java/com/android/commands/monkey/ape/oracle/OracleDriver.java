@@ -31,9 +31,9 @@ import java.util.Map;
  *       agent-side values the production loop computes in {@code updateStateInternal}, off the
  *       JVM;</li>
  *   <li>{@code graph.markVisited(state, timestamp)};</li>
- *   <li>{@code router.beginStep(i)} when the preset has one;</li>
+ *   <li>{@code llm.beginStep(i)} when the preset has a scripted LLM;</li>
  *   <li>{@code agent.ladder()} — the system under test, unchanged;</li>
- *   <li>{@code router.finishStep()}, which fails when the step's scripted consultations did not
+ *   <li>{@code llm.finishStep()}, which fails when the step's scripted consultations did not
  *       happen;</li>
  *   <li>build the {@link DecisionRecord} from the returned action;</li>
  *   <li>{@code graph.markVisited(action, timestamp)} for a {@code ModelAction} return;</li>
@@ -93,7 +93,7 @@ import java.util.Map;
  * <h2>Failures propagate unchanged</h2>
  * Nothing here catches anything. A {@code BadStateException} (the ladder found no available action),
  * a {@code NoClassDefFoundError} (a scenario drove selection into a device-only branch), and the
- * router's {@code IllegalStateException} (a scripted consultation that never happened) all leave the
+ * script's {@code IllegalStateException} (a scripted consultation that never happened) all leave the
  * driver as they were thrown. Wrapping them would cost the one property design D6 asks of the
  * boundary — that crossing it fails <i>loudly</i>, as itself, and gets the scenario redesigned rather
  * than an {@code @Ignore}.
@@ -117,8 +117,22 @@ public final class OracleDriver {
      * @return the decision sequence, in step order, ready for {@code GoldenFile} to write or compare
      */
     static List<DecisionRecord> run(OracleSataAgent agent, ScenarioScript script) throws Exception {
+        return run(agent, script, null);
+    }
+
+    /**
+     * Replays {@code script}, driving {@code llm}'s per-step bookkeeping around each selection.
+     *
+     * <p>The scripted LLM arrives as an argument rather than being read off the agent, because there
+     * is no longer one field to read it from: the script reaches the pipeline as a gate and an
+     * engine installed on each of the three LLM stages, so the object the driver has to arm is the
+     * one the caller built, not one the agent holds.
+     *
+     * @param llm the scripted LLM for an LLM preset, or null for a preset that has none
+     */
+    static List<DecisionRecord> run(OracleSataAgent agent, ScenarioScript script, ScriptedLlm llm)
+            throws Exception {
         Graph graph = ((Model) OracleScaffold.getField(agent, "model")).getGraph();
-        ScriptedLlmRouter router = (ScriptedLlmRouter) OracleScaffold.getField(agent, "_llmRouter");
 
         Map<String, State> statesByScreen = new HashMap<>();
         String screen = script.getEntryScreen().getName();
@@ -136,16 +150,16 @@ public final class OracleDriver {
             OracleScaffold.setField(agent, "_isNewState", step.isNewState());
             OracleScaffold.setField(agent, "graphStableCounter", step.getGraphStableCounter());
             graph.markVisited(state, agent.getTimestamp()); // before the ladder — finding 5.1-a
-            if (router != null) {
-                router.beginStep(index);
+            if (llm != null) {
+                llm.beginStep(index);
             }
 
             Action selected = agent.ladder();
 
-            if (router != null) {
-                router.finishStep();
+            if (llm != null) {
+                llm.finishStep();
             }
-            records.add(record(index, selected, router));
+            records.add(record(index, selected, llm));
             if (selected instanceof ModelAction) {
                 graph.markVisited((ModelAction) selected, agent.getTimestamp());
             }
@@ -184,12 +198,12 @@ public final class OracleDriver {
      * </ul>
      *
      * <p>The {@code llm} field distinguishes <i>absent</i> from {@code not_routed}, which are
-     * different statements: absent means the preset has no router at all, so no consultation was
-     * possible; {@code not_routed} means a router was present and the step passed it by. Only a
+     * different statements: absent means the preset has no LLM at all, so no consultation was
+     * possible; {@code not_routed} means one was present and the step passed it by. Only a
      * preset that actually has one can make the second claim.
      */
-    private static DecisionRecord record(int step, Action selected, ScriptedLlmRouter router) {
-        String llm = router == null ? null : router.getProvenance().getLabel();
+    private static DecisionRecord record(int step, Action selected, ScriptedLlm scripted) {
+        String llm = scripted == null ? null : scripted.getProvenance().getLabel();
         if (selected instanceof ModelAction) {
             ModelAction picked = (ModelAction) selected;
             return new DecisionRecord(step, picked.getType().name(), targetXPath(picked),

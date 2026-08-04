@@ -68,7 +68,7 @@ public class ParityOracleLlmMopTest {
                 .stepsSinceLauncherFiring(SEEDED_CADENCE)
                 .steps(
                         ScenarioScript.step(true, 0, ScenarioScript.accept(
-                                true, false, false, ScriptedLlmRouter.FIRST_UNVISITED_TARGETED)),
+                                true, false, false, ScriptedLlm.FIRST_UNVISITED_TARGETED)),
                         ScenarioScript.step(false, 5, ScenarioScript.decline(false, true, false)),
                         ScenarioScript.step(false, 6),
                         ScenarioScript.step(false, 7, ScenarioScript.timeout(false, false, true)))
@@ -84,10 +84,11 @@ public class ParityOracleLlmMopTest {
     @Test
     public void baselineGoldenIsReproduced() throws Exception {
         ScenarioScript script = baseline();
+        ScriptedLlm llm = new ScriptedLlm(script);
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM_MOP, script, new ScriptedLlmRouter(script));
+                OracleScaffold.Preset.LLM_MOP, script, llm);
 
-        List<DecisionRecord> records = OracleDriver.run(agent, script);
+        List<DecisionRecord> records = OracleDriver.run(agent, script, llm);
 
         assertEquals("one record per scripted step", script.getSteps().size(), records.size());
         assertEquals("the new-state hook accepted", "accepted", records.get(0).getLlm());

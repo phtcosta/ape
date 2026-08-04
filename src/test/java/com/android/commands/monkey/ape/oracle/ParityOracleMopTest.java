@@ -34,7 +34,7 @@ import static org.junit.Assert.assertNull;
  * {@code decisionSource} and no {@code pickChannel} — it has none to read. Their absence is the
  * launcher's signature in a golden, never a "not set yet".
  *
- * <p>Every record is free of the {@code llm} field: this preset has no router, so no consultation
+ * <p>Every record is free of the {@code llm} field: this preset has no LLM, so no consultation
  * was possible, which is a different claim from {@code not_routed} and is what keeps a MOP diff
  * readable.
  */
@@ -130,7 +130,7 @@ public class ParityOracleMopTest {
                 "short_circuit_unvisited", mopPick.getPickChannel());
 
         for (DecisionRecord record : records) {
-            assertNull("a preset without a router has no llm axis at all", record.getLlm());
+            assertNull("a preset without an LLM has no llm axis at all", record.getLlm());
         }
 
         GoldenFile.captureOrCompare(new GoldenFile.Header(

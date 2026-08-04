@@ -7,7 +7,7 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 
 /**
- * rearch-01 task 6.3 — the {@code llm} preset's baseline golden: a scripted router, no MOP data.
+ * rearch-01 task 6.3 — the {@code llm} preset's baseline golden: a scripted LLM, no MOP data.
  *
  * <h2>All three hooks, all three verdicts, and the fourth label</h2>
  * The four steps are one of each, in the order the ladder consults them:
@@ -23,9 +23,9 @@ import static org.junit.Assert.assertEquals;
  *   <li><b>random timeout</b> — the same observable as a decline (null, fall-through), a different
  *       provenance. That distinction exists only in the golden, which is exactly why the golden
  *       records it (design D3).</li>
- *   <li><b>no entry</b> — {@code not_routed}: a router was present and the step passed it by. That
+ *   <li><b>no entry</b> — {@code not_routed}: an LLM was present and the step passed it by. That
  *       is a different claim from the field being <i>absent</i>, which is what an {@code aperv}
- *       golden says, and only a preset that has a router can make it.</li>
+ *       golden says, and only a preset that has one can make it.</li>
  * </ol>
  *
  * <p>The screens stay unsaturated throughout, so every fall-through lands on EARLY_STAGE. That is
@@ -61,7 +61,7 @@ public class ParityOracleLlmTest {
                 .transition("home", "//*[@resource-id='h2']", "second")
                 .steps(
                         ScenarioScript.step(true, 0, ScenarioScript.accept(
-                                true, false, false, ScriptedLlmRouter.FIRST_UNVISITED_TARGETED)),
+                                true, false, false, ScriptedLlm.FIRST_UNVISITED_TARGETED)),
                         ScenarioScript.step(true, 5, ScenarioScript.decline(false, true, false)),
                         ScenarioScript.step(false, 6, ScenarioScript.timeout(false, false, true)),
                         ScenarioScript.step(false, 7))
@@ -76,10 +76,11 @@ public class ParityOracleLlmTest {
     @Test
     public void baselineGoldenIsReproduced() throws Exception {
         ScenarioScript script = baseline();
+        ScriptedLlm llm = new ScriptedLlm(script);
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM, script, new ScriptedLlmRouter(script));
+                OracleScaffold.Preset.LLM, script, llm);
 
-        List<DecisionRecord> records = OracleDriver.run(agent, script);
+        List<DecisionRecord> records = OracleDriver.run(agent, script, llm);
 
         assertEquals("one record per scripted step", script.getSteps().size(), records.size());
         assertEquals("the new-state hook accepted", "accepted", records.get(0).getLlm());
@@ -88,7 +89,7 @@ public class ParityOracleLlmTest {
         assertEquals("through the llm pick channel", "llm", records.get(0).getPickChannel());
         assertEquals("the stagnation hook declined", "declined", records.get(1).getLlm());
         assertEquals("the random hook timed out", "timeout", records.get(2).getLlm());
-        assertEquals("a step the router was consulted about and passed by",
+        assertEquals("a step the script was consulted about and passed by",
                 "not_routed", records.get(3).getLlm());
         for (int step = 1; step < records.size(); step++) {
             assertEquals("a null verdict falls through to the SATA chain",

@@ -110,14 +110,14 @@ public class OracleDriverTest {
                 .transition("main", W0, "detail")
                 .steps(
                         ScenarioScript.step(true, 0, ScenarioScript.accept(true, false, false,
-                                ScriptedLlmRouter.XPATH_PREFIX + W0)),
+                                ScriptedLlm.XPATH_PREFIX + W0)),
                         ScenarioScript.step(true, 0, ScenarioScript.accept(true, false, false,
-                                ScriptedLlmRouter.XPATH_PREFIX + D0)))
+                                ScriptedLlm.XPATH_PREFIX + D0)))
                 .build();
-        ScriptedLlmRouter router = new ScriptedLlmRouter(script);
-        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Preset.LLM, script, router);
+        ScriptedLlm llm = new ScriptedLlm(script);
+        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Preset.LLM, script, llm);
 
-        List<DecisionRecord> records = OracleDriver.run(agent, script);
+        List<DecisionRecord> records = OracleDriver.run(agent, script, llm);
 
         assertEquals(W0, records.get(0).getTarget());
         // Only a driver that consulted the transition table could offer D0 to the second step: the
@@ -130,20 +130,21 @@ public class OracleDriverTest {
     // ---- the record's shape -------------------------------------------------------------------
 
     @Test
-    public void theLlmFieldIsAbsentWithoutARouterAndAlwaysPresentWithOne() throws Exception {
+    public void theLlmFieldIsAbsentWithoutAScriptedLlmAndAlwaysPresentWithOne() throws Exception {
         ScenarioScript apervScript = singleScreen(2);
         OracleSataAgent aperv =
                 OracleScaffold.newAgent(OracleScaffold.Preset.APERV, apervScript, null);
         for (DecisionRecord record : OracleDriver.run(aperv, apervScript)) {
-            assertNull("a preset with no router cannot claim not_routed either", record.getLlm());
+            assertNull("a preset with no LLM cannot claim not_routed either", record.getLlm());
         }
 
-        // Same scenario, a router, and no step that routes: the field is present and says so.
+        // Same scenario, a scripted LLM, and no step that routes: the field is present and says so.
         ScenarioScript llmScript = singleScreen(2);
-        ScriptedLlmRouter router = new ScriptedLlmRouter(llmScript);
-        OracleSataAgent llm = OracleScaffold.newAgent(OracleScaffold.Preset.LLM, llmScript, router);
-        for (DecisionRecord record : OracleDriver.run(llm, llmScript)) {
-            assertEquals(ScriptedLlmRouter.Provenance.NOT_ROUTED.getLabel(), record.getLlm());
+        ScriptedLlm scriptedLlm = new ScriptedLlm(llmScript);
+        OracleSataAgent llm =
+                OracleScaffold.newAgent(OracleScaffold.Preset.LLM, llmScript, scriptedLlm);
+        for (DecisionRecord record : OracleDriver.run(llm, llmScript, scriptedLlm)) {
+            assertEquals(ScriptedLlm.Provenance.NOT_ROUTED.getLabel(), record.getLlm());
         }
     }
 
@@ -224,7 +225,6 @@ public class OracleDriverTest {
         OracleScaffold.setField(agent, "model", new Model(graph));
         OracleScaffold.setField(agent, "newState", state);
         OracleScaffold.setField(agent, "timestamp", 1);
-        OracleScaffold.setField(agent, "_llmRouter", null);
 
         try {
             OracleDriver.run(agent, script);

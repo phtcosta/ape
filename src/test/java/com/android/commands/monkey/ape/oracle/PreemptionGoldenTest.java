@@ -154,7 +154,7 @@ public class PreemptionGoldenTest {
                 .steps(
                         // 0 — accept, on a first visit, while the launcher is due.
                         ScenarioScript.step(true, 0, ScenarioScript.accept(
-                                true, false, false, ScriptedLlmRouter.FIRST_UNVISITED_TARGETED)),
+                                true, false, false, ScriptedLlm.FIRST_UNVISITED_TARGETED)),
                         // 1 — first arrival on `primed`, so the new-state hook routes honestly;
                         // every verdict declines and all three hooks are consulted in order.
                         ScenarioScript.step(true, STABLE_COUNTER,
@@ -184,11 +184,11 @@ public class PreemptionGoldenTest {
     @Test
     public void preemptionGoldenIsReproduced() throws Exception {
         ScenarioScript script = preemption();
-        HookOrderRouter router = new HookOrderRouter(script);
+        HookOrderRecorder recorder = new HookOrderRecorder(script);
         OracleSataAgent agent =
-                OracleScaffold.newAgent(OracleScaffold.Preset.LLM_MOP, script, router);
+                OracleScaffold.newAgent(OracleScaffold.Preset.LLM_MOP, script, recorder);
 
-        List<DecisionRecord> records = OracleDriver.run(agent, script);
+        List<DecisionRecord> records = OracleDriver.run(agent, script, recorder);
 
         assertEquals("one record per scripted step", script.getSteps().size(), records.size());
 
@@ -198,7 +198,7 @@ public class PreemptionGoldenTest {
         assertEquals("the accepting LLM stage labels the action", "LLM", accepted.getDecisionSource());
         assertEquals("through the LLM channel", "llm", accepted.getPickChannel());
         assertEquals("only the new-state hook was consulted — the ladder returned above the rest",
-                Arrays.asList(NEW_STATE), router.consultedAt(0));
+                Arrays.asList(NEW_STATE), recorder.consultedAt(0));
 
         // --- step 1: the decline falls through to the launcher, on the same step
         DecisionRecord launcher = records.get(1);
@@ -213,9 +213,9 @@ public class PreemptionGoldenTest {
         // Finding 3.3-1, read straight off the golden: the launcher was due at step 0 too. It fired
         // here instead, so step 0's accepted return left the counter at its pre-preemption value.
         assertEquals("hook order: new-state before stagnation before random",
-                Arrays.asList(NEW_STATE, STAGNATION, RANDOM), router.consultedAt(1));
+                Arrays.asList(NEW_STATE, STAGNATION, RANDOM), recorder.consultedAt(1));
         assertEquals("and all three routed on this step", Arrays.asList(NEW_STATE, STAGNATION, RANDOM),
-                router.routedAt(1));
+                recorder.routedAt(1));
 
         // --- steps 2 and 3: the SATA chain is the fallback
         for (int step = 2; step < records.size(); step++) {
@@ -224,14 +224,19 @@ public class PreemptionGoldenTest {
             assertEquals("step " + step + " was decided by the SATA chain", "SATA",
                     fallback.getDecisionSource());
         }
-        assertEquals("an unscripted step still consults all three predicates",
-                Arrays.asList(NEW_STATE, STAGNATION, RANDOM), router.consultedAt(2));
+        // Step 2 revisits a known screen with the episode's shot already spent, so the first two
+        // hooks stop at their own conditions and never reach a gate — isNewState is false and the
+        // stagnation flag is burned. Only the coin's hook gets that far, and the script gives it
+        // nothing to route.
+        assertEquals("an unscripted step consults the hooks whose own condition still holds",
+                Arrays.asList(RANDOM), recorder.consultedAt(2));
 
         // --- the single shot, spent at step 1 and unavailable at step 3
-        assertEquals("the stagnation predicate is still consulted",
-                Arrays.asList(NEW_STATE, STAGNATION, RANDOM), router.consultedAt(3));
-        assertTrue("but it answers false: the stub honors firedThisEpisode",
-                router.routedAt(3).isEmpty());
+        assertEquals("the stagnation hook does not even reach its gate once the shot is spent",
+                Arrays.asList(RANDOM), recorder.consultedAt(3));
+        assertTrue("and nothing routes: the script declares only the stagnation hook, which the"
+                        + " stage's own flag has already closed",
+                recorder.routedAt(3).isEmpty());
         assertTrue("and the episode's flag stays burned",
                 stagnationShotBurned(agent));
 
@@ -269,11 +274,13 @@ public class PreemptionGoldenTest {
     public void anAcceptedStepDoesNotAdvanceTheLauncherCadence() throws Exception {
         ScenarioScript preempted = oneStep("cadence-preempted", DUE_CADENCE,
                 ScenarioScript.step(true, 0, ScenarioScript.accept(
-                        true, false, false, ScriptedLlmRouter.FIRST_UNVISITED_TARGETED)));
+                        true, false, false, ScriptedLlm.FIRST_UNVISITED_TARGETED)));
+        ScriptedLlm preemptedLlm = new ScriptedLlm(preempted);
         OracleSataAgent accepting = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM_MOP, preempted, new ScriptedLlmRouter(preempted));
+                OracleScaffold.Preset.LLM_MOP, preempted, preemptedLlm);
 
-        List<DecisionRecord> acceptedRecords = OracleDriver.run(accepting, preempted);
+        List<DecisionRecord> acceptedRecords =
+                OracleDriver.run(accepting, preempted, preemptedLlm);
 
         assertEquals("the step was preempted by the LLM", "accepted", acceptedRecords.get(0).getLlm());
         assertEquals("so the increment at SataAgent.java:522 was never reached",
@@ -281,10 +288,12 @@ public class PreemptionGoldenTest {
 
         ScenarioScript unpreempted =
                 oneStep("cadence-unpreempted", DUE_CADENCE, ScenarioScript.step(true, 0));
+        ScriptedLlm unpreemptedLlm = new ScriptedLlm(unpreempted);
         OracleSataAgent unrouted = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM_MOP, unpreempted, new ScriptedLlmRouter(unpreempted));
+                OracleScaffold.Preset.LLM_MOP, unpreempted, unpreemptedLlm);
 
-        List<DecisionRecord> unroutedRecords = OracleDriver.run(unrouted, unpreempted);
+        List<DecisionRecord> unroutedRecords =
+                OracleDriver.run(unrouted, unpreempted, unpreemptedLlm);
 
         assertEquals("the same seeded cadence, unpreempted, reaches the firing point",
                 "EVENT_TRIGGER_ACTIVITY", unroutedRecords.get(0).getActionType());
@@ -303,10 +312,11 @@ public class PreemptionGoldenTest {
         ScenarioScript script = oneStep("stagnation-decline", 0,
                 ScenarioScript.step(false, STABLE_COUNTER,
                         ScenarioScript.decline(false, true, false)));
+        ScriptedLlm llm = new ScriptedLlm(script);
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM_MOP, script, new ScriptedLlmRouter(script));
+                OracleScaffold.Preset.LLM_MOP, script, llm);
 
-        List<DecisionRecord> records = OracleDriver.run(agent, script);
+        List<DecisionRecord> records = OracleDriver.run(agent, script, llm);
 
         assertEquals("the stagnation hook was consulted and declined",
                 "declined", records.get(0).getLlm());
@@ -323,11 +333,12 @@ public class PreemptionGoldenTest {
     public void aStagnationAcceptResetsTheCounter() throws Exception {
         ScenarioScript script = oneStep("stagnation-accept", 0,
                 ScenarioScript.step(false, STABLE_COUNTER, ScenarioScript.accept(
-                        false, true, false, ScriptedLlmRouter.FIRST_UNVISITED_TARGETED)));
+                        false, true, false, ScriptedLlm.FIRST_UNVISITED_TARGETED)));
+        ScriptedLlm llm = new ScriptedLlm(script);
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM_MOP, script, new ScriptedLlmRouter(script));
+                OracleScaffold.Preset.LLM_MOP, script, llm);
 
-        List<DecisionRecord> records = OracleDriver.run(agent, script);
+        List<DecisionRecord> records = OracleDriver.run(agent, script, llm);
 
         assertEquals("the stagnation hook accepted", "accepted", records.get(0).getLlm());
         assertEquals("an accept resets the counter", 0, intField(agent, "graphStableCounter"));
@@ -392,21 +403,28 @@ public class PreemptionGoldenTest {
     }
 
     /**
-     * A {@link ScriptedLlmRouter} that additionally records, per step, which hooks the ladder
-     * consulted and in which order — the only way to observe the spec's hook-order requirement,
-     * since a step where two hooks decline is indistinguishable in the golden from one where only
-     * the second was reached.
+     * A {@link ScriptedLlm} that additionally records, per step, which hooks reached their gate and
+     * in which order — the only way to observe the spec's hook-order requirement, since a step
+     * where two hooks decline is indistinguishable in the golden from one where only the second was
+     * reached.
      *
-     * <p>It lives here rather than in {@code ScriptedLlmRouter} on purpose: the four committed
-     * baselines were captured with that class as it stands, and observation added to a shared class
-     * is one edit away from being behavior added to it. A local subclass cannot touch them.
+     * <p>It lives here rather than in {@code ScriptedLlm} on purpose: the four committed baselines
+     * were captured with that class as it stands, and observation added to a shared class is one
+     * edit away from being behavior added to it. A local subclass cannot touch them.
+     *
+     * <p><b>What "consulted" means here is now sharper than it was.</b> The gate is each stage's
+     * last conjunct, so a hook records only when the shared precondition passed <em>and</em> the
+     * stage's own condition held. Before the trigger predicates moved into the stages, the stub's
+     * predicates were the first thing each hook called and every hook recorded on every step that
+     * cleared the precondition. The order this observes is unchanged; the population is smaller,
+     * and the assertions below say which hooks are absent and why.
      */
-    static final class HookOrderRouter extends ScriptedLlmRouter {
+    static final class HookOrderRecorder extends ScriptedLlm {
 
         private final List<List<String>> consulted = new ArrayList<>();
         private final List<List<String>> routed = new ArrayList<>();
 
-        HookOrderRouter(ScenarioScript script) {
+        HookOrderRecorder(ScenarioScript script) {
             super(script);
         }
 
@@ -418,37 +436,23 @@ public class PreemptionGoldenTest {
         }
 
         @Override
-        public boolean shouldRouteNewState(boolean isNewState) {
-            return record(NEW_STATE, super.shouldRouteNewState(isNewState));
-        }
-
-        @Override
-        public boolean shouldRouteStagnation(int graphStableCounter, boolean firedThisEpisode) {
-            return record(STAGNATION,
-                    super.shouldRouteStagnation(graphStableCounter, firedThisEpisode));
-        }
-
-        @Override
-        public boolean shouldRouteRandom() {
-            return record(RANDOM, super.shouldRouteRandom());
-        }
-
-        /** The hooks whose predicate the ladder invoked on {@code step}, in invocation order. */
-        List<String> consultedAt(int step) {
-            return consulted.get(step);
-        }
-
-        /** The subset of those that answered true, so {@code selectAction} was reached. */
-        List<String> routedAt(int step) {
-            return routed.get(step);
-        }
-
-        private boolean record(String hook, boolean routes) {
+        protected boolean consult(String hook) {
+            boolean routes = super.consult(hook);
             consulted.get(consulted.size() - 1).add(hook);
             if (routes) {
                 routed.get(routed.size() - 1).add(hook);
             }
             return routes;
+        }
+
+        /** The hooks whose gate the pipeline reached on {@code step}, in invocation order. */
+        List<String> consultedAt(int step) {
+            return consulted.get(step);
+        }
+
+        /** The subset of those that answered true, so the engine was reached. */
+        List<String> routedAt(int step) {
+            return routed.get(step);
         }
     }
 }

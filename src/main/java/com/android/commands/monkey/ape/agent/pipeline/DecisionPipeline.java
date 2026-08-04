@@ -150,15 +150,21 @@ public final class DecisionPipeline {
                     stages.add(new BudgetStage(collaborators::selectNewActionForTrivialActivity));
                     break;
                 case LLM_NEW_STATE:
-                    stages.add(new LlmNewStateStage(collaborators.llmRouter(),
+                    stages.add(new LlmNewStateStage(collaborators.llmEngine(),
+                            collaborators::llmBreakerAllows,
                             collaborators::resolveSynthesizedTap));
                     break;
                 case LLM_STAGNATION:
-                    stages.add(new LlmStagnationStage(collaborators.llmRouter(),
+                    stages.add(new LlmStagnationStage(collaborators.llmEngine(),
+                            collaborators::llmBreakerAllows,
+                            spec.exploration().integer("ape.graphStableRestartThreshold"),
                             collaborators::resolveSynthesizedTap));
                     break;
                 case LLM_RANDOM:
-                    stages.add(new LlmRandomStage(collaborators.llmRouter(),
+                    stages.add(new LlmRandomStage(collaborators.llmEngine(),
+                            collaborators::llmBreakerAllows,
+                            spec.llm().dbl("ape.llmPercentage"),
+                            collaborators.agentRandom(),
                             collaborators::resolveSynthesizedTap));
                     break;
                 case MOP_LAUNCHER:

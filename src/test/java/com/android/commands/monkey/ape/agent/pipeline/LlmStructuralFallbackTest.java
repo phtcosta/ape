@@ -34,26 +34,26 @@ import static org.junit.Assert.assertSame;
  * decline and a timeout falling through to {@code SATA}. Writing two identical stage-level tests
  * would assert the same code path twice under two names.
  *
- * <p><b>Breaker denial arrives as a false trigger.</b> {@code breakerAllows()} is the last conjunct
- * of each routing predicate, so a stage cannot tell a breaker-open step from any other declined
- * trigger — which is the whole point of INV-DP-11 having one path. The breaker's own contract, that
+ * <p><b>Breaker denial arrives as a declined trigger.</b> The breaker is the last conjunct of every
+ * hook, so from below it a breaker-open step is indistinguishable from a step whose own condition
+ * failed — which is the whole point of INV-DP-11 having one path. The breaker's own contract, that
  * its OPEN line is logged once per open episode, is asserted where the latch lives, in
- * {@code LlmRouterTest}.
+ * {@code LlmClientTest}.
  */
 public class LlmStructuralFallbackTest {
 
     @Test
     public void anEngineThatAnswersNothingLeavesTheStepToTheChain() throws Exception {
-        PipelineFixture.StubRouter router = new PipelineFixture.StubRouter(true, null);
+        PipelineFixture.StubLlm llm = new PipelineFixture.StubLlm(true, null);
         ModelAction fromTheChain = PipelineFixture.chainAction();
-        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(router, fromTheChain);
+        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(llm, fromTheChain);
         DecisionPipeline pipeline = DecisionPipeline.fromSpec(PipelineFixture.llmPlan(), agent);
 
         Action decided = pipeline.decide(PipelineFixture.routableStep());
 
         assertSame("the remainder decides the step, and nothing retries", fromTheChain, decided);
         assertEquals("all three routing modes asked and all three were answered with nothing",
-                3, router.selectCalls);
+                3, llm.selectCalls);
         assertEquals(1, agent.chainCalls);
         assertEquals(ModelAction.DecisionSource.SATA, fromTheChain.getDecisionSource());
         assertNotEquals("a step the LLM did not decide must not be attributed to it",
@@ -62,26 +62,28 @@ public class LlmStructuralFallbackTest {
 
     @Test
     public void aDeniedTriggerLeavesTheStepToTheChainWithoutConsultingTheModel() throws Exception {
-        // What a breaker-open step looks like from a stage: the predicate says no. So does a mode
-        // that is off, or a coin that came up short — one path, by construction.
-        PipelineFixture.StubRouter router =
-                new PipelineFixture.StubRouter(false, PipelineFixture.chainAction());
+        // What a breaker-open step looks like from a stage: the last conjunct says no. So does an
+        // already-seen state, a spent stagnation shot, or a coin that came up short — one path, by
+        // construction. The plan puts the other three conjuncts out of the way, so the breaker is
+        // the only thing declining here.
+        PipelineFixture.StubLlm llm =
+                new PipelineFixture.StubLlm(false, PipelineFixture.chainAction());
         ModelAction fromTheChain = PipelineFixture.chainAction();
-        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(router, fromTheChain);
+        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(llm, fromTheChain);
         DecisionPipeline pipeline = DecisionPipeline.fromSpec(PipelineFixture.llmPlan(), agent);
 
         Action decided = pipeline.decide(PipelineFixture.routableStep());
 
         assertSame(fromTheChain, decided);
-        assertEquals("a denied trigger must not cost a round trip", 0, router.selectCalls);
+        assertEquals("a denied trigger must not cost a round trip", 0, llm.selectCalls);
         assertEquals(ModelAction.DecisionSource.SATA, fromTheChain.getDecisionSource());
     }
 
     @Test
     public void theRemainderIsWhateverThePlanPutAfterTheLlmStages() throws Exception {
-        PipelineFixture.StubRouter router = new PipelineFixture.StubRouter(true, null);
+        PipelineFixture.StubLlm llm = new PipelineFixture.StubLlm(true, null);
         PipelineFixture.FakeAgent agent =
-                new PipelineFixture.FakeAgent(router, PipelineFixture.chainAction());
+                new PipelineFixture.FakeAgent(llm, PipelineFixture.chainAction());
         DecisionPipeline pipeline =
                 DecisionPipeline.fromSpec(PipelineFixture.llmWithLauncherPlan(1), agent);
         FakeStepContext ctx = PipelineFixture.routableStep();

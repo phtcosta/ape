@@ -10,7 +10,7 @@ import java.util.Random;
 
 import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
-import com.android.commands.monkey.ape.llm.LlmRouter;
+import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.Graph;
@@ -31,7 +31,7 @@ import com.android.commands.monkey.ape.utils.MopData;
  * <p>{@link FakeStepContext} does this for a step; this does it for the run around the step. The two
  * tests that need it — {@link LlmStructuralFallbackTest} and {@link HardPreemptionTest} — assert
  * opposite halves of the same mechanism (what happens when an LLM stage declines, and what happens
- * when it does not), so they need the same plan, the same census and the same scripted router, and
+ * when it does not), so they need the same plan, the same census and the same scripted engine, and
  * differ only in the verdict and in what they count.
  *
  * <p>Everything here is scripted rather than mocked: a plan is resolved from a preset the way a
@@ -59,43 +59,42 @@ final class PipelineFixture {
     }
 
     /**
-     * The router reduced to a verdict: whether the triggers route, and what the engine answers.
+     * The run's LLM reduced to two values: whether the breaker lets an attempt through, and what the
+     * engine answers when one is made.
      *
      * <p>A null answer stands for every engine failure the spec enumerates — decline, timeout,
      * no-match, dead-pair ban, boundary reject, transport error — because that is what all of them
-     * return. A false {@code routes} stands for every trigger denial, breaker included: the breaker
-     * is the last conjunct of each real predicate, so a stage cannot tell those apart either.
+     * return. A false {@code allows} stands for the breaker being open, which is the last conjunct
+     * of every hook and the only trigger denial that is not the stage's own condition.
+     *
+     * <p>It is an engine and a boolean rather than one object because the two seams are now
+     * separate: {@link StageCollaborators#llmEngine()} is what a stage calls,
+     * {@link StageCollaborators#llmBreakerAllows()} is what it consults, and the agent-side
+     * conjuncts in between belong to the stages themselves — which is why the plan and the step this
+     * fixture builds have to satisfy them for real.
      */
-    static class StubRouter extends LlmRouter {
+    static class StubLlm extends LlmEngine {
 
-        private final boolean routes;
+        private final boolean allows;
         private ModelAction answer;
         int selectCalls;
 
-        StubRouter(boolean routes, ModelAction answer) {
-            super(new Random(42L));
-            this.routes = routes;
+        StubLlm(boolean allows, ModelAction answer) {
+            // Every step of the real pipeline is replaced below, so none of the units it composes is
+            // reachable and none needs to exist.
+            super(null, null, null, null, null, null);
+            this.allows = allows;
             this.answer = answer;
+        }
+
+        /** Whether the breaker lets this run's hooks through. */
+        boolean allows() {
+            return allows;
         }
 
         /** Changes what the engine answers from the next step on. */
         void answersFrom(ModelAction next) {
             this.answer = next;
-        }
-
-        @Override
-        public boolean shouldRouteNewState(boolean isNewState) {
-            return routes;
-        }
-
-        @Override
-        public boolean shouldRouteStagnation(int graphStableCounter, boolean firedThisEpisode) {
-            return routes && !firedThisEpisode;
-        }
-
-        @Override
-        public boolean shouldRouteRandom() {
-            return routes;
         }
 
         @Override
@@ -116,25 +115,33 @@ final class PipelineFixture {
      */
     static class FakeAgent implements StageCollaborators {
 
-        private final LlmRouter router;
+        private final StubLlm llm;
         private final ModelAction fromTheChain;
         private final int componentTargets;
+
+        /**
+         * The stream the probabilistic hook draws from. Seeded and its own, so the coin never
+         * competes with {@link FakeStepContext#random}, which is the component trigger's.
+         */
+        private final Random agentRandom = new Random(11L);
 
         int chainCalls;
         int triggerCalls;
         int lastTriggeredTarget = -1;
 
-        FakeAgent(LlmRouter router, ModelAction fromTheChain) {
-            this(router, fromTheChain, 1);
+        FakeAgent(StubLlm llm, ModelAction fromTheChain) {
+            this(llm, fromTheChain, 1);
         }
 
-        FakeAgent(LlmRouter router, ModelAction fromTheChain, int componentTargets) {
-            this.router = router;
+        FakeAgent(StubLlm llm, ModelAction fromTheChain, int componentTargets) {
+            this.llm = llm;
             this.fromTheChain = fromTheChain;
             this.componentTargets = componentTargets;
         }
 
-        @Override public LlmRouter llmRouter() { return router; }
+        @Override public LlmEngine llmEngine() { return llm; }
+        @Override public boolean llmBreakerAllows() { return llm.allows(); }
+        @Override public Random agentRandom() { return agentRandom; }
         @Override public ModelAction selectNewActionForTrivialActivity() { return null; }
         @Override public ModelAction selectNewActionBackToActivity() { return null; }
         @Override public ModelAction selectNewActionEarlyStageForward() { return null; }
@@ -176,9 +183,30 @@ final class PipelineFixture {
         return TestRunSpecs.spec(entries);
     }
 
+    /**
+     * The two plan values that let all three hooks reach their gate on one step.
+     *
+     * <p>Each stage evaluates its own agent-side conjunct before consulting the breaker, so a plan
+     * at the jar defaults cannot produce a step all three are entitled to: the stagnation midpoint
+     * would be 50 while {@link #routableStep} counts 5, and the coin would come up short 98 times in
+     * a hundred. At a threshold of 10 the midpoint is the counter the step states, and at a rate of
+     * 1.0 the coin always passes — which leaves the breaker as the only thing a stub still decides,
+     * and that is what {@link StubLlm} owns.
+     */
+    static final String[] LIVE_HOOK_KEYS = {
+        "ape.graphStableRestartThreshold", "10",
+        "ape.llmPercentage", "1.0"};
+
     /** The shipped {@code llm} arm: the three LLM stages, then the chain. */
     static RunSpec llmPlan() {
-        return preset(Presets.LLM, "ape.llmUrl", LLM_URL);
+        return preset(Presets.LLM, join(new String[] {"ape.llmUrl", LLM_URL}, LIVE_HOOK_KEYS));
+    }
+
+    static String[] join(String[] first, String[] second) {
+        String[] all = new String[first.length + second.length];
+        System.arraycopy(first, 0, all, 0, first.length);
+        System.arraycopy(second, 0, all, first.length, second.length);
+        return all;
     }
 
     /**
@@ -189,18 +217,22 @@ final class PipelineFixture {
      *        it rather than counting to the jar default of fifty
      */
     static RunSpec llmWithLauncherPlan(int cadence) {
-        return preset(Presets.LLM,
+        return preset(Presets.LLM, join(new String[] {
                 "ape.llmUrl", LLM_URL,
                 "ape.mopDataPath", TestRunSpecs.MOP_PATH,
                 "ape.activityTriggerEnabled", "true",
-                "ape.activityTriggerStagnationStep", Integer.toString(cadence));
+                "ape.activityTriggerStagnationStep", Integer.toString(cadence)}, LIVE_HOOK_KEYS));
     }
 
-    /** A step every LLM stage is entitled to consult: empty buffer, three actions, new state. */
+    /**
+     * A step every LLM stage is entitled to consult: empty buffer, three actions, a new state, and a
+     * stability counter at the midpoint {@link #LIVE_HOOK_KEYS} puts the stagnation threshold at.
+     */
     static FakeStepContext routableStep() throws Exception {
         FakeStepContext ctx = new FakeStepContext();
         ctx.newState = FakeStepContext.stateWith(ACTIVITY, 3);
         ctx.isNewState = true;
+        ctx.graphStableCounter = 5;
         ctx.actionBufferSize = 0;
         ctx.timestamp = 7;
         // Registered nowhere, so the activity has budget left and the gate passes.

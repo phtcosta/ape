@@ -28,9 +28,9 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * newState.getActions().size() > 2} — was verbatim at three sites, so a change to one of them was a
  * change to the policy at one hook and not the others, silently.
  *
- * <p>The third conjunct of those three copies, {@code _llmRouter != null}, is not here: an LLM stage
- * exists only on a plan carrying its feature, and such a plan has a router. The guard dissolved into
- * assembly rather than moving (INV-DP-03).
+ * <p>The third conjunct of those three copies, a null test on the run's LLM, is not here: an LLM
+ * stage exists only on a plan carrying its feature, and such a plan builds the units. The guard
+ * dissolved into assembly rather than moving (INV-DP-03).
  */
 public final class LlmGate {
 

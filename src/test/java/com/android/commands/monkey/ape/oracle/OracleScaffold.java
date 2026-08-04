@@ -5,7 +5,6 @@ import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionStage;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
-import com.android.commands.monkey.ape.llm.LlmRouter;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.Graph;
@@ -71,8 +70,7 @@ import java.util.Set;
  *   <tr><td>{@code timestamp}</td><td>ApeAgent</td><td>{@code getTimestamp()}, form-completion probes</td></tr>
  *   <tr><td>{@code model}</td><td>StatefulAgent</td><td>{@code getGraph()} — the global-action scan, the launcher's visited set, path search</td></tr>
  *   <tr><td>{@code _mopData}</td><td>StatefulAgent</td><td>preset axis; launcher and component-trigger gates</td></tr>
- *   <tr><td>{@code _llmRouter}</td><td>StatefulAgent</td><td>preset axis; the three LLM hooks</td></tr>
- *   <tr><td>{@code _coverageTracker}</td><td>StatefulAgent</td><td>{@code computeDynamicEpsilon()} ({@code Config.dynamicEpsilon} defaults true)</td></tr>
+ * *   <tr><td>{@code _coverageTracker}</td><td>StatefulAgent</td><td>{@code computeDynamicEpsilon()} ({@code Config.dynamicEpsilon} defaults true)</td></tr>
  *   <tr><td>{@code _budgetTracker}</td><td>StatefulAgent</td><td>the first block dereferences it unconditionally — {@code Config.activityBudgetEnabled} defaults <b>true</b>, so null is not the "budget off" wiring, it is a crash</td></tr>
  *   <tr><td>{@code scoringContext}, {@code scoringPipeline}</td><td>StatefulAgent</td><td>not read by the ladder itself; wired because the profile mirrors the constructor</td></tr>
  *   <tr><td>{@code actionBuffer}</td><td>StatefulAgent</td><td>{@code actionBufferSize()} in all three LLM preconditions, {@code selectNewActionFromBuffer()}</td></tr>
@@ -162,7 +160,7 @@ import java.util.Set;
  * <ul>
  *   <li><b>2.1-a — there is no GUITree builder, and none is needed.</b> Design D2 and task 2.1
  *       name one, but within the ladder {@code newGUITree} has exactly one reader: it is passed to
- *       {@code _llmRouter.selectAction}, which the scripted router overrides (task 3.1). Building a
+ *       {@code LlmEngine.selectAction}, which the scripted engine overrides (task 3.1). Building a
  *       real one is also not possible off device — a {@code GUITree} is assembled from
  *       {@code AccessibilityNodeInfo}. So the field stays null, and the cost is stated rather than
  *       hidden: nothing in the goldens exercises tree-derived behavior, which is already a
@@ -172,7 +170,7 @@ import java.util.Set;
  *       {@code State} through {@code new State(stateKey)}, whose {@code buildActions} calls
  *       {@code NamerFactory.decodeActions}, which throws {@code IllegalArgumentException} on any
  *       {@code Name} that is not an {@code ActionPatchName} — and the harness's names are local
- *       xpath-identity stubs, the established {@code StateTest}/{@code LlmRouterDeadPairTest}
+ *       xpath-identity stubs, the established {@code StateTest}/{@code CoordinateMapperDeadPairTest}
  *       idiom. {@link #registerInGraph} therefore performs the same registration steps
  *       ({@code keyToState}/{@code idToState}, {@code addActivity}, {@code addActions}) directly on
  *       the graph's fields. Registration is load-bearing, not cosmetic: without an
@@ -250,8 +248,9 @@ import java.util.Set;
  * {@code activityTriggerMaxPerRun=0}, {@code mopTargetPickCap=3}. Each preset test guard-asserts
  * the half it depends on (design D2). Scoring weights are deliberately <b>not</b> among them: they
  * are consumed above this entry point, so no golden can depend on one, and their guard belongs to
- * {@code rearch-03} INV-ARCH-12. {@code llmPercentage} is likewise absent — the scripted router
- * overrides {@code shouldRouteRandom()} outright, so no LLM preset's golden reads it.
+ * {@code rearch-03} INV-ARCH-12. {@code llmPercentage} and
+ * {@code graphStableRestartThreshold} are likewise absent — an LLM preset states both in its plan
+ * (see {@link #newAgent}) rather than inheriting the jar's, so no LLM golden reads either default.
  */
 public final class OracleScaffold {
 
@@ -268,10 +267,11 @@ public final class OracleScaffold {
     }
 
     /**
-     * The four target presets. A preset is realized by the injection profile, not by Config: the
-     * presence or absence of {@code _mopData} and {@code _llmRouter} are its only axes (design D2),
-     * mirroring what {@code StatefulAgent}'s constructor would have decided from
-     * {@code Config.mopDataPath} and {@code Config.llmUrl}.
+     * The four target presets. A preset is realized by the plan it states and the injection profile
+     * that follows from it: the presence or absence of {@code _mopData} and of the LLM feature are
+     * its only axes (design D2), which is what {@code StatefulAgent}'s constructor used to decide
+     * from {@code Config.mopDataPath} and {@code Config.llmUrl} and what {@code RunSpec} decides
+     * now.
      */
     public enum Preset {
         APERV(false, false),
@@ -280,15 +280,15 @@ public final class OracleScaffold {
         LLM_MOP(true, true);
 
         private final boolean mopData;
-        private final boolean llmRouter;
+        private final boolean llm;
 
-        Preset(boolean mopData, boolean llmRouter) {
+        Preset(boolean mopData, boolean llm) {
             this.mopData = mopData;
-            this.llmRouter = llmRouter;
+            this.llm = llm;
         }
 
         public boolean hasMopData() { return mopData; }
-        public boolean hasLlmRouter() { return llmRouter; }
+        public boolean hasLlm() { return llm; }
     }
 
     // ---- reflection ------------------------------------------------------------------------
@@ -330,7 +330,7 @@ public final class OracleScaffold {
 
     /**
      * A {@link Name} whose xpath is its identity — the {@code StateTest}/
-     * {@code LlmRouterDeadPairTest} idiom. It carries no {@code Namer}, which is what puts the
+     * {@code CoordinateMapperDeadPairTest} idiom. It carries no {@code Namer}, which is what puts the
      * production {@code State} constructor out of reach (finding 2.1-b).
      */
     static Name testName(final String xpath) {
@@ -469,15 +469,15 @@ public final class OracleScaffold {
      * Builds the agent for a preset, wired over the scenario's entry screen and with both RNG
      * streams seeded from the scenario's declared seed.
      *
-     * @param router the scripted router for the LLM presets; null for the others. The preset's
-     *               declared axis and the argument must agree — a mismatch is an authoring bug and
-     *               fails here rather than producing a golden for the wrong preset.
+     * @param llm the scripted LLM for the LLM presets; null for the others. The preset's declared
+     *            axis and the argument must agree — a mismatch is an authoring bug and fails here
+     *            rather than producing a golden for the wrong preset.
      */
-    static OracleSataAgent newAgent(Preset preset, ScenarioScript script, LlmRouter router)
+    static OracleSataAgent newAgent(Preset preset, ScenarioScript script, ScriptedLlm llm)
             throws Exception {
-        if (preset.hasLlmRouter() != (router != null)) {
-            throw new IllegalArgumentException("preset " + preset + " requires an LLM router "
-                    + (preset.hasLlmRouter() ? "but none was supplied" : "but one was supplied"));
+        if (preset.hasLlm() != (llm != null)) {
+            throw new IllegalArgumentException("preset " + preset + " requires a scripted LLM "
+                    + (preset.hasLlm() ? "but none was supplied" : "but one was supplied"));
         }
 
         // The plan the decision pipeline is assembled from, and which the ladder reads. A preset
@@ -491,12 +491,31 @@ public final class OracleScaffold {
         // launcher gate the capture ran under (activityTriggerEnabled true), and an LLM arm gets the
         // three hooks the capture ran with (llmOnNewState/llmOnStagnation true, llmPercentage 0.02).
         // A preset without the substrate states neither key, which closes the same gates its absent
-        // MopData and absent router already closed.
+        // MopData and absent LLM stages already closed.
         //
-        // ape.llmUrl is a plan value only. The router is injected below, so nothing in this harness
-        // opens a socket — what the URL buys is the LLM feature, and with it the LLM stages.
-        String[] llmKeys = preset.hasLlmRouter()
-                ? new String[] {"ape.llmUrl", "http://127.0.0.1:30000/v1"}
+        // ape.llmUrl is a plan value only. Every stage's engine and gate is substituted below, so
+        // nothing in this harness opens a socket — what the URL buys is the LLM feature, and with it
+        // the LLM stages.
+        //
+        // Two LLM keys are stated away from their jar defaults, and both are injection-profile
+        // adaptations to the trigger predicates having moved into the stages (INV-ORA-07):
+        //
+        //   ape.graphStableRestartThreshold=10 — the stagnation stage now evaluates the real
+        //   midpoint predicate, and at the jar default of 100 the midpoint is 50 while every
+        //   scenario's graphStableCounter is 0, 5, 6 or 7. At 10 the midpoint is 5, which is the
+        //   value the scenarios were written around. This does not touch the forced restart: that
+        //   reads the static Config field, which no plan writes, and it sits above this harness's
+        //   entry point in any case.
+        //
+        //   ape.llmPercentage=1.0 — the probabilistic stage now draws a real coin, and at the jar
+        //   default of 0.02 a scripted random hook would be refused ~98% of the time. At 1.0 the
+        //   coin always passes and the scripted gate below is what decides. The stream it draws
+        //   from is substituted as well (installScriptedLlm), so the draw does not touch the
+        //   agent's pinned stream and no golden moves.
+        String[] llmKeys = preset.hasLlm()
+                ? new String[] {"ape.llmUrl", "http://127.0.0.1:30000/v1",
+                        "ape.graphStableRestartThreshold", "10",
+                        "ape.llmPercentage", "1.0"}
                 : new String[0];
         RunSpec spec = preset.hasMopData()
                 ? TestRunSpecs.installMop(llmKeys)
@@ -522,7 +541,6 @@ public final class OracleScaffold {
         // Config.activityBudgetEnabled defaults true, so the constructor builds a real tracker and
         // the ladder's first block dereferences it unconditionally (SataAgent.java:468).
         setField(agent, "_budgetTracker", budgetTracker(script));
-        setField(agent, "_llmRouter", router);
         final MopData contextMopData = mopData;
         ScoringContext scoringContext = new ScoringContext() {
             @Override public MopData getMopData() { return contextMopData; }
@@ -563,10 +581,49 @@ public final class OracleScaffold {
                 setField(stage, "stepsSinceFiring", script.getStepsSinceLauncherFiring());
             }
         }
+        if (llm != null) {
+            installScriptedLlm(pipeline, llm);
+        }
 
         RandomHelper.seed(script.getSeed());
         agent.pinned = new Random(script.getSeed());
         return agent;
+    }
+
+    /**
+     * Replaces each LLM stage's engine and breaker gate with the script's, on the stage that owns
+     * them.
+     *
+     * <p>Per-stage rather than per-run because the gate is where a hook's verdict now lives: the
+     * stage evaluates its own condition first and consults the gate last, so a gate that could not
+     * tell which hook was asking could not express a script (design D3). The engine is shared —
+     * only the hook whose gate answered true can reach it.
+     *
+     * <p>The probabilistic stage's coin is substituted as well, and that is the one substitution
+     * that would move a golden if it were omitted: assembly hands the stage the agent's own
+     * generator, and a draw taken from it here would shift every later epsilon-greedy draw the
+     * ladder makes — four committed goldens moved by an artifact of the harness. Overwriting the
+     * field leaves the agent's pinned stream untouched. The pre-decomposition harness replaced the
+     * coin outright by overriding the predicate that held it; this replaces the stream it draws
+     * from, which is the same replacement one layer down.
+     */
+    private static void installScriptedLlm(DecisionPipeline pipeline, ScriptedLlm llm)
+            throws Exception {
+        for (DecisionStage stage : pipeline.stages()) {
+            String hook = null;
+            if (stage.name().equals(DecisionPipeline.Candidate.LLM_NEW_STATE.stageName())) {
+                hook = ScriptedLlm.NEW_STATE;
+            } else if (stage.name().equals(DecisionPipeline.Candidate.LLM_STAGNATION.stageName())) {
+                hook = ScriptedLlm.STAGNATION;
+            } else if (stage.name().equals(DecisionPipeline.Candidate.LLM_RANDOM.stageName())) {
+                hook = ScriptedLlm.RANDOM;
+                setField(stage, "random", new Random(0L));
+            }
+            if (hook != null) {
+                setField(stage, "engine", llm.engine());
+                setField(stage, "breakerAllows", llm.gateFor(hook));
+            }
+        }
     }
 
     /**

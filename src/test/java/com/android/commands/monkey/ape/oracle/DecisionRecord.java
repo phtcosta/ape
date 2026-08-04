@@ -12,7 +12,7 @@ import java.util.Objects;
  * <p><b>Absent, never null.</b> A field that does not apply to a step is left out of the line
  * entirely rather than written as {@code null}: {@code pickChannel} and {@code decisionSource} for
  * a return that is not a {@code ModelAction}, {@code target} for a targetless action, {@code llm}
- * for a preset with no router. The distinction is not cosmetic — it is what keeps an {@code aperv}
+ * for a preset with no LLM. The distinction is not cosmetic — it is what keeps an {@code aperv}
  * golden textually free of the LLM axis, so a diff shows only what the preset actually has.
  *
  * <p><b>Why the line is built by hand instead of through {@code JSONObject.toString()}.</b>
@@ -50,9 +50,9 @@ public final class DecisionRecord {
      * @param pickChannel    the returned action's {@code PickChannel} label
      *                       ({@code ModelAction.PickChannel.getLabel()}, e.g.
      *                       {@code short_circuit_unvisited}); null on the same condition
-     * @param llm            {@code ScriptedLlmRouter.Provenance.getLabel()} —
+     * @param llm            {@code ScriptedLlm.Provenance.getLabel()} —
      *                       {@code accepted | declined | timeout | not_routed}; null for a preset
-     *                       with no router
+     *                       with no LLM
      */
     public DecisionRecord(int step, String actionType, String target, String decisionSource,
                           String pickChannel, String llm) {

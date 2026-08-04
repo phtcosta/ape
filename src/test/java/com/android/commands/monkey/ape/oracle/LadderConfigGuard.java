@@ -24,9 +24,10 @@ import static org.junit.Assert.assertTrue;
  * happens in {@code adjustActionsByGUITree()}, above this oracle's entry point, so no golden record
  * can depend on one. Their guard belongs to {@code rearch-03} INV-ARCH-12.
  *
- * <p>{@code ape.llmPercentage} is likewise absent, and for a reason worth stating: the scripted
- * router overrides {@code shouldRouteRandom()} outright (design D3), so no LLM preset's golden
- * depends on that key at all.
+ * <p>{@code ape.llmPercentage} is likewise absent, and for a reason worth stating: an LLM preset
+ * states the key in its own plan rather than inheriting the jar's, and the scaffold substitutes the
+ * stream the coin is drawn from (design D3), so no LLM preset's golden depends on that default at
+ * all.
  */
 final class LadderConfigGuard {
 

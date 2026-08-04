@@ -42,12 +42,12 @@ public class HardPreemptionTest {
      * caller names, a component coin that always comes up, and the terminal chain.
      */
     private static RunSpec fullPlan(int cadence) {
-        return PipelineFixture.preset(Presets.LLM,
+        return PipelineFixture.preset(Presets.LLM, PipelineFixture.join(new String[] {
                 "ape.llmUrl", PipelineFixture.LLM_URL,
                 "ape.mopDataPath", TestRunSpecs.MOP_PATH,
                 "ape.activityTriggerEnabled", "true",
                 "ape.activityTriggerStagnationStep", Integer.toString(cadence),
-                "ape.componentPercentage", "1.0");
+                "ape.componentPercentage", "1.0"}, PipelineFixture.LIVE_HOOK_KEYS));
     }
 
     /** The step all four mechanisms qualify for: routable, budgeted, with a census and a graph. */
@@ -66,9 +66,9 @@ public class HardPreemptionTest {
     @Test
     public void aStepEveryMechanismQualifiesForIsDecidedByTheLlm() throws Exception {
         ModelAction answer = new ModelAction(null, ActionType.MODEL_CLICK);
-        PipelineFixture.StubRouter router = new PipelineFixture.StubRouter(true, answer);
+        PipelineFixture.StubLlm llm = new PipelineFixture.StubLlm(true, answer);
         PipelineFixture.FakeAgent agent =
-                new PipelineFixture.FakeAgent(router, PipelineFixture.chainAction());
+                new PipelineFixture.FakeAgent(llm, PipelineFixture.chainAction());
         DecisionPipeline pipeline = DecisionPipeline.fromSpec(fullPlan(1), agent);
 
         Action decided = pipeline.decide(contendedStep());
@@ -78,7 +78,7 @@ public class HardPreemptionTest {
         assertEquals(ModelAction.DecisionSource.LLM, answer.getDecisionSource());
         assertEquals(ModelAction.PickChannel.LLM, answer.getPickChannel());
         assertEquals("the two LLM stages below the one that accepted were never asked either",
-                1, router.selectCalls);
+                1, llm.selectCalls);
         assertEquals("no component was triggered", 0, agent.triggerCalls);
         assertEquals("no SATA rung was evaluated", 0, agent.chainCalls);
     }
@@ -87,9 +87,9 @@ public class HardPreemptionTest {
     public void theLauncherWouldHaveFiredOnThatStep() throws Exception {
         // The same plan, the same step, the model declining: the launcher reaches its firing point
         // and launches. So its absence from the step above is preemption, not an idle launcher.
-        PipelineFixture.StubRouter router = new PipelineFixture.StubRouter(true, null);
+        PipelineFixture.StubLlm llm = new PipelineFixture.StubLlm(true, null);
         PipelineFixture.FakeAgent agent =
-                new PipelineFixture.FakeAgent(router, PipelineFixture.chainAction());
+                new PipelineFixture.FakeAgent(llm, PipelineFixture.chainAction());
         DecisionPipeline pipeline = DecisionPipeline.fromSpec(fullPlan(1), agent);
 
         Action decided = pipeline.decide(contendedStep());
@@ -107,9 +107,9 @@ public class HardPreemptionTest {
         // The launcher one step short of its cadence, so the fall-through reaches the coin. It fires
         // and the step is still decided by the chain: a side effect acts, it never decides
         // (INV-DP-05).
-        PipelineFixture.StubRouter router = new PipelineFixture.StubRouter(true, null);
+        PipelineFixture.StubLlm llm = new PipelineFixture.StubLlm(true, null);
         ModelAction fromTheChain = PipelineFixture.chainAction();
-        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(router, fromTheChain);
+        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(llm, fromTheChain);
         DecisionPipeline pipeline = DecisionPipeline.fromSpec(fullPlan(2), agent);
 
         Action decided = pipeline.decide(contendedStep());
@@ -139,13 +139,13 @@ public class HardPreemptionTest {
     public void aPreemptedStepDoesNotAdvanceTheLauncherCadence() throws Exception {
         ModelAction answer = new ModelAction(null, ActionType.MODEL_CLICK);
         ModelAction fromTheChain = PipelineFixture.chainAction();
-        PipelineFixture.StubRouter router = new PipelineFixture.StubRouter(true, answer);
-        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(router, fromTheChain);
+        PipelineFixture.StubLlm llm = new PipelineFixture.StubLlm(true, answer);
+        PipelineFixture.FakeAgent agent = new PipelineFixture.FakeAgent(llm, fromTheChain);
         DecisionPipeline pipeline =
                 DecisionPipeline.fromSpec(PipelineFixture.llmWithLauncherPlan(2), agent);
 
         Action preempted = pipeline.decide(launcherStep());
-        router.answersFrom(null); // from here the model declines and the step falls through
+        llm.answersFrom(null); // from here the model declines and the step falls through
 
         Action first = pipeline.decide(launcherStep());
         Action second = pipeline.decide(launcherStep());

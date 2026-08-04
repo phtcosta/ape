@@ -15,20 +15,26 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
-import com.android.commands.monkey.ape.llm.LlmRouter;
+import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.ModelAction;
 
 /**
  * Ask the model when the agent has just walked into a screen it has never seen.
  *
  * <p>This is the first of the three LLM hooks and therefore the one that preempts the other two, the
- * MOP launcher and the whole SATA chain whenever it answers. Its trigger is the router's
- * {@code shouldRouteNewState}, unchanged: the step entered an unseen state, the mode is enabled, and
- * the circuit breaker allows an attempt — in that order, because the breaker's consultation has a
- * side effect (the OPEN→HALF_OPEN probe and the once-per-episode log latch) and must not be reached
- * on a step the earlier conjuncts already declined.
+ * MOP launcher and the whole SATA chain whenever it answers. Its trigger is two conjuncts in a fixed
+ * order: the step entered an unseen state, and then the circuit breaker allows an attempt. The order
+ * is behaviour, not style — the breaker's consultation has a side effect (the OPEN→HALF_OPEN probe
+ * and the once-per-open-episode log latch) and must not be reached on a step the first conjunct
+ * already declined.
+ *
+ * <p><b>The mode conjunct is gone, and assembly is the whole reason it could go.</b> The predicate
+ * this stage inherited also tested that new-state routing was enabled, which is precisely the
+ * condition under which this stage exists at all (INV-DP-03). Inside the stage it is necessarily
+ * true, so testing it would be asking whether the object running the test was constructed.
  *
  * <p><b>A declining model does not change the step's shape.</b> Precondition unmet, trigger false,
  * breaker open, or an engine that returns null for any of its reasons — screenshot failure, transport
@@ -38,16 +44,20 @@ import com.android.commands.monkey.ape.model.ModelAction;
  */
 public final class LlmNewStateStage implements DecisionStage {
 
-    private final LlmRouter router;
+    private final LlmEngine engine;
+    private final BooleanSupplier breakerAllows;
     private final Consumer<ModelAction> resolveSynthesizedTap;
 
     /**
-     * @param router the LLM router; non-null, because this stage exists only on a plan carrying the
-     *        new-state LLM feature and such a plan has one
+     * @param engine the run's LLM orchestrator; non-null, because this stage exists only on a plan
+     *        carrying the new-state LLM feature and such a plan has one
+     * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      */
-    public LlmNewStateStage(LlmRouter router, Consumer<ModelAction> resolveSynthesizedTap) {
-        this.router = router;
+    public LlmNewStateStage(LlmEngine engine, BooleanSupplier breakerAllows,
+                            Consumer<ModelAction> resolveSynthesizedTap) {
+        this.engine = engine;
+        this.breakerAllows = breakerAllows;
         this.resolveSynthesizedTap = resolveSynthesizedTap;
     }
 
@@ -58,10 +68,10 @@ public final class LlmNewStateStage implements DecisionStage {
 
     @Override
     public StageResult decide(StepContext ctx) {
-        if (!LlmGate.allows(ctx) || !router.shouldRouteNewState(ctx.isNewState())) {
+        if (!LlmGate.allows(ctx) || !ctx.isNewState() || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }
-        ModelAction result = router.selectAction(ctx.newGUITree(), ctx.newState(),
+        ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
                 ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "new-state",
                 ctx.timestamp());
         if (result == null) {

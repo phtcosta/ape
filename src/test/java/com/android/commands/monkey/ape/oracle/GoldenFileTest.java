@@ -47,7 +47,7 @@ public class GoldenFileTest {
     /**
      * Three steps spanning the format's shapes: a fully-populated SATA pick, a launcher step whose
      * return is not a {@code ModelAction} (so it carries no channel or source), and a targetless
-     * action under a preset with no router (so it carries no target and no {@code llm}).
+     * action under a preset with no LLM (so it carries no target and no {@code llm}).
      */
     private static List<DecisionRecord> threeRecords() {
         return Arrays.asList(

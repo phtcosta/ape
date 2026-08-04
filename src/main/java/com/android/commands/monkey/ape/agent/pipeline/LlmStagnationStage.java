@@ -15,9 +15,10 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
-import com.android.commands.monkey.ape.llm.LlmRouter;
+import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StateTransition;
 
@@ -44,23 +45,53 @@ import com.android.commands.monkey.ape.model.StateTransition;
  * <p>The counter itself stays with the agent rather than moving here (design D5): the forced-restart
  * mechanism reads it independently, so it is shared exploration state, not this stage's episode
  * state. The reset is the single write any stage makes to it.
+ *
+ * <p><b>The threshold arrives separately from the rest of the LLM parameters, and that is a fact
+ * about ownership.</b> {@code ape.graphStableRestartThreshold} is the agent's stagnation budget —
+ * exploration scope, not LLM scope — and this stage only ever reads its midpoint. The mode conjunct
+ * the inherited predicate also carried is gone: enabling stagnation routing is the condition under
+ * which this stage exists (INV-DP-03), so inside it the test is vacuous.
  */
 public final class LlmStagnationStage implements DecisionStage {
 
-    private final LlmRouter router;
+    private final LlmEngine engine;
+    private final BooleanSupplier breakerAllows;
+    private final int restartThreshold;
     private final Consumer<ModelAction> resolveSynthesizedTap;
 
     /** Whether this stagnation episode has already spent its one call. */
     private boolean firedThisEpisode;
 
     /**
-     * @param router the LLM router; non-null, because this stage exists only on a plan carrying the
-     *        stagnation LLM feature and such a plan has one
+     * @param engine the run's LLM orchestrator; non-null, because this stage exists only on a plan
+     *        carrying the stagnation LLM feature and such a plan has one
+     * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
+     * @param restartThreshold the agent's forced-restart threshold, whose half is this hook's
+     *        firing point
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      */
-    public LlmStagnationStage(LlmRouter router, Consumer<ModelAction> resolveSynthesizedTap) {
-        this.router = router;
+    public LlmStagnationStage(LlmEngine engine, BooleanSupplier breakerAllows, int restartThreshold,
+                              Consumer<ModelAction> resolveSynthesizedTap) {
+        this.engine = engine;
+        this.breakerAllows = breakerAllows;
+        this.restartThreshold = restartThreshold;
         this.resolveSynthesizedTap = resolveSynthesizedTap;
+    }
+
+    /**
+     * The stagnation trigger predicate (INV-RTR-19): at or past the midpoint, with the episode's
+     * flag still armed.
+     *
+     * <p>The retired condition was exact equality with {@code threshold / 2}. Since the counter
+     * resets to 0 on every new edge, that gave each stagnation episode a one-step window: any step
+     * where the counter jumped past the midpoint, or was reset just before it, silently cost the
+     * episode its only chance, and the hook virtually never fired. {@code >=} closes the window and
+     * the flag preserves the original single-shot intent. Pure, so it is unit-testable without a
+     * stage, an agent or a plan.
+     */
+    static boolean stagnationMidpointReached(int graphStableCounter, int threshold,
+                                             boolean firedThisEpisode) {
+        return !firedThisEpisode && graphStableCounter >= threshold / 2;
     }
 
     @Override
@@ -71,11 +102,13 @@ public final class LlmStagnationStage implements DecisionStage {
     @Override
     public StageResult decide(StepContext ctx) {
         if (!LlmGate.allows(ctx)
-                || !router.shouldRouteStagnation(ctx.graphStableCounter(), firedThisEpisode)) {
+                || !stagnationMidpointReached(ctx.graphStableCounter(), restartThreshold,
+                        firedThisEpisode)
+                || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }
         firedThisEpisode = true;
-        ModelAction result = router.selectAction(ctx.newGUITree(), ctx.newState(),
+        ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
                 ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "stagnation",
                 ctx.timestamp());
         if (result == null) {

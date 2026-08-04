@@ -11,7 +11,7 @@ import java.util.Random;
 import org.junit.Test;
 
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
-import com.android.commands.monkey.ape.llm.LlmRouter;
+import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.agent.SataAgent;
@@ -117,9 +117,24 @@ public class DecisionPipelineFromSpecTest {
         public void logActionSelected(Action action, SataAgent.SataEventType type) {
         }
 
+        /**
+         * Null, and only ever read by assembly. These tests assert the roster and the wiring of the
+         * non-LLM stages; where an LLM stage is assembled, no step reaches its engine, which is the
+         * same reason the two below refuse rather than answer.
+         */
         @Override
-        public LlmRouter llmRouter() {
+        public LlmEngine llmEngine() {
             return null;
+        }
+
+        @Override
+        public boolean llmBreakerAllows() {
+            throw new UnsupportedOperationException("no test here reaches an LLM stage's gate");
+        }
+
+        @Override
+        public Random agentRandom() {
+            return new Random(0L);
         }
 
         @Override

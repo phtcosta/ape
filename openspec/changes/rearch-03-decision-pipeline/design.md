@@ -374,6 +374,23 @@ constructions could then drift — the way the duplicated `ScoringContext` alrea
 injects the assembled `decisionPipeline`, built by the same `fromSpec` against the preset's installed
 plan and the agent's own producers. No golden and no scenario script changed.
 
+**The LLM half of that profile is larger, and task 4.6 is where it grew.** Once the trigger predicates
+sit inside the stages, a script cannot reach a hook by substituting one collaborator: the hook's own
+conjunct runs first and the script sits behind it. `OracleScaffold` therefore substitutes, per LLM
+stage, the breaker gate — a `BooleanSupplier` the script answers per hook, which is where the verdict
+became hook-aware — plus one shared scripted `LlmEngine` that only the hook whose gate answered can
+reach, plus, on the probabilistic stage alone, the `Random` the coin draws from. That last one is the
+substitution that would have moved four committed baselines had it been omitted: assembly hands the
+stage the agent's own generator, the same one the epsilon-greedy rungs draw from, so one extra draw per
+step would shift every later draw for a reason that is purely a harness artifact. Overriding the coin's
+*verdict* would not have sufficed — a verdict-overridden coin still consumes a draw.
+
+Still no golden and no scenario script changed. What did change is the harness's observation window:
+"consulted" now means "the shared precondition passed **and** the stage's own condition held", a
+sharper statement than the pre-decomposition one, which only meant the precondition passed. The
+hook-order requirement the preemption golden exists for is unaffected — it is pinned on a step where
+all three conjuncts hold and all three hooks are consulted in order.
+
 ## API Design
 
 ### `DecisionPipeline.fromSpec(RunSpec spec, StageCollaborators collaborators) -> DecisionPipeline`

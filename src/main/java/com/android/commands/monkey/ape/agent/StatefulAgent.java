@@ -47,7 +47,6 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
-import com.android.commands.monkey.ape.llm.LlmRouter;
 
 import com.android.commands.monkey.MonkeySourceApe;
 import com.android.commands.monkey.ape.ActionFilter;
@@ -68,6 +67,7 @@ import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.agent.pipeline.StepContext;
@@ -151,7 +151,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     private final ScoringPipeline scoringPipeline;
 
     // LLM integration fields
-    protected LlmRouter _llmRouter;
     private final SystemBroadcastCatalog _broadcastCatalog;
     protected boolean _isNewState;
     protected State _lastState;
@@ -183,7 +182,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         this._budgetTracker = Config.activityBudgetEnabled
                 ? new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget)
                 : null;
-        this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
         this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
         // and assemble the pipeline once, now that _mopData/_coverageTracker/graph/timestamp are set.
@@ -1080,15 +1078,15 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                         newState.getStateKey(), !currentStateTransition.isSameActivity(),
                         activityHasMop(newState.getActivity()));
             }
-            // B1 outcome feedback (llm-routing INV-RTR-15): the router cannot observe outcomes, so
-            // the agent hands it the executed LLM decision and the new_state bit computed here. Only
-            // LLM-originated decisions feed the ban record — SATA-selected actions are never banned.
-            // The feedback rides the same buffered-decision guards as the line above but not its
-            // telemetry gate: the ban is a selection mechanism, and it must behave identically in an
-            // arm that runs with [APE-STEP] emission turned off.
-            if (_llmRouter != null
+            // B1 outcome feedback (llm-routing INV-RTR-15): the ban record cannot observe outcomes,
+            // so the agent hands it the executed LLM decision and the new_state bit computed here.
+            // Only LLM-originated decisions feed the record — SATA-selected actions are never
+            // banned. The feedback rides the same buffered-decision guards as the line above but not
+            // its telemetry gate: the ban is a selection mechanism, and it must behave identically
+            // in an arm that runs with [APE-STEP] emission turned off.
+            if (RunContext.current().hasLlm()
                     && currentAction.getDecisionSource() == ModelAction.DecisionSource.LLM) {
-                _llmRouter.recordLlmOutcome(currentAction, _isNewState);
+                RunContext.current().coordinateMapper().recordLlmOutcome(currentAction, _isNewState);
             }
             lastDecisionAction = null;
         }
@@ -1774,7 +1772,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * Called after resolveNewAction() when the action is a ModelAction.
      */
     protected void recordActionHistory(ModelAction action) {
-        if (_llmRouter == null) {
+        // The ring buffer feeds the LLM prompt and nothing else, so a run with no LLM would fill it
+        // for a reader that will never come. The test is the plan's, not a unit's nullness: a plan
+        // without the feature builds no units and assembles no LLM stage.
+        if (!RunContext.current().hasLlm()) {
             return;
         }
         try {
@@ -1856,7 +1857,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
 
     public void tearDown() {
         safeStep("llmSummary", () -> {
-            if (_llmRouter != null) _llmRouter.printSummary();
+            if (RunContext.current().hasLlm()) {
+                RunContext.current().llmTelemetry().printSummary();
+            }
         });
         safeStep("superTearDown", super::tearDown);
         safeStep("coverageDump", this::dumpCoverage);

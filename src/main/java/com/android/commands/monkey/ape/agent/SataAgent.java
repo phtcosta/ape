@@ -47,7 +47,7 @@ import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.SubsequenceFilter;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
-import com.android.commands.monkey.ape.llm.LlmRouter;
+import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.runtime.RunContext;
@@ -428,8 +428,30 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     }
 
     @Override
-    public LlmRouter llmRouter() {
-        return _llmRouter;
+    public LlmEngine llmEngine() {
+        return RunContext.current().llmEngine();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Reached only from an LLM stage, which exists only on a plan that built the client, so the
+     * dereference is safe by assembly rather than by a guard.
+     */
+    @Override
+    public boolean llmBreakerAllows() {
+        return RunContext.current().llmClient().allows();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The agent's own stream, which is what {@code ApeAgent.getRandom()} exposes and what the
+     * probabilistic hook has always drawn from.
+     */
+    @Override
+    public java.util.Random agentRandom() {
+        return getRandom();
     }
 
     /**

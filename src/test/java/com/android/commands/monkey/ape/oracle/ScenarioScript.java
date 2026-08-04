@@ -27,12 +27,14 @@ import java.util.Set;
  * unmapped selection leaves the agent on the same screen, which is the common case and keeps
  * scenarios short. The driver (task 5.1) is what consults the table — this class only holds it.
  *
- * <p><b>LLM entries.</b> A step's entry declares which of the three hooks the script wants
- * routed and what the router answers. It is consumed by {@code ScriptedLlmRouter} (task 3.1),
- * which honors the agent-side arguments on top of these flags: a scripted
- * {@code routeStagnation} still yields to the episode's single-shot flag, and a scripted
- * {@code routeNewState} still yields to {@code _isNewState}. A step with no entry declares that
- * no consultation is expected; the router fails loudly if the agent asks anyway.
+ * <p><b>LLM entries.</b> A step's entry declares which of the three hooks the script wants routed
+ * and what comes back when one does. It is consumed by {@code ScriptedLlm} (task 3.1), which owns
+ * the verdict and nothing more: each stage evaluates its own condition before consulting the script,
+ * so a scripted {@code routeStagnation} still yields to the episode's single-shot flag and a
+ * scripted {@code routeNewState} still yields to {@code _isNewState} — but it is the stage that
+ * yields, not this table, and such a hook never reaches the script at all. A step with no entry
+ * declares that no consultation is expected; {@code ScriptedLlm} fails loudly if a hook reaches its
+ * engine anyway.
  */
 public final class ScenarioScript {
 
@@ -44,7 +46,7 @@ public final class ScenarioScript {
      */
     public static final int DEFAULT_PRIORITY = 8;
 
-    /** What the scripted router answers when a hook routes. */
+    /** What the scripted LLM answers when a hook routes. */
     public enum LlmVerdict {
         /** Return a {@code ModelAction} chosen from the offered list by the entry's selector. */
         ACCEPT,

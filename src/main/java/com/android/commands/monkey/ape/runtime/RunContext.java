@@ -21,17 +21,27 @@ import java.util.Locale;
 import java.util.Random;
 import java.util.TimeZone;
 
+import com.android.commands.monkey.ape.llm.ApePromptBuilder;
+import com.android.commands.monkey.ape.llm.CoordinateMapper;
+import com.android.commands.monkey.ape.llm.LlmClient;
+import com.android.commands.monkey.ape.llm.LlmEngine;
+import com.android.commands.monkey.ape.llm.LlmTelemetry;
+import com.android.commands.monkey.ape.llm.ScreenshotStep;
+import com.android.commands.monkey.ape.llm.ToolCallParser;
 import com.android.commands.monkey.ape.utils.RandomHelper;
 
 /**
- * What this run is: its plan, its identity, and its randomness.
+ * What this run is: its plan, its identity, its randomness, and — when the plan asks for one — its
+ * LLM.
  *
- * <p>Three things belong here and nothing else does. The resolved {@link RunSpec}, which is the
+ * <p>Four things belong here and nothing else does. The resolved {@link RunSpec}, which is the
  * only authority on what the run was asked to do. The {@code runId}, which is what a trace, a
- * result row and a log line join on. And the seeded random stream — this class performs the single
+ * result row and a log line join on. The seeded random stream — this class performs the single
  * {@link RandomHelper#seed} call of the process, so there is one place that decides where the
  * run's randomness comes from instead of a seeding call sitting in the middle of a bootstrap
- * method.
+ * method. And the LLM units, which are run-scoped state with no agent in them: a breaker, a ban
+ * record and a counter set all live exactly as long as the process does, and putting them here is
+ * what lets a stage hold the one it uses instead of reaching through the agent for a router.
  *
  * <p><b>This is still a static holder, and it is worth saying so plainly.</b> The gain it delivers
  * is one static holder in place of a hundred-odd static configuration fields and four static file
@@ -55,6 +65,18 @@ public final class RunContext {
     private final RunSpec spec;
     private final String runId;
 
+    /**
+     * The run's LLM, or four nulls when the plan carries no LLM feature.
+     *
+     * <p>Absence is the whole mechanism, not a disabled mode: a plan without the feature builds no
+     * unit, assembles no LLM stage (INV-DP-03), and emits no LLM trace line. There is nothing to
+     * ask whether it is on, because there is nothing there.
+     */
+    private final LlmClient llmClient;
+    private final CoordinateMapper coordinateMapper;
+    private final LlmTelemetry llmTelemetry;
+    private final LlmEngine llmEngine;
+
     private RunContext(RunSpec spec, long seed) {
         this.spec = spec;
         // Seeding belongs to constructing the context, not to the caller, so a context cannot
@@ -62,6 +84,26 @@ public final class RunContext {
         // Monkey's own Random was built from, so both streams derive from one number.
         RandomHelper.seed(seed);
         this.runId = resolveRunId(spec, seed);
+
+        if (spec.has(Feature.LLM)) {
+            RunSpec.LlmParams llm = spec.llm();
+            // The restart threshold is exploration-scope, not LLM-scope: it is the agent's
+            // stagnation budget and the LLM only reads its midpoint. It therefore arrives
+            // separately, here and at the stagnation stage alike.
+            this.llmClient = new LlmClient(
+                    llm, spec.exploration().integer("ape.graphStableRestartThreshold"));
+            // The trip count is asked for rather than mirrored: it belongs to the client, and only
+            // a recorded failure can raise it.
+            this.llmTelemetry = new LlmTelemetry(llm, llmClient::getTripCount);
+            this.coordinateMapper = new CoordinateMapper(llm);
+            this.llmEngine = new LlmEngine(new ScreenshotStep(), new ApePromptBuilder(), llmClient,
+                    new ToolCallParser(), coordinateMapper, llmTelemetry);
+        } else {
+            this.llmClient = null;
+            this.llmTelemetry = null;
+            this.coordinateMapper = null;
+            this.llmEngine = null;
+        }
     }
 
     /**
@@ -140,6 +182,34 @@ public final class RunContext {
      */
     public Random rng() {
         return RandomHelper.getRandom();
+    }
+
+    /** Whether this run has an LLM at all — equivalently, whether the plan carries the feature. */
+    public boolean hasLlm() {
+        return llmEngine != null;
+    }
+
+    /**
+     * The orchestrator the three LLM stages call, or null on a plan with no LLM feature — in which
+     * case no stage asks, because none was assembled.
+     */
+    public LlmEngine llmEngine() {
+        return llmEngine;
+    }
+
+    /** The run's transport and circuit breaker, whose {@code allows()} gates every LLM hook. */
+    public LlmClient llmClient() {
+        return llmClient;
+    }
+
+    /** The mapping and the dead-pair ban record, which the agent feeds executed outcomes to. */
+    public CoordinateMapper coordinateMapper() {
+        return coordinateMapper;
+    }
+
+    /** The run's LLM counters and lines, which print their summary at teardown. */
+    public LlmTelemetry llmTelemetry() {
+        return llmTelemetry;
     }
 
     /**
