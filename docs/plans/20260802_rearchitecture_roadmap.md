@@ -1246,3 +1246,151 @@ Open coordination items — status 2026-08-03:
   **Operational note for the sdd skills**: they resolve paths against the primary working directory,
   not a worktree. `/sdd-doc-code src/main/...` reported `NoTargetFiles` against `workspace-rv/ape`;
   an absolute path into `ape-rearch-b` works.
+
+- 2026-08-04 — **Stage 3 group 5 closed: the `ScoringPipeline`'s config parameter is no longer
+  decorative, and the pass list is no longer the only thing the trace says about assembly.
+  `rearch-03-decision-pipeline` is 35/53.** Seven commits: the artifact update group 5 was owed
+  (`adbfaf0e`), then 5.1 (`4f81edce`), 5.1a (`ead1fe1a`), 5.2+5.3 (`caa12d2a`), 5.2a (`377e89d1`),
+  5.4 (`4e331d57`), 5.5 (`2c013210`), 5.5a (`214798a8`). Group 6 was not begun. All work is in
+  `ape-rearch` on `rearch`; `git worktree list` still shows exactly two worktrees and no `rearch-b`.
+
+  **The gates, with the skip decomposition rather than the bare total.** The 19 skips are 13
+  `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3,
+  `GUITreeBuilderPasswordTest` 1) plus 6 `Assume` in `SglangLiveTest`, which *run* when `SGLANG_URL`
+  is exported — the environment was constant across every row below.
+
+  | Commit | Task | Tests | Failures | Skipped |
+  |---|---|---:|---:|---:|
+  | `adbfaf0e` | artifacts | 1113 | 0 | 19 |
+  | `4f81edce` | 5.1 | 1113 | 0 | 19 |
+  | `ead1fe1a` | 5.1a | 1116 | 0 | 19 |
+  | `caa12d2a` | 5.2 + 5.3 | 1118 | 0 | 19 |
+  | `377e89d1` | 5.2a | 1121 | 0 | 19 |
+  | `4e331d57` | 5.4 | — | — | — |
+  | `2c013210` | 5.5 | 1124 | 0 | 19 |
+  | `214798a8` | 5.5a | 1124 | 0 | 19 |
+
+  `4e331d57` is comment-only and was verified by `test-compile` rather than re-run; it sits between
+  two 1121/1124 measurements. The parity gate held at **14/14** after every task; `git status
+  --short src/test/resources/goldens` printed nothing throughout (INV-ORA-07); `openspec validate
+  --strict` stayed clean, `--specs --strict` 21 passed, and the task count stayed **53**.
+
+  **The +11 is all new coverage, and each piece names a thing that could not be asserted before.**
+  +3 `ScoringParamsDefaultsTest` (5.1a). +2 in `ScoringPassGateTest` (5.2/5.3): `mopWeightWtg=0` and
+  `frontierBoostWeight=0` shutting their passes with the substrate present — cases the file's own
+  javadoc had recorded as unreachable in-JVM because the gates read `static final` fields, and which
+  an injected weight makes ordinary. +3 census tests (5.2a). +3 contrast tests (5.5).
+
+  - **What `ScoringParams` owns.** The eight weights and gates the scoring path reads, derived from
+    the resolved plan by `fromSpec`: `mopWeightDirect` 500, `mopWeightTransitive` 300,
+    `mopWeightOpenMenu` 250, `mopWeightWtg` 200, `frontierBoostWeight` 200, `mopFrontierWeight` 0,
+    `coverageBoostWeight` 100, `formCompletionEnabled` true. They span two scopes of the plan — six
+    are MOP-family, two are not — and a pass has no business knowing which, so `fromSpec` collapses
+    them and states once that **an absent feature reads as its off value**: a plan without MOP has
+    no `MopParams` at all, and a plan with MOP but without WTG carries no `ape.mopWeightWtg`. To a
+    pass both mean the weight is zero and the gate is shut.
+
+    Because `mopFrontierWeight` defaults to **0**, **a default plan assembles six passes, not
+    seven**. That is a shut gate rather than a missing pass, and telling those two apart in the
+    trace is what 5.2a is for.
+
+  - **The `OracleScaffold` adaptation, and why it is INV-ORA-07-permitted rather than a deviation.**
+    `fromConfig` had five call sites, not the one task 5.2 named, and `OracleScaffold:553` is the
+    parity gate's own harness — so the deletion breaks the merge gate's compilation. The repair is
+    one line: the scaffold had already resolved the plan it installs (`RunSpec spec`) at the same
+    assembly site, so it derives the params from that. INV-ORA-07 freezes the goldens and the
+    scenario scripts and permits the *injection profile* to adapt to a relocated collaborator; the
+    file already carried exactly this adaptation for `DecisionPipeline.fromSpec(spec, agent)`, with
+    the permission recorded in a comment, and the new one is recorded the same way. No golden and
+    no scenario script moved, and none could: the pipeline runs in `adjustActionsByGUITree()`,
+    above this harness's entry point. It was folded into 5.2's text through
+    `openspec-update-change` **before** any code was written, not discovered at `mvn test`.
+
+  - **The candidate census (5.2a).** `ScoringPipeline.candidates()` returns every candidate pass in
+    declaration order mapped to whether it was constructed — the `PIPELINE.candidates` member. It is
+    a **sibling** of the pass list and never a widening of it (INV-ARCH-04): `passNames()` still
+    returns exactly the constructed passes and the `[APE-ARCH]` line is byte-identical. What it buys
+    is that the pass list becomes readable as a data-dependent outcome instead of a configuration
+    echo — across the decisive campaign's 360 runs that line took three values, split identically in
+    every arm, because the frontier family is never constructed in 25 of the 40 applications, and
+    the only evidence in the trace was three names missing from a list everyone read as
+    configuration.
+
+    It is taken in the **constructor**, not in `fromParams`: same moment by a shorter route, since
+    the constructor is where the full candidate list is in scope and the last moment the disabled
+    passes exist. Building it in `fromParams` would mean handing the constructor a map derivable
+    from the list it already receives. Keeping the disabled passes in a field so they could be
+    enumerated later is what both places reject — it would keep objects alive for telemetry's sake.
+
+    **No `reason` on an entry and no `disabledReason()` on `ScoringPass`.** Each gate is a
+    conjunction of `mopData != null`, `hasWtgData()` and a weight, and all three conjuncts are
+    already recorded elsewhere in the same trace (`MOP_DATA.status`, `MOP_DATA.wtgEdges`,
+    `RUN_START.params`), so the reason is a lookup rather than a field — and adding one would touch
+    all seven implementations plus the test double. It would also be unreliable: the passes do not
+    evaluate their conjuncts in one order, so a "first failing conjunct" would report source order
+    rather than cause. The consumer already existed and was not designed here: the `rearch-b` merge
+    brought `EventSink.pipeline(List stages, List passes, Map<String, Boolean> candidates)` with a
+    test (`NdjsonSinkTest`) and **no producer**, so the shape was given. Stage 4 wires the emission.
+
+  **Where the handoff's scouting was wrong, and it matters in two of the four cases.**
+
+  - **`MopScorer` does not carry six or seven static `Config` reads. It carried four**
+    (`mopWeightDirect:45`, `mopWeightTransitive:48`, `mopWeightWtg:111`/`:120`); two of the six grep
+    hits were javadoc. The scoring package's six were right (`FrontierPass` 2, `CoveragePass` 2,
+    `WtgPass` 1, `FormCompletionPass` 1). D9's table said `MopScorer (7)` with `mopWeightOpenMenu(3)`
+    and the scoring passes `(9)` with `mopFrontierWeight(3)`; design.md now carries the corrected
+    rows.
+  - **Two of the eight keys had no static read at all.** `mopWeightOpenMenu` and `mopFrontierWeight`
+    already reached the plan through an **ambient `RunContext.current()`** read (`MopScorer:101`,
+    `MopFrontierPass:43`) — which a `Config` grep does not find and INV-ARCH-11 forbids just as
+    much. For those two, 5.3 replaced an ambient global with an argument rather than deleting a
+    static read. **Note for 6.5**: its grep-guard is worded against "the scoring package", so as
+    written it misses `MopScorer` (in `ape/utils`) entirely, and a guard that greps only for
+    `Config.` would have passed over both ambient reads. Not fixed here.
+  - **`StatefulAgent.java:1475-1478`** — the anchor D8 and INV-ARCH-12 use to argue that the goldens
+    cannot observe a scoring default — is stale; that range is `moveForward()` today. The argument
+    is sound and the sites are `:1537-1538`, where `resolveNewAction()` calls
+    `adjustActionsByGUITree()` and only then `selectNewActionNonnull()`. Corrected inside
+    `rearch-03`. **The same stale anchor survives in `openspec/specs/parity-oracle/spec.md:201`, in
+    `rearch-06/design.md:237` and in this file at `:173`** — inherited, out of this session's scope,
+    and left alone deliberately.
+  - Line anchors: 5.2's `StatefulAgent:208` is `:198`; 5.5a's `PipelineParityTest` `:112`/`:148` are
+    `:129`/`:165`. 5.5a's tautology had already migrated from `Config.mopWeightOpenMenu` to
+    `RunContext.current().spec().mop().weightOpenMenu()` — same tautology, newer source.
+
+  - **A latent order-dependence was fixed rather than found later.** `BasePriorityCharacterizationTest`
+    errored **3/3 in isolation** at `23e4eede` (`IllegalStateException: no run context`) and was
+    green in the full suite only because another class left a `RunContext` installed:
+    `fromConfig` constructed `MopFrontierPass`, which reached for one. It states a sata plan as a
+    value now and passes alone. This is why 5.3 is load-bearing beyond the invariant.
+
+  - **The empty pipeline is not reachable by zeroing the weights.** Written first as "params alone
+    can empty the pipeline", 5.5's contrast test failed with `[MopWidgetPass, MenuGatewayPass]`:
+    those two gate on the substrate and ignore every weight. The assertion was corrected to the true
+    behaviour rather than loosened — emptying it takes **both** halves, no weights *and* no MOP data
+    path, which is what "a plan carrying no scoring feature" means, the path being the MOP feature's
+    activation key. Both halves are pinned so they cannot be confused, and the case is now reached
+    through the real entry point for the first time: it previously needed the retired `apePureMode`
+    switch and was asserted through the package-private constructor.
+
+  - **Group 5's order was changed once, deliberately.** 5.3 landed with 5.2 in one commit, ahead of
+    5.2a. A `fromParams` whose passes still read statics in `isEnabled()` would compile, pass the
+    suite and deliver nothing — the decorative parameter the task exists to remove — so a tree in
+    which the signature had changed but the values had not would not be one consistent state (P3).
+    Nothing was skipped and the count did not move.
+
+  - **5.4 was an audit and its honest output was two edits** (learning 57). Finding 3.3-3 was
+    already discharged by the injection commit, which had to rewrite the same javadoc; what
+    remained was that the roster lived only on the factory method, and one comment that dated
+    itself ("before this change") in a stage with several. Six pass javadocs still open with
+    "extracted verbatim from the inline block in `adjustActionsByGUITree()`", which reads like the
+    lineage P4 deletes. It was kept deliberately: that sentence is the parity claim (INV-ARCH-05),
+    the reason the goldens hold over this code, not an account of how the file got here.
+
+  **`ScoringParamsDefaultsTest` was verified to be able to fail**, which is the only thing that
+  makes a drift guard one. With `ape.mopWeightDirect` drifted 500 → 400 it failed naming the field
+  and both values (`expected:<500> but was:<400>`) while the parity gate stayed **14/14** — the
+  whole argument for why it is a separate test and not a golden. The probe was reverted.
+
+  **Group 6 was not started**, and `SataAgent:22`'s unused static import of
+  `graphStableRestartThreshold` was left alone as the 6.4 note records.
