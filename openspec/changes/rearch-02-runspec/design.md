@@ -236,7 +236,9 @@ One line, one JSON object, emitted immediately after successful resolution and b
 
 ### D-10 — Persistence protocol removal; teardown after-state (INV-COV-10)
 
-Deleted: `StatefulAgent.saveGraph()` and its `safeStep`, `Graph.readGraph`, the `--ape-model` CLI branch, `ape.modelFile`, the three `save*` flags, and the model-file loading in `createAgent` (`ApeAgent.java:70-77` — `graph = new Graph()` unconditionally). `Graph.printDot`/`printVis` become caller-less and are deleted (verify at apply time). `sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js` cease to exist. Retry-on-failure remains wholly the Python supervisor's job (R1/R3); nothing replaces the protocol.
+Deleted: `StatefulAgent.saveGraph()` and its `safeStep` **call**, `Graph.readGraph`, the `--ape-model` CLI branch, `ape.modelFile`, the **four** `save*` flags, and the model-file loading in `createAgent` (`ApeAgent.java:70-77` — `graph = new Graph()` unconditionally). `safeStep` itself survives: it is the shared per-step wrapper of the whole chain (INV-EXPL-29), and deleting it would take the teardown's failure isolation with it. `Graph.printDot`/`printVis` become caller-less and are deleted, and with them the five helpers `printVis` alone called — `getColor`, `getStateTransitionType`, `getNodeTitle`, `getStateTransitionTitle` and `escape` — so the dead set is seven methods (`printStateTransitions` is caller-less too but was already so before this change, and is out of scope). `sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js` cease to exist.
+
+**`ape.saveStates` is the fourth flag, and it is not inert.** Its only read site is inside `saveGraph`, so it dies with the method; but unlike a dormant key it is live today — its jar default is `true`, and `saveGraph`'s early return cannot fire at defaults because `saveObjModel` and `saveVisGraph` are both `true` — so a per-state `step-<timestamp>-<id>.txt` file is written for every state of every deployed run, and those cease to exist as well. The key is retired rather than left owned: a key the resolver validates and nothing reads is precisely the silent ambient input this capability exists to remove. No rv-android code consumes any of these files (verified by grep over `modules/` and `scripts/`). Retry-on-failure remains wholly the Python supervisor's job (R1/R3); nothing replaces the protocol.
 
 Teardown chain **after** this change:
 
@@ -249,7 +251,21 @@ INV-COV-10's boundary is restated on what remains: the coverage dump runs strict
 
 ### D-11 — The five non-final `Config` fields die; tests construct `RunSpec`s
 
-`mopWeightOpenMenu`, `fuzzInputTyped`, `mopStrictPackageMatch`, `activityTriggerEnabled`, `mopFrontierWeight` (`Config.java:149,151,153,165,245`) are non-final solely so tests can toggle them. Their read sites (MopScorer, ApeFuzzer, MopData.load, SataAgent/StatefulAgent launcher gate, MopFrontierPass) move to accessors on `RunContext.current().spec()`; the fields are deleted from `Config`. Tests build a `RunSpec` via a package-visible test factory (`RunSpec` values, no property files) and install it with `RunContext.installForTest(spec)`. This is the *only* group of read-site migrations in stage 2 — chosen because it is forced (final-ness) and small.
+`mopWeightOpenMenu`, `fuzzInputTyped`, `mopStrictPackageMatch`, `activityTriggerEnabled`, `mopFrontierWeight` (`Config.java:149,151,153,165,245`) are non-final solely so tests can toggle them. Their read sites move to accessors on `RunContext.current().spec()`; the fields are deleted from `Config`.
+
+The roster is six sites, derived from the tree rather than from this design's first draft, which was wrong in both directions — it named `ApeFuzzer` and `StatefulAgent`, which read none of the five, and omitted `ApeAgent` and `TypedInputGenerator`, which read one:
+
+| Field | Read sites in `src/main` |
+|---|---|
+| `mopWeightOpenMenu` | `MopScorer.java:99` |
+| `fuzzInputTyped` | `ApeAgent.java:236`, `TypedInputGenerator.java:30` |
+| `mopStrictPackageMatch` | `MopData.java:306` |
+| `activityTriggerEnabled` | `SataAgent.java:523` |
+| `mopFrontierWeight` | `MopFrontierPass.java:38`, `:68` |
+
+`MopParams` is null exactly when the plan carries no MOP feature, so the two sites reachable on a non-MOP arm (`SataAgent:523`, `MopFrontierPass:38`) read that absence as "off". This is not a new guard: both already stood behind a `mopData != null` test that produced the same outcome, and an arm without the MOP feature has no MOP data either.
+
+**The parity oracle is a consumer of this migration.** `SataAgent:523` is on the ladder the rearch-01 goldens replay, so once it reads the plan the oracle must install one or `RunContext.current()` throws. `OracleScaffold.newAgent` installs the preset's plan — a MOP arm for the MOP presets, a bare one otherwise — at **jar defaults**, which is the condition design D2 says the goldens were captured under, so `activityTriggerEnabled` is `true` for a MOP preset exactly as `Config`'s default made it. `LadderConfigGuard` asserts that one value against the plan instead of against `Config`. Both are injection-scaffold adaptations to a relocated field, which is the one adaptation INV-ORA-07 permits while stages 2 and 3 are in flight; no golden changes. Tests build a `RunSpec` via a package-visible test factory (`RunSpec` values, no property files) and install it with `RunContext.installForTest(spec)`. This is the *only* group of read-site migrations in stage 2 — chosen because it is forced (final-ness) and small.
 
 ### D-12 — `RunContext` stage-2 scope and the stage-3 seam, honestly
 

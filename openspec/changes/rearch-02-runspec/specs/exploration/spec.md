@@ -63,7 +63,7 @@ The agent type SHALL NOT be settable from a properties file: `ape.agentType` (an
 
 ### Requirement: Output Persistence on Termination
 
-On termination — normal (when `StopTestingException` is caught) or abnormal (any other `Throwable` escaping the exploration loop) — the exploration engine SHALL run its teardown chain inside a `finally` block in `Monkey`, so an uncaught `RuntimeException` from the event loop still produces the run's outputs before the process exits. **The legacy graph persistence no longer exists**: `sataModel.obj`, `sataGraph.dot`, and `sataGraph.vis.js` SHALL NOT be written, `StatefulAgent.saveGraph()` SHALL NOT exist, and the keys `ape.saveObjModel`/`ape.saveDotGraph`/`ape.saveVisGraph` are retired (their presence aborts resolution). Resilience is the Python supervisor's retry; no run state survives the process (R1/R3).
+On termination — normal (when `StopTestingException` is caught) or abnormal (any other `Throwable` escaping the exploration loop) — the exploration engine SHALL run its teardown chain inside a `finally` block in `Monkey`, so an uncaught `RuntimeException` from the event loop still produces the run's outputs before the process exits. **The legacy graph persistence no longer exists**: `sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js` and the per-state `step-<timestamp>-<id>.txt` dumps SHALL NOT be written, `StatefulAgent.saveGraph()` SHALL NOT exist, and the keys `ape.saveObjModel`/`ape.saveDotGraph`/`ape.saveVisGraph`/`ape.saveStates` are retired (their presence aborts resolution). `StatefulAgent.safeStep` is NOT removed — it is the per-step isolation wrapper the whole chain depends on (INV-EXPL-29); what the removal takes is its `saveGraph` invocation. Resilience is the Python supervisor's retry; no run state survives the process (R1/R3).
 
 The teardown chain in `StatefulAgent.tearDown` SHALL be, in order: LLM summary, `super.tearDown()`, **coverage dump**, action-history save, action counters, activity nodes, naming dump, model counters — each step isolated via `safeStep` (INV-EXPL-29). The coverage dump SHALL run strictly before the first teardown artifact write (the action-history save, the only remaining `/sdcard`-writing step) — this restates INV-COV-10's boundary now that the model serialization it was originally ordered against no longer exists; the protected property (the fragile emission precedes the expensive write) is unchanged.
 
@@ -127,7 +127,7 @@ The table below lists the configuration keys relevant to the exploration engine 
 | `ape.defaultGUIThrottle` | long (ms) | 200 | Delay between injected events |
 | `ape.trivialActivityRankThreshold` | int | 3 | Minimum activity count before trivial-activity logic activates |
 
-The keys `ape.saveObjModel`, `ape.saveDotGraph`, and `ape.saveVisGraph` are retired (persistence removal) and abort resolution if present.
+The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present.
 
 #### Scenario: Property file present on device
 
