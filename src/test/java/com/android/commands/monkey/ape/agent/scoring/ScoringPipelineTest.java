@@ -149,6 +149,51 @@ public class ScoringPipelineTest {
                 "MopFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
     }
 
+    // ---- the candidate census: what the pass list does NOT say (5.2a) --------
+
+    @Test
+    public void theCensusCarriesEveryCandidateAndItsVerdict() {
+        // No MopData: the four MOP-family passes are candidates that were not constructed, which
+        // is exactly the fact the [APE-ARCH] line cannot express — it shows their absence only as
+        // names that are not there.
+        StubScoringContext ctx = new StubScoringContext();
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx);
+
+        Map<String, Boolean> census = p.candidates();
+
+        assertEquals("every candidate is named, constructed or not",
+                Arrays.asList("MopWidgetPass", "MenuGatewayPass", "WtgPass", "FrontierPass",
+                        "MopFrontierPass", "CoveragePass", "FormCompletionPass"),
+                new ArrayList<>(census.keySet()));
+        assertEquals(Boolean.FALSE, census.get("WtgPass"));
+        assertEquals(Boolean.FALSE, census.get("MopFrontierPass"));
+        assertEquals(Boolean.TRUE, census.get("CoveragePass"));
+        assertEquals(Boolean.TRUE, census.get("FormCompletionPass"));
+    }
+
+    @Test
+    public void theCensusIsASiblingOfThePassListNotAWideningOfIt() {
+        // INV-ARCH-04: a consumer reading passes still sees exactly the constructed ones, so the
+        // census cannot leak a disabled pass into the roster or the [APE-ARCH] line.
+        StubScoringContext ctx = new StubScoringContext();
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx);
+
+        assertEquals(Arrays.asList("CoveragePass", "FormCompletionPass"), p.passNames());
+        assertEquals(2, p.size());
+        assertEquals("the census still names all seven", 7, p.candidates().size());
+    }
+
+    @Test
+    public void theCensusIsUnmodifiable() {
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), new StubScoringContext());
+        try {
+            p.candidates().put("Injected", Boolean.TRUE);
+            fail("the census is the run's record, not a place to write to");
+        } catch (UnsupportedOperationException expected) {
+            // the record a sink reads cannot be edited by the code that reads it
+        }
+    }
+
     @Test
     public void coverageOnlyArmWhenNoMopData() {
         StubScoringContext ctx = new StubScoringContext(); // mopData == null

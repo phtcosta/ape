@@ -2,7 +2,9 @@ package com.android.commands.monkey.ape.agent.scoring;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -19,20 +21,29 @@ import com.android.commands.monkey.ape.utils.Logger;
 public final class ScoringPipeline {
 
     private final List<ScoringPass> passes;
+    private final Map<String, Boolean> candidates;
 
     /**
-     * Keeps the enabled passes, in the given order, and logs the assembly once. Package-private: the
-     * only public entry is {@link #fromParams} (INV-ARCH-04). Tests in this package construct a
-     * pipeline directly from stub passes.
+     * Keeps the enabled passes, in the given order, records the census of every candidate, and logs
+     * the assembly once. Package-private: the only public entry is {@link #fromParams}
+     * (INV-ARCH-04). Tests in this package construct a pipeline directly from stub passes.
+     *
+     * <p>The census is taken here because here is the last moment the disabled passes exist: the
+     * pipeline drops them and keeps no handle on them, and holding them in a field just to be able
+     * to enumerate them later would keep objects alive for telemetry's sake. Recording their names
+     * and their verdict costs nothing and outlives them.
      */
     ScoringPipeline(List<ScoringPass> candidatePasses) {
         List<ScoringPass> enabled = new ArrayList<>();
+        Map<String, Boolean> census = new LinkedHashMap<>();
         for (ScoringPass p : candidatePasses) {
+            census.put(p.name(), p.isEnabled());
             if (p.isEnabled()) {
                 enabled.add(p);
             }
         }
         this.passes = enabled;
+        this.candidates = Collections.unmodifiableMap(census);
         Logger.iformat("[APE-ARCH] passes=[%s]", String.join(", ", passNames()));
     }
 
@@ -79,6 +90,30 @@ public final class ScoringPipeline {
         for (ScoringPass p : passes) {
             p.apply(state, actions, ctx);
         }
+    }
+
+    /**
+     * Every candidate pass in declaration order, mapped to whether it was constructed — the
+     * {@code PIPELINE.candidates} member of the run's trace.
+     *
+     * <p>It is a <b>sibling</b> of {@link #passNames()}, never a widening of it (INV-ARCH-04): a
+     * consumer reading {@code passes} still sees exactly the constructed passes, and the
+     * {@code [APE-ARCH]} line is unchanged. What it adds is that the pass list becomes readable as
+     * a data-dependent outcome rather than a configuration echo. Across the decisive campaign's
+     * 360 runs that line took three values, split the same way in every arm, because the whole
+     * frontier family is never constructed in 25 of the 40 applications — and the only evidence of
+     * that in the trace was three names missing from a list every analyst read as configuration.
+     *
+     * <p>No {@code reason} accompanies an entry, and there is no {@code disabledReason()} on
+     * {@link ScoringPass}. Each gate is a conjunction of {@code mopData != null},
+     * {@code hasWtgData()} and a weight, and all three conjuncts are already recorded elsewhere in
+     * the same trace ({@code MOP_DATA.status}, {@code MOP_DATA.wtgEdges}, {@code RUN_START.params}),
+     * so the reason is a lookup rather than a field. It would also be unreliable: the passes do not
+     * evaluate their conjuncts in one order, so a "first failing conjunct" would report source
+     * order rather than cause, and two passes absent for the same reason could disagree about it.
+     */
+    public Map<String, Boolean> candidates() {
+        return candidates;
     }
 
     /** The enabled passes' names, in pipeline order — the content of the {@code [APE-ARCH]} line. */
