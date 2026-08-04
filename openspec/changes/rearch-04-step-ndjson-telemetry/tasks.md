@@ -3,7 +3,8 @@
 **Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. Group 8 lands in rv-android, which the ape worktree does NOT cover — it needs a matching branch in that repository (procedure doc §4).
 
 <!-- Subagent dispatch hints:
-     - Group 1 (Serializer) must complete first — everything else builds on JsonBuf.
+     - Group 1 (Serializer) must complete first — everything else builds on the writer it adds
+       to the existing ape.runtime.Json (shipped by rearch-02; NOT a new class, see group 1).
      - Group 2 (Sink core) depends on 1. Groups 3–6 depend on 2 and are largely sequential
        within the jar (they touch StatefulAgent/LlmRouter together).
      - Group 8 (Python native reader) is independent of Groups 3–7 once the schema (Group 2)
@@ -17,11 +18,15 @@
 
 ## 1. JSON Serializer (escaping by construction)
 
-- [ ] 1.1 Implement `ape.telemetry.JsonBuf` (~80 LOC, zero deps): reused `StringBuilder`, `beginObject/endObject/beginArray/endArray/name/value` API, escaping per INV-SNK-02 (`"`/`\`, U+0000–U+001F incl. NUL, U+2028/U+2029; non-ASCII passthrough), `toLine()` never containing a raw newline
-- [ ] 1.2 Add permanent round-trip tests (Sec. 9.12): newline, quotes, backslash, NUL, spaces, non-ASCII values serialize→parse (`org.json`, test classpath only) byte-identically
-- [ ] 1.3 Add the permanent one-line-per-record test: adversarial inputs never produce a raw `\n` in the output (INV-SNK-01)
-- [ ] 1.4 Run `/sdd-doc-code src/main/java/com/android/commands/monkey/ape/telemetry/JsonBuf.java`
-- [ ] 1.5 Run `/sdd-test-run ape.telemetry`
+**The serializer already exists and is not written twice.** `rearch-02-runspec` shipped `ape.runtime.Json` (`src/main/java/com/android/commands/monkey/ape/runtime/Json.java`, ~160 lines, zero dependencies) for the `RUN_START` line, with `JsonTest` green. Its own javadoc states the contract this stage inherits: *"`RUN_START` is the first user, and this class is the seed of the stage-4 NDJSON sink: that stage grows the writer, not the format, so a `RUN_START` line captured today parses unchanged afterwards."* This group therefore **extends** that class; it does not create a second one. A second escaper is precisely the defect class this change exists to remove — two implementations of "how a control character leaves this process" is how they drift, and P3 forbids the parallel copy.
+
+What is already there: the value grammar (strings, numbers, booleans, null, `Map` objects, `Collection` arrays, nested), the refusal of `NaN`/`Infinity`, the refusal of out-of-grammar types instead of a silent `toString()`, and the INV-SNK-02 escape set **except** U+2028/U+2029 — `"`/`\`, `\b`/`\f`/`\n`/`\r`/`\t`, every remaining `< 0x20` as `\u00xx` including NUL, non-ASCII passthrough. What is missing is the *writer*: `Json.object(Map)` builds a value tree per call, which is the wrong shape for one record per step across a full run.
+
+- [ ] 1.1 Extend `ape.runtime.Json` with the streaming writer the sink needs, alongside the existing `object(Map)` entry point (which `RunSpecEcho` still uses): a `Json.Buf` holding a reused `StringBuilder` with `beginObject/endObject/beginArray/endArray/name/value` and `toLine()`, `reset()` returning the buffer to empty for the next record. The escaping is the existing `appendString`/`appendNumber` — reused, not reimplemented. Add U+2028/U+2029 to `appendString` (both are `>= 0x20` and currently pass through; they are legal JSON but break JavaScript-family line readers, and the Python-side reader of group 8 is not the only consumer the trace will ever meet). `toLine()` SHALL NOT contain a raw newline
+- [ ] 1.2 Extend the round-trip tests (Sec. 9.12) to the streaming writer: newline, quotes, backslash, NUL, U+2028/U+2029, spaces, non-ASCII values serialize→parse (`org.json`, test classpath only) byte-identically. Assert the two entry points agree — the same value tree through `object(Map)` and through `Json.Buf` produces the same line, which is what keeps "grows the writer, not the format" true rather than merely intended
+- [ ] 1.3 Add the permanent one-line-per-record test: adversarial inputs never produce a raw `\n` in the output (INV-SNK-01). The existing `JsonTest` cases stay as they are — they pin the `RUN_START` format that stage 2 shipped and this stage promises not to move
+- [ ] 1.4 Run `/sdd-doc-code src/main/java/com/android/commands/monkey/ape/runtime/Json.java`
+- [ ] 1.5 Run `/sdd-test-run ape.runtime` (group 1 lives there; `ape.telemetry` starts existing at group 2)
 
 ## 2. EventSink Core (StepRecord, lifecycle, dictionaries)
 
