@@ -704,3 +704,79 @@ Open coordination items — status 2026-08-03:
 
   **Tasks 2.6–2.9 are not started.** The session stopped at a green golden with 2.5's boxes ticked,
   which is the outcome the group-2 handoff asked for over a complete but unattributable group.
+
+- 2026-08-04 — **Stage 3 group 2 finished bar its doc pass: tasks 2.6–2.8 landed,
+  `rearch-03-decision-pipeline` 14/53.** The ladder is gone. `selectNewActionNonnull()` is the
+  logging prologue plus `decisionPipeline.decide(this)` and nothing else — verified by reading the
+  body, which carries no residual guard and no counter (2.8). Gate observed before the work rather
+  than trusted: **1020 tests, 0 failures, 19 skipped**, BUILD SUCCESS, decomposition 13 `@Ignore`
+  (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3,
+  `GUITreeBuilderPasswordTest` 1) + 6 `Assume` in `SglangLiveTest` with `SGLANG_URL` unset. After
+  2.7: **1030 / 0 / 19**, the +10 being `ComponentTriggerStageTest` 6 and `SataChainStageTest` 4,
+  decomposition unchanged. The five golden classes (14 tests) ran after each of the two extractions
+  and are green at both commits; `git status --short src/test/resources/goldens` empty throughout
+  (INV-ORA-07 holds).
+
+  **The component trigger's parity argument is now structural, and it is the same argument as 2.2's
+  in reverse.** The coin (`getRandom().nextDouble() < componentPercentage`) was the last conjunct of
+  a short-circuiting condition whose first two conjuncts became assembly conditions. No preset
+  states `ape.componentPercentage`, so `COMPONENT_TRIGGER` is in no preset's plan and the stage is
+  in no preset's roster — an absent stage draws nothing, exactly as the false first conjunct drew
+  nothing. Finding 2.1-c survives its own relocation: what used to be "the block's first conjunct is
+  false" is now "the stage does not exist", and `OracleScaffold`'s and `OracleSataAgent`'s notes say
+  so rather than pointing at deleted line numbers.
+
+  **The cursor moved and the dispatch did not, which needed two collaborator methods rather than
+  one.** D5 puts the component round-robin cursor in the stage and leaves `dispatchTrigger` /
+  `dispatchProvider` with the agent. `triggerMopComponent()` held both, so it split:
+  `mopComponentTargetCount()` builds the pool once and reports its size, and
+  `triggerMopComponent(int)` fires the target the stage names. The alternative — passing the cursor
+  in and returning it — would have left the round-robin walk on the agent and made the stage a box
+  holding an int, which is ownership in name only.
+
+  **A gap in the delta spec, settled by following its normative sentence.** `component-triggering`
+  says a winning coin calls the trigger *and returns `SideEffect`*, but no scenario covers the case
+  where the census declares components and none is triggerable — visible only once the split exposed
+  the count. Both branches return `SideEffect`; the empty one describes itself as
+  `no triggerable component target`. The cursor does not advance there, which is the pre-change
+  behaviour (`total == 0` returned before the increment). Recorded rather than quietly decided: this
+  is a spec gap filled by its own requirement text, not a behaviour choice.
+
+  **`fromSpec`'s `default: break;` became its error one task early.** Task 2.7's text owns that
+  clause, but 2.6 was the task after which every candidate had a construction step, so leaving a
+  silent skip whose comment said "the extraction has not reached these yet" would have been a false
+  comment (P4). It is now an `IllegalStateException` naming the candidate — the guard for a constant
+  added without its construction step.
+
+  **The rung table is exactly the de-duplication D12 describes and nothing more.** Seven
+  `(Supplier<ModelAction>, SataEventType)` pairs in one list, walked by one loop that logs and
+  returns on the first non-null, then `BadStateException("No available action on the current
+  state")`. The order lives in the stage's constructor rather than at the assembly call site, which
+  is what lets `SataChainStageTest` assert the order that ships instead of one a fixture invented.
+  **The label is read after `logActionSelected`, not before**: that call attributes every rung but
+  the two priority-consuming ones as `SATA`, so a stage that captured the source first would report
+  a stale value and break INV-DP-04's equality clause. It has its own test.
+
+  **Widening was the honest route for the six protected rungs.** `selectNewActionFromBuffer`,
+  `handleNullAction` (both `StatefulAgent`), `selectNewActionBackToActivity`,
+  `selectNewActionEarlyStageForward`, `selectNewActionEarlyStageBackward`,
+  `selectNewActionEpsilonGreedyRandomly` and `logActionSelected` (all `SataAgent`) are now public and
+  declared on `StageCollaborators`; `SataAgent.SataEventType` became public because the rung table
+  carries it. `InlineLadderStage`, `StageCollaborators.decideInlineLadder()`,
+  `SataAgent.decideInlineLadder()` and `SataAgent.selected(...)` were deleted in the same commit
+  (P3), together with the three imports that died with them.
+
+  **`selected(...)`'s non-model branch turned out to have been unreachable.** All seven rungs return
+  `ModelAction`, so the helper's `nonModelDecisionSource` leg never ran from the chain; the stage
+  types its rungs `Supplier<ModelAction>` and reads `getDecisionSource()` directly. The generic form
+  was written when the block still contained the launcher, which does produce a non-model action —
+  it went with `MopLauncherStage` at 2.5 and the generality was left behind.
+
+  **`DecisionPipelineFromSpecTest`'s fake followed the code, which is learning 52 again.** Its
+  `decideInlineLadder` stub became the seven rung stubs, and `inlineLadderCalls` became `chainCalls`
+  counted on the buffer rung — the chain's first, and the only one no other stage shares, since the
+  trivial-activity search is both rung four and the budget gate's producer. Assertion content is
+  unchanged; the roster names it asserts are now `[Budget, SataChain]`.
+
+  **Task 2.9 is not started**, and it is all that stands between group 2 and group 3: the
+  `sdd-doc-code` pass over the stage classes and `sdd-test-run`. Groups 3–8 are untouched.

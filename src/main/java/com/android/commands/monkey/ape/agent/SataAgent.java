@@ -42,14 +42,11 @@ import com.android.commands.monkey.ape.AndroidDevice;
 import com.android.commands.monkey.ape.AndroidDevice.Activity;
 import com.android.commands.monkey.ape.AndroidDevice.Stack;
 import com.android.commands.monkey.ape.AndroidDevice.Task;
-import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.BaseActionFilter;
 import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.SubsequenceFilter;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
-import com.android.commands.monkey.ape.agent.pipeline.LlmGate;
 import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
-import com.android.commands.monkey.ape.agent.pipeline.StageResult;
 import com.android.commands.monkey.ape.llm.LlmRouter;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
@@ -193,7 +190,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         }
     };
 
-    static enum SataEventType {
+    public static enum SataEventType {
         TRIVIAL_ACTIVITY,
         SATURATED_STATE, USE_BUFFER, EARLY_STAGE,
         EPSILON_GREEDY, RANDOM, NULL, BUFFER_LOSS, FILL_BUFFER, BAD_STATE;
@@ -243,7 +240,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         return this.getGraph().isEntryState(state);
     }
 
-    protected void logActionSelected(Action action, SataEventType type) {
+    @Override
+    public void logActionSelected(Action action, SataEventType type) {
         Logger.iformat("Select action %s by strategy %s", action, type);
         // Decision-source attribution is set at the priority-consuming PICK SITES
         // (the roulettes and the MOP short-circuits inside EARLY_STAGE/EPSILON_GREEDY),
@@ -481,75 +479,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         return decisionPipeline.decide(this);
     }
 
-    /**
-     * The rungs of the ladder this class still decides itself.
-     *
-     * <p>The pipeline's roster ends in a stage that calls this, so every step is decided by the
-     * pipeline while the extraction is walking the ladder from the top. What is left here is
-     * whatever has not become a stage yet, in its original order and with its original predicates.
-     *
-     * @return the step's decision, always a {@code SELECT}
-     */
     @Override
-    public StageResult decideInlineLadder() {
-        Action resolved = null;
-        resolved = selectNewActionFromBuffer();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.USE_BUFFER);
-            return selected(resolved);
-        }
-        resolved = selectNewActionBackToActivity();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.TRIVIAL_ACTIVITY);
-            return selected(resolved);
-        }
-        resolved = selectNewActionEarlyStageForward();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.EARLY_STAGE);
-            return selected(resolved);
-        }
-        resolved = selectNewActionForTrivialActivity();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.TRIVIAL_ACTIVITY);
-            return selected(resolved);
-        }
-        resolved = selectNewActionEarlyStageBackward();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.EARLY_STAGE);
-            return selected(resolved);
-        }
-        resolved = selectNewActionEpsilonGreedyRandomly();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.EPSILON_GREEDY);
-            return selected(resolved);
-        }
-        resolved = handleNullAction();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.NULL);
-            return selected(resolved);
-        }
-        throw new BadStateException("No available action on the current state");
-    }
-
-    /**
-     * Wraps a decided action with the decision-source label that names who decided it.
-     *
-     * <p>The label is read off the action rather than chosen here: the pick sites stamp a
-     * {@link ModelAction}'s provenance themselves, and a non-model action's source is derived from
-     * its type the same way {@code [APE-STEP]}'s non-model branch derives it. That is what INV-DP-04
-     * requires — one vocabulary, and the stage's label equal to what telemetry will print.
-     *
-     * @param action the action the ladder settled on
-     * @return the {@code SELECT} result carrying it
-     */
-    private static StageResult selected(Action action) {
-        String source = action instanceof ModelAction
-                ? ((ModelAction) action).getDecisionSource().name()
-                : nonModelDecisionSource(action.getType()).name();
-        return StageResult.select(action, source);
-    }
-
-    protected ModelAction selectNewActionEarlyStageBackward() {
+    public ModelAction selectNewActionEarlyStageBackward() {
         return selectNewActionEarlyStageBackwardGreedy();
     }
 
@@ -557,7 +488,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         logEvent(SataEventType.BUFFER_LOSS);
     }
 
-    protected ModelAction selectNewActionEpsilonGreedyRandomly() {
+    @Override
+    public ModelAction selectNewActionEpsilonGreedyRandomly() {
         // back-menu-pick-cap: bound discretionary BACK/MENU re-picks per (activity, type) across
         // NamingFactory-minted sibling states (INV-SEL-NAV-01). Only the discretionary channels
         // here are capped — the short-circuits, the least-visited pick, and the roulette. The
@@ -1106,7 +1038,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         return action;
     }
 
-    protected ModelAction selectNewActionBackToActivity() {
+    @Override
+    public ModelAction selectNewActionBackToActivity() {
         if (this.backToActivity == null) {
             return null;
         }
@@ -1195,7 +1128,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         return Config.minEpsilon + (Config.maxEpsilon - Config.minEpsilon) * coverageGap;
     }
 
-    protected ModelAction selectNewActionEarlyStageForward() {
+    @Override
+    public ModelAction selectNewActionEarlyStageForward() {
         // A simple Depth First
         ModelAction action = selectNewActionEarlyStageForABA();
         if (action != null) {

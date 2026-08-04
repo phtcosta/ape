@@ -168,7 +168,14 @@ public final class DecisionPipeline {
                             collaborators::triggerMopComponent));
                     break;
                 case SATA_CHAIN:
-                    stages.add(new InlineLadderStage(collaborators));
+                    stages.add(new SataChainStage(collaborators::logActionSelected,
+                            collaborators::selectNewActionFromBuffer,
+                            collaborators::selectNewActionBackToActivity,
+                            collaborators::selectNewActionEarlyStageForward,
+                            collaborators::selectNewActionForTrivialActivity,
+                            collaborators::selectNewActionEarlyStageBackward,
+                            collaborators::selectNewActionEpsilonGreedyRandomly,
+                            collaborators::handleNullAction));
                     break;
                 default:
                     // Every candidate is constructed above, so this is reachable only by adding a

@@ -531,7 +531,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * 
      * @return
      */
-    protected ModelAction selectNewActionFromBuffer() {
+    public ModelAction selectNewActionFromBuffer() {
         if (actionBuffer.isEmpty()) {
             return null;
         }
@@ -1746,7 +1746,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * 
      * @return must return a non-null action
      */
-    protected ModelAction handleNullAction() {
+    public ModelAction handleNullAction() {
         ModelAction action = newState.randomlyPickAction(getRandom(), validatedActionFilter);
         if (action != null) {
             ModelAction resolved = validateNewAction(action);

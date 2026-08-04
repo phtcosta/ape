@@ -19,10 +19,9 @@ import java.util.Random;
  * ({@code SataAgent.java:1330}, after the task-1.6 seam), the epsilon-greedy roulette
  * ({@code :681}), and {@code handleNullAction} ({@code StatefulAgent.java:1695,1706,1711}).
  *
- * <p>The component-trigger draw ({@code SataAgent.java:548}) is <b>not</b> among them, although it
- * is written against this same accessor. It is the last conjunct of a short-circuiting condition
- * whose first is {@code Config.componentPercentage > 0} — false under the jar defaults this
- * harness runs on — so the draw never executes (finding 2.1-c, design D5). Nothing is lost by
+ * <p>The component-trigger draw is <b>not</b> among them, although {@code ComponentTriggerStage}
+ * takes it from this same accessor. No preset states {@code ape.componentPercentage}, so the stage
+ * is in no preset's roster and the draw never executes (finding 2.1-c, design D5). Nothing is lost by
  * that: a draw that never happens cannot desynchronize the stream. The distinction is worth the
  * sentence, because "the override reaches this call site" and "this call site draws" are different
  * claims, and only the second one moves a golden.

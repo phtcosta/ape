@@ -13,6 +13,7 @@ import com.android.commands.monkey.ape.llm.ApePromptBuilder;
 import com.android.commands.monkey.ape.llm.LlmRouter;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -50,12 +51,18 @@ public class DecisionPipelineFromSpecTest {
     private static class FakeCollaborators implements StageCollaborators {
 
         private final ModelAction trivial;
-        private final StageResult remainder;
-        private int inlineLadderCalls;
+        private final ModelAction fromTheChain;
 
-        FakeCollaborators(ModelAction trivial, StageResult remainder) {
+        /**
+         * How many times the chain ran. Counted on the buffer rung because it is the chain's first
+         * rung and the only one no other stage shares — the trivial-activity search is rung four
+         * and also the budget gate's producer, so counting there could not tell the two apart.
+         */
+        private int chainCalls;
+
+        FakeCollaborators(ModelAction trivial, ModelAction fromTheChain) {
             this.trivial = trivial;
-            this.remainder = remainder;
+            this.fromTheChain = fromTheChain;
         }
 
         @Override
@@ -64,9 +71,39 @@ public class DecisionPipelineFromSpecTest {
         }
 
         @Override
-        public StageResult decideInlineLadder() {
-            inlineLadderCalls++;
-            return remainder;
+        public ModelAction selectNewActionFromBuffer() {
+            chainCalls++;
+            return null;
+        }
+
+        @Override
+        public ModelAction selectNewActionBackToActivity() {
+            return null;
+        }
+
+        @Override
+        public ModelAction selectNewActionEarlyStageForward() {
+            return null;
+        }
+
+        @Override
+        public ModelAction selectNewActionEarlyStageBackward() {
+            return null;
+        }
+
+        @Override
+        public ModelAction selectNewActionEpsilonGreedyRandomly() {
+            return null;
+        }
+
+        /** The chain's last rung, which is where these plans let it answer. */
+        @Override
+        public ModelAction handleNullAction() {
+            return fromTheChain;
+        }
+
+        @Override
+        public void logActionSelected(Action action, SataAgent.SataEventType type) {
         }
 
         @Override
@@ -169,54 +206,54 @@ public class DecisionPipelineFromSpecTest {
     @Test
     public void aBareplanAssemblesTheBudgetGateAndTheTerminalStage() {
         DecisionPipeline pipeline = assemble(TestRunSpecs.spec(),
-                new FakeCollaborators(null, StageResult.select(action(), "SATA")));
+                new FakeCollaborators(null, action()));
 
-        assertEquals(Arrays.asList("Budget", "InlineLadder"), pipeline.stageNames());
+        assertEquals(Arrays.asList("Budget", "SataChain"), pipeline.stageNames());
     }
 
     @Test
     public void aPlanWithTheBudgetOffAssemblesNoBudgetStage() {
         DecisionPipeline pipeline = assemble(
                 TestRunSpecs.spec("ape.activityBudgetEnabled", "false"),
-                new FakeCollaborators(null, StageResult.select(action(), "SATA")));
+                new FakeCollaborators(null, action()));
 
         // Structural absence, not a stage that answers "disabled" (INV-DP-03).
-        assertEquals(Arrays.asList("InlineLadder"), pipeline.stageNames());
+        assertEquals(Arrays.asList("SataChain"), pipeline.stageNames());
     }
 
     @Test
     public void assemblyEchoesTheRosterItBuilt() {
         List<DecisionPipeline> built = new java.util.ArrayList<>();
         String echoed = echoOf(TestRunSpecs.spec(),
-                new FakeCollaborators(null, StageResult.select(action(), "SATA")), built);
+                new FakeCollaborators(null, action()), built);
 
-        assertTrue("got: " + echoed, echoed.contains("[APE-ARCH] stages=[Budget, InlineLadder]"));
+        assertTrue("got: " + echoed, echoed.contains("[APE-ARCH] stages=[Budget, SataChain]"));
     }
 
     @Test
     public void theTerminalStageIsAlwaysAssembledAndDecidesTheStep() throws Exception {
         ModelAction fromTheChain = action();
         FakeCollaborators agent =
-                new FakeCollaborators(null, StageResult.select(fromTheChain, "SATA"));
+                new FakeCollaborators(null, fromTheChain);
         DecisionPipeline pipeline = assemble(TestRunSpecs.spec(), agent);
 
         Action decided = pipeline.decide(new FakeContext(stateOn(ACTIVITY), exhausted()));
 
         assertSame(fromTheChain, decided);
-        assertEquals(1, agent.inlineLadderCalls);
+        assertEquals(1, agent.chainCalls);
     }
 
     @Test
     public void theBudgetStageIsWiredToTheTrivialActivityProducer() throws Exception {
         ModelAction trivial = action();
         FakeCollaborators agent =
-                new FakeCollaborators(trivial, StageResult.select(action(), "SATA"));
+                new FakeCollaborators(trivial, action());
         DecisionPipeline pipeline = assemble(TestRunSpecs.spec(), agent);
 
         Action decided = pipeline.decide(new FakeContext(stateOn(ACTIVITY), exhausted()));
 
         assertSame("assembly bound the budget gate to the wrong producer", trivial, decided);
         assertEquals("the budget gate preempts the rest of the ladder (INV-DP-02)",
-                0, agent.inlineLadderCalls);
+                0, agent.chainCalls);
     }
 }

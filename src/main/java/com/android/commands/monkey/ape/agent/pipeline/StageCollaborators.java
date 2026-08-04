@@ -15,7 +15,9 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.agent.SataAgent.SataEventType;
 import com.android.commands.monkey.ape.llm.LlmRouter;
+import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ModelAction;
 
 /**
@@ -41,12 +43,74 @@ import com.android.commands.monkey.ape.model.ModelAction;
 public interface StageCollaborators {
 
     /**
+     * The next action of an already-planned sequence, or {@code null} when the buffer is empty.
+     *
+     * @return the buffered action, or {@code null}
+     */
+    ModelAction selectNewActionFromBuffer();
+
+    /**
+     * The BACK navigation towards the activity the run set out to return to, or {@code null} when
+     * there is none or it is already reached.
+     *
+     * @return the back-to-activity action, or {@code null}
+     */
+    ModelAction selectNewActionBackToActivity();
+
+    /**
+     * The unvisited-action roulette on the current state, or {@code null} when nothing there is
+     * unvisited.
+     *
+     * @return the early-stage forward action, or {@code null}
+     */
+    ModelAction selectNewActionEarlyStageForward();
+
+    /**
      * The navigation action towards an activity with unexplored work, or {@code null} when the
      * current activity already is one and when none is reachable.
      *
      * @return the trivial-activity navigation action, or {@code null}
      */
     ModelAction selectNewActionForTrivialActivity();
+
+    /**
+     * The backward walk over the graph towards unfinished work, or {@code null} when no such path
+     * exists.
+     *
+     * @return the early-stage backward action, or {@code null}
+     */
+    ModelAction selectNewActionEarlyStageBackward();
+
+    /**
+     * The epsilon-greedy pick: explore at rate epsilon, exploit otherwise. Consumes the seeded
+     * stream, which is why its position in the chain is a parity constraint (INV-DP-10).
+     *
+     * @return the epsilon-greedy action, or {@code null}
+     */
+    ModelAction selectNewActionEpsilonGreedyRandomly();
+
+    /**
+     * The last resort: a validated random pick over the state's actions.
+     *
+     * <p>It is the one rung that does not decline — it selects, or it throws
+     * {@code BadStateException} because the state offers nothing executable.
+     *
+     * @return the action of last resort, never {@code null}
+     */
+    ModelAction handleNullAction();
+
+    /**
+     * Logs the rung that decided the step, counts it, and writes the action's attribution.
+     *
+     * <p>Agent-side because the attribution rule is the agent's: every rung but the two that consume
+     * priority has its action stamped {@code SATA} here, and the two that do stamp their own source
+     * at the pick site. That makes this call the point after which — and only after which — an
+     * action's decision source is the one telemetry will print.
+     *
+     * @param action the action the rung produced
+     * @param type the rung's event label
+     */
+    void logActionSelected(Action action, SataEventType type);
 
     /**
      * The run's LLM router, or {@code null} on a plan with no LLM feature — in which case no stage
@@ -89,19 +153,4 @@ public interface StageCollaborators {
      * @param target the index of the target to fire
      */
     void triggerMopComponent(int target);
-
-    /**
-     * The rungs of the ladder that are still inline on the agent, decided as one block.
-     *
-     * <p>The extraction walks the ladder from the top, so at any moment the stages that exist stand
-     * in front of a remainder that does not yet: the SATA chain. {@link InlineLadderStage} carries that remainder as the roster's
-     * terminal stage, which is what lets the pipeline decide every step of a real run — and every
-     * step of a golden — from the first extracted stage onwards, instead of running beside the ladder
-     * until the last one lands. Task 2.7 replaces it with {@code SataChainStage}, at which point the
-     * remainder is empty and this method has no body left to hold.
-     *
-     * @return the step's decision, always a {@code SELECT}; the block ends in the chain's
-     *         {@code BadStateException} rather than in a pass (INV-DP-06)
-     */
-    StageResult decideInlineLadder();
 }
