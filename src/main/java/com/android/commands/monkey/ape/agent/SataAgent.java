@@ -336,8 +336,9 @@ public class SataAgent extends StatefulAgent {
     }
 
     /**
-     * Per-state UI-coverage dump (read-only), emitted at the pre-{@code saveGraph} step of the
-     * teardown chain (INV-COV-10). {@code mopReach} is computed here because the tracker holds no
+     * Per-state UI-coverage dump (read-only), emitted strictly before {@code saveActionHistory} —
+     * the first teardown step that writes an artifact (INV-COV-10). {@code mopReach} is computed
+     * here because the tracker holds no
      * MopData reference (D4): a state's Activity gates a MOP target iff
      * {@code _mopData != null && activityHasMop(activity)} — which is why the hoist is an
      * overridable step rather than a line moved up into a class that cannot see the predicate.

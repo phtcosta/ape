@@ -340,3 +340,42 @@ Open coordination items — status 2026-08-03:
   deviation is in the mechanism, and it is recorded here rather than left implicit. One item binds
   stage 2 group 1: task 4.3a makes `ape.corpusBasis` a third resolver-owned key, so task 1.2's
   key-ownership table is `ape.preset`, `ape.runId`, `ape.corpusBasis`.
+- 2026-08-04 — **Stage 2 group 7 (the gates) is green; stage 2 is not done.** Tasks 7.1–7.6 complete,
+  `rearch-02-runspec` at 40/49. What the gates said, as observed: the five rearch-01 golden classes
+  across the four presets green (`ParityOracle{Aperv,Mop,Llm,LlmMop}Test` + `PreemptionGoldenTest`,
+  14 tests, 0 failures); full suite **937 / 0 failures / 19 skipped** (13 `@Ignore` + 6 `Assume` in
+  `SglangLiveTest`, with `SGLANG_URL` unset — the decomposition, not the total, is the comparable
+  number); `mvn clean package` green with `target/ape-rv.jar` holding exactly one entry,
+  `classes.dex`, 641564 bytes. No golden changed (INV-ORA-07 holds).
+  **D-9's sanctioned-divergence clause did not apply, and that was established rather than assumed**:
+  `StringCache.nextString()` was temporarily poisoned to throw on any call; `StringCacheSeededTest`
+  went red (proving the probe live) while all five golden classes stayed green (proving the ladder
+  never reaches it). The string list is not merely empty on these fixtures — the method is not
+  called at all, because the list is populated only by `GUITreeBuilder`'s `cacheString(s, true)`
+  sites and the oracle enters below GUITree building. The probe was reverted; byte-parity everywhere.
+  **The build stamp reports `b7baa68`, not this branch's `fbcfcde`** — the documented worktree
+  misreport (`docs/20260803_procedimento_worktree_rearch.md`): in a linked worktree the plugin
+  normalizes `.git` to the main repo's common dir and stamps `master`'s HEAD. The stamping mechanism
+  is therefore verified working (constant present in the dex, no `${…}` residue) while its *value* is
+  known-wrong here; no worktree jar is deployed, so no delivered jar carries it. Neither a green nor
+  a regression — recorded as observed.
+  Tasks 7.4/7.5 were followed by hand: their `sdd-*` skills exist on disk but are absent from the
+  Skill registry of an rv-android-rooted session. `sdd-qa-lint-fix` is a no-op here by its own rule
+  (Java/checkstyle has no auto-fix) and checkstyle is neither installed nor configured; `sdd-verify`
+  resolves to tests **pass** / lint **skipped** (checkstyle absent) / complexity **null** (no Java
+  tool) ⇒ overall **pass**. The 7.5 review surfaced six comment-level P4 defects in groups 1–5's own
+  writing, fixed here and named in the commit: five `formerly a non-final Config field` javadocs in
+  `RunSpec` (lineage, and describing fields `Config` no longer has) and one `SataAgent` javadoc still
+  naming the deleted `saveGraph`. No production behavior changed — the dex is byte-identical in size.
+  **Why the stage is still not deployable**, corrected against the tree rather than carried over from
+  the session brief, which said `rvsec#93` was blocked: it is neither blocked nor unstarted any more.
+  `rvsec` commit `d8f1df0a` (2026-08-04, *"retire ape_pure_mode from the aperv arm surface"*)
+  implements it — `gh93-retire-ape-pure-mode` is 30/30 tasks and `grep ape_pure_mode` over `tool.py`
+  returns nothing. But it sits on branch `rearch-counterparts` alone, committed `refs #93` rather than
+  `closes #93`, and design D-4's precondition is the counterpart **merged into `modules`** before any
+  stage-2 jar reaches a device — the reverse order aborts every campaign arm before step 1. The gate
+  is therefore unmet on the merge criterion, not on the implementation one. That commit was made
+  outside this session; nothing here touched `rvsec`. Stage 2's own group 6 (4 tasks: the fixture and
+  compat-test half that follow 6.0) is skipped, not done; groups 8 (owner-executed device smoke) and
+  9 (change hygiene) remain. "Stage 2's gates are green" is the claim this entry makes; "stage 2 is
+  done" is not, and the `apply` box above stays open.

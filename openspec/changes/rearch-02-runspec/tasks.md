@@ -72,12 +72,12 @@ Gate: this change may only be applied after `rearch-01-parity-oracle` is impleme
 
 ## 7. Gates and checkpoints
 
-- [ ] 7.1 Parity-oracle gate: run the rearch-01 golden suite per preset against the stage-2 jar — green for `aperv`/`mop`/`llm`/`llm_mop`. If any fixture exercises a populated string list, confirm it is in the sanctioned-divergence set (design D-9) and document; byte-parity everywhere else
-- [ ] 7.2 `mvn clean package`: `target/ape-rv.jar` builds; vendored jars still excluded; dex contains the build sha
-- [ ] 7.3 `mvn test` full suite green
-- [ ] 7.4 Run `/sdd-qa-lint-fix` then `/sdd-verify` on the touched modules
-- [ ] 7.5 Invoke `/sdd-code-reviewer` via Skill tool over the change diff
-- [ ] 7.6 Update `CLAUDE.md`: RunSpec/fail-fast/RUN_START notes; remove `--ape-model`, `ape.apePureMode`, save-flag references; current-state wording only (P4)
+- [x] 7.1 Parity-oracle gate: run the rearch-01 golden suite per preset against the stage-2 jar — green for `aperv`/`mop`/`llm`/`llm_mop`. If any fixture exercises a populated string list, confirm it is in the sanctioned-divergence set (design D-9) and document; byte-parity everywhere else
+- [x] 7.2 `mvn clean package`: `target/ape-rv.jar` builds; vendored jars still excluded; dex contains the build sha
+- [x] 7.3 `mvn test` full suite green
+- [x] 7.4 Run `/sdd-qa-lint-fix` then `/sdd-verify` on the touched modules
+- [x] 7.5 Invoke `/sdd-code-reviewer` via Skill tool over the change diff
+- [x] 7.6 Update `CLAUDE.md`: RunSpec/fail-fast/RUN_START notes; remove `--ape-model`, `ape.apePureMode`, save-flag references; current-state wording only (P4)
 
 ## 8. Device smoke (optional, standalone validation only)
 

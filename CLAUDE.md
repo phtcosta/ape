@@ -83,7 +83,7 @@ Monkey (entry: com.android.commands.monkey.Monkey)
         └── Agent (testing strategy)
               ├── SataAgent      — primary: SATA heuristic, epsilon-greedy (active via --ape sata)
               ├── RandomAgent    — priority-weighted random baseline (active via --ape random)
-              ├── ReplayAgent    — replay recorded scripts (active via ape.replayLog config)
+              ├── ReplayAgent    — replay recorded scripts (active via --ape replay --ape-replay <log>)
               ├── ApeAgent       — full CEGAR with refinement (class exists; Phase 2: wire into CLI)
               └── StatefulAgent  — base class for SataAgent/RandomAgent/ApeAgent
 ```
@@ -111,9 +111,19 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 | `ape.utils` | Config (100+ flags), Logger, RandomHelper, Utils |
 | `reducer/` | Crash test-case minimization (delta debugging) |
 
+### The run plan (`ape/runtime/`)
+
+A run's behavior is decided once, at startup, by a `RunSpec` — an immutable, validated plan resolved from `/data/local/tmp/ape.properties`, `/sdcard/ape.properties` and the command line. `Monkey.run` resolves it before any device interaction, and `RunContext.initialize` then holds it, together with the run id and the seeded RNG, for the whole run. Read it through `RunContext.current().spec()`.
+
+Resolution is **total and fail-fast**: an unknown key, a key outside the `ape.` namespace, a value of the wrong type, a retired key, or an impossible feature combination aborts the run before the first event. The abort prints `[APE-RUNSPEC-ABORT] reason=<class> key=<key> detail=<msg>` and exits nonzero, so a supervisor sees a failed task rather than a run that quietly explored under a configuration nobody chose. `KeyOwnership` is the registry of what is known: every key belongs to the base exploration params, to one `Feature`, or to the resolver, and retired keys carry a reason naming what replaced them.
+
+Presets (`aperv`, `mop`, `llm`, `llm_mop`) name the campaign arms; `ape.preset` selects one and explicit keys override it.
+
+The first line of a run's output is a level-0 `RUN_START` JSON record (`RunSpecEcho`) carrying the run id, seed, agent, preset, active features, resolved params, inert keys, plan digest and the build stamp — so a trace says which jar produced it and under which plan. `BuildInfo.GIT_SHA` / `JAR_BUILT` are filled at package time from git.
+
 ### Central Configuration
 
-`ape/utils/Config.java` defines all configuration flags loaded from `ape.properties`. Key flags:
+`ape/utils/Config.java` defines the configuration flags loaded from `ape.properties` that the plan does not own. Key flags:
 - `doFuzzing` / `fuzzingRate` — enables random fuzzing at 2% rate per step (enabled by default)
 - `evolveModel` / `actionRefinementFirst` — controls model refinement behavior
 - `maxStatesPerActivity` / `maxGUITreesPerState` — state space limits
@@ -122,10 +132,16 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `defaultGUIThrottle` — delay between actions
 - `mopDataPath` — path to static analysis JSON on device (null = MOP scoring disabled)
 - `mopWeightDirect` / `mopWeightTransitive` — MOP scoring weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost)
-- `mopWeightOpenMenu` — boost on the MODEL_MENU action when the activity's OPTIONSMENU is a MOP gateway (default 250; gh13 T1.2)
-- `fuzzInputTyped` — type-aware EditText fuzzing from static `inputType`/`hint` (default true; set false to restore the legacy random-string generator — gh13 T1.3 rollback knob)
-- `mopStrictPackageMatch` — reject `MopData.load` when the JSON package/mainActivity diverges from the runtime values (default false = warn-only; gh13 T1.7)
-- `activityTriggerEnabled` — include activities in component triggering (default **true**; registered in the `apePureMode` kill-switch registry, so a pure arm forces it off)
+
+Five keys are owned by the plan rather than by `Config`, and are read through `RunContext.current().spec()`:
+- `ape.mopWeightOpenMenu` → `spec().mop().weightOpenMenu()` — boost on the MODEL_MENU action when the activity's OPTIONSMENU is a MOP gateway (default 250; gh13 T1.2)
+- `ape.fuzzInputTyped` → `spec().exploration().fuzzInputTyped()` — type-aware EditText fuzzing from static `inputType`/`hint` (default true; set false for the random-string generator — gh13 T1.3 rollback knob)
+- `ape.mopStrictPackageMatch` → `spec().mop().strictPackageMatch()` — reject `MopData.load` when the JSON package/mainActivity diverges from the runtime values (default false = warn-only; gh13 T1.7)
+- `ape.activityTriggerEnabled` → `spec().mop().activityTriggerEnabled()` — include activities in component triggering (default **true**)
+- `ape.mopFrontierWeight` → `spec().mop().frontierWeight()` — boost for unvisited actions on MOP-reachable widgets (default 0 = pass disabled)
+
+`MopParams` is absent on an arm whose plan carries no MOP feature; the two sites reachable on such an arm read that absence as "off".
+
 - Naming: the static-analysis JSON wire format uses `Target` vocabulary (`reachesTarget`/`directlyReachesTarget`/`targetMethods`); aperv's Java model uses `MOP` (the only targets aperv consumes are JavaMOP operations). The boundary lives in the `MopData` class javadoc — `*Target` appears only where JSON is read (gh13 D7)
 - `llmUrl` — SGLang base URL (null = LLM disabled); e.g., `http://10.0.2.2:30000/v1`
 - `llmOnNewState` / `llmOnStagnation` — toggle LLM modes (default: true)
@@ -134,11 +150,11 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 - `llmPercentage` — probability of random LLM routing per step (default: 0.02 = 2%; 0.0 disables; 0.7 = rv-agent-like 70%)
 - `llmMaxTokens` — `max_tokens` for the chat completion request (default: 1024; J1c expose-only, defaults reproduce the prior hard-coded value; not causal for truncation — `tokens_out` ≈ 25). Shared by the `[APE-LLM-CONFIG]` manifest and the request body
 - `llmSnapTolerancePx` — floor of the euclidean snap tolerance `max(floor, min(w,h)/2)` in `LlmRouter.mapToModelAction` (default: 50; J1b expose-only, lever analyzed and discarded — default not swept)
-- `llmBoundaryTopPct` / `llmBoundaryBottomPct` — top/bottom boundary reject bands as a fraction of screen height (defaults: 0.05 / 0.94; J1b expose-only, policy levers, defaults reproduce the prior hard-coded bands). A coordinate with `pixelY < h*top` or `pixelY > h*bottom` is rejected (status/nav bar) with no off-tree tap synthesized. All four J1b/J1c keys are registered exempt in `Config.rvExemptReasons` (LLM sub-params, inert when the LLM masters are forced off — INV-ARCH-06). Native `tool_calls` malformations now run the same coordinate-repair pipeline as the XML `<tool_call>` path (`SglangClient.ToolCall.rawArguments` → `ToolCallParser` Level 1 → shared `parseJsonString`), surfacing through the existing `repair=` telemetry field (INV-LLM-10, INV-RTR-14)
+- `llmBoundaryTopPct` / `llmBoundaryBottomPct` — top/bottom boundary reject bands as a fraction of screen height (defaults: 0.05 / 0.94; J1b expose-only, policy levers, defaults reproduce the prior hard-coded bands). A coordinate with `pixelY < h*top` or `pixelY > h*bottom` is rejected (status/nav bar) with no off-tree tap synthesized. All four J1b/J1c keys are owned by the LLM feature, so on a plan without it they are inert at their neutral values and are reported in `RUN_START.inert`. Native `tool_calls` malformations now run the same coordinate-repair pipeline as the XML `<tool_call>` path (`SglangClient.ToolCall.rawArguments` → `ToolCallParser` Level 1 → shared `parseJsonString`), surfacing through the existing `repair=` telemetry field (INV-LLM-10, INV-RTR-14)
 
 ## Notes
 
-- Unit + integration test suite: `mvn test` (145 tests, 14 skipped for Android runtime). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest`
+- Unit + integration test suite: `mvn test` (937 tests, 19 skipped — 13 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
 - Known issue: `OutOfMemoryError` possible due to keeping all GUITrees in memory
 - Pre-compiled `ape.jar` is included in repo for convenience

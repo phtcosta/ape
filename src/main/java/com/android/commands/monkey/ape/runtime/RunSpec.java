@@ -702,7 +702,7 @@ public final class RunSpec {
             super(values);
         }
 
-        /** Type-aware input fuzzing; formerly a non-final {@code Config} field. */
+        /** Type-aware input fuzzing; false when the key is absent. */
         public boolean fuzzInputTyped() {
             return has("ape.fuzzInputTyped") && bool("ape.fuzzInputTyped");
         }
@@ -718,22 +718,22 @@ public final class RunSpec {
             return str("ape.mopDataPath");
         }
 
-        /** Formerly a non-final {@code Config} field. */
+        /** Whether a package or mainActivity mismatch rejects the MOP data instead of warning. */
         public boolean strictPackageMatch() {
             return bool("ape.mopStrictPackageMatch");
         }
 
-        /** Zero when the gateway feature is absent; formerly a non-final {@code Config} field. */
+        /** Zero when the gateway feature is absent. */
         public int weightOpenMenu() {
             return has("ape.mopWeightOpenMenu") ? integer("ape.mopWeightOpenMenu") : 0;
         }
 
-        /** Zero when the frontier feature is absent; formerly a non-final {@code Config} field. */
+        /** Zero when the frontier feature is absent. */
         public int frontierWeight() {
             return has("ape.mopFrontierWeight") ? integer("ape.mopFrontierWeight") : 0;
         }
 
-        /** False when the launcher feature is absent; formerly a non-final {@code Config} field. */
+        /** False when the launcher feature is absent. */
         public boolean activityTriggerEnabled() {
             return has("ape.activityTriggerEnabled") && bool("ape.activityTriggerEnabled");
         }
