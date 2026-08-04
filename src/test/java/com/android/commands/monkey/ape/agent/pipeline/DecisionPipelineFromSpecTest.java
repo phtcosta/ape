@@ -78,6 +78,16 @@ public class DecisionPipelineFromSpecTest {
         public void resolveSynthesizedTap(ModelAction tap) {
             throw new UnsupportedOperationException("no LLM stage is assembled in these plans");
         }
+
+        @Override
+        public int mopComponentTargetCount() {
+            throw new UnsupportedOperationException("no MOP stage is assembled in these plans");
+        }
+
+        @Override
+        public void triggerMopComponent(int target) {
+            throw new UnsupportedOperationException("no MOP stage is assembled in these plans");
+        }
     }
 
     /**

@@ -1134,8 +1134,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         return false;
     }
 
-    /** Round-robin cursor over the combined (trigger + provider) tuple list (gh11 / gh13 T1.4+T1.5). */
-    private int componentTriggerIndex = 0;
     /** Lazily-built tuple lists, cached for the session. */
     private java.util.List<TriggerTuple> _triggerTuples;
     private java.util.List<ProviderTuple> _providerTuples;
@@ -1301,26 +1299,38 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * gh13 T1.4+T1.5: trigger one MOP-reachable component per call, round-robining across all
-     * (component × filter × action) and (provider × operation) tuples. Returns true if a trigger
-     * was dispatched. No-op (returns false, cursor unchanged) when no tuples exist.
+     * The size of the MOP-reachable trigger pool: every (component × filter × action) tuple
+     * followed by every (provider × operation) tuple (gh13 T1.4+T1.5). Built on the first ask and
+     * cached for the session, so the count a caller walks over cannot change under it.
+     *
+     * @return the pool size; zero when the census yields no triggerable target
      */
-    protected boolean triggerMopComponent() {
+    public int mopComponentTargetCount() {
         if (!_tuplesBuilt) {
             _triggerTuples = buildTriggerTuples(_mopData);
             _providerTuples = buildProviderTuples(_mopData);
             _tuplesBuilt = true;
         }
-        int total = _triggerTuples.size() + _providerTuples.size();
-        if (total == 0) return false;
+        return _triggerTuples.size() + _providerTuples.size();
+    }
 
-        int idx = componentTriggerIndex % total;
-        componentTriggerIndex++;
-
-        if (idx < _triggerTuples.size()) {
-            return dispatchTrigger(_triggerTuples.get(idx));
+    /**
+     * Fires one target of that pool. The trigger tuples occupy the low indices and the provider
+     * tuples the rest, which is what makes a single cursor walk both kinds.
+     *
+     * <p>Which target is fired is the caller's choice, not this method's: the round-robin cursor is
+     * episode state owned by the component-trigger stage (INV-DP-07), while the intent and
+     * {@code content}-command dispatch below is device-facing machinery that stays with the agent
+     * (design D5).
+     *
+     * @param target an index below {@link #mopComponentTargetCount}
+     */
+    public void triggerMopComponent(int target) {
+        if (target < _triggerTuples.size()) {
+            dispatchTrigger(_triggerTuples.get(target));
+            return;
         }
-        return dispatchProvider(_providerTuples.get(idx - _triggerTuples.size()));
+        dispatchProvider(_providerTuples.get(target - _triggerTuples.size()));
     }
 
     /** Build the per-trigger log line (static for testability). */

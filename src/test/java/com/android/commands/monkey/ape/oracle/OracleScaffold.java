@@ -184,17 +184,19 @@ import java.util.Set;
  *       phase-2 grid — the key exists only in {@code aperv-tool}'s mapping
  *       ({@code tool.py:101}) and is absent from the 18 {@code ARM_DEFINING_KEYS} and both
  *       arm-flag dicts — so every arm runs on the jar default 0.0
- *       ({@code Config.java:256}), which makes the block's first conjunct false in production and
- *       here alike. Even with the gate forced open the committed fixture yields zero tuples (no
- *       receivers, no services, and its one provider has {@code reachesTarget=false}, filtered at
- *       {@code StatefulAgent.java:1246}), so {@code triggerMopComponent()} returns at
- *       {@code :1266} leaving {@code componentTriggerIndex} untouched; and had a tuple existed,
- *       dispatch is device-bound ({@code android.content.Intent} in {@code dispatchTrigger},
- *       {@code AndroidDevice.executeCommandAndWaitFor} in {@code dispatchProvider}, whose wrapper
- *       catches {@code Exception} and not the {@code NoClassDefFoundError} actually thrown). The
- *       exclusion costs no parity: the block returns nothing, and its short-circuiting
- *       conjunction consumes no RNG draw, so it can shift neither a decision nor the agent
- *       stream. Should a future arm enable it, this must be revisited before that arm's
+ *       ({@code Config.java:256}), which makes the rate non-positive in production and here alike.
+ *       Since the extraction moved that rate into the plan, the same fact reads structurally: no
+ *       preset states the key, so {@code COMPONENT_TRIGGER} is in no preset's plan and
+ *       {@code ComponentTriggerStage} is in no preset's roster (INV-DP-03). Even with the gate
+ *       forced open the committed fixture yields zero tuples (no receivers, no services, and its
+ *       one provider has {@code reachesTarget=false}, filtered at {@code StatefulAgent.java:1246}),
+ *       so {@code mopComponentTargetCount()} reports zero and the stage's cursor never moves; and
+ *       had a tuple existed, dispatch is device-bound ({@code android.content.Intent} in
+ *       {@code dispatchTrigger}, {@code AndroidDevice.executeCommandAndWaitFor} in
+ *       {@code dispatchProvider}, whose wrapper catches {@code Exception} and not the
+ *       {@code NoClassDefFoundError} actually thrown). The exclusion costs no parity: an absent
+ *       stage decides nothing and draws nothing, exactly as the short-circuiting conjunction it
+ *       replaced did. Should a future arm enable it, this must be revisited before that arm's
  *       comparability is claimed.</li>
  * </ul>
  *

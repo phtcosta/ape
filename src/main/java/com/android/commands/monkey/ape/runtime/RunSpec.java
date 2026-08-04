@@ -750,6 +750,15 @@ public final class RunSpec {
         public int activityTriggerMaxPerRun() {
             return integer("ape.activityTriggerMaxPerRun");
         }
+
+        /**
+         * The probability that a selection pass fires a component trigger. Read only when the
+         * component-trigger feature is present — and since this key being positive is what
+         * activates that feature, a plan that carries the feature always carries the key.
+         */
+        public double componentPercentage() {
+            return dbl("ape.componentPercentage");
+        }
     }
 
     /** Present exactly when the plan carries {@link Feature#LLM}. */

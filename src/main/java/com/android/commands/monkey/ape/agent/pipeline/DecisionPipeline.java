@@ -162,15 +162,19 @@ public final class DecisionPipeline {
                     stages.add(new MopLauncherStage(spec.mop().activityTriggerStagnationStep(),
                             spec.mop().activityTriggerMaxPerRun()));
                     break;
+                case COMPONENT_TRIGGER:
+                    stages.add(new ComponentTriggerStage(spec.mop().componentPercentage(),
+                            collaborators::mopComponentTargetCount,
+                            collaborators::triggerMopComponent));
+                    break;
                 case SATA_CHAIN:
                     stages.add(new InlineLadderStage(collaborators));
                     break;
                 default:
-                    // The candidates between these two are blocks the extraction has not reached
-                    // yet: they still run inside the terminal stage, in their ladder positions, so
-                    // constructing nothing here is what keeps a step's decision unchanged. The last
-                    // extraction task turns this branch into the error it will then be.
-                    break;
+                    // Every candidate is constructed above, so this is reachable only by adding a
+                    // constant without its construction step — which would otherwise assemble a
+                    // roster quietly missing a stage the plan asked for (INV-DP-03 read backwards).
+                    throw new IllegalStateException("no construction step for candidate " + candidate);
             }
         }
         return new DecisionPipeline(stages);

@@ -68,11 +68,33 @@ public interface StageCollaborators {
     void resolveSynthesizedTap(ModelAction tap);
 
     /**
+     * How many component-trigger targets the arm's census yields, building the pool on first ask.
+     *
+     * <p>Two methods rather than one because the round-robin walk and the dispatch belong to
+     * different owners: the cursor is the stage's episode state (INV-DP-07), while the pool and the
+     * per-kind dispatch — intents for receivers and services, {@code content} commands for providers
+     * — are the agent's device-facing machinery, which is where design D5 leaves them. The stage
+     * therefore asks how many targets there are, walks its own cursor over that range, and names the
+     * one to fire.
+     *
+     * @return the size of the combined (component × filter × action) and (provider × operation)
+     *         pool; zero when the census yields no triggerable target
+     */
+    int mopComponentTargetCount();
+
+    /**
+     * Fires the component-trigger target at {@code target}, which the caller took from the range
+     * {@link #mopComponentTargetCount} reported.
+     *
+     * @param target the index of the target to fire
+     */
+    void triggerMopComponent(int target);
+
+    /**
      * The rungs of the ladder that are still inline on the agent, decided as one block.
      *
      * <p>The extraction walks the ladder from the top, so at any moment the stages that exist stand
-     * in front of a remainder that does not yet: the LLM hooks, the MOP launcher, the component
-     * trigger, and the SATA chain. {@link InlineLadderStage} carries that remainder as the roster's
+     * in front of a remainder that does not yet: the SATA chain. {@link InlineLadderStage} carries that remainder as the roster's
      * terminal stage, which is what lets the pipeline decide every step of a real run — and every
      * step of a golden — from the first extracted stage onwards, instead of running beside the ladder
      * until the last one lands. Task 2.7 replaces it with {@code SataChainStage}, at which point the
