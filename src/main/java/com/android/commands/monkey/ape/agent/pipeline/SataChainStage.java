@@ -111,8 +111,10 @@ public final class SataChainStage implements DecisionStage {
      * {@inheritDoc}
      *
      * <p>{@code ctx} is unread: each rung is bound to an agent method that reads the agent's own
-     * fields, exactly as it did when this was a block of {@code selectNewActionNonnull}. Task 6.1 is
-     * where those reads become injected parameters.
+     * fields, exactly as it did when this was a block of {@code selectNewActionNonnull} — which is the
+     * parity claim this stage rests on, not an account of how the file got here. Those fields are the
+     * agent's injected exploration parameters, so no rung reaches a static {@code Config}
+     * (INV-DP-12).
      *
      * @throws BadStateException when every rung declines — the terminal stage's one way out other
      *         than a decision (INV-DP-06)

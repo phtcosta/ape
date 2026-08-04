@@ -62,7 +62,6 @@ import com.android.commands.monkey.ape.utils.Utils;
 
 import android.content.ComponentName;
 import android.content.Intent;
-import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 public abstract class ApeAgent implements Agent {

@@ -73,7 +73,7 @@ public class State extends GraphElement {
         // all: it gates which actions a State is *built* with, during model construction, from a
         // value the plan freezes at load. Threading plan state through Model/State/naming
         // construction to reach it would be a model-layer change with no decision-path payoff, and
-        // the guard of task 6.5 pins it at exactly one occurrence so it cannot quietly grow a
+        // StaticConfigReadGuardTest pins it at exactly one occurrence so it cannot quietly grow a
         // sibling.
         menuAction = new ModelAction(this, ActionType.MODEL_MENU);
         if (Config.modelMenuEnabled) {
