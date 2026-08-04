@@ -903,3 +903,108 @@ Open coordination items — status 2026-08-03:
   **Group 3 is complete: 3.1–3.4 all ticked.** Group 4 — the `LlmRouter` decomposition into five
   units, with the class deleted and its 67 tests migrated — is the next real extraction and was
   deliberately not begun here.
+
+- 2026-08-04 — **Stage 3 group 4 opened: three of the five LLM units landed,
+  `rearch-03-decision-pipeline` 22/53.** Gate observed before the work and again after each task:
+  **1042 → 1057 tests, 0 failures, 19 skipped**, BUILD SUCCESS, decomposition unchanged on both
+  sides at 13 `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4,
+  `ApePinchOrZoomEventTest` 3, `GUITreeBuilderPasswordTest` 1) + 6 `Assume` in `SglangLiveTest`
+  with `SGLANG_URL` unset. The parity gate ran after every task and held at 14/14; `git status
+  --short src/test/resources/goldens` was empty throughout (INV-ORA-07 holds) and no scenario
+  script changed. `openspec validate --strict` clean.
+
+  **`LlmRouter` is still the production path.** 4.1–4.3 built the units beside it, as groups 1–3
+  built the pipeline beside the ladder; nothing constructs them yet. The class dies at 4.7, and the
+  wiring that replaces it is 4.6.
+
+  - **4.1 `LlmClient`** composes `SglangClient` and `LlmCircuitBreaker` so the breaker cannot be
+    consulted twice per decision — `allows()` is that single consultation, carrying the
+    open-episode latch and the side-effect-free `isOpen()` emission check verbatim. Two manifest
+    fields needed a decision the task text does not anticipate: `stagnation_threshold` is an
+    **exploration**-scope key, not an LLM one, so it is an explicit constructor argument rather
+    than an `LlmParams` read; and the three trigger keys (`llmOnNewState`, `llmOnStagnation`,
+    `llmPercentage`) belong to features a plan may omit, where an absent key means a disabled
+    trigger and the manifest must state the value the run behaves as rather than drop the field an
+    offline reader joins on. Everything else is by key on `LlmParams` — §4.4 of the handoff asked
+    whether to add named accessors, and the answer is no: `url()`/`model()` earn their names by
+    being read at several sites, while nine keys read once each would be nine accessors for one
+    caller (P1).
+
+  - **4.2 `ScreenshotStep`** keeps dimension probing, capture and encoding as three calls rather
+    than one, because they fail differently and the engine must report them differently: a null
+    capture is `cause=screenshot` and carries the failing stage, a null encode is `cause=image` and
+    has no stage at all. **`deviceDimensions()` has no unit test and that is a property of the
+    method, not an omission.** `AndroidDevice.getDisplayBounds()` raises `NoClassDefFoundError` in
+    the JVM suite — an `Error`, which the historical `catch (Exception)` around the tree fallback
+    never covered and still does not, so it leaves the method. That is unchanged from the block the
+    unit extracted, so the probe is recorded as device-only rather than given a seam it does not
+    have on a device (learning 44).
+
+  - **4.3 `CoordinateMapper`** takes geometry and the ban together because the ban's key material
+    is exactly what the mapping produced. The `type_text`/`MODEL_LONG_CLICK` defect is reproduced
+    and named in the javadoc. **The 28 tests task 4.7's table assigns here moved now rather than at
+    the deletion, and all 28 were green on their first run against the new unit with every
+    assertion unchanged** — which is the semantic-preservation evidence the extraction owes, and it
+    is worth more than the same 28 tests moved after the fact.
+    `feedingAndConsultingTheBanNeverTouchesTheBreaker` is the one rewrite: the mapper now holds no
+    breaker at all, which states INV-RTR-16 structurally, so the assertion was remade across the
+    seam a run actually has.
+
+  **The §6.0 oracle question is settled, and the handoff's framing of it was incomplete in a way
+  that changes the plan.** The handoff proposed a scripted `LlmEngine` as the natural replacement
+  for `ScriptedLlmRouter`. **Object substitution alone cannot work**, and two verified facts say so:
+
+  1. `ape.graphStableRestartThreshold` defaults to **100** (`KeyOwnership.java:142`), so the real
+     `stagnationMidpointReached` midpoint is 50. Every LLM scenario's `graphStableCounter` is 0, 5,
+     6 or 7 — `ParityOracleLlmTest`, `ParityOracleLlmMopTest` and `PreemptionGoldenTest` alike. The
+     stub does not merely *gate* the stagnation predicate, it **replaces** it: the real predicate
+     is false on every scripted step, so a stage that evaluates it would never fire the hook the
+     script declares, and `llm:"declined"` would stop being reproducible.
+  2. `ape.llmPercentage` defaults to 0.02, and the delta spec's `Probabilistic LLM Routing`
+     requires the coin to be drawn in the stage, before the breaker gate. A real coin at 0.02
+     refuses the scripted random hook ~98% of the time. (`RunContext.rng()` has no other consumer
+     today, so the *draw* is stream-neutral in the oracle — it is the *verdict* that diverges.)
+
+  The decisive case is smaller still and needs neither default: `llm/baseline` step 2 carries
+  `isNewState=true` with `routesNewState=false`. The script's per-hook booleans are what select
+  which hook fires on a step whose agent-side conditions hold for several. **So the scripted seam
+  must be able to veto and to force each hook independently — it cannot come from the plan, and it
+  cannot come from a hook-blind `allows()`.**
+
+  **The shape chosen, to be built at 4.6:** `OracleScaffold` post-processes the assembled roster
+  and gives each of the three LLM stages its *own* scripted `LlmEngine`, one per hook, so
+  `allows()` is hook-aware by construction rather than by carrying a mode argument production would
+  ignore. The scaffold already walks `pipeline.stages()` to seed the launcher's cadence counter, so
+  this is the same adaptation, and it needs **no production test seam and no golden change** —
+  squarely inside INV-ORA-07's "only the injection scaffold MAY be adapted". It also needs the
+  scaffold's installed plan to state `ape.graphStableRestartThreshold` and `ape.llmPercentage` at
+  values that let a scripted hook through, which is the same class of move as the `ape.llmUrl` the
+  scaffold already installs. `ScriptedLlmRouter`'s contract is preserved, not weakened;
+  `HookOrderRouter` becomes a recorder the three scripted engines write to. **No deviation from
+  INV-ORA-07 is required and no golden needs regenerating.**
+
+  One consequence to state rather than hide: `finishStep()`'s consumption bookkeeping shifts
+  meaning slightly. Today "the predicate was invoked" means "the `LlmGate` precondition passed";
+  afterwards it means "`LlmGate` passed **and** the stage's own conjunct passed". No current
+  scenario declares a hook whose agent-side conjunct is false, so no scenario changes — but the
+  next scenario author should know the check got sharper.
+
+  **Task 4.6's text needs an `openspec-update-change` before it is implemented.** It says only
+  "point the three LLM stages at `LlmEngine`", while D7's first row and the three MODIFIED
+  requirements (`New-State LLM Mode`, `Stagnation LLM Mode`, `Probabilistic LLM Routing`) all move
+  the trigger predicates into the stages. That move has to happen inside group 4 — `LlmRouter`
+  cannot die while the predicates live in it — and the task must name it rather than have it
+  arrive as a silent widening. The same update should settle the dead `Config.llmOnNewState` /
+  `llmOnStagnation` / `llmPercentage > 0` conjunct each predicate carries, which D3 made redundant
+  with assembly: deleting it is a behaviour argument, not a tidy-up.
+
+  **One artifact/code disagreement found and left for 4.5 to resolve.** The delta spec states
+  `LlmEngine.selectAction(GUITree, State, List<ModelAction>, String mode, int step)` — five
+  arguments, without the `mopData` and `recentActions` the stages pass today from `ctx.mopData()`
+  and `ctx.actionHistory()`. Either the engine sources them itself or the signature keeps them;
+  the spec's form is likely abbreviation rather than intent, but it is the acceptance text and 4.5
+  should not quietly pick one.
+
+  **Group 4 is three of eight: 4.1–4.3 ticked, 4.4–4.8 open.** The remaining work is `LlmTelemetry`
+  (4.4), the engine that composes the five (4.5), the wiring and the oracle rework above (4.6), the
+  deletion and the residual test migration (4.7), and the doc pass (4.8). Group 5 was not begun.
