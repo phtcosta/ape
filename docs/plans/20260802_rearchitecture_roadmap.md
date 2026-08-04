@@ -652,7 +652,7 @@ Open coordination items — status 2026-08-03:
   after *every* task (INV-DP-09), which is why the session boundary is here: group 1 is the last
   point at which a green golden proves nothing about one's own edit.
 
-- 2026-08-04 — **Stage 3 group 2, tasks 2.1–2.5 landed: `rearch-03-decision-pipeline` 12/53.**
+- 2026-08-04 — **Stage 3 group 2, tasks 2.1–2.5 landed: `rearch-03-decision-pipeline` 11/53.**
   The ladder is now the pipeline for its first five rungs. Gate observed *before* the work rather
   than trusted from the handoff: **984 tests, 0 failures, 19 skipped**, BUILD SUCCESS, decomposition
   13 `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest`
