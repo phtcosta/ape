@@ -367,8 +367,9 @@ candidate list.
 `RunContext` parameter is dropped.** D3 sketched assembly as reading the plan and the run context,
 but gating is a question about the plan and construction is a question about the agent, and the
 stages' run-scoped collaborators arrive per step through `StepContext` — so a context parameter here
-is one nothing reads (P1). Task 7.1, which moves the LLM units and the pipeline itself onto
-`RunContext`, is where that changes. "Single assembly point" is unaffected.
+is one nothing reads (P1). This paragraph closed by expecting task 7.1 to move the LLM units and the
+pipeline itself onto `RunContext`; 7.1 settled it the other way for the pipeline, and **D15** records
+why. "Single assembly point" is unaffected either way.
 
 **The extraction seam: `InlineLadderStage`.** Until task 2.7 lands `SataChainStage`, `fromSpec`
 assembles `InlineLadderStage` for the `SATA_CHAIN` candidate — a package-private stage delegating to
@@ -406,6 +407,41 @@ Still no golden and no scenario script changed. What did change is the harness's
 sharper statement than the pre-decomposition one, which only meant the precondition passed. The
 hook-order requirement the preemption golden exists for is unaffected — it is pinned on a step where
 all three conjuncts hold and all three hooks are consulted in order.
+
+### D15 — What task 7.1 settled: the pipeline stays with the agent, the LLM units are on the context (recorded 2026-08-04, after implementation)
+
+7.1's earlier wording — "`RunContext` owns the assembled `DecisionPipeline` and the LLM units" — was
+one claim that had already landed and one the code contradicts, and D14 closed by forward-referencing
+the contradicted half as this task's work. Recorded here so nothing re-opens it.
+
+**The LLM half landed at 4.1–4.6 and is unchanged.** `RunContext` builds `LlmClient`,
+`CoordinateMapper`, `LlmTelemetry` and `LlmEngine` in its constructor and holds them as final fields,
+all four null together on a plan with no LLM feature. That is what lets a stage hold the unit it uses
+instead of reaching through the agent for it, and it is what INV-DP-03 means on the LLM side.
+
+**The pipeline stays owned by `SataAgent`, and initialization order is why.** `fromSpec` binds the
+agent's action producers as method references (D14), so the pipeline cannot exist before the agent
+does; `RunContext` is established before any agent exists, which is precisely what makes
+`RunContext.current().spec()` readable inside the agent's constructor. Moving ownership would take one
+of two shapes and both cost more than they buy: a two-phase `installPipeline(...)` — a mutable field
+with a null window, in the one class whose contract is that a run's context is established once and
+never re-established — or an inverted initialization order, which would put the plan behind the agent
+that reads it.
+
+**And no consumer wants it there.** The pipeline's only production readers are the agent's `decide`
+and `onStateTransition` call sites. Stage 4's `PIPELINE` record needs the stage census, which is
+`DecisionPipeline.assembledCandidates(RunSpec)` plus `Candidate.values()` — a pure function of the
+plan, needing no instance and no context, which is D13's "the plan-to-roster mapping is data" read
+forward. `lastStepSideEffects()` has no production reader at all yet. What a
+`RunContext.current().decisionPipeline()` accessor would add is one more ambient read of exactly the
+kind INV-DP-12 forbids and task 6.5's guard bans inside `agent/pipeline/**`.
+
+**What 7.1 is, therefore**: an audit of the LLM half, a wording fix here and in `fromSpec`'s javadoc,
+and the one thing that was genuinely missing — the assertion that pins transition forwarding. The
+parity oracle cannot stand in for it. `OracleScaffold` `Unsafe`-allocates its agent, so
+`StatefulAgent`'s `graph.addListener(this)` never runs and the harness's agent is not a
+`GraphListener` at all: a regression that stopped forwarding edges, or that forwarded them before the
+agent's own counter bookkeeping, would leave every golden green and the gate at 14/14.
 
 ## API Design
 
