@@ -30,14 +30,14 @@ What is already there: the value grammar (strings, numbers, booleans, null, `Map
 
 ## 2. EventSink Core (StepRecord, lifecycle, dictionaries)
 
-- [ ] 2.1 Define the `EventSink` interface (all methods `void`, primitives/strings in, nothing out — INV-SNK-07 by shape) and `NoopSink`
-- [ ] 2.2 Implement `NdjsonSink`: single pending `StepRecord` accumulator (reused object), `beginStep` (closes an unresolved predecessor without `out`), `decision`/`decisionNonModel`, `llm[]` append, `outcome` (close + one `System.out` write, never through `Logger` — INV-SNK-11), `flushPendingStep` (`out:{"resolved":false}`)
-- [ ] 2.3 Implement the run-local ID tables: `ACT` (`{"type":"ACT","id","name","mop"}`) and `STATE` (`{"type":"STATE","id","key","act"}`) records emitted on first sight, definition-before-reference (INV-SNK-06)
-- [ ] 2.4 Implement volume rules: defaults omitted; tri-state exemptions for `dec.patched` and `dec.cf` (INV-SNK-05); envelope once (INV-SNK-04)
-- [ ] 2.5 Implement the failure latch: no sink method propagates a `Throwable`; first failure disables emission for the run with one warning (INV-SNK-12)
-- [ ] 2.6 Unit tests: lifecycle (outcome joins its step at N+1; legitimate no-`out` closure; flush encoding), dictionary ordering, defaults omission, tri-state `patched`, record-per-step count (INV-SNK-03), every record line starts with `{`
-- [ ] 2.7 Run `/sdd-doc-code src/main/java/com/android/commands/monkey/ape/telemetry/NdjsonSink.java`
-- [ ] 2.8 Run `/sdd-test-run ape.telemetry`
+- [x] 2.1 Define the `EventSink` interface (all methods `void`, primitives/strings in, nothing out — INV-SNK-07 by shape) and `NoopSink`
+- [x] 2.2 Implement `NdjsonSink`: single pending `StepRecord` accumulator (reused object), `beginStep` (closes an unresolved predecessor without `out`), `decision`/`decisionNonModel`, `llm[]` append, `outcome` (close + one `System.out` write, never through `Logger` — INV-SNK-11), `flushPendingStep` (`out:{"resolved":false}`)
+- [x] 2.3 Implement the run-local ID tables: `ACT` (`{"type":"ACT","id","name","mop"}`) and `STATE` (`{"type":"STATE","id","key","act"}`) records emitted on first sight, definition-before-reference (INV-SNK-06)
+- [x] 2.4 Implement volume rules: defaults omitted; tri-state exemptions for `dec.patched` and `dec.cf` (INV-SNK-05); envelope once (INV-SNK-04)
+- [x] 2.5 Implement the failure latch: no sink method propagates a `Throwable`; first failure disables emission for the run with one warning (INV-SNK-12)
+- [x] 2.6 Unit tests: lifecycle (outcome joins its step at N+1; legitimate no-`out` closure; flush encoding), dictionary ordering, defaults omission, tri-state `patched`, record-per-step count (INV-SNK-03), every record line starts with `{`
+- [x] 2.7 Run `/sdd-doc-code src/main/java/com/android/commands/monkey/ape/telemetry/NdjsonSink.java`
+- [x] 2.8 Run `/sdd-test-run ape.telemetry`
 
 ## 3. Wire the Producers (decision, LLM, outcome)
 

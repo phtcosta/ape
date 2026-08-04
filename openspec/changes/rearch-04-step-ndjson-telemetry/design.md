@@ -260,28 +260,49 @@ Preconditions: balanced begin/end (assertion-checked in tests, not at runtime). 
 
 ```java
 interface EventSink {                    // all void; never throws into the loop
+    int ABSENT = -1;                     // the tri-states' third state, and 0 is taken
+
     void beginStep(int step, long tRelMs, String activity, boolean activityHasMop,
                    String stateKey);     // opens pending record; interns ACT/STATE ids;
-                                         // closes a still-pending predecessor without `out`
+                                         // closes a still-pending predecessor without `out`;
+                                         // re-entering the same step keeps the open record
     void decision(String action, String decisionSource, String pickChannel,
                   int priority, int mop, int mopFrontier, int wtg, int coverage,
-                  int menu, int form, int patched /*-1 absent*/,
-                  int cfChanged /*-1 absent*/, String cfAction /*null unless changed*/);
+                  int menu, int form, String wtgSource /*null unless wtg != 0*/,
+                  int patched /*ABSENT*/, int cfChanged /*ABSENT*/,
+                  String cfAction /*null unless changed*/);
     void decisionNonModel(String action, String decisionSource, String pickChannel);
-    void llmCall(/* call, mode, tool, qwenX/Y, pxX/Y, result, reason, repair, mcls,
-                    ncls, ndist, widgets, tokIn, tokOut, ms, text, sys, user, resp */);
+    void mopExposure(int boosted, int total);          // from the MOP widget pass, at its own site
+    void componentLaunch(int result, String error);    // after dispatch, which is when it exists
+    void llmDump(String system, String user, String response, String toolCalls);
+    void llmCall(int call, String mode, String tool, int qwenX, int qwenY, int pixelX,
+                 int pixelY, String result, String reason, String repair,
+                 String matchedClass, String nearestClass, double nearestDistance,
+                 int widgets, int tokensIn, int tokensOut, long ms, String text);
     void llmError(String cause, String detail);
     void llmBreakerOpen(int trips);
-    void outcome(boolean newState, String targetStateKey, boolean activityChanged);
+    void outcome(boolean newState, String targetStateKey, String targetActivity,
+                 boolean targetActivityHasMop, boolean activityChanged);
     void flushPendingStep();             // teardown: writes pending with out:{"resolved":false}
-    void mopData(String status, String reason, String pkg, int windows, int widgets);
+    void mopData(/* status, reason, pkg, windows, widgets, flagged, droppedNoId, wtgEdges,
+                    handlersUnmatched, syntheticLambda, recovered, mopActivities,
+                    mopActsAugmented */);
+    void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates);
     void llmAck(String serverModel);
-    void pipeline(List<String> stages, List<String> passes);
-    void runEnd(String reason, RunCounters counters);
+    void runEnd(String reason, RunCounters counters);  // added by group 4, with RunCounters
 }
 ```
 
 `RunCounters` is a plain value object filled at teardown from `LlmRouter` accessors (which replace `printSummary`) plus step/dictionary counts maintained by the sink itself.
+
+**Four signatures differ from this section's first draft, each because the record the spec mandates could not otherwise be produced.** They are recorded here rather than left to the implementation, since the sketch is what the next group reads.
+
+- `outcome` carries the target's **activity** and its MOP flag, not only the state key. The target state can be seen for the first time at outcome time — that is what a new state *is* — and its `STATE` dictionary entry has to name an activity, because the outcome-side `activity_has_mop` is derived by the reader as `out.target → STATE.act → ACT.mop` (D-3). Without it the derivation breaks for exactly the new states the run exists to find.
+- `mopExposure` is its own call rather than two more parameters on `decision`, because the pair is computed inside the MOP widget pass — the site that emits `[APE-RV] MOP boost` today — and threading it out to `resolveNewAction` would add a scoring-context accessor that `dec.wtgsrc` was deliberately designed to avoid.
+- `componentLaunch` is its own call because of ordering: the launch result does not exist when the decision is recorded. This is precisely why the retired `[APE-STEP]` line could never carry it, and the reason the record can is that it closes at N+1.
+- `llmDump` stages the prompt/response text for the next sub-event instead of riding `llmCall`'s parameter list. The dumps exist before the call's outcome does — the retired `[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]` lines preceded their `[APE-LLM-TEL]` line for the same reason — so staging is what lets an attempt abandoned before it maps keep the prompt that produced it.
+
+`decision` also gains `wtgSource` (task 3.1a's stamp, carried on the action like `wtgBoost` itself), and `pipeline` gains the candidate census that the `PIPELINE` record requires. `mopData` takes the full census of the run-level requirement rather than the five fields sketched here.
 
 ## Data Flow
 
