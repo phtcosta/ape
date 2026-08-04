@@ -903,3 +903,29 @@ Open coordination items — status 2026-08-03:
   **Group 3 is complete: 3.1–3.4 all ticked.** Group 4 — the `LlmRouter` decomposition into five
   units, with the class deleted and its 67 tests migrated — is the next real extraction and was
   deliberately not begun here.
+
+- 2026-08-04 — **rearch-04 groups 1 and 2 implemented in worktree B** (`ape-rearch-b`, branch
+  `rearch-b`), 13/59 tasks. Group 1 grew `ape.runtime.Json` — the class stage 2 shipped — into the
+  streaming writer stage 4 needs, rather than creating the second escaper the pre-stage-2 task text
+  described; the permanent test that keeps "one format" honest is the agreement assertion between
+  `Json.object(Map)` and `Json.Buf`. U+2028/U+2029 now escape: both were passing through, both are
+  legal JSON unescaped, and both split a record in the readers that split before parsing. Group 2 is
+  the sink core — `EventSink`, `NdjsonSink`, `StepRecord`, `NoopSink` — with the record lifecycle,
+  the `ACT`/`STATE` dictionaries, the volume rules and the failure latch, plus 25 tests. No producer
+  is wired: the `key=value` families still emit, and group 3 moves them. Suite 1056 → 1088, 0
+  failures, 19 skipped.
+
+  **Four `EventSink` signatures differ from the design's sketch, and design.md now records why.**
+  `outcome()` carries the target's activity, because a target state can be first seen at outcome
+  time and its `STATE` entry must name an activity for the reader's `out.target → STATE.act →
+  ACT.mop` derivation — the sketched signature would have broken the outcome-side MOP flag for
+  exactly the new states a run exists to find. `mopExposure()`, `componentLaunch()` and `llmDump()`
+  are separate calls because their data exists at a different moment than the decision does; the
+  launch result in particular is *why* the retired `[APE-STEP]` line could never carry it.
+
+  **Group 3 not started — it is the stage-3 file surface** (`StatefulAgent`, `LlmRouter`), and the
+  concurrent session owns those files until `rearch-03` lands. Owner decision pending.
+
+  **Operational note for the sdd skills**: they resolve paths against the primary working directory,
+  not a worktree. `/sdd-doc-code src/main/...` reported `NoTargetFiles` against `workspace-rv/ape`;
+  an absolute path into `ape-rearch-b` works.
