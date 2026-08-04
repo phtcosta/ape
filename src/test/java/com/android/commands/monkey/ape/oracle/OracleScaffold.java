@@ -582,6 +582,8 @@ public final class OracleScaffold {
         setField(agent, "exploration", spec.exploration());
         setField(agent, "mopTargetPickCap",
                 spec.has(Feature.MOP) ? spec.mop().targetPickCap() : 0);
+        setField(agent, "stepTelemetryEnabled", spec.has(Feature.STEP_TELEMETRY)
+                && spec.telemetry().bool("ape.stepTelemetryEnabled"));
         // The decision policy the constructor would have assembled (SataAgent.java), built from the
         // same plan installed above and against this agent's own action producers. Last, because
         // nothing it binds may be read before every field it reaches through is set — this is the

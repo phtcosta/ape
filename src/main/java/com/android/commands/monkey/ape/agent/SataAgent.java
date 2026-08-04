@@ -208,19 +208,6 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     private final DecisionPipeline decisionPipeline;
 
     /**
-     * The plan's exploration parameters, taken once here and read as a field at every selection
-     * site below (INV-DP-12). The ladder used to read these off {@code Config}'s statics — some
-     * qualified, most through {@code import static}, which is why a grep for {@code Config.} never
-     * reported the real count. Reaching the run context is legitimate at assembly and forbidden at
-     * decision time, and this field is what makes the difference structural: the constructor is the
-     * only place the plan is consulted.
-     *
-     * <p>The oracle harness allocates its agent without running a constructor, so this is one of
-     * the fields it injects, from the same plan it installs.
-     */
-    private final RunSpec.ExplorationParams exploration;
-
-    /**
      * The MOP target re-pick cap, resolved here rather than read through {@link #exploration}
      * because it belongs to {@code MopParams}, which does not exist on a plan without MOP. Zero
      * disables the cap, which is what a run with no MOP targets to cap means.
@@ -236,7 +223,6 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         this.epsilon = epsilon;
 
         RunSpec spec = RunContext.current().spec();
-        this.exploration = spec.exploration();
         this.mopTargetPickCap = spec.has(Feature.MOP) ? spec.mop().targetPickCap() : 0;
 
         this.actionCounters = new int[SataEventType.values().length];

@@ -15,20 +15,6 @@
  */
 package com.android.commands.monkey.ape.agent;
 
-import static com.android.commands.monkey.ape.utils.Config.activityStableRestartThreshold;
-import static com.android.commands.monkey.ape.utils.Config.baseThrottle;
-import static com.android.commands.monkey.ape.utils.Config.evolveModel;
-import static com.android.commands.monkey.ape.utils.Config.fuzzingActivityVisitThreshold;
-import static com.android.commands.monkey.ape.utils.Config.graphStableRestartThreshold;
-import static com.android.commands.monkey.ape.utils.Config.maxExtraPriorityAliasedActions;
-import static com.android.commands.monkey.ape.utils.Config.maxThrottle;
-import static com.android.commands.monkey.ape.utils.Config.saveGUITreeToXmlEveryStep;
-import static com.android.commands.monkey.ape.utils.Config.stateStableRestartThreshold;
-import static com.android.commands.monkey.ape.utils.Config.takeScreenshot;
-import static com.android.commands.monkey.ape.utils.Config.takeScreenshotForEveryStep;
-import static com.android.commands.monkey.ape.utils.Config.takeScreenshotForNewState;
-import static com.android.commands.monkey.ape.utils.Config.throttleForActivityTransition;
-import static com.android.commands.monkey.ape.utils.Config.throttleForUnvisitedAction;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -67,7 +53,9 @@ import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.agent.pipeline.StepContext;
@@ -81,7 +69,6 @@ import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.AndroidDevice;
 import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopScorer;
@@ -146,10 +133,30 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     private final ActivityBudgetTracker _budgetTracker;
 
     // rv-scoring-pipeline: the RV scoring path, extracted from adjustActionsByGUITree() into an
-    // ordered set of passes assembled once from Config. The context is the seam through which the
+    // ordered set of passes assembled once from the plan. The context is the seam through which the
     // passes read this agent's collaborators (live), so a pass carries no run state (INV-ARCH-02/05).
     private final ScoringContext scoringContext;
     private final ScoringPipeline scoringPipeline;
+
+    /**
+     * The plan's exploration parameters, taken once in the constructor and read as a field at every
+     * site below (INV-DP-12). It sits here rather than on {@link SataAgent} because both classes
+     * read from it, and a second field on the subclass would shadow this one — including for the
+     * oracle harness, whose field injection walks the hierarchy and stops at the first match.
+     *
+     * <p>Reaching the run context is injection at assembly and a violation at decision time; that
+     * this field is assigned in the constructor and only read afterwards is what makes the
+     * distinction structural rather than a convention.
+     */
+    protected final RunSpec.ExplorationParams exploration;
+
+    /**
+     * Whether the per-step telemetry lines are emitted. Resolved to a primitive here rather than
+     * read through {@link #exploration} because it belongs to {@code TelemetryParams}, which does
+     * not exist on a plan without the step-telemetry feature — and an absent feature means the
+     * lines are off, which is the same thing this false says.
+     */
+    private final boolean stepTelemetryEnabled;
 
     // LLM integration fields
     private final SystemBroadcastCatalog _broadcastCatalog;
@@ -174,14 +181,24 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         this.model = new Model(graph);
         this.timestamp = graph.getTimestamp();
         ComponentName mainApp = ape.getMainApp();
+        RunSpec spec = RunContext.current().spec();
+        this.exploration = spec.exploration();
+        this.stepTelemetryEnabled = spec.has(Feature.STEP_TELEMETRY)
+                && spec.telemetry().bool("ape.stepTelemetryEnabled");
+        // The MOP substrate's path. A plan carries MopParams exactly when it carries the MOP
+        // feature, and that feature is derived from ape.mopDataPath being set — so a null path here
+        // and an absent feature are the same statement, and requireMopArm below reads the null as
+        // "this run declares no MOP arm" exactly as it read an unset Config field.
+        String mopDataPath = spec.has(Feature.MOP) ? spec.mop().dataPath() : null;
         this._mopData = requireMopArm(
-                MopData.load(Config.mopDataPath, mainApp.getPackageName(), mainApp.getClassName()),
-                Config.mopDataPath);
+                MopData.load(mopDataPath, mainApp.getPackageName(), mainApp.getClassName()),
+                mopDataPath);
         this._coverageTracker = new UICoverageTracker();
         // rv-scoring-pipeline (activityBudgetEnabled): the activity budget is a fork addition; upstream
         // has none. Off -> no tracker is built and the budget check is skipped (INV-ARCH-01).
-        this._budgetTracker = Config.activityBudgetEnabled
-                ? new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget)
+        this._budgetTracker = spec.has(Feature.ACTIVITY_BUDGET)
+                ? new ActivityBudgetTracker(exploration.integer("ape.activityBaseBudget"),
+                        exploration.integer("ape.activityBudgetPerWidget"))
                 : null;
         this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
@@ -197,7 +214,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             @Override public boolean menuPickEligible(String activity) { return StatefulAgent.this.menuPickEligible(activity); }
         };
         this.scoringPipeline = ScoringPipeline.fromParams(
-                ScoringParams.fromSpec(RunContext.current().spec()), this.scoringContext);
+                ScoringParams.fromSpec(spec), this.scoringContext);
     }
 
     protected MopData getMopData() {
@@ -452,7 +469,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         if (an == null) {
             return action;
         }
-        if (an.getVisitedCount() < fuzzingActivityVisitThreshold) {
+        if (an.getVisitedCount() < exploration.fuzzingActivityVisitThreshold()) {
             this.disableFuzzing = true;
         }
         return action;
@@ -684,7 +701,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             // idle-timeout-cap: break threshold derives from the same flag as the
             // getRootInActiveWindowSlow ceiling (÷1000), so lowering the ceiling keeps
             // this "window stuck animating" break firing (INV-EXPL-25). Default 10s.
-            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= Config.maxIdleTimeoutMs / 1000) {
+            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= exploration.maxIdleTimeoutMs() / 1000) {
                 break;
             }
         }
@@ -756,7 +773,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             // getRootInActiveWindowSlow duration — derived from the same flag (÷1000) so the ceiling
             // and both retry-loop breaks stay coupled (INV-EXPL-25). Default 10s. This loop also has
             // retry/early-exit paths, but the break must not diverge from the ceiling by construction.
-            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= Config.maxIdleTimeoutMs / 1000) {
+            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= exploration.maxIdleTimeoutMs() / 1000) {
                 break;
             }
         }
@@ -840,7 +857,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     protected void checkNonDeterministicTransitions() {
-        if (!evolveModel) {
+        if (!exploration.evolveModel()) {
             return;
         }
         if (currentStateTransition == null) {
@@ -894,7 +911,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     protected void preEvolveModel() {
-        if (!evolveModel) {
+        if (!exploration.evolveModel()) {
             return;
         }
         {
@@ -991,7 +1008,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     protected void saveGUI() {
-        if (saveGUITreeToXmlEveryStep) {
+        if (exploration.saveGUITreeToXmlEveryStep()) {
             checkOutputDir();
             File xmlFile = new File(checkOutputDir(), String.format("step-%d.xml", getTimestamp()));
             Logger.iformat("Saving GUI tree to %s at step %d", xmlFile, getTimestamp());
@@ -1002,7 +1019,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 Logger.wformat("Fail to save GUI tree to %s at step %d", xmlFile, getTimestamp());
             }
         }
-        if (takeScreenshot && takeScreenshotForEveryStep) {
+        if (exploration.takeScreenshot() && exploration.takeScreenshotForEveryStep()) {
             checkOutputDir();
             File screenshotFile = new File(checkOutputDir(), String.format("step-%d.png", getTimestamp()));
             Logger.iformat("Saving screen shot to %s at step %d", screenshotFile, getTimestamp());
@@ -1079,7 +1096,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // so the BadStateException selection-retry and recovery re-record cannot duplicate the line.
         if (currentStateTransition != null
                 && lastDecisionAction != null && lastDecisionAction == currentAction) {
-            if (Config.stepTelemetryEnabled) {
+            if (stepTelemetryEnabled) {
                 Logger.iformat(
                         "[APE-OUTCOME] step=%d decision_source=%s new_state=%s target_state=%s"
                         + " activity_changed=%s activity_has_mop=%d",
@@ -1123,7 +1140,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     public boolean onActivityStable(int counter) {
-        if (counter > activityStableRestartThreshold) {
+        if (counter > exploration.activityStableRestartThreshold()) {
             Logger.format("Activity is stable for %d", counter);
             requestRestart();
             return true;
@@ -1133,7 +1150,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
 
     @Override
     public boolean onGraphStable(int counter) {
-        if (counter > graphStableRestartThreshold) {
+        if (counter > exploration.graphStableRestartThreshold()) {
             Logger.format("Graph is stable for %d", counter);
             requestRestart();
             return true;
@@ -1434,7 +1451,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
 
     @Override
     public boolean onStateStable(int counter) {
-        if (counter > stateStableRestartThreshold) {
+        if (counter > exploration.stateStableRestartThreshold()) {
             Logger.format("State is stable for %d", counter);
             requestRestart();
             return true;
@@ -1480,7 +1497,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     public void onAddNode(State node) {
-        if (takeScreenshot && takeScreenshotForNewState) {
+        if (exploration.takeScreenshot() && exploration.takeScreenshotForNewState()) {
             checkOutputDir();
             String id = node.getGraphId();
             File screenshotFile = new File(checkOutputDir(), String.format("%s.png", id));
@@ -1550,7 +1567,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             // rv-scoring-pipeline (stepTelemetryEnabled): the [APE-STEP] line is fork telemetry, not
             // upstream. The decision_source provenance is still set during selection; only the emission
             // is gated, so the pure arm produces zero [APE-STEP] lines (INV-ARCH-01).
-            if (Config.stepTelemetryEnabled) {
+            if (stepTelemetryEnabled) {
                 Logger.iformat(
                         "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
                         + "priority=%d mop=%d mop_frontier=%d wtg=%d coverage=%d menu=%d form=%d"
@@ -1579,7 +1596,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             // source is derived from the action's type: the stagnation launcher
             // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
             // action stays on the SATA chain that produced it (INV-SEL-04). clock as above.
-            if (Config.stepTelemetryEnabled) {
+            if (stepTelemetryEnabled) {
                 Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s"
                         + " decision_source=%s activity_has_mop=%d pick_channel=%s",
                         getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
@@ -1660,7 +1677,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 List<GUITreeNode> nodes = newGUITree.getNodes(action.getTarget());
                 int size = nodes.size();
                 if (size > 1) {
-                    priority += Math.min(size, maxExtraPriorityAliasedActions) * getActionBasePriority(action.getType());
+                    priority += Math.min(size, exploration.maxExtraPriorityAliasedActions()) * getActionBasePriority(action.getType());
                 }
             }
             for (StateTransition edge : edges) {
@@ -1687,7 +1704,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             action.setPriority(priority);
         }
         // rv-scoring-pipeline (INV-ARCH-05): every RV scoring term is now a ScoringPass in the
-        // pipeline assembled once from Config (MopWidget → MenuGateway → WTG → Frontier → Coverage →
+        // pipeline assembled once from the plan (MopWidget → MenuGateway → WTG → Frontier → Coverage →
         // FormCompletion). apply() clears provenance then runs the enabled passes; an empty pipeline
         // (pure arm) is a strict no-op, leaving the upstream base priorities above untouched.
         scoringPipeline.apply(newState, newState.getActions().toArray(new ModelAction[0]), scoringContext);
@@ -1716,7 +1733,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         if (state != action.getState()) {
             throw new IllegalStateException("Oops");
         }
-        int throttle = baseThrottle;
+        int throttle = exploration.baseThrottle();
         Collection<StateTransition> edges = getGraph().getOutStateTransitions(action);
         boolean hasActivityTransition = false;
         for (StateTransition edge : edges) {
@@ -1728,14 +1745,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             }
         }
         if (action.isUnvisited()) {
-            throttle += throttleForUnvisitedAction;
+            throttle += exploration.throttleForUnvisitedAction();
             Logger.dformat("Add throttle for unvisited activity state transition: %d", throttle);
         }
         if (hasActivityTransition) {
-            throttle += throttleForActivityTransition;
+            throttle += exploration.throttleForActivityTransition();
             Logger.dformat("Add throttle for weak activity state transition: %d", throttle);
         }
-        throttle = Math.min(throttle, maxThrottle);
+        throttle = Math.min(throttle, exploration.maxThrottle());
 
         GUITreeNode node = action.getResolvedNode();
         if (node != null) {
