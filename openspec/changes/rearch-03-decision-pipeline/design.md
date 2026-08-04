@@ -63,7 +63,7 @@ the DecisionPipeline itself, and forwards transition events to stages' episode s
 | `StageResult` | Sum type: `select(action, decisionSource)` / `continueChain()` / `sideEffect(desc)` | stage decision | tagged value |
 | `DecisionStage` | One named precedence rung: `name()`, `decide(StepContext)`; optional `onStateTransition(edge)` hook (default no-op) | `StepContext` | `StageResult` |
 | `DecisionPipeline` | Ordered stage list; assembly from `RunSpec`; the decide loop; `[APE-ARCH] stages=[...]` echo | `RunSpec`, `RunContext` | selected `Action` |
-| `StepContext` | Per-step view: `newState`, `newGUITree`, action buffer size, `graphStableCounter` (read/reset), timestamp, `RunContext` accessors (RNG, MopData, graph, trackers) | agent state | — |
+| `StepContext` | Per-step view: `newState`, `newGUITree`, whether the state is new, action buffer size, `graphStableCounter` (read/reset), timestamp, `RunContext` accessors (RNG, MopData, graph, trackers) | agent state | — |
 | `BudgetStage` | `:468-477` relocated; Select trivial or Continue | budget tracker, activity | `Select`/`Continue` |
 | `LlmNewState/LlmStagnation/LlmRandom` | Trigger predicates (from `LlmRouter:232-281`) + episode state + `LlmEngine` call + accept (from `acceptLlmResult` `:425-432`) | `StepContext`, `LlmEngine` | `Select`/`Continue` |
 | `MopLauncherStage` | `:522-545` relocated; owns cadence/budget/round-robin counters | `MopParams`, graph, MopData | `Select`/`Continue` |
@@ -386,7 +386,9 @@ Walks stages in order; returns the first `SELECT`'s action; records `SIDE_EFFECT
 
 ### `StepContext`
 
-Read surface: `newState()`, `newGUITree()`, `actionBufferSize()`, `graphStableCounter()`, `timestamp()`, `random()`, `mopData()`, `graph()`, `budgetTracker()`, `actionHistory()`. Write surface (minimal, explicit): `resetGraphStableCounter()` (LlmStagnation escape, `:503` parity). Implemented as a thin view over the agent + `RunContext` — no copying, no snapshotting.
+Read surface: `newState()`, `newGUITree()`, `isNewState()`, `actionBufferSize()`, `graphStableCounter()`, `timestamp()`, `random()`, `mopData()`, `graph()`, `budgetTracker()`, `actionHistory()`. Write surface (minimal, explicit): `resetGraphStableCounter()` (LlmStagnation escape, `:503` parity). Implemented as a thin view over the agent + `RunContext` — no copying, no snapshotting.
+
+`isNewState()` was added at task 2.2, through this gate rather than around it. It is the new-state hook's whole trigger argument (`_isNewState`, set once per step by the agent's state update), so it is per-step data and belongs here; routing it through `StageCollaborators` instead would have put a datum behind a behaviour seam to avoid touching the design, which is the move this enumeration exists to prevent.
 
 ### `LlmEngine.selectAction(GUITree, State, List<ModelAction>, String mode, int step) -> ModelAction | null`
 

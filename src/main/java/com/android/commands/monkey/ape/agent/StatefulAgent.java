@@ -276,6 +276,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     @Override
+    public boolean isNewState() {
+        return _isNewState;
+    }
+
+    @Override
     public int graphStableCounter() {
         return graphStableCounter;
     }

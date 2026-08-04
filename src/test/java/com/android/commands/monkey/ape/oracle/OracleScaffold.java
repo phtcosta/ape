@@ -476,16 +476,27 @@ public final class OracleScaffold {
                     + (preset.hasLlmRouter() ? "but none was supplied" : "but one was supplied"));
         }
 
-        // The plan the ladder reads. One ladder value moved out of Config and into the run plan
-        // (the launcher gate, SataAgent.selectNewActionNonnull), so a preset must now also state
-        // itself as a RunSpec — this is the injection scaffold adapting to a relocated field,
-        // which is the one adaptation INV-ORA-07 permits while stages 2 and 3 are in flight.
+        // The plan the decision pipeline is assembled from, and which the ladder reads. A preset
+        // must state itself as a RunSpec because what used to be a Config read at the decision site
+        // is now an assembly condition — the launcher gate first, and since the extraction started,
+        // the presence of each stage. This is the injection scaffold adapting to relocated
+        // configuration, the one adaptation INV-ORA-07 permits while stages 2 and 3 are in flight.
         //
         // The values are the jar defaults, deliberately: the goldens were captured over
         // jar-default Config (design D2), so a MOP arm at its defaults reproduces exactly the
-        // launcher gate the capture ran under (activityTriggerEnabled true). A non-MOP preset gets
-        // no MopParams at all, which closes the same gate the absent MopData already closed.
-        RunSpec spec = preset.hasMopData() ? TestRunSpecs.installMop() : TestRunSpecs.install();
+        // launcher gate the capture ran under (activityTriggerEnabled true), and an LLM arm gets the
+        // three hooks the capture ran with (llmOnNewState/llmOnStagnation true, llmPercentage 0.02).
+        // A preset without the substrate states neither key, which closes the same gates its absent
+        // MopData and absent router already closed.
+        //
+        // ape.llmUrl is a plan value only. The router is injected below, so nothing in this harness
+        // opens a socket — what the URL buys is the LLM feature, and with it the LLM stages.
+        String[] llmKeys = preset.hasLlmRouter()
+                ? new String[] {"ape.llmUrl", "http://127.0.0.1:30000/v1"}
+                : new String[0];
+        RunSpec spec = preset.hasMopData()
+                ? TestRunSpecs.installMop(llmKeys)
+                : TestRunSpecs.install(llmKeys);
 
         OracleSataAgent agent = allocate(OracleSataAgent.class);
         Graph graph = new Graph();

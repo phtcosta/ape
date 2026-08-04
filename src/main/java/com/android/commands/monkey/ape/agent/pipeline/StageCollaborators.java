@@ -15,6 +15,7 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.llm.LlmRouter;
 import com.android.commands.monkey.ape.model.ModelAction;
 
 /**
@@ -46,6 +47,25 @@ public interface StageCollaborators {
      * @return the trivial-activity navigation action, or {@code null}
      */
     ModelAction selectNewActionForTrivialActivity();
+
+    /**
+     * The run's LLM router, or {@code null} on a plan with no LLM feature — in which case no stage
+     * asks for it, because no LLM stage was assembled.
+     *
+     * @return the router the LLM stages call
+     */
+    LlmRouter llmRouter();
+
+    /**
+     * Resolves an LLM-synthesized tap against the current state, so the action carries the
+     * {@code GUITreeAction} the dispatch path asserts on.
+     *
+     * <p>Agent-side because resolution needs the throttle the agent computes for the action, which
+     * depends on the state's history rather than on anything the step's view carries.
+     *
+     * @param tap the synthesized off-tree tap the engine returned
+     */
+    void resolveSynthesizedTap(ModelAction tap);
 
     /**
      * The rungs of the ladder that are still inline on the agent, decided as one block.

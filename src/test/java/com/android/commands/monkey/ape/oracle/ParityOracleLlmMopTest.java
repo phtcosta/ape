@@ -91,7 +91,7 @@ public class ParityOracleLlmMopTest {
 
         assertEquals("one record per scripted step", script.getSteps().size(), records.size());
         assertEquals("the new-state hook accepted", "accepted", records.get(0).getLlm());
-        assertEquals("an accepted action is labelled by acceptLlmResult",
+        assertEquals("an accepted action is labelled by the accepting LLM stage",
                 "LLM", records.get(0).getDecisionSource());
 
         DecisionRecord declined = records.get(1);

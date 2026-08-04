@@ -146,6 +146,10 @@ public final class DecisionPipeline {
                 case BUDGET:
                     stages.add(new BudgetStage(collaborators::selectNewActionForTrivialActivity));
                     break;
+                case LLM_NEW_STATE:
+                    stages.add(new LlmNewStateStage(collaborators.llmRouter(),
+                            collaborators::resolveSynthesizedTap));
+                    break;
                 case SATA_CHAIN:
                     stages.add(new InlineLadderStage(collaborators));
                     break;

@@ -11,7 +11,7 @@ The pipeline is policy structure, not policy change: stage order is fixed in cod
 ### Input
 - `RunSpec` — the validated immutable plan (features, `ExplorationParams`, `MopParams`, `LlmParams`) — source: `run-spec` capability, resolved at bootstrap
 - `RunContext` — per-run mutable state owner (model, graph, seeded RNG, MopData, LLM units, trackers)
-- `StepContext` — per-step view: current `State`/`GUITree`, action buffer size, `graphStableCounter` (read + a single reset method), timestamp, RNG, MopData, graph, budget tracker, action history
+- `StepContext` — per-step view: current `State`/`GUITree`, whether the step entered a previously unseen state, action buffer size, `graphStableCounter` (read + a single reset method), timestamp, RNG, MopData, graph, budget tracker, action history
 
 ### Output
 - `Action` — the selected action for the step (widget action, trivial-navigation action, LLM-matched or synthesized action, or `EVENT_TRIGGER_ACTIVITY`)

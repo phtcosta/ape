@@ -57,6 +57,12 @@ public interface StepContext {
     GUITree newGUITree();
 
     /**
+     * Whether this step walked into a state the run had never seen. The new-state LLM hook's whole
+     * trigger, and per-step: the same state is new once and familiar afterwards.
+     */
+    boolean isNewState();
+
+    /**
      * How many actions are queued in the agent's buffer. Zero is the LLM stages' shared
      * precondition: mid-sequence steps are not the LLM's to redirect.
      */

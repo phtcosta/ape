@@ -15,7 +15,7 @@ import static org.junit.Assert.assertEquals;
  *   <li><b>new-state accept</b> — the hook routes because the step declares a first visit
  *       ({@code shouldRouteNewState} honors {@code _isNewState}, it does not merely obey the
  *       script), and the accepted action comes back labelled {@code LLM} / {@code llm} by
- *       {@code acceptLlmResult}. The selected action is a member of the offered list, never a
+ *       the accepting stage. The selected action is a member of the offered list, never a
  *       synthesized tap: resolving a {@code MODEL_LLM_TAP} would leave the JVM.</li>
  *   <li><b>stagnation decline</b> — the hook routes, the verdict is null, the ladder falls through
  *       to the SATA chain. The record still carries {@code llm:"declined"}: the consultation
@@ -83,7 +83,7 @@ public class ParityOracleLlmTest {
 
         assertEquals("one record per scripted step", script.getSteps().size(), records.size());
         assertEquals("the new-state hook accepted", "accepted", records.get(0).getLlm());
-        assertEquals("an accepted action is labelled by acceptLlmResult",
+        assertEquals("an accepted action is labelled by the accepting LLM stage",
                 "LLM", records.get(0).getDecisionSource());
         assertEquals("through the llm pick channel", "llm", records.get(0).getPickChannel());
         assertEquals("the stagnation hook declined", "declined", records.get(1).getLlm());

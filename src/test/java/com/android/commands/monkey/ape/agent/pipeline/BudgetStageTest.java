@@ -64,6 +64,11 @@ public class BudgetStageTest {
         }
 
         @Override
+        public boolean isNewState() {
+            throw new UnsupportedOperationException("the budget gate does not care about novelty");
+        }
+
+        @Override
         public int actionBufferSize() {
             throw new UnsupportedOperationException("the budget gate does not read the buffer");
         }

@@ -32,18 +32,17 @@ import java.util.Random;
  * transition, and scripts never model a breaker-open episode.
  *
  * <p><b>Accept returns a member of the offered list, never a synthesized tap.</b> That is not a
- * stylistic choice: {@code SataAgent.acceptLlmResult} ({@code :425-433}) resolves a
- * {@code MODEL_LLM_TAP} against {@code newState}, which leaves the JVM. A selector therefore only
+ * stylistic choice: an accepted {@code MODEL_LLM_TAP} is resolved against {@code newState}
+ * ({@code LlmGate.accept} into {@code SataAgent.resolveSynthesizedTap}), which leaves the JVM. A selector therefore only
  * ever picks from the {@code actions} the agent offered.
  *
  * <p><b>Consumption bookkeeping (task 3.2).</b> A step's entry is a claim about what the agent
  * will do, and a claim that does not come true is a scenario bug, not a skip. {@link #finishStep}
  * fails when a declared hook's predicate was never <i>invoked</i> — which is what happens when the
- * ladder's triplicated precondition ({@code actionBufferSize() == 0 &&
- * newState.getActions().size() > 2 && _llmRouter != null}, {@code SataAgent.java:480,493,508})
- * short-circuits ahead of it. Invocation, not the return value, is the criterion: a predicate that
+ * shared LLM precondition ({@code LlmGate.allows}: an empty action buffer and more
+ * than two actions on the state) short-circuits ahead of it. Invocation, not the return value, is the criterion: a predicate that
  * ran and answered false because the agent-side argument suppressed it did exactly what the script
- * asked. And once a hook accepts, the ladder returns, so the hooks below it are correctly
+ * asked. And once a hook accepts, the step is decided, so the hooks below it are correctly
  * unreached and not checked.
  */
 public class ScriptedLlmRouter extends LlmRouter {

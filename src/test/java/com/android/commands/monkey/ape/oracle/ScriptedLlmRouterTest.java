@@ -225,7 +225,7 @@ public class ScriptedLlmRouterTest {
         assertTrue(selected instanceof ModelAction);
         ModelAction picked = (ModelAction) selected;
         assertEquals(W1, picked.getTarget().toXPath());
-        // acceptLlmResult (SataAgent.java:425-433) stamps the provenance the golden records.
+        // The accepting LLM stage (LlmGate.accept) stamps the provenance the golden records.
         assertEquals(ModelAction.DecisionSource.LLM, picked.getDecisionSource());
         assertEquals(ModelAction.PickChannel.LLM, picked.getPickChannel());
         assertEquals(ScriptedLlmRouter.Provenance.ACCEPTED, router.getProvenance());

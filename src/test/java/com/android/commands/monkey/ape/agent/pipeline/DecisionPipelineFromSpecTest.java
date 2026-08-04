@@ -10,6 +10,7 @@ import java.util.Random;
 import org.junit.Test;
 
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
+import com.android.commands.monkey.ape.llm.LlmRouter;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.Graph;
@@ -67,6 +68,16 @@ public class DecisionPipelineFromSpecTest {
             inlineLadderCalls++;
             return remainder;
         }
+
+        @Override
+        public LlmRouter llmRouter() {
+            return null;
+        }
+
+        @Override
+        public void resolveSynthesizedTap(ModelAction tap) {
+            throw new UnsupportedOperationException("no LLM stage is assembled in these plans");
+        }
     }
 
     /**
@@ -86,6 +97,7 @@ public class DecisionPipelineFromSpecTest {
         @Override public State newState() { return state; }
         @Override public ActivityBudgetTracker budgetTracker() { return tracker; }
         @Override public GUITree newGUITree() { return null; }
+        @Override public boolean isNewState() { return false; }
         @Override public int actionBufferSize() { return 0; }
         @Override public int graphStableCounter() { return 0; }
         @Override public int timestamp() { return 1; }

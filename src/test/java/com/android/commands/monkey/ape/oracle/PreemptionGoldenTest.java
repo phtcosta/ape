@@ -193,7 +193,7 @@ public class PreemptionGoldenTest {
         // --- step 0: the accept preempts a launcher that was due to fire
         DecisionRecord accepted = records.get(0);
         assertEquals("the new-state hook accepted", "accepted", accepted.getLlm());
-        assertEquals("acceptLlmResult labels the action", "LLM", accepted.getDecisionSource());
+        assertEquals("the accepting LLM stage labels the action", "LLM", accepted.getDecisionSource());
         assertEquals("through the LLM channel", "llm", accepted.getPickChannel());
         assertEquals("only the new-state hook was consulted — the ladder returned above the rest",
                 Arrays.asList(NEW_STATE), router.consultedAt(0));
