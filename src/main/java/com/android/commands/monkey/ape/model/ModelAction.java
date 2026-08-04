@@ -248,6 +248,38 @@ public class ModelAction extends Action {
         return;
     }
 
+    /**
+     * Drops the references into {@code released}, iff this action was last resolved against it.
+     *
+     * <p>Resolution overwrites, it never clears, so an action last resolved against a tree the
+     * model later releases kept that tree — and its whole node subtree — reachable after it had
+     * left {@code State.treeHistory} (V24). This is the clearing half, invoked from
+     * {@code Model.release} in the same cycle as the {@code GUITreeBuilder} cache sweep.
+     *
+     * <p>The comparison is reference identity: an action resolved against a different, live tree is
+     * left alone, and a re-resolve after this call restores everything.
+     *
+     * <p>What is deliberately <em>not</em> touched is {@code resolvedSaturation}. It is the one
+     * cross-step semantic output of a resolve — {@code isSaturated()} feeds the action filters and
+     * the SATA ladder on later steps — so clearing it would turn a retention fix into a decision
+     * change (audit row B4, INV-MODEL-19). Priority, the boost fields and the telemetry provenance
+     * are left alone for the same reason.
+     *
+     * <p>The timestamp goes back to {@code -1}, which is the field's own initial value: after this
+     * call the action is in exactly the state it was in before its first resolve, rather than in a
+     * new third state that readers would have to know about.
+     */
+    public void releaseResolved(GUITree released) {
+        if (this.resolvedTree != released) {
+            return;
+        }
+        this.resovledTimestamp = -1;
+        this.resolvedTree = null;
+        this.resolvedGUITreeAction = null;
+        this.resolvedNode = null;
+        this.resolvedNodes = null;
+    }
+
     public DecisionSource getDecisionSource() {
         return this.decisionSource;
     }
