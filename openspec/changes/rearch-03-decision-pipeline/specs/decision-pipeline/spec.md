@@ -93,10 +93,17 @@ Assembly SHALL happen exactly once per run and SHALL emit one `[APE-ARCH] stages
 
 It matters on the *pass* side, and that is where the evidence is. The scoring passes become absent for a reason nothing in the plan reveals — `WtgPass`, `FrontierPass` and `MopFrontierPass` each gate on run-time data — and over the decisive campaign the whole family is never constructed in 25 of the 40 applications. Making the stage census static and the pass census data-bearing is the distinction; the pass half is specified in the scoring-pipeline capability.
 
-#### Scenario: full llm_mop plan assembles all stages
+#### Scenario: a plan carrying every feature assembles every stage
 - **WHEN** the plan carries the activity-budget, LLM (all three modes), MOP, activity-trigger, and component-trigger features
 - **THEN** the pipeline SHALL be `[Budget, LlmNewState, LlmStagnation, LlmRandom, MopLauncher, ComponentTrigger, SataChain]`
 - **AND** one `[APE-ARCH] stages=[Budget, LlmNewState, LlmStagnation, LlmRandom, MopLauncher, ComponentTrigger, SataChain]` line SHALL be emitted
+- **AND** no shipped preset SHALL state such a plan: every arm carries `ape.activityTriggerEnabled=false` and none states `ape.componentPercentage`, so the full roster is reachable only by stating those keys explicitly
+
+#### Scenario: the four shipped presets assemble the rosters their keys state
+- **WHEN** a plan is resolved from a preset name plus the deployment keys the preset omits (`ape.mopDataPath`, `ape.llmUrl`)
+- **THEN** `aperv` and `mop` SHALL both assemble `[Budget, SataChain]` — `mop`'s four keys are scoring weights and it inherits `aperv`'s disabled activity trigger, so a present MOP substrate assembles no MOP stage
+- **AND** `llm` and `llm_mop` SHALL both assemble `[Budget, LlmNewState, LlmStagnation, LlmRandom, SataChain]` — including the random-routing stage neither preset mentions, because `ape.llmPercentage` resolves to its positive jar default and `Feature`'s table carries the neutral value rather than the default
+- **AND** the `[APE-ARCH]` echo SHALL name exactly that roster
 
 #### Scenario: aperv plan assembles the minimal pipeline
 - **WHEN** the plan carries no LLM, no MOP, no component-trigger feature (activity budget on)

@@ -33,8 +33,8 @@
 
 - [x] 3.1 Permanent preemption golden (report Sec. 9.4): synthetic step qualifying LLM + launcher-firing-point + component-coin + SATA simultaneously ⇒ order confirmed (`LLM` wins; no trigger; no rung)
 - [x] 3.2 Permanent 3.3-1 pin (INV-DP-08): LLM-preempted step leaves the launcher cadence counter unchanged; next fall-through step advances it by exactly 1
-- [x] 3.3 Permanent structural-fallback test (report Sec. 9.5): scripted decline/timeout/breaker-open ⇒ step decided by the configured remainder with correct non-`LLM` `decision_source`; breaker-open line once per episode
-- [x] 3.4 Feature-absent = stage-absent assembly matrix per preset (INV-DP-03): `aperv` ⇒ `[Budget, SataChain]`; `mop` adds launcher/trigger per its plan; `llm`/`llm_mop` add the enabled LLM stages; echo line asserted
+- [x] 3.3 Permanent structural-fallback test (report Sec. 9.5): decline/timeout/breaker-open ⇒ step decided by the configured remainder with correct non-`LLM` `decision_source`; breaker-open line once per episode. **Split across two seams, because the oracle cannot carry all three conditions**: `ScriptedLlmRouter` overrides the routing predicates outright, so no override reaches the breaker and no script can model a breaker-open episode — that override is what satisfies INV-ORA-03, and INV-ORA-07 freezes the goldens depending on it. Decline and timeout are already pinned there (`goldens/llm/baseline.ndjson` steps 1–2, both falling through to `decisionSource=SATA`). What this task adds is (i) the composition over an assembled pipeline, on two plans so that "the configured remainder" is `SataChain`/`SATA` in one and `MopLauncher`/`Component` in the other, and (ii) the breaker-open latch, which had no test at all, asserted where the latch lives
+- [x] 3.4 Feature-absent = stage-absent assembly matrix per preset (INV-DP-03), asserted against the rosters the shipped presets actually produce: `aperv` ⇒ `[Budget, SataChain]`; `mop` ⇒ `[Budget, SataChain]` — its four keys are *scoring* weights, it inherits `ape.activityTriggerEnabled=false`, and no preset states `ape.componentPercentage`, so the substrate is present and no MOP stage is assembled; `llm` and `llm_mop` ⇒ `[Budget, LlmNewState, LlmStagnation, LlmRandom, SataChain]` — including the random stage neither preset mentions, because `ape.llmPercentage` resolves to its jar default of `0.02` (`KeyOwnership.java:216`) and `Feature`'s `"0"` is the neutral value, not the default; echo line asserted
 
 ## 4. LlmRouter decomposition (design D7)
 
@@ -44,11 +44,11 @@
 - [ ] 4.4 `LlmTelemetry` — all counters/latches (`LlmRouter:68-112`), `[APE-LLM-TEL]`/`[APE-LLM-ERROR]`/`[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]`/ACK, `printSummary`; teardown call site updated
 - [ ] 4.5 `LlmEngine` — the thin 9-step orchestration replacing `selectAction` (`:327-612`): never-throws + finally-nulling preserved (INV-RTR-02/06); repair pipeline untouched (INV-LLM-10/INV-RTR-14 — native `tool_calls` malformations still flow `rawArguments` → `ToolCallParser` Level 1 → shared `parseJsonString`, surfacing as `repair=`)
 - [ ] 4.6 Point the three LLM stages at `LlmEngine`; route the `[APE-OUTCOME]`-site dead-pair feedback (`StatefulAgent:1041`) to `CoordinateMapper` via `RunContext`
-- [ ] 4.7 **Delete `LlmRouter`** (P3 — no facade); migrate its **66** unit tests to the owning units with assertion content unchanged (repair-path and telemetry-field tests must pass unmodified). Write the per-file destination map before moving anything, so no file is dropped for having no obvious home:
+- [ ] 4.7 **Delete `LlmRouter`** (P3 — no facade); migrate its **67** unit tests to the owning units with assertion content unchanged (repair-path and telemetry-field tests must pass unmodified). Write the per-file destination map before moving anything, so no file is dropped for having no obvious home:
 
   | Test file | `@Test` | Destination unit |
   |---|---:|---|
-  | `LlmRouterTest` | 31 | split across `LlmEngine` (orchestration, never-throws, outcome classification) and `LlmClient` (transport, breaker) |
+  | `LlmRouterTest` | 32 | split across `LlmEngine` (orchestration, never-throws, outcome classification) and `LlmClient` (transport, breaker). The 32nd is task 3.3's `breakerOpenIsLoggedOncePerOpenEpisode`, which pins the open-episode latch this task's 4.1 moves into `LlmClient.allows()`; it goes to `LlmClient` with the rest of the breaker tests |
   | `LlmRouterDeadPairTest` | 12 | `CoordinateMapper` (ban key, strikes, `recordLlmOutcome`) |
   | `LlmRouterCoordinateMappingTest` | 11 | `CoordinateMapper` (containment, snap, boundary bands) |
   | `LlmRouterMappingTest` | 5 | `CoordinateMapper` (`mapToModelAction`, `fixTextEdit`) |
