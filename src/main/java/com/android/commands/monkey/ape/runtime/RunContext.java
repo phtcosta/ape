@@ -41,7 +41,7 @@ import com.android.commands.monkey.ape.utils.RandomHelper;
  * run's randomness comes from instead of a seeding call sitting in the middle of a bootstrap
  * method. And the LLM units, which are run-scoped state with no agent in them: a breaker, a ban
  * record and a counter set all live exactly as long as the process does, and putting them here is
- * what lets a stage hold the one it uses instead of reaching through the agent for a router.
+ * what lets a stage hold the one it uses instead of reaching through the agent for it.
  *
  * <p><b>This is still a static holder, and it is worth saying so plainly.</b> The gain it delivers
  * is one static holder in place of a hundred-odd static configuration fields and four static file

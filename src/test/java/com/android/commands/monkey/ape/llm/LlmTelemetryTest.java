@@ -17,12 +17,10 @@ import static org.junit.Assert.assertTrue;
 /**
  * What the run counts and what it says it counted.
  *
- * <p>Three of these assertions were written against the pre-decomposition router, where the only
- * device-free seam was the aggregate summary: the per-decision {@code [APE-LLM-TEL]} line was built
- * inside {@code selectAction}, which loads {@code AndroidDevice} for the screenshot, so a JVM test
- * could not reach it and the line was validated by the device smoke alone. Separating emission from
- * orchestration removes that gate — the line is now a pure function of the verdict handed in, and
- * the tests below pin the fields an offline join reads.
+ * <p>The per-decision {@code [APE-LLM-TEL]} line is reachable from a JVM test because emission is
+ * separate from orchestration: the line is a pure function of the verdict handed in, and nothing
+ * on the way to it loads {@code AndroidDevice}. That is what lets the tests below pin the fields an
+ * offline join reads, rather than leaving them to the device smoke.
  */
 public class LlmTelemetryTest {
 
@@ -94,6 +92,15 @@ public class LlmTelemetryTest {
         // Adjacent counters remain present and separate.
         assertTrue(out.contains("matched=0"));
         assertTrue(out.contains("no_match=0"));
+        // A run that abandoned nothing still names all seven causes, each at zero: an offline reader
+        // joins on the field being present, so an absent field and a zero one are different facts.
+        // screenshot_failed is a peer cause here, not a subset of another (INV-RTR-11).
+        for (String field : new String[]{"screenshot_failed=0", "timeout=0", "http_error=0",
+                "conn_error=0", "parse_error=0", "image_error=0", "internal_error=0"}) {
+            assertTrue("summary must expose " + field + ", got: " + out, out.contains(field));
+        }
+        assertFalse("the per-cause breakdown replaced the aggregate null field, got: " + out,
+                out.contains(" null="));
     }
 
     @Test
@@ -415,7 +422,7 @@ public class LlmTelemetryTest {
 
     /**
      * The summary reports the run's trip count by asking for it, not by mirroring it. The
-     * pre-decomposition router refreshed a field at each failure site; since only a failure raises
+     * mirrored form would refresh a field at each failure site; since only a failure raises
      * the count, the value is the same, and asking removes a second place for it to live.
      */
     @Test

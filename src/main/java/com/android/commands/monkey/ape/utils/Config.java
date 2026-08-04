@@ -171,7 +171,7 @@ public class Config {
     public static final double llmTopP = Config.getDouble("ape.llmTopP", 0.6);
     public static final int llmTopK = Config.getInteger("ape.llmTopK", 50);
     public static final int llmTimeoutMs = Config.getInteger("ape.llmTimeoutMs", 15000);
-    // Clamped to [0,1]: a value > 1 would make shouldRouteRandom() always fire
+    // Clamped to [0,1]: a value > 1 would make the probabilistic LLM hook always fire
     // (random.nextDouble() < 1.5 is always true); a negative value is meaningless.
     public static final double llmPercentage =
             Math.max(0.0, Math.min(1.0, Config.getDouble("ape.llmPercentage", 0.02)));
@@ -180,7 +180,7 @@ public class Config {
     // screen is a widgetless substrate (MopData.isWidgetlessSubstrate). Default -1 sentinel = "no
     // override" (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt from the
     // [0,1] clamp; a >=0 value is clamped to [0,1]; any real negative collapses to the sentinel. Seam
-    // only — no consumer yet (the router wiring is a later round).
+    // only — no consumer yet (wiring it is a later round).
     public static final double llmPercentageNoSubstrate =
             clampLlmPercentageNoSubstrate(Config.getDouble("ape.llmPercentageNoSubstrate", -1.0));
     // llm-native-toolcall-repair J1b/J1c: four previously hard-coded LLM values exposed as config keys

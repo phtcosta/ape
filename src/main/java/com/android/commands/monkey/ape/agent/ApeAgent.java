@@ -194,8 +194,8 @@ public abstract class ApeAgent implements Agent {
                 // gets text; otherwise keep the legacy probabilistic gate for non-form screens
                 // (INV-FORM-03 / INV-INP-04). The toss is short-circuited when in context.
                 // An LLM decision on an input-capable widget also fills deterministically: it is
-                // the *what* half of fixTextEdit (B6(iv)), where the router already decided the
-                // decision is a text entry rather than a bare press. The generator is the same one
+                // the *what* half of fixTextEdit (B6(iv)), where CoordinateMapper already decided
+                // the decision is a text entry rather than a bare press. The generator is the same one
                 // a SATA-selected input action uses — the LLM is never asked for the text.
                 if (llmTextEntry || inFormCompletionContext() || RandomHelper.toss(inputRate)) {
                     node.setInputText(generateInputText(node));

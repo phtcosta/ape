@@ -130,7 +130,7 @@ public class NativeToolCallRepairAcceptanceTest {
     public void census_unrecoverableBack_fallsBackNoCrash() {
         // back is not a tap: the int-scan gate rejects it → Level 1 falls back to the map path.
         // back carries no coordinate semantics, so (0,0) here is NOT a degenerate tap — it is the
-        // correct back action; the router routes it to state.getBackAction() without coordinate matching.
+        // correct back action; CoordinateMapper sends it to state.getBackAction() without coordinate matching.
         ToolCallParser.ParsedAction a =
                 runNativePath(envelopeArgsString("back", "{\"bad\": =}"));
         assertNotNull(a);

@@ -30,7 +30,7 @@ public class ApePromptBuilder {
     /**
      * The canonical "input-capable" widget set. One definition serves every consumer of the
      * notion: whether the system message offers {@code type_text}, the {@code type_text} filter in
-     * the router's coordinate mapping, the fixTextEdit conversion of a click on such a widget, and
+     * CoordinateMapper, the fixTextEdit conversion of a click on such a widget, and
      * the dead-pair ban's exemption (llm-routing INV-RTR-15). Kept in one place so that if the
      * notion of "input-capable" is ever wrong, it is wrong once — a second, independently
      * maintained list would let the prompt, the mapping and the ban drift apart.
@@ -779,8 +779,8 @@ public class ApePromptBuilder {
      * Returns true if any action in the list targets an input-type widget.
      *
      * <p>One predicate decides both halves of the same offer: whether the system message lists
-     * {@code type_text}, and whether the wire schema the router sends carries it. Static so the
-     * router can ask it without a builder instance — prompt and wire can then never disagree.
+     * {@code type_text}, and whether the wire schema LlmClient sends carries it. Static so both
+     * can ask it without a builder instance — prompt and wire can then never disagree.
      */
     static boolean hasInputField(List<ModelAction> actions) {
         if (actions == null) return false;
@@ -793,8 +793,8 @@ public class ApePromptBuilder {
     }
 
     /**
-     * The canonical input-capable predicate, read by the prompt builder, the router's coordinate
-     * mapping and the dead-pair ban. Static so every consumer reaches the same set
+     * The canonical input-capable predicate, read by the prompt builder, CoordinateMapper
+     * and the dead-pair ban. Static so every consumer reaches the same set
      * ({@link #INPUT_CLASS_NAMES}) without holding a builder instance.
      */
     public static boolean isInputClass(GUITreeNode node) {

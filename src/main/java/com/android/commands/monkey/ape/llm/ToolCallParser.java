@@ -355,7 +355,7 @@ public class ToolCallParser {
         private final String direction;
         // The repair form a successful parse required (INV-LLM-09):
         // none / missing_y / array_xy / quoted_xy / int_scan. Travels with the action so the
-        // router reads it at the single telemetry build site with no stale-state seam.
+        // engine reads it at the single telemetry build site with no stale-state seam.
         private final String repairForm;
 
         public ParsedAction(String actionType, int x, int y, String text, String direction,

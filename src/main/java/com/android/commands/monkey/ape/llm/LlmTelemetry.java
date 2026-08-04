@@ -46,10 +46,10 @@ public final class LlmTelemetry {
      * The breaker's trip count, asked for when the summary is printed.
      *
      * <p>A function rather than a mirrored field, because the trip count belongs to
-     * {@link LlmClient} (design D5) and a mirror can only ever restate it. The pre-decomposition
-     * router refreshed a field at each failure site, which made the summary report the count as of
-     * the last failure; since only a failure can raise it, that is the same number this reads, and
-     * a supplier keeps this unit testable without a client.
+     * {@link LlmClient} (design D5) and a mirror can only ever restate it. A field refreshed at
+     * each failure site would report the count as of the last failure; since only a failure can
+     * raise it, that is the same number this reads, and a supplier keeps this unit testable
+     * without a client.
      */
     private final IntSupplier breakerTrips;
 

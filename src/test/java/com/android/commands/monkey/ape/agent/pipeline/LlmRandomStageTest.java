@@ -265,4 +265,50 @@ public class LlmRandomStageTest {
         }
         return routed;
     }
+
+    // -------------------------------------------------------------------------
+    // INV-RTR-09 — the no-substrate override is exposed and consumed by nothing
+    // -------------------------------------------------------------------------
+
+    /** The two source directories a routing decision is made in, after the predicates moved here. */
+    private static final String[] DECISION_PATH = {
+        "src/main/java/com/android/commands/monkey/ape/agent/pipeline",
+        "src/main/java/com/android/commands/monkey/ape/llm",
+    };
+
+    /**
+     * {@code ape.llmPercentageNoSubstrate} is loaded and exposed, and no routing decision reads it
+     * (INV-RTR-09). The seam exists so a later adaptive round can substitute a percentage for
+     * widgetless substrates without a protocol change; until something deliberately wires it, a read
+     * anywhere on the decision path would give it an effect the spec says it does not have.
+     *
+     * <p>Asserted over the whole decision path rather than over one named file. The predicate that
+     * would consume it used to live in a single class and now lives in this stage, and a check that
+     * names one file stops protecting anything the next time the code moves — silently, at runtime,
+     * because reading a source file that is no longer there is not a compile error. The clamp and
+     * the {@code -1} sentinel are {@code ConfigTest}'s; what is pinned here is the absence of a
+     * consumer. Note that the plain rate {@code ape.llmPercentage} legitimately appears on this
+     * path — it is this stage's own trigger — so the search is for the override's full key name.
+     */
+    @Test
+    public void theNoSubstrateOverrideIsReadByNoDecisionOnThePath() throws Exception {
+        List<String> consumers = new ArrayList<>();
+        for (String dir : DECISION_PATH) {
+            java.io.File root = new java.io.File(dir);
+            assertTrue("decision-path source not found at " + root.getAbsolutePath(),
+                    root.isDirectory());
+            java.io.File[] sources = root.listFiles();
+            assertTrue("decision path must not be empty: " + dir,
+                    sources != null && sources.length > 0);
+            for (java.io.File source : sources) {
+                if (!source.getName().endsWith(".java")) continue;
+                String body = new String(
+                        java.nio.file.Files.readAllBytes(source.toPath()),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                if (body.contains("llmPercentageNoSubstrate")) consumers.add(source.getName());
+            }
+        }
+        assertEquals("llmPercentageNoSubstrate must reach no decision on the path (INV-RTR-09)",
+                java.util.Collections.<String>emptyList(), consumers);
+    }
 }

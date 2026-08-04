@@ -56,7 +56,7 @@ public class SglangClient {
      *
      * <p>The tools schema travels with the request (INV-LLM-11): nothing about it is retained on
      * the client between invocations, so the caller decides per request which tools exist. This is
-     * what lets the wire schema track the screen — the router omits {@code type_text} where there
+     * what lets the wire schema track the screen — LlmClient omits {@code type_text} where there
      * is no input field, matching its system message. A schema fixed at construction could not,
      * and the run-wide array it installed always advertised {@code type_text} while the prompt
      * conditionally omitted it: the model was offered a tool the prompt said did not exist.
