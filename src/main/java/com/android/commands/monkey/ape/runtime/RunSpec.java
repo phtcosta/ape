@@ -964,6 +964,11 @@ public final class RunSpec {
         public String model() {
             return str("ape.llmModel");
         }
+
+        /** Which prompt the builder writes; run-frozen, so it is read once at construction. */
+        public String promptVariant() {
+            return str("ape.llmPromptVariant");
+        }
     }
 
     /** Present exactly when the plan carries {@link Feature#STEP_TELEMETRY}. Stage 4 grows it. */

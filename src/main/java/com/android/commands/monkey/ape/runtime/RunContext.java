@@ -96,7 +96,7 @@ public final class RunContext {
             // a recorded failure can raise it.
             this.llmTelemetry = new LlmTelemetry(llm, llmClient::getTripCount);
             this.coordinateMapper = new CoordinateMapper(llm);
-            this.llmEngine = new LlmEngine(new ScreenshotStep(), new ApePromptBuilder(), llmClient,
+            this.llmEngine = new LlmEngine(new ScreenshotStep(), new ApePromptBuilder(llm.promptVariant()), llmClient,
                     new ToolCallParser(), coordinateMapper, llmTelemetry);
         } else {
             this.llmClient = null;

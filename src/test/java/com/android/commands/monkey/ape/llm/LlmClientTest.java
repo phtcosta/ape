@@ -174,7 +174,7 @@ public class LlmClientTest {
         List<ModelAction> actions = oneActionOn("android.widget.EditText");
         assertTrue(ApePromptBuilder.hasInputField(actions));
 
-        String systemMessage = new ApePromptBuilder()
+        String systemMessage = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
                 .build(null, null, actions, null, null, null).get(0).getTextContent();
         List<String> wire = toolNames(sglang().buildRequestBody(messages(),
                 LlmClient.buildToolsSchema(ApePromptBuilder.hasInputField(actions),
@@ -190,7 +190,7 @@ public class LlmClientTest {
         List<ModelAction> actions = oneActionOn("android.widget.Button");
         assertFalse(ApePromptBuilder.hasInputField(actions));
 
-        String systemMessage = new ApePromptBuilder()
+        String systemMessage = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
                 .build(null, null, actions, null, null, null).get(0).getTextContent();
         List<String> wire = toolNames(sglang().buildRequestBody(messages(),
                 LlmClient.buildToolsSchema(ApePromptBuilder.hasInputField(actions),

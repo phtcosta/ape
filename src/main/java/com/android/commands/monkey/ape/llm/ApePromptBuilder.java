@@ -7,7 +7,6 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
 
 import java.util.ArrayList;
@@ -58,8 +57,16 @@ public class ApePromptBuilder {
     static final String VARIANT_V17 = "v17";
     static final String VARIANT_VISUAL_ONLY = "visual_only";
 
-    static String getPromptVariant() {
-        return Config.llmPromptVariant;
+    /**
+     * The prompt variant this builder writes, injected at construction from the resolved plan
+     * (INV-DP-12). The variant is run-frozen, so taking it once is the same value the read site
+     * used to fetch on every prompt — by a route that a test can state and a run cannot change
+     * midway.
+     */
+    private final String promptVariant;
+
+    public ApePromptBuilder(String promptVariant) {
+        this.promptVariant = promptVariant;
     }
 
     // -------------------------------------------------------------------------
@@ -140,7 +147,7 @@ public class ApePromptBuilder {
         boolean includeTypeText = hasInputField(actions);
 
         // --- Dispatch by variant ---
-        String variant = getPromptVariant();
+        String variant = promptVariant;
         String systemText = buildSystemMessageForVariant(variant, includeTypeText);
         String userText;
         switch (variant) {

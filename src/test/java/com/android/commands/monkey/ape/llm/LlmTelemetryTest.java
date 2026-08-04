@@ -437,7 +437,7 @@ public class LlmTelemetryTest {
     @Test
     public void thePromptIsRecordedWithoutTheImage() {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> telemetry.logPrompt(new ApePromptBuilder()
+        String out = trace(() -> telemetry.logPrompt(new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
                 .build(null, null, null, null, "AAAABBBBCCCC", null)));
 
         assertTrue("the system message is recorded, got: " + out,
