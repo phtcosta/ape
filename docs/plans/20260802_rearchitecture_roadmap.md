@@ -1550,3 +1550,149 @@ Open coordination items — status 2026-08-03:
   **Still inherited and still left alone**: the stale anchor `StatefulAgent.java:1475-1478` in
   `openspec/specs/parity-oracle/spec.md:201`, in `rearch-06/design.md:237` and in this file at
   `:173`.
+
+- 2026-08-04 — **Stage 3 group 7 closed: the wiring is verified rather than moved, and the two hooks
+  no golden can see are now pinned. `rearch-03-decision-pipeline` is 45/53.** Five commits: the
+  artifact update group 7 was owed (`08ce429b`), then 7.1 (`ed89bea7`), 7.2 (`6edf96de`), 7.3
+  (`90266cfb`), 7.4 (`3d997cbb`). **Group 8 was not begun** — it is the whole stage's
+  verification-and-archive gate and should run once, deliberately, against a finished stage. All work
+  is in `ape-rearch` on `rearch`; `git worktree list` still shows exactly two worktrees and no
+  `rearch-b`. `docs/handoff/` is still untracked and was left alone.
+
+  **The gates, with the skip decomposition rather than the bare total.** The 19 skips are 13
+  `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3,
+  `GUITreeBuilderPasswordTest` 1) plus 6 `Assume` in `SglangLiveTest`; `SGLANG_URL` was unexported
+  throughout, so the environment was constant across every row.
+
+  | Commit | Task | Tests | Failures | Skipped |
+  |---|---|---:|---:|---:|
+  | `08ce429b` | artifacts | — | — | — |
+  | `ed89bea7` | 7.1 | 1132 | 0 | 19 |
+  | `6edf96de` | 7.2 | 1137 | 0 | 19 |
+  | `90266cfb` | 7.3 | 1137 | 0 | 19 |
+  | `3d997cbb` | 7.4 | 1137 | 0 | 19 |
+
+  The parity gate held at **14/14** after every task; `git status --short src/test/resources/goldens`
+  printed nothing throughout (INV-ORA-07); `openspec validate --strict` stayed clean, `--specs
+  --strict` 21 passed, and the task count stayed **53**.
+
+  **7.1's premise was contradicted by the code, and the decision was to keep the pipeline with the
+  agent** — outcome 1 of the three the handoff called defensible, taken on three grounds and
+  recorded as design **D15** before any code was written. (i) *Initialization order.* `fromSpec` binds
+  the agent's action producers as method references (D14), and `RunContext` is established before any
+  agent exists — which is exactly what makes `RunContext.current().spec()` readable inside the agent's
+  constructor. Ownership would need a two-phase `installPipeline(...)`, a mutable field with a null
+  window in the one class whose contract is a context established once, or an inverted order that puts
+  the plan behind the agent that reads it. (ii) *No consumer wants it there.* The only production
+  readers are the agent's `decide` and `onStateTransition`; stage 4's `PIPELINE` census is
+  `assembledCandidates(RunSpec)` plus `Candidate.values()`, a pure function of the plan needing no
+  instance; and `lastStepSideEffects()` has no production reader at all yet. An accessor on the context
+  would add one more ambient read of the kind INV-DP-12 forbids and 6.5's guard bans in
+  `agent/pipeline/**`. (iii) *The LLM half was already true* since 4.1–4.6. D14's closing sentence,
+  which forward-referenced the move as settled, was corrected, as were the same promise in
+  `fromSpec`'s javadoc and the assembly comment in `SataAgent`'s constructor. **The count stayed 53:
+  this was a rewording, not a retirement.**
+
+  **What 7.1 actually delivered is the assertion nothing had written**, and the probe for it is the
+  strongest evidence this group produced. `TransitionForwardingTest` allocates a `SataAgent` the way
+  `OracleScaffold` does and gives it a pipeline of one recording stage. Order is observable only
+  through `graphStableCounter`, which the super call writes and the stage reads at hook time: three
+  edges record `[1, 2, 0]` in the right order and `[0, 1, 2]` in the wrong one. Edge *identity* is
+  asserted rather than equality, because `StateTransition.equals` compares source/action/target and
+  **ignores the visit type** — an edge rebuilt on the way through would compare equal while re-arming
+  the stagnation flag on the wrong type. **Both probes were run and both were reverted.** With the two
+  calls swapped the test failed `[1, 2, 0]` → `[0, 1, 2]` **while the parity gate stayed 14/14**. With
+  the forwarding deleted outright — which kills the stagnation re-arm for every real run — both new
+  tests failed and the parity gate **plus `LlmStagnationStageTest`'s own 14 tests** all stayed green.
+  That is learning 95 measured rather than argued.
+
+  **Why the oracle cannot see it, verified rather than assumed.** `OracleScaffold` `Unsafe`-allocates
+  its agent, so `StatefulAgent`'s `graph.addListener(this)` never runs and the harness's agent is not
+  a `GraphListener` at all — nothing in the oracle ever calls `onVisitStateTransition`. The
+  "exactly once per visited edge" claim of the task is about the listener graph, not a method body,
+  and it decomposes into four facts: `Graph` fans each edge at one call site
+  (`fireStateTransitionEvents`, `Graph.java:407`); the agent registers once
+  (`StatefulAgent.java:175`) and is built once per run (`ApeAgent.createAgent`, reached once from
+  `MonkeySourceApe.java:276`); the agent forwards once; and the pipeline forwards to each stage once.
+  The first two are single-call-site facts about code no stage owns; the last two are what this change
+  moved, and both are now under test.
+
+  **7.2 is asserted over the roster, not per stage, and the per-stage form was already there.** Five
+  of the six selecting stages already assert their own label in the test the group that extracted them
+  wrote, so five more copies would restate what is pinned and still say nothing about a seventh stage.
+  `StageProvenanceLabelTest` holds one expectation per `Candidate` and **asserts the table's coverage
+  of the enum**, then walks the stages `fromSpec` really assembled from a plan carrying every feature
+  — built explicitly, because no shipped preset states one. Each stage is asked directly rather than
+  through `decide()`, since hard preemption would let the first stage answer for all of them.
+
+  **What it catches that the goldens do not — and here the answer is "everything", for a reason worth
+  recording**: `StageResult.decisionSource()` has **no caller in `src/main`**. The `[APE-STEP]` line
+  reports the action's own stamped source, not the pipeline's label, so a mislabelled stage changes no
+  trace and fails no golden; it stays invisible until stage 4 wires the label into the step record, at
+  which point it would arrive already wrong. These tests are the label's only readers until then. Two
+  facts nothing had asserted: **`SataChain`'s label is not a constant** — it stamps by boost
+  attribution, and `SataChainStageTest` pins the literal `SATA` its fixture happens to produce, which
+  keeps passing if the stage is rewritten to hardcode `SATA`, flattening every MOP- and WTG-guided step
+  into the baseline source (the probe proved it: `MopFrontier` vs `SATA` red here, `SataChainStageTest`
+  green); and **`MopLauncher`'s action is an `ActivityTriggerAction`, not a `ModelAction`**, which is
+  the only reason a constant label is legitimate there, since INV-DP-04's equality is conditional on
+  the action being a `ModelAction`. `Budget` is the third with teeth: it stamps and then names the
+  constant again, two independent writes that could disagree. Three probes, all reverted, including a
+  candidate added with no table entry — which fails naming it, the property the copies would not have.
+
+  **7.3's scope decision, stated as one: this change's own files, not the tree.** The pass covered the
+  51 `src/main` files `git diff fb3b6faf~1..HEAD` names and left the rest, on the group 6 rule that the
+  file a task rewrites is the file that task's lint step owns. Six orphaned imports removed, all in
+  touched files and all predating this change: `ApeAgent` (`SystemClock`), `GUITreeBuilder` (`List`),
+  `Config` (`Arrays`, `LinkedHashMap`, `Map`), `SglangClientTest` (`ArrayList`). Nine remain in
+  `src/main` and two in `src/test`, every one in a file this change never opened.
+
+  **The census had to be re-derived and the handoff's was wrong in both directions**, in the same way
+  group 6's was. Measured: **14 in `src/main` across 9 files**, not 15 across 10, **plus 3 in
+  `src/test` it did not count at all**. The divergence is `StageResult`: its `ModelAction` import is
+  referenced three times in javadoc `{@link}`, so it *is* used and removing it would break those links
+  — a census that ignores javadoc reports it dead. So the change's own pipeline files had **zero**.
+
+  **Two of 7.3's three items were "nothing to do", honestly.** The triplicated precondition text was
+  already collapsed: task 2.2 created `LlmGate`, the three LLM stages call `LlmGate.allows(ctx)`, and
+  `LlmRandomStage`'s one mention places its coin draw relative to the precondition — that stage's own
+  draw-order content (INV-DP-10), not a copy. The P4 pass produced **two edits**: `SataChainStage`
+  promised "Task 6.1 is where those reads become injected parameters", which 6.1 had already made
+  false; and `State` named "the guard of task 6.5", where task numbers die at archive, so it names
+  `StaticConfigReadGuardTest`. **Left alone deliberately**: the scoring package's "extracted from the
+  (formerly interleaved)" family, which the owner ruled in group 5 is the INV-ARCH-05 parity claim and
+  not lineage; `MopLauncherStage`'s account of the counter that is gone rather than relocated, which is
+  the rationale for an absence (INV-DP-03); the measured-rationale comments in `LlmTelemetry` and
+  `ModelAction`, which are the *why* P2 asks for; and `NdjsonSink`'s forward reference to group 4,
+  still in flight.
+
+  **7.4 ran the `sdd-verify` pipeline by hand and skipped two stages by the skill's own rule.**
+  `/sdd-verify` is not in an rv-android-rooted session's Skill registry, so its `SKILL.md` was read and
+  followed, as 6.6 did for `/sdd-qa-lint-fix`. Detection resolved at step 1 —
+  `.sdd/sdd-config.yaml` states `language: java`, `mode: minimal` — so no `sdd-detection` and no MCP.
+  **overall: pass**; tests 1118 passed / 0 failed / 19 skipped; **lint skipped on four independent
+  grounds** (checkstyle not on `PATH`, no plugin in `pom.xml`, no `/google_checks.xml`, and the project
+  config states `linter: none`), and the skill prescribes skipping rather than installing;
+  **complexity null**, because the skill's table defines no complexity tool for Java, which it
+  distinguishes from a defined-but-missing one. Noted and **not** fixed, being outside this change:
+  `.sdd/sdd-config.yaml` states `test_framework: none` while JUnit 4 runs 1137 tests. Its
+  `build_system: ant` is correct — the tree carries both `build.xml` and `pom.xml`.
+
+  **Where the scouting turned out to be right, and where wrong.** §3.1 was right and was the session's
+  load-bearing finding: 7.1's premise really was contradicted, and settling it through
+  `openspec-update-change` first is what kept a design decision from arriving as a compile fix. §3.4
+  was wrong about the import census in both directions (above) and right to predict that the
+  precondition item would be "nothing to do". §3.2's second half was true but for a reason it did not
+  state: the forwarding *body* was already correct, and what was missing was any assertion over it.
+
+  **A tooling note for the next session.** A Java LSP is reachable from this session, but it is rooted
+  at the primary working directory (`rv-android`) and never imported `ape-rearch`'s Maven project — it
+  reports these files as `non-project file, only syntax errors are reported`. It resolves references
+  within `src/main` and returns **nothing at all** for `src/test`: `findReferences` on
+  `DecisionPipeline` found 6 in 2 files while 15 test files name it. For census-shaped questions that
+  is the dangerous failure mode, so grep over both trees stayed the instrument. `/add-dir` on the
+  worktree would fix it.
+
+  **Still inherited and still left alone**: the stale anchor `StatefulAgent.java:1475-1478` in
+  `openspec/specs/parity-oracle/spec.md:201`, in `rearch-06/design.md:237` and in this file at
+  `:173`.
