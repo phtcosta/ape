@@ -266,6 +266,56 @@ Emission is untouched in this change: `[APE-STEP]` (`StatefulAgent:1493-1506`, `
 
 The 7× copied `resolved = …; if (resolved != null) { logActionSelected(…); return; }` pattern (`:552-587`) collapses inside the stage into an ordered rung list — `(supplier, SataEventType)` pairs walked by one loop that logs and returns on the first non-null. Same order (buffer → back-to-activity → early-forward → trivial → early-backward → epsilon-greedy → null-handler), same `SataEventType` labels, same `BadStateException` after the last rung. This is GLM's surviving idea confined to the stage interior (report Sec. 5.3) — a mechanical de-duplication with zero sampling-semantics change.
 
+### D13 — What group 1 settled that D1–D3 left open (recorded 2026-08-04, after implementation)
+
+D1 and D2 specify the types and not their home, and three further questions only arose once the
+skeleton existed. Recorded here so groups 2, 6 and 7 inherit answers instead of re-deciding them.
+
+**The package is `com.android.commands.monkey.ape.agent.pipeline`.** No artifact named one; this is
+the parallel of the sibling `com.android.commands.monkey.ape.agent.scoring`, which this change's own
+`scoring-pipeline` delta names explicitly. The stage classes of group 2 belong in the same package,
+and it is the name task 6.5's grep-guard reads as "the pipeline package".
+
+**`StepContext` is an interface, not a class.** D2 calls it "a thin view over the agent +
+`RunContext`", and the members it needs are the agent's protected fields and methods — so the
+production implementation is the agent (or its inner class) and nothing is copied. The same device is
+already load-bearing one layer down in `ScoringContext`, and it is what lets a stage test in group 2
+assert a predicate against a fake with no agent, device or live model.
+
+**Assembly is split: the plan-to-roster mapping is data, stage construction is not.** A static
+`Candidate` table carries the seven candidates in fixed order, each with the leaf feature that
+assembles it, exposed as `DecisionPipeline.assembledCandidates(RunSpec)`. This is simultaneously the
+static candidate census the ADDED assembly requirement demands for stage 4's `PIPELINE` record, and
+it makes "which stages does this plan imply" a pure function of the plan — assertable per preset
+(task 3.4) without a device or a live stage. Each gate names the **leaf** feature only
+(`LLM_NEW_STATE`, not `LLM ∧ LLM_NEW_STATE`): `Feature` declares those dependencies and plan
+resolution enforces them, so repeating the root would be a second guard for a fact the plan
+guarantees. `fromSpec` adds only the construction step, over this table.
+
+**`fromSpec`'s "never returns an empty pipeline" postcondition binds from task 2.7**, when the
+terminal stage exists. Until then `decide()` throws `IllegalStateException` on an exhausted roster
+rather than returning null, so the interim violation is loud and cannot reach a run silently. Group
+1 therefore landed everything in task 1.3 except `fromSpec` itself, and left that box open by owner
+decision rather than relocating its text.
+
+**INV-DP-04's label equality is asserted, not enforced at the factory.** `StageResult.select` checks
+both arguments non-null and stops there. Validating the label against `ModelAction`'s stamped
+provenance inside the factory would put a throw in the decision path of a live run, where a
+mislabelled stage would abort an experiment instead of failing a test; task 7.2's per-stage assertion
+is the intended check, and the error table above lists no factory validation.
+
+**INV-DP-05's "the pipeline SHALL record it" is a per-step accumulator, not a trace line.**
+`DecisionPipeline.lastStepSideEffects()` holds what the side-effect stages did on the step being
+decided, cleared at each `decide()`. Deliberately not a new `[APE-ARCH]` line: `triggerMopComponent()`
+already logs its own dispatch, and a format invented here is one stage 4's `StepRecord` restructures
+immediately.
+
+**The transition fan-out lives on the pipeline.** `DecisionPipeline.onStateTransition(edge)` forwards
+a visited edge to every assembled stage once, in roster order — the roster is the only thing that
+knows the stages, so a per-stage wiring at the agent would have to duplicate it. Task 2.3 hooks the
+agent's `onVisitStateTransition` to this method and task 7.1 owns the ordering guarantee (agent
+counters first, then stages).
+
 ## API Design
 
 ### `DecisionPipeline.fromSpec(RunSpec spec, RunContext ctx) -> DecisionPipeline`

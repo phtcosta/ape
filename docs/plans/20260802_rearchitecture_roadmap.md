@@ -608,7 +608,15 @@ Open coordination items — status 2026-08-03:
   also the static candidate census the `decision-pipeline` delta requires for the stage-4 `PIPELINE`
   record, and separating it from construction is what makes "which stages does this plan imply"
   assertable per preset with no device, model or live stage. Group 2 needs only to add the
-  construction step; the mapping tested here is the one that ships. The gating conjuncts name the
+  construction step; the mapping tested here is the one that ships.
+  **Where 1.3 closes, decided by the owner (2026-08-04): at task 2.1, and its text is not moved.**
+  The first stage class makes `fromSpec` writable, so the group-2 session that lands `BudgetStage`
+  writes `fromSpec` over the existing `Candidate` table in the same task and ticks 1.3 then. The box
+  stays open until that happens — it is the record of the residue, not an oversight, and an
+  `openspec-update-change` relocating the clause was considered and declined: a task that will be
+  discharged two tasks later is better left visible than rewritten. The design's "never empty"
+  postcondition still only becomes true at 2.7, which is why `decide()` throws on an exhausted roster
+  rather than returning null in the meantime. The gating conjuncts name the
   leaf feature only (`LLM_NEW_STATE`, not `LLM ∧ LLM_NEW_STATE`): `Feature` declares those
   dependencies and plan resolution enforces them, so the root would be a second guard for a fact the
   plan already guarantees.
