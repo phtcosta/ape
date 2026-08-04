@@ -18,9 +18,13 @@ import com.android.commands.monkey.ape.utils.MopScorer;
 public final class MopWidgetPass implements ScoringPass {
 
     private final boolean enabled;
+    private final int weightDirect;
+    private final int weightTransitive;
 
-    public MopWidgetPass(ScoringContext ctx) {
+    public MopWidgetPass(ScoringContext ctx, ScoringParams params) {
         this.enabled = ctx.getMopData() != null;
+        this.weightDirect = params.mopWeightDirect();
+        this.weightTransitive = params.mopWeightTransitive();
     }
 
     @Override
@@ -49,8 +53,8 @@ public final class MopWidgetPass implements ScoringPass {
             GUITreeNode node = action.getResolvedNode();
             if (node == null) continue;
             boolean[] containmentHit = new boolean[]{false};
-            int boost = mopBoostWithContainment(
-                    activity, node, MopScorer.eventTypeOf(action), containmentHit, mopData);
+            int boost = mopBoostWithContainment(activity, node, MopScorer.eventTypeOf(action),
+                    containmentHit, mopData, weightDirect, weightTransitive);
             if (boost > 0) {
                 action.setPriority(action.getPriority() + boost);
                 action.setMopBoost(boost);
@@ -70,15 +74,19 @@ public final class MopWidgetPass implements ScoringPass {
      * scores the node's own short id plus its ancestors (≤ 2 up) and descendants (≤ 2 down) via
      * {@link MopScorer#score}, returning the maximum. {@code containmentHit[0]} is set true when the
      * winning boost came from an ancestor/descendant rather than the exact id (hit-rate telemetry).
-     * Moved from {@code StatefulAgent} unchanged, now taking {@code MopData} as a parameter.
+     * Moved from {@code StatefulAgent} unchanged, now taking {@code MopData} and the two MOP
+     * weights as parameters.
      */
     private static int mopBoostWithContainment(String activity, GUITreeNode node,
                                                String eventType, boolean[] containmentHit,
-                                               MopData mopData) {
+                                               MopData mopData, int weightDirect,
+                                               int weightTransitive) {
         List<String> ids = MopScorer.containmentShortIds(node);
-        int best = MopScorer.score(activity, ids.get(0), mopData, eventType);
+        int best = MopScorer.score(
+                activity, ids.get(0), mopData, eventType, weightDirect, weightTransitive);
         for (int i = 1; i < ids.size(); i++) {
-            int b = MopScorer.score(activity, ids.get(i), mopData, eventType);
+            int b = MopScorer.score(
+                    activity, ids.get(i), mopData, eventType, weightDirect, weightTransitive);
             if (b > best) {
                 best = b;
                 containmentHit[0] = true;

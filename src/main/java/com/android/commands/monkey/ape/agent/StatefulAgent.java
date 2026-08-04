@@ -72,6 +72,7 @@ import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.agent.pipeline.StepContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -185,9 +186,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
         // and assemble the pipeline once, now that _mopData/_coverageTracker/graph/timestamp are set.
-        // fromConfig emits the [APE-ARCH] passes=[...] startup line. Pass isEnabled() reads only
-        // getMopData() here (run-fixed) — never menuPickEligible — so no subclass field is touched
-        // before the subclass constructor runs.
+        // fromParams emits the [APE-ARCH] passes=[...] startup line. Pass isEnabled() reads only
+        // its injected weight and getMopData() here (run-fixed) — never menuPickEligible — so no
+        // subclass field is touched before the subclass constructor runs.
         this.scoringContext = new ScoringContext() {
             @Override public MopData getMopData() { return StatefulAgent.this.getMopData(); }
             @Override public UICoverageTracker getCoverageTracker() { return StatefulAgent.this.getCoverageTracker(); }
@@ -195,7 +196,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             @Override public int getTimestamp() { return StatefulAgent.this.getTimestamp(); }
             @Override public boolean menuPickEligible(String activity) { return StatefulAgent.this.menuPickEligible(activity); }
         };
-        this.scoringPipeline = ScoringPipeline.fromConfig(null, this.scoringContext);
+        this.scoringPipeline = ScoringPipeline.fromParams(
+                ScoringParams.fromSpec(RunContext.current().spec()), this.scoringContext);
     }
 
     protected MopData getMopData() {

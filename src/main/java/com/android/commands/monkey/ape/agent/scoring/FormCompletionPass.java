@@ -3,7 +3,6 @@ package com.android.commands.monkey.ape.agent.scoring;
 import com.android.commands.monkey.ape.agent.FormCompletion;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 
 /**
@@ -18,8 +17,8 @@ public final class FormCompletionPass implements ScoringPass {
 
     private final boolean enabled;
 
-    public FormCompletionPass(ScoringContext ctx) {
-        this.enabled = Config.formCompletionEnabled;
+    public FormCompletionPass(ScoringContext ctx, ScoringParams params) {
+        this.enabled = params.formCompletionEnabled();
     }
 
     @Override

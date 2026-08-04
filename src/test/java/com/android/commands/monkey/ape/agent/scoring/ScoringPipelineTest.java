@@ -4,11 +4,7 @@ import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.utils.MopData;
-import com.android.commands.monkey.ape.runtime.RunContext;
-import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -23,26 +19,26 @@ import static org.junit.Assert.*;
 /**
  * rv-scoring-pipeline tasks 2.3/2.4 — {@link ScoringPipeline} assembly and run mechanics
  * (INV-ARCH-02/03/04). The pipeline is exercised both with stub passes (filtering, ordering,
- * boost-reset, empty no-op) and via {@link ScoringPipeline#fromConfig} at default config (the
- * flags→passes assembly matrix for the coverage-only and full-MOP arms). The pure/empty arm through
- * {@code fromConfig} needs {@code apePureMode}, which forces {@code static final} gates that cannot be
- * re-evaluated in this JVM, so the empty-pipeline contract is asserted here via the direct
- * constructor and on device (task 7.6).
+ * boost-reset, empty no-op) and through {@link ScoringPipeline#fromParams}, which is the
+ * weights-and-substrate assembly matrix.
+ *
+ * <p>Every roster below is produced by handing {@code fromParams} a {@link ScoringParams} and a
+ * context, with nothing installed process-wide. An empty roster used to be the one case this file
+ * could not reach through the real entry point — it needed the retired {@code apePureMode} switch
+ * to force {@code static final} gates a JVM test cannot re-evaluate — so it was asserted through
+ * the package-private constructor instead. A plan with no scoring feature is now just a
+ * {@code ScoringParams} of zeroes, so the case is reachable where it belongs.
  */
 public class ScoringPipelineTest {
 
-    /**
-     * The pass roster is plan-controlled, so every case needs a plan in effect. A MOP arm at its
-     * jar defaults is the neutral starting point; a case that needs another weight installs its own.
-     */
-    @Before
-    public void installDefaultMopPlan() {
-        TestRunSpecs.installMop();
+    /** A fully-armed MOP arm, at values that are not the jar's, so a roster cannot be a default. */
+    private static ScoringParams allOn() {
+        return new ScoringParams(917, 613, 271, 419, 331, 233, 101, true);
     }
 
-    @After
-    public void clearPlan() {
-        RunContext.resetForTest();
+    /** The MOP arm as a plan states it by default: every weight but the MOP-frontier one. */
+    private static ScoringParams withoutMopFrontier() {
+        return new ScoringParams(917, 613, 271, 419, 331, 0, 101, true);
     }
 
 
@@ -121,7 +117,7 @@ public class ScoringPipelineTest {
         assertEquals("provenance untouched (no reset on empty pipeline)", 7, a.getMopBoost());
     }
 
-    // ---- fromConfig assembly matrix at default flags (2.4) ------------------
+    // ---- fromParams assembly matrix: weights x substrate (2.4) --------------
 
     private static MopData mopWithWtg() {
         Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
@@ -131,34 +127,32 @@ public class ScoringPipelineTest {
     }
 
     @Test
-    public void fromConfigFullMopArmAssemblesAllSixInOrder() {
+    public void fullMopArmAssemblesSixInOrderWhenTheMopFrontierWeightIsZero() {
         StubScoringContext ctx = new StubScoringContext();
         ctx.mopData = mopWithWtg();
-        ScoringPipeline p = ScoringPipeline.fromConfig(null, ctx);
+        ScoringPipeline p = ScoringPipeline.fromParams(withoutMopFrontier(), ctx);
         assertEquals(Arrays.asList(
                 "MopWidgetPass", "MenuGatewayPass", "WtgPass",
                 "FrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
     }
 
     @Test
-    public void fromConfigInsertsMopFrontierAfterFrontierBeforeCoverageWhenWeighted() {
-        // Task 4.3 / INV-MFP registration position: MopFrontierPass joins the roster only when
-        // the plan states a positive frontier weight, immediately after the generic FrontierPass
-        // and before CoveragePass —
+    public void mopFrontierSitsAfterFrontierAndBeforeCoverageWhenWeighted() {
+        // Task 4.3 / INV-MFP registration position: MopFrontierPass joins the roster only when the
+        // weight is positive, immediately after the generic FrontierPass and before CoveragePass —
         // the frontier family stays contiguous (INV-ARCH-03 relative order preserved).
         StubScoringContext ctx = new StubScoringContext();
         ctx.mopData = mopWithWtg();
-        TestRunSpecs.installMop("ape.mopFrontierWeight", "200");
-        ScoringPipeline p = ScoringPipeline.fromConfig(null, ctx);
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx);
         assertEquals(Arrays.asList(
                 "MopWidgetPass", "MenuGatewayPass", "WtgPass", "FrontierPass",
                 "MopFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
     }
 
     @Test
-    public void fromConfigCoverageOnlyArmWhenNoMopData() {
+    public void coverageOnlyArmWhenNoMopData() {
         StubScoringContext ctx = new StubScoringContext(); // mopData == null
-        ScoringPipeline p = ScoringPipeline.fromConfig(null, ctx);
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx);
         assertEquals(Arrays.asList("CoveragePass", "FormCompletionPass"), p.passNames());
     }
 }

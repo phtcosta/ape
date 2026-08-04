@@ -6,13 +6,13 @@ import java.util.List;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 
 /**
  * rv-scoring-pipeline (INV-ARCH-03/04/05). The single assembly point and runner for the RV scoring
- * passes. {@link #fromConfig} constructs the six passes in fixed order, keeps only the enabled ones,
- * and logs the assembly once as {@code [APE-ARCH] passes=[...]}; nothing else builds a pipeline.
+ * passes. {@link #fromParams} constructs the seven passes in fixed order, keeps only the enabled
+ * ones, and logs the assembly once as {@code [APE-ARCH] passes=[...]}; nothing else builds a
+ * pipeline.
  * {@link #apply} is the one RV addition to {@code StatefulAgent.adjustActionsByGUITree()} after the
  * (byte-identical upstream) base-priority loop.
  */
@@ -22,7 +22,7 @@ public final class ScoringPipeline {
 
     /**
      * Keeps the enabled passes, in the given order, and logs the assembly once. Package-private: the
-     * only public entry is {@link #fromConfig} (INV-ARCH-04). Tests in this package construct a
+     * only public entry is {@link #fromParams} (INV-ARCH-04). Tests in this package construct a
      * pipeline directly from stub passes.
      */
     ScoringPipeline(List<ScoringPass> candidatePasses) {
@@ -37,26 +37,27 @@ public final class ScoringPipeline {
     }
 
     /**
-     * Builds the pipeline from configuration. Constructs the passes in the fixed order
-     * {@code MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion}
-     * (INV-ARCH-03; the frontier family stays contiguous) and retains only those whose
-     * {@code isEnabled()} is true. The six original passes are the exact order of the pre-refactor
-     * inline blocks; {@code MopFrontierPass} (Lever B) is additive, disabled unless
-     * {@code mopFrontierWeight > 0}. Each pass decides {@code isEnabled()} from {@link Config}'s gates
-     * and the run-fixed {@link ScoringContext#getMopData()} at construction.
+     * Builds the pipeline from the run's scoring parameters. Constructs the seven passes in the
+     * fixed order {@code MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage →
+     * FormCompletion} (INV-ARCH-03; the frontier family stays contiguous) and retains only those
+     * whose {@code isEnabled()} is true. The first six are the exact order of the pre-refactor
+     * inline blocks; {@code MopFrontierPass} (Lever B) is additive, disabled unless its weight is
+     * positive — which it is not by default, so a default plan assembles six passes, not seven.
      *
-     * @param cfg present for signature fidelity with the spec; the pass gates read {@code Config}'s
-     *            {@code public static final} fields directly.
+     * <p>Each pass decides {@code isEnabled()} once, here, from the weights it is handed and the
+     * run-fixed {@link ScoringContext#getMopData()}. This is the only place a scoring parameter is
+     * read: below it, a pass is a function of the numbers it was constructed with, which is what
+     * lets a test state a weight instead of arranging for a global to hold it (INV-ARCH-11).
      */
-    public static ScoringPipeline fromConfig(Config cfg, ScoringContext ctx) {
+    public static ScoringPipeline fromParams(ScoringParams params, ScoringContext ctx) {
         List<ScoringPass> candidates = new ArrayList<>();
-        candidates.add(new MopWidgetPass(ctx));
-        candidates.add(new MenuGatewayPass(ctx));
-        candidates.add(new WtgPass(ctx));
-        candidates.add(new FrontierPass(ctx));
-        candidates.add(new MopFrontierPass(ctx));
-        candidates.add(new CoveragePass(ctx));
-        candidates.add(new FormCompletionPass(ctx));
+        candidates.add(new MopWidgetPass(ctx, params));
+        candidates.add(new MenuGatewayPass(ctx, params));
+        candidates.add(new WtgPass(ctx, params));
+        candidates.add(new FrontierPass(ctx, params));
+        candidates.add(new MopFrontierPass(ctx, params));
+        candidates.add(new CoveragePass(ctx, params));
+        candidates.add(new FormCompletionPass(ctx, params));
         return new ScoringPipeline(candidates);
     }
 

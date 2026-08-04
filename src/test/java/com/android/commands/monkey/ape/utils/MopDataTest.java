@@ -29,6 +29,14 @@ import static org.junit.Assert.*;
  */
 public class MopDataTest {
 
+    /**
+     * The two MOP weights this file's scoring assertions pass in. Not the jar defaults on purpose:
+     * a value that exists nowhere else can only appear in a result by having travelled from the
+     * argument. {@code ScoringParamsDefaultsTest} is what pins the defaults themselves.
+     */
+    private static final int W_DIRECT = 917;
+    private static final int W_TRANSITIVE = 613;
+
     /** The strict-package gate is a plan value, so loading needs a plan in effect. */
     @Before
     public void installMopPlan() {
@@ -353,8 +361,8 @@ public class MopDataTest {
         }
         assertTrue("click handler cross-references a reachesTarget method", handlerReaches);
         assertTrue(d.activityHasMop(MDA));
-        assertEquals(Config.mopWeightTransitive,
-                MopScorer.score(MDA, "buttonGenerateHash", d, "click"));
+        assertEquals(W_TRANSITIVE,
+                MopScorer.score(MDA, "buttonGenerateHash", d, "click", W_DIRECT, W_TRANSITIVE));
         // gateway: MainActivity's options menu navigates to MOP sub-activities
         assertTrue(d.activityHasMopOptionsMenu(MAIN));
     }
@@ -693,7 +701,7 @@ public class MopDataTest {
         assertTrue(d.getServices().isEmpty());
         assertTrue(d.getActivities().isEmpty());
         assertTrue(d.getProviders().isEmpty());
-        assertEquals(0, MopScorer.score("x", "y", d, "click"));
+        assertEquals(0, MopScorer.score("x", "y", d, "click", W_DIRECT, W_TRANSITIVE));
     }
 
     // 15.22
@@ -709,7 +717,7 @@ public class MopDataTest {
         MopData.Widget w = d.getWidget("C", "b");
         assertEquals(Boolean.TRUE, w.directMopByEventType.get("click"));
         assertEquals(2, w.listeners.size());
-        assertEquals(Config.mopWeightDirect, MopScorer.score("C", "b", d, "click"));
+        assertEquals(W_DIRECT, MopScorer.score("C", "b", d, "click", W_DIRECT, W_TRANSITIVE));
     }
 
     // 15.23

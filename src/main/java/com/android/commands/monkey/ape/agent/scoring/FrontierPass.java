@@ -8,7 +8,6 @@ import com.android.commands.monkey.ape.agent.StatefulAgent;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
 
@@ -29,10 +28,12 @@ import com.android.commands.monkey.ape.utils.MopData;
 public final class FrontierPass implements ScoringPass {
 
     private final boolean enabled;
+    private final int weight;
 
-    public FrontierPass(ScoringContext ctx) {
+    public FrontierPass(ScoringContext ctx, ScoringParams params) {
         MopData mopData = ctx.getMopData();
-        this.enabled = mopData != null && mopData.hasWtgData() && Config.frontierBoostWeight > 0;
+        this.weight = params.frontierBoostWeight();
+        this.enabled = mopData != null && mopData.hasWtgData() && weight > 0;
     }
 
     @Override
@@ -51,7 +52,7 @@ public final class FrontierPass implements ScoringPass {
         int timestamp = ctx.getTimestamp();
         String activity = state.getActivity();
         // Precompute which transition targets are already visited so the frontier decision is a pure
-        // set lookup (INV-WTG-06). isEnabled already guarantees frontierBoostWeight > 0.
+        // set lookup (INV-WTG-06). isEnabled already guarantees the weight is positive.
         List<MopData.WtgTransition> transitions = mopData.getWtgTransitions(activity);
         Set<String> visitedTargets = new HashSet<>();
         for (MopData.WtgTransition t : transitions) {
@@ -69,7 +70,7 @@ public final class FrontierPass implements ScoringPass {
             GUITreeNode node = action.getResolvedNode();
             if (node == null) continue;
             String shortId = MopData.extractShortId(node.getResourceID());
-            int fBoost = StatefulAgent.frontierBoost(shortId, transitions, visitedTargets, Config.frontierBoostWeight);
+            int fBoost = StatefulAgent.frontierBoost(shortId, transitions, visitedTargets, weight);
             if (fBoost > 0) {
                 action.setPriority(action.getPriority() + fBoost);
                 action.setWtgBoost(action.getWtgBoost() + fBoost);

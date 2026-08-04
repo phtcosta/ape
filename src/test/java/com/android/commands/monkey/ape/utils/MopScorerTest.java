@@ -1,16 +1,11 @@
 package com.android.commands.monkey.ape.utils;
 
 import com.android.commands.monkey.ape.model.ActionType;
-import com.android.commands.monkey.ape.runtime.RunContext;
-import com.android.commands.monkey.ape.runtime.RunSpec;
-import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -40,16 +35,17 @@ import static org.junit.Assert.*;
  */
 public class MopScorerTest {
 
-    /** The menu-gateway boost is a plan value, so the scorer needs a plan in effect. */
-    @Before
-    public void installMopPlan() {
-        TestRunSpecs.installMop();
-    }
-
-    @After
-    public void clearPlan() {
-        RunContext.resetForTest();
-    }
+    /**
+     * The weights the scorer is asked to apply. Deliberately NOT the jar defaults: a test that
+     * passes the default and asserts the default cannot tell an injected weight from a static one
+     * it forgot to remove. These values exist nowhere else, so an assertion below can only hold if
+     * the number travelled from the argument to the result. The jar's actual defaults are pinned
+     * by {@code ScoringParamsDefaultsTest}, which is where that question belongs.
+     */
+    private static final int W_DIRECT = 917;
+    private static final int W_TRANSITIVE = 613;
+    private static final int W_WTG = 419;
+    private static final int W_OPEN_MENU = 271;
 
 
     // -------------------------------------------------------------------------
@@ -87,7 +83,7 @@ public class MopScorerTest {
     // -------------------------------------------------------------------------
 
     /**
-     * Scenario: Widget leads to MOP activity -> returns Config.mopWeightWtg.
+     * Scenario: Widget leads to MOP activity -> returns W_WTG.
      * "settings" click in MainActivity leads to SettingsActivity which has MOP.
      */
     @Test
@@ -101,9 +97,9 @@ public class MopScorerTest {
 
         MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", data);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", data, W_WTG);
         assertEquals("Widget leading to MOP activity should get mopWeightWtg boost",
-                Config.mopWeightWtg, score);
+                W_WTG, score);
     }
 
     /**
@@ -120,7 +116,7 @@ public class MopScorerTest {
 
         MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "about", data);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "about", data, W_WTG);
         assertEquals("Widget leading to non-MOP activity should return 0", 0, score);
     }
 
@@ -138,7 +134,7 @@ public class MopScorerTest {
 
         MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "unknown_widget", data);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "unknown_widget", data, W_WTG);
         assertEquals("Widget with no WTG match should return 0", 0, score);
     }
 
@@ -147,7 +143,7 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_nullData() {
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", null);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", null, W_WTG);
         assertEquals("Null MopData should return 0", 0, score);
     }
 
@@ -159,7 +155,7 @@ public class MopScorerTest {
         // MopData with no WTG transitions
         MopData data = MopData.forTest(null, null, null);
 
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", data);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", data, W_WTG);
         assertEquals("No WTG data should return 0", 0, score);
     }
 
@@ -177,7 +173,7 @@ public class MopScorerTest {
 
         MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        int score = MopScorer.scoreWtg(null, "settings", data);
+        int score = MopScorer.scoreWtg(null, "settings", data, W_WTG);
         assertEquals(0, score);
     }
 
@@ -195,8 +191,8 @@ public class MopScorerTest {
 
         MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        assertEquals(0, MopScorer.scoreWtg("com.example.MainActivity", null, data));
-        assertEquals(0, MopScorer.scoreWtg("com.example.MainActivity", "", data));
+        assertEquals(0, MopScorer.scoreWtg("com.example.MainActivity", null, data, W_WTG));
+        assertEquals(0, MopScorer.scoreWtg("com.example.MainActivity", "", data, W_WTG));
     }
 
     /**
@@ -222,12 +218,12 @@ public class MopScorerTest {
         MopData data = buildData(
                 "br.unb.cic.cryptoapp.MainActivity", transitions, mopActivities);
 
-        assertEquals(Config.mopWeightWtg,
+        assertEquals(W_WTG,
                 MopScorer.scoreWtg("br.unb.cic.cryptoapp.MainActivity",
-                        "menu_item_cipher", data));
+                        "menu_item_cipher", data, W_WTG));
         assertEquals(0,
                 MopScorer.scoreWtg("br.unb.cic.cryptoapp.MainActivity",
-                        "menu_item_message_digest", data));
+                        "menu_item_message_digest", data, W_WTG));
     }
 
     /**
@@ -245,7 +241,7 @@ public class MopScorerTest {
         MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
 
         // Query from a different activity — no transitions registered there
-        int score = MopScorer.scoreWtg("com.example.OtherActivity", "settings", data);
+        int score = MopScorer.scoreWtg("com.example.OtherActivity", "settings", data, W_WTG);
         assertEquals(0, score);
     }
 
@@ -288,29 +284,28 @@ public class MopScorerTest {
     @Test // 17.1
     public void testScoreOpenMenuBoostsWhenOptionsMenuHasMopWidget() throws Exception {
         MopData d = loadMenuMopFixture();
-        RunSpec spec = TestRunSpecs.installMop("ape.mopWeightOpenMenu", "250");
-        assertEquals(spec.mop().weightOpenMenu(), MopScorer.scoreOpenMenu("C", d));
+        assertEquals(W_OPEN_MENU, MopScorer.scoreOpenMenu("C", d, W_OPEN_MENU));
     }
 
     @Test // 17.2
     public void testScoreOpenMenuZeroWhenActivityHasNoMopOptionsMenu() throws Exception {
         MopData d = loadMenuMopFixture();
-        assertEquals(0, MopScorer.scoreOpenMenu("NoSuchActivity", d));
+        assertEquals(0, MopScorer.scoreOpenMenu("NoSuchActivity", d, W_OPEN_MENU));
     }
 
     @Test // 17.3
     public void testScoreEventTypeAwareMatchesClick() throws Exception {
         MopData d = loadEventTypeFixture();
-        assertEquals(Config.mopWeightDirect, MopScorer.score("C", "b", d, "click"));
+        assertEquals(W_DIRECT, MopScorer.score("C", "b", d, "click", W_DIRECT, W_TRANSITIVE));
         // longClick is unflagged on widget b; with the activity-level fallback removed the
         // event-type-specific miss scores 0 (discriminative-only).
-        assertEquals(0, MopScorer.score("C", "b", d, "longClick"));
+        assertEquals(0, MopScorer.score("C", "b", d, "longClick", W_DIRECT, W_TRANSITIVE));
     }
 
     @Test // 17.4
     public void testScoreEventTypeNullFallsBackToAggregate() throws Exception {
         MopData d = loadEventTypeFixture();
-        assertEquals(Config.mopWeightDirect, MopScorer.score("C", "b", d, null));
+        assertEquals(W_DIRECT, MopScorer.score("C", "b", d, null, W_DIRECT, W_TRANSITIVE));
     }
 
     @Test // 17.5
@@ -324,9 +319,9 @@ public class MopScorerTest {
 
     @Test // 17.6
     public void testScoreReturnsZeroWhenMopDataNull() {
-        assertEquals(0, MopScorer.score("a", "b", null, "click"));
-        assertEquals(0, MopScorer.scoreOpenMenu("a", null));
-        assertEquals(0, MopScorer.scoreWtg("a", "b", null));
+        assertEquals(0, MopScorer.score("a", "b", null, "click", W_DIRECT, W_TRANSITIVE));
+        assertEquals(0, MopScorer.scoreOpenMenu("a", null, W_OPEN_MENU));
+        assertEquals(0, MopScorer.scoreWtg("a", "b", null, W_WTG));
         assertEquals(0, MopScorer.stateMopDensity(null, null, 0));
     }
 
@@ -373,10 +368,10 @@ public class MopScorerTest {
         ids.put("flagged", true);  // direct MOP
         MopData data = buildWidgetData("A", ids);
 
-        assertEquals(0, MopScorer.score("A", "plain", data, null));
-        assertEquals(0, MopScorer.score("A", "absent", data, null));
-        assertEquals(Config.mopWeightDirect, MopScorer.score("A", "flagged", data, null));
-        assertEquals(0, MopScorer.score("B", "plain", data, null));
+        assertEquals(0, MopScorer.score("A", "plain", data, null, W_DIRECT, W_TRANSITIVE));
+        assertEquals(0, MopScorer.score("A", "absent", data, null, W_DIRECT, W_TRANSITIVE));
+        assertEquals(W_DIRECT, MopScorer.score("A", "flagged", data, null, W_DIRECT, W_TRANSITIVE));
+        assertEquals(0, MopScorer.score("B", "plain", data, null, W_DIRECT, W_TRANSITIVE));
     }
 
     /**
@@ -394,8 +389,8 @@ public class MopScorerTest {
         ids.put("inner", false);  // child the runtime resolves, unflagged
         MopData data = buildWidgetData("A", ids);
 
-        assertEquals(Config.mopWeightDirect, MopScorer.score("A", "card", data, null));
-        assertEquals(0, MopScorer.score("A", "inner", data, null));
+        assertEquals(W_DIRECT, MopScorer.score("A", "card", data, null, W_DIRECT, W_TRANSITIVE));
+        assertEquals(0, MopScorer.score("A", "inner", data, null, W_DIRECT, W_TRANSITIVE));
     }
 
     // -------------------------------------------------------------------------
@@ -579,7 +574,7 @@ public class MopScorerTest {
         String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
                 + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"x\",\"widgetName\":\"toCrypto\"}]}";
         MopData d = MopData.load(writeTempJson(jsonDoc(reaches, wins, trans)), null, null);
-        assertEquals(Config.mopWeightWtg, MopScorer.scoreWtg("Src", "toCrypto", d));
+        assertEquals(W_WTG, MopScorer.scoreWtg("Src", "toCrypto", d, W_WTG));
     }
 
     private static String jsonDoc(String reach, String wins, String trans) {

@@ -4,6 +4,7 @@ import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionStage;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ActivityNode;
@@ -550,7 +551,14 @@ public final class OracleScaffold {
             @Override public boolean menuPickEligible(String activity) { return true; }
         };
         setField(agent, "scoringContext", scoringContext);
-        setField(agent, "scoringPipeline", ScoringPipeline.fromConfig(null, scoringContext));
+        // The scoring parameters now arrive by injection rather than off static Config, so the
+        // scaffold derives them from the same plan it installed above — the injection profile
+        // adapting to a relocated collaborator, which is the one adaptation INV-ORA-07 permits
+        // while the extraction is in flight. No golden moves: the pipeline runs in
+        // adjustActionsByGUITree(), above this harness's entry point, so no golden record has ever
+        // depended on a scoring weight.
+        setField(agent, "scoringPipeline",
+                ScoringPipeline.fromParams(ScoringParams.fromSpec(spec), scoringContext));
 
         // --- fields with inline initializers, which Unsafe.allocateInstance also skipped
         setField(agent, "actionBuffer", new LinkedList<>());

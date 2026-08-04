@@ -3,7 +3,6 @@ package com.android.commands.monkey.ape.agent.scoring;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopScorer;
@@ -23,10 +22,12 @@ import com.android.commands.monkey.ape.utils.MopScorer;
 public final class WtgPass implements ScoringPass {
 
     private final boolean enabled;
+    private final int weightWtg;
 
-    public WtgPass(ScoringContext ctx) {
+    public WtgPass(ScoringContext ctx, ScoringParams params) {
         MopData mopData = ctx.getMopData();
-        this.enabled = mopData != null && mopData.hasWtgData() && Config.mopWeightWtg != 0;
+        this.weightWtg = params.mopWeightWtg();
+        this.enabled = mopData != null && mopData.hasWtgData() && weightWtg != 0;
     }
 
     @Override
@@ -54,7 +55,7 @@ public final class WtgPass implements ScoringPass {
             GUITreeNode node = action.getResolvedNode();
             if (node == null) continue;
             String shortId = MopData.extractShortId(node.getResourceID());
-            int boost = MopScorer.scoreWtg(activity, shortId, mopData);
+            int boost = MopScorer.scoreWtg(activity, shortId, mopData, weightWtg);
             if (boost > 0) {
                 action.setPriority(action.getPriority() + boost);
                 action.setWtgBoost(boost);

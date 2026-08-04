@@ -6,10 +6,7 @@ import java.util.Set;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.runtime.RunContext;
-import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
 
@@ -21,8 +18,8 @@ import com.android.commands.monkey.ape.utils.MopData;
  * The generic frontier pass requires only unvisited; this one adds the MOP condition, so it is
  * independent of and additive to it.
  *
- * <p>The boost is the plan's {@code mop().frontierWeight()} (default {@code 0} → pass disabled, byte-identical
- * to absent). It is applied as a {@code setPriority} increment — the steering mechanism, since the
+ * <p>The boost is the injected {@code mopFrontierWeight} (default {@code 0} → pass disabled,
+ * byte-identical to absent). It is applied as a {@code setPriority} increment — the steering mechanism, since the
  * boost fields are telemetry-only and never enter {@code getPriority()} — and accumulated into its own
  * {@code mopFrontierBoost} field by read-modify-write, so a priority stacked with the WTG-MOP and
  * generic-frontier boosts stays decomposable by mechanism (INV-ARCH-10).
@@ -36,12 +33,11 @@ public final class MopFrontierPass implements ScoringPass {
     private final boolean enabled;
     private final int weight;
 
-    public MopFrontierPass(ScoringContext ctx) {
+    public MopFrontierPass(ScoringContext ctx, ScoringParams params) {
         MopData mopData = ctx.getMopData();
-        // MopParams is null on an arm without the MOP feature, which is also an arm without MOP
-        // data — the pass is off either way, so the absence reads as weight 0.
-        RunSpec.MopParams mopParams = RunContext.current().spec().mop();
-        this.weight = mopParams == null ? 0 : mopParams.frontierWeight();
+        // An arm without the MOP feature carries no weight to state, and is also an arm without
+        // MOP data — the pass is off either way, so ScoringParams reports the absence as 0.
+        this.weight = params.mopFrontierWeight();
         this.enabled = weight > 0 && mopData != null && mopData.hasWtgData();
     }
 

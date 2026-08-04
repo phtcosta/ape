@@ -1,6 +1,7 @@
 package com.android.commands.monkey.ape.agent;
 
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.Graph;
@@ -106,6 +107,11 @@ public class PipelineParityTest {
         return state;
     }
 
+    /** The scoring parameters of the MOP plan this test installs, as the constructor derives them. */
+    private static ScoringParams planParams() {
+        return ScoringParams.fromSpec(RunContext.current().spec());
+    }
+
     /** A ScoringContext wired the way {@code StatefulAgent}'s constructor wires it. */
     private static ScoringContext ctxFor(final MopData mopData, final UICoverageTracker tracker) {
         return new ScoringContext() {
@@ -126,7 +132,7 @@ public class PipelineParityTest {
         setField(agent, "_coverageTracker", tracker);
         ScoringContext ctx = ctxFor(mopData, tracker);
         setField(agent, "scoringContext", ctx);
-        setField(agent, "scoringPipeline", ScoringPipeline.fromConfig(null, ctx));
+        setField(agent, "scoringPipeline", ScoringPipeline.fromParams(planParams(), ctx));
         return agent;
     }
 
@@ -162,7 +168,7 @@ public class PipelineParityTest {
         ScoringContext ctx = ctxFor(MopData.forTest(null, null, null), new UICoverageTracker());
         assertEquals(Arrays.asList(
                         "MopWidgetPass", "MenuGatewayPass", "CoveragePass", "FormCompletionPass"),
-                ScoringPipeline.fromConfig(null, ctx).passNames());
+                ScoringPipeline.fromParams(planParams(), ctx).passNames());
     }
 
     @Test

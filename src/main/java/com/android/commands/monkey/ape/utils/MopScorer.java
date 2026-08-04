@@ -1,6 +1,5 @@
 package com.android.commands.monkey.ape.utils;
 
-import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -13,18 +12,15 @@ import java.util.List;
 /**
  * Maps MOP reachability to integer priority boosts for action scoring.
  *
- * Weights are read from Config (configurable via ape.properties):
- *   directMop              → Config.mopWeightDirect     (default 500)
- *   transitiveMop (only)   → Config.mopWeightTransitive (default 300)
- *   OPTIONSMENU gateway    → mop().weightOpenMenu()     (default 250)
+ * <p>Every weight arrives as a parameter from the calling pass, which read it off the run's
+ * {@code ScoringParams} (INV-ARCH-11). This class resolves widgets and transitions; it does not
+ * decide what a match is worth, and it has no opinion about where the number came from:
+ *   directMop              → the caller's direct weight
+ *   transitiveMop (only)   → the caller's transitive weight
+ *   OPTIONSMENU gateway    → the caller's open-menu weight
  *   no match               → 0 (discriminative-only; no activity-level fallback)
  */
 public class MopScorer {
-
-    /** Backward-compatible 3-arg score: match-any event type. */
-    public static int score(String activity, String shortId, MopData data) {
-        return score(activity, shortId, data, null);
-    }
 
     /**
      * Priority boost for an action targeting the given widget, scored against the
@@ -33,19 +29,21 @@ public class MopScorer {
      * aggregate flag applies (match-any fallback, INV-MOP-14).
      *
      * @param data may be null (returns 0 — null-safe, INV-MOP)
+     * @param weightDirect boost for a directly-MOP widget
+     * @param weightTransitive boost for a widget that reaches a monitored operation transitively
      */
     public static int score(String activity, String shortId, MopData data,
-                            String candidateEventType) {
+                            String candidateEventType, int weightDirect, int weightTransitive) {
         if (data == null) {
             return 0;
         }
         MopData.Widget w = data.getWidget(activity, shortId);
         if (w != null) {
             if (w.isDirectMop(candidateEventType)) {
-                return Config.mopWeightDirect;
+                return weightDirect;
             }
             if (w.isTransitiveMop(candidateEventType)) {
-                return Config.mopWeightTransitive;
+                return weightTransitive;
             }
         }
         // Discriminative-only: a null or resolved-but-unflagged widget carries no MOP
@@ -88,17 +86,17 @@ public class MopScorer {
 
     /**
      * Boost for opening the options menu of the given activity (T1.2). Returns
-     * the plan's {@code mop().weightOpenMenu()} when the activity's OPTIONSMENU is a MOP gateway
-     * (INV-MOP-13), else 0. O(1) over the precomputed set.
+     * {@code weightOpenMenu} when the activity's OPTIONSMENU is a MOP gateway (INV-MOP-13), else 0.
+     * O(1) over the precomputed set.
      *
      * @param data may be null (returns 0)
+     * @param weightOpenMenu boost for a gateway activity's menu
      */
-    public static int scoreOpenMenu(String activity, MopData data) {
+    public static int scoreOpenMenu(String activity, MopData data, int weightOpenMenu) {
         if (data == null || activity == null) {
             return 0;
         }
-        return data.activityHasMopOptionsMenu(activity)
-                ? RunContext.current().spec().mop().weightOpenMenu() : 0;
+        return data.activityHasMopOptionsMenu(activity) ? weightOpenMenu : 0;
     }
 
     /**
@@ -106,9 +104,10 @@ public class MopScorer {
      * MOP-reachable activity (INV-WTG-02, INV-MOP-06).
      *
      * @param data may be null (returns 0)
+     * @param weightWtg boost for a transition into a MOP-reachable activity; 0 disables the term
      */
-    public static int scoreWtg(String activity, String shortId, MopData data) {
-        if (data == null || !data.hasWtgData() || Config.mopWeightWtg == 0) {
+    public static int scoreWtg(String activity, String shortId, MopData data, int weightWtg) {
+        if (data == null || !data.hasWtgData() || weightWtg == 0) {
             return 0;
         }
         if (activity == null || shortId == null || shortId.isEmpty()) {
@@ -117,7 +116,7 @@ public class MopScorer {
         List<MopData.WtgTransition> transitions = data.getWtgTransitions(activity);
         for (MopData.WtgTransition t : transitions) {
             if (shortId.equals(t.widgetName) && data.activityHasMop(t.targetActivity)) {
-                return Config.mopWeightWtg;
+                return weightWtg;
             }
         }
         return 0;

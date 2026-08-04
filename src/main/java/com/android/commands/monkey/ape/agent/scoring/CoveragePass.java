@@ -2,7 +2,6 @@ package com.android.commands.monkey.ape.agent.scoring;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
@@ -15,9 +14,11 @@ import com.android.commands.monkey.ape.utils.UICoverageTracker;
 public final class CoveragePass implements ScoringPass {
 
     private final boolean enabled;
+    private final int weight;
 
-    public CoveragePass(ScoringContext ctx) {
-        this.enabled = Config.coverageBoostWeight != 0;
+    public CoveragePass(ScoringContext ctx, ScoringParams params) {
+        this.weight = params.coverageBoostWeight();
+        this.enabled = weight != 0;
     }
 
     @Override
@@ -38,7 +39,7 @@ public final class CoveragePass implements ScoringPass {
         int covTotalTarget = 0;
         float coverageGap = coverageTracker.getCoverageGap(state);
         int stateVisits = state.getVisitedCount();
-        int decayedWeight = Config.coverageBoostWeight / (1 + stateVisits / 5);
+        int decayedWeight = weight / (1 + stateVisits / 5);
         for (ModelAction action : actions) {
             if (!action.requireTarget() || !action.isValid()) continue;
             if (!action.isResolvedAt(timestamp)) continue;
