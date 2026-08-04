@@ -989,21 +989,41 @@ Open coordination items — status 2026-08-03:
   scenario declares a hook whose agent-side conjunct is false, so no scenario changes — but the
   next scenario author should know the check got sharper.
 
-  **Task 4.6's text needs an `openspec-update-change` before it is implemented.** It says only
-  "point the three LLM stages at `LlmEngine`", while D7's first row and the three MODIFIED
-  requirements (`New-State LLM Mode`, `Stagnation LLM Mode`, `Probabilistic LLM Routing`) all move
-  the trigger predicates into the stages. That move has to happen inside group 4 — `LlmRouter`
-  cannot die while the predicates live in it — and the task must name it rather than have it
-  arrive as a silent widening. The same update should settle the dead `Config.llmOnNewState` /
-  `llmOnStagnation` / `llmPercentage > 0` conjunct each predicate carries, which D3 made redundant
-  with assembly: deleting it is a behaviour argument, not a tidy-up.
+  **The artifacts owed three corrections and all three went through `openspec-update-change` in
+  the same session, in two commits.** 53 tasks and 22 done throughout; `openspec validate --strict`
+  clean and `--specs --strict` 21 passed after each.
 
-  **One artifact/code disagreement found and left for 4.5 to resolve.** The delta spec states
-  `LlmEngine.selectAction(GUITree, State, List<ModelAction>, String mode, int step)` — five
-  arguments, without the `mopData` and `recentActions` the stages pass today from `ctx.mopData()`
-  and `ctx.actionHistory()`. Either the engine sources them itself or the signature keeps them;
-  the spec's form is likely abbreviation rather than intent, but it is the acceptance text and 4.5
-  should not quietly pick one.
+  - **Task 4.6 said only "point the three LLM stages at `LlmEngine`"**, while D7's first row and
+    the three MODIFIED trigger requirements all move the predicates into the stages. That move has
+    to happen inside group 4 — `LlmRouter` cannot die while the predicates live in it — so the task
+    now names it, together with the three sub-decisions it owns: the redundant mode conjunct is
+    deleted (behaviour-neutral *because of assembly*, INV-DP-03, and for no other reason), the
+    coin's stream, and the oracle seam above. Its stale `StatefulAgent:1041` anchor was corrected
+    to name the owner rather than a fresh line number — the site is `:1089-1091` (learning 58).
+
+  - **`Probabilistic LLM Routing` contradicted itself about the RNG, and this is the substantive
+    one.** It said the coin is "drawn from the run's seeded RNG (`RunContext`)" while the same
+    sentence invokes INV-DP-10 to promise the draw sequence is unchanged. `RunContext.rng()` is
+    `RandomHelper`'s stream; the router's coin is Monkey's `mRandom` (`StatefulAgent.java:186`
+    constructs the router with `ape.getRandom()`). They are **different `Random` instances seeded
+    from one number** — `RunContext`'s own constructor comment says as much — and `SataAgent` draws
+    from both. Moving the coin from one to the other would shift every later `RandomHelper` draw in
+    an LLM arm: a real change in what a device does, **and one the parity goldens cannot catch**,
+    because the oracle's scripted LLM replaces the coin outright (INV-ORA-03). The requirement now
+    names the agent's stream and says why. This is the clearest instance so far of the gate having
+    a blind spot exactly where a stub replaces production behaviour.
+
+  - **`Action Selection Pipeline` declared a five-argument `selectAction`** and then, three
+    paragraphs down, required step 4 to call `ApePromptBuilder.build(...)`, which cannot build a
+    prompt without the `mopData` and `recentActions` the signature had dropped. The five-argument
+    form is not implementable without breaking the design: both values are per-step and
+    agent-owned, while the engine is constructed once per run and owned by `RunContext`, so
+    sourcing them internally would mean holding a `StepContext` or the agent — which is what D2
+    exists to prevent. The pre-decomposition signature is restored, with the reason recorded so the
+    next reader does not re-shorten it. The alternative considered and declined was bundling the
+    five per-step values into one input type: it reads better, but it is a design change in a stage
+    whose contract is semantic neutrality, and it would add a type the parity gate then has to
+    cover.
 
   **Group 4 is three of eight: 4.1–4.3 ticked, 4.4–4.8 open.** The remaining work is `LlmTelemetry`
   (4.4), the engine that composes the five (4.5), the wiring and the oracle rework above (4.6), the
