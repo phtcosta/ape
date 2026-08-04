@@ -2,6 +2,7 @@ package com.android.commands.monkey.ape.oracle;
 
 import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionStage;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.llm.LlmRouter;
@@ -84,12 +85,12 @@ import java.util.Set;
  *   <tr><td>{@code backToActivity}</td><td>SataAgent</td><td>null keeps {@code selectNewActionBackToActivity()} out of {@code AndroidDevice} (see the boundary below)</td></tr>
  *   <tr><td>{@code _isNewState}, {@code graphStableCounter}</td><td>StatefulAgent</td><td>the LLM stages' agent-side arguments; the driver rewrites them per step</td></tr>
  *   <tr><td>{@code decisionPipeline}</td><td>SataAgent</td><td>the run's assembled policy, built by {@code DecisionPipeline.fromSpec} from the preset's plan; the stages own their own episode state, which starts armed</td></tr>
- *   <tr><td>{@code _stepsSinceLauncherFiring}</td><td>SataAgent</td><td>the launcher's cadence counter; <b>seeded once here</b> from the scenario and never touched again (design D2, INV-ORA-05)</td></tr>
+ *   <tr><td>{@code stepsSinceFiring}</td><td>MopLauncherStage</td><td>the launcher's cadence counter; <b>seeded once here</b> from the scenario, on the stage that owns it, and never touched again (design D2, INV-ORA-05)</td></tr>
  * </table>
  *
  * <p>Two of those are <b>declared scenario inputs rather than defaults</b> (design D2), because the
  * production values are the product of dozens of steps and a golden that had to spend them would be
- * too long to review: {@code _stepsSinceLauncherFiring}, and the registration plus iteration count
+ * too long to review: the launcher's {@code stepsSinceFiring}, and the registration plus iteration count
  * inside {@code _budgetTracker}. Both are seeded at construction; neither is advanced per step. The
  * distinction matters for the second one especially — {@code ActivityBudgetTracker.isBudgetExhausted}
  * answers false for an <i>unregistered</i> activity, so an untouched tracker is not "budget off", it
@@ -544,17 +545,22 @@ public final class OracleScaffold {
         setField(agent, "graphStableCounter", 0);
         setField(agent, "backToActivity", null);
         setField(agent, "epsilon", Config.defaultEpsilon);
-        // The launcher's cadence counter is seeded once, here, and never touched again: the ladder
-        // owns every later write (SataAgent.java:522,529) and the driver is forbidden from touching
-        // it at all (INV-ORA-05). See ScenarioScript.getStepsSinceLauncherFiring().
-        setField(agent, "_stepsSinceLauncherFiring", script.getStepsSinceLauncherFiring());
-
         // The decision policy the constructor would have assembled (SataAgent.java), built from the
         // same plan installed above and against this agent's own action producers. Last, because
         // nothing it binds may be read before every field it reaches through is set — this is the
         // injection profile adapting to a relocated collaborator, the one adaptation INV-ORA-07
         // permits while the extraction is in flight.
-        setField(agent, "decisionPipeline", DecisionPipeline.fromSpec(spec, agent));
+        DecisionPipeline pipeline = DecisionPipeline.fromSpec(spec, agent);
+        setField(agent, "decisionPipeline", pipeline);
+        // The launcher's cadence counter is seeded once, here, and never touched again: the stage
+        // owns every later write and the driver is forbidden from touching it at all (INV-ORA-05).
+        // It is seeded after assembly because the stage that holds it does not exist before then.
+        // See ScenarioScript.getStepsSinceLauncherFiring().
+        for (DecisionStage stage : pipeline.stages()) {
+            if (stage.name().equals(DecisionPipeline.Candidate.MOP_LAUNCHER.stageName())) {
+                setField(stage, "stepsSinceFiring", script.getStepsSinceLauncherFiring());
+            }
+        }
 
         RandomHelper.seed(script.getSeed());
         agent.pinned = new Random(script.getSeed());

@@ -31,7 +31,7 @@ import static org.junit.Assert.assertTrue;
  *   <li><b>{@code entry}, LLM accept.</b> The cadence counter is seeded at
  *       {@link #DUE_CADENCE} = 49, one below {@code Config.activityTriggerStagnationStep}, and an
  *       unvisited census candidate is available — so the launcher is <i>due</i>: had this step not
- *       been preempted, {@code _stepsSinceLauncherFiring++} ({@code :522}) would have reached 50 and
+ *       been preempted, the launcher stage's cadence increment would have reached 50 and
  *       fired. The new-state hook accepts and the ladder returns at {@code :485}, above the
  *       increment. <b>The golden itself carries the proof</b>: the launcher fires on step 1, not on
  *       step 0, which is only possible if step 0 left the counter at 49 (finding 3.3-1,
@@ -73,7 +73,7 @@ import static org.junit.Assert.assertTrue;
  * capture boundary (finding 6.1-b) — it needs a path over graph edges the driver records none of.
  *
  * <h2>Where the field assertions of task 7.2 live, and why some of them are one step long</h2>
- * {@code _stepsSinceLauncherFiring} and {@code stagnationHookFired} are never written by
+ * The launcher's cadence counter and the stagnation stage's shot are never written by
  * {@link OracleDriver}, so both survive a multi-step run and are read at the end of the scenario.
  * {@code graphStableCounter} is not: the driver injects the step's scripted value at the <i>start</i>
  * of every step ({@code OracleDriver.java:136}), so after a four-step run the field holds step 3's
@@ -237,7 +237,7 @@ public class PreemptionGoldenTest {
 
         // --- the cadence counter, after the run: reset at the fire, then two ordinary passes
         assertEquals("the counter restarted from the firing point and advanced once per later step",
-                2, intField(agent, "_stepsSinceLauncherFiring"));
+                2, cadenceCounter(agent));
 
         // --- the budget gate, in both its states
         ActivityBudgetTracker budget =
@@ -277,7 +277,7 @@ public class PreemptionGoldenTest {
 
         assertEquals("the step was preempted by the LLM", "accepted", acceptedRecords.get(0).getLlm());
         assertEquals("so the increment at SataAgent.java:522 was never reached",
-                DUE_CADENCE, intField(accepting, "_stepsSinceLauncherFiring"));
+                DUE_CADENCE, cadenceCounter(accepting));
 
         ScenarioScript unpreempted =
                 oneStep("cadence-unpreempted", DUE_CADENCE, ScenarioScript.step(true, 0));
@@ -289,7 +289,7 @@ public class PreemptionGoldenTest {
         assertEquals("the same seeded cadence, unpreempted, reaches the firing point",
                 "EVENT_TRIGGER_ACTIVITY", unroutedRecords.get(0).getActionType());
         assertEquals("and the block resets the counter at the firing point (:529)",
-                0, intField(unrouted, "_stepsSinceLauncherFiring"));
+                0, cadenceCounter(unrouted));
     }
 
     /**
@@ -369,15 +369,26 @@ public class PreemptionGoldenTest {
      * the stage can reach the flag by ordinary means, and a test that wants to observe it has to say
      * out loud whose state it is.
      */
+    private static int cadenceCounter(OracleSataAgent agent) throws Exception {
+        return (Integer) stageField(agent, DecisionPipeline.Candidate.MOP_LAUNCHER, "stepsSinceFiring");
+    }
+
     private static boolean stagnationShotBurned(OracleSataAgent agent) throws Exception {
+        return (Boolean) stageField(agent, DecisionPipeline.Candidate.LLM_STAGNATION,
+                "firedThisEpisode");
+    }
+
+    /** A field of the stage that owns it, found through the roster (INV-DP-07). */
+    private static Object stageField(OracleSataAgent agent, DecisionPipeline.Candidate candidate,
+            String field) throws Exception {
         DecisionPipeline pipeline =
                 (DecisionPipeline) OracleScaffold.getField(agent, "decisionPipeline");
         for (DecisionStage stage : pipeline.stages()) {
-            if (stage.name().equals(DecisionPipeline.Candidate.LLM_STAGNATION.stageName())) {
-                return boolField(stage, "firedThisEpisode");
+            if (stage.name().equals(candidate.stageName())) {
+                return OracleScaffold.getField(stage, field);
             }
         }
-        throw new IllegalStateException("this preset assembles no stagnation stage");
+        throw new IllegalStateException("this preset assembles no " + candidate + " stage");
     }
 
     /**

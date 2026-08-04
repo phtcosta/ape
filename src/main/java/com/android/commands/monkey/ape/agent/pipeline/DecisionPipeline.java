@@ -158,6 +158,10 @@ public final class DecisionPipeline {
                     stages.add(new LlmRandomStage(collaborators.llmRouter(),
                             collaborators::resolveSynthesizedTap));
                     break;
+                case MOP_LAUNCHER:
+                    stages.add(new MopLauncherStage(spec.mop().activityTriggerStagnationStep(),
+                            spec.mop().activityTriggerMaxPerRun()));
+                    break;
                 case SATA_CHAIN:
                     stages.add(new InlineLadderStage(collaborators));
                     break;

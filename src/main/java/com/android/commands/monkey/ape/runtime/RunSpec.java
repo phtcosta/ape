@@ -737,6 +737,19 @@ public final class RunSpec {
         public boolean activityTriggerEnabled() {
             return has("ape.activityTriggerEnabled") && bool("ape.activityTriggerEnabled");
         }
+
+        /**
+         * Selection passes between two launcher firings. Read only when the launcher feature is
+         * present, which is the only condition under which a launcher exists to read it.
+         */
+        public int activityTriggerStagnationStep() {
+            return integer("ape.activityTriggerStagnationStep");
+        }
+
+        /** Per-run launch budget; zero means unlimited (INV-CT-12). */
+        public int activityTriggerMaxPerRun() {
+            return integer("ape.activityTriggerMaxPerRun");
+        }
     }
 
     /** Present exactly when the plan carries {@link Feature#LLM}. */
