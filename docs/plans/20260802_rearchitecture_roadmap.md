@@ -780,3 +780,63 @@ Open coordination items — status 2026-08-03:
 
   **Task 2.9 is not started**, and it is all that stands between group 2 and group 3: the
   `sdd-doc-code` pass over the stage classes and `sdd-test-run`. Groups 3–8 are untouched.
+
+- 2026-08-04 — **Stage 3 group 2 closed: task 2.9's doc pass landed, `rearch-03-decision-pipeline`
+  15/53.** The `ape` repo's `sdd-*` skills are on disk at `.claude/skills/` but absent from the Skill
+  registry of an rv-android-rooted session, so `sdd-doc-code/SKILL.md` was read and followed
+  manually — the same route task 1.5 and stage 2's task 4.5 took, and it is recorded in the commit.
+  `sdd-test-run`'s Maven branch is plain `mvn test`. Gate observed before the work and again after:
+  **1030 tests, 0 failures, 19 skipped**, BUILD SUCCESS, decomposition unchanged at 13 `@Ignore`
+  (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3,
+  `GUITreeBuilderPasswordTest` 1) + 6 `Assume` in `SglangLiveTest` with `SGLANG_URL` unset. The
+  count is identical on both sides, which is the expected shape of a comment-only task rather than
+  evidence of nothing having happened. `git status --short src/test/resources/goldens` empty
+  throughout (INV-ORA-07 holds); `openspec validate --strict` clean.
+
+  **The pass was a near no-op, and that is the honest report.** INV-CODE-01 preserves substantive
+  documentation, and all thirteen files in the package were written with it, so the sweep over the
+  seven stages and their six seams changed exactly two comment blocks. Nothing was rewritten, no
+  file gained a class or method summary it lacked, and the diff contains no executable line — the
+  proof being that stripping comment lines from `git diff -U0` leaves it empty. A doc task that
+  touched two blocks is not a doc task that rewrote a package, and the value of running it was the
+  audit, not the edit.
+
+  **The stale reference the P4 pass was told to hunt does exist, and it was in `StepContext`.** Its
+  class javadoc justified the single write method by pointing at `SataAgent.java:503` as the site of
+  the stagnation stage's accepted escape. That line has held an unrelated back/menu pick block since
+  the ladder was deleted at 2.8; the reset now lives in `LlmStagnationStage.decide`, reaching the
+  agent through `resetGraphStableCounter()`. It is the third instance of finding 2.1-c's family
+  after `OracleScaffold`'s and `OracleSataAgent`'s, and it was fixed the way those were — by naming
+  the current owner (`{@link LlmStagnationStage}`) rather than a new line number, which is the form
+  that cannot go stale again. No comment was found describing behaviour the code does not have, so
+  nothing had to be escalated.
+
+  **The one genuine tag gap was `DecisionPipeline`'s package-private constructor.** Every other
+  constructor in the package carries `@param`; this one had prose explaining why it is
+  package-private but no tag for `stages`, which is the parameter whose copy semantics matter — the
+  roster is defensively copied, so a caller's later mutation cannot reorder a policy the
+  `[APE-ARCH]` echo has already reported. That is the test seam of learning 48, so it is exactly the
+  member worth the tag. Everywhere else the tags were skipped deliberately (P1): `StepContext`'s and
+  `DecisionPipeline`'s accessors have summaries that a `@return` would only restate, and the five
+  stages whose `decide` adds nothing to `DecisionStage.decide`'s contract inherit its documentation
+  instead of repeating it — the two that do add something (`SataChainStage`'s `BadStateException`,
+  `LlmStagnationStage.onStateTransition`) already carried `{@inheritDoc}` blocks from their own
+  tasks.
+
+  **Two P4 checks came back clean and one is worth naming rather than acting on.** No promotional
+  term occurs anywhere in the package outside the upstream Apache header (whose "Advanced Software
+  Technologies Lab" is the ETH Zurich lab's name), and no comment names a type the extraction
+  deleted — `InlineLadderStage`, `decideInlineLadder`, `selected(...)`, `componentTriggerIndex`,
+  `stagnationHookFired` and the three underscore-prefixed launcher counters appear nowhere in
+  `src/main`. What the package does carry, throughout and by construction, is prose that explains a
+  current constraint by reference to the pre-extraction shape — "the conjunction below is the
+  original one", "the block this replaces spelled it out seven times". Read as lineage that is
+  migration history; read as rationale it is the parity argument this stage exists to make
+  defensible, and it is the reason a later reader will not reorder a conditional RNG draw. It is a
+  deliberate authorial voice landed across eight reviewed commits, so a doc pass is the wrong
+  instrument for revisiting it: flagged here, left alone, and if it is ever to change it should be
+  one decision over the whole package rather than a sweep's collateral.
+
+  **Group 2 is complete: 2.1–2.9 all ticked.** Group 3's four permanent tests (3.1–3.4) are not
+  started and change no production code; group 4, the `LlmRouter` decomposition, is the next real
+  extraction and was deliberately not begun here.

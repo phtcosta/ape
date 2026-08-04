@@ -27,7 +27,7 @@
 - [x] 2.6 `ComponentTriggerStage` — extract `:547-551` returning `SideEffect`; move the component round-robin cursor from `StatefulAgent`; `triggerMopComponent()` dispatch helpers stay put and are called by the stage. Unit test coin/guard/side-effect-continues; **goldens green**
 - [x] 2.7 `SataChainStage` — extract `:552-588` as the terminal stage; collapse the 7× copied `resolved`/`if`/`return` pattern into an ordered rung table (supplier + `SataEventType`) walked by one loop (design D12); same order, logging, provenance stamping, `BadStateException` at exhaustion. Unit tests: rung order, exhaustion throw; **goldens green**
 - [x] 2.8 Delete the now-empty inline ladder: `selectNewActionNonnull()` = prologue + `pipeline.decide(stepContext)`; verify the method body carries no residual guard or counter. **Full golden suite green per preset**
-- [ ] 2.9 Run `/sdd-doc-code` on the stage classes; run `/sdd-test-run`
+- [x] 2.9 Run `/sdd-doc-code` on the stage classes; run `/sdd-test-run`
 
 ## 3. Permanent architectural tests (promoted from rearch-01 fixtures)
 

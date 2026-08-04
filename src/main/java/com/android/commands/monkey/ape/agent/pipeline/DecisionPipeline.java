@@ -113,6 +113,9 @@ public final class DecisionPipeline {
      * <p>Package-private: a run's roster comes from its plan, and a pipeline built from an arbitrary
      * stage list is a test fixture. Tests in this package build one directly from stub stages, the way
      * the scoring pipeline's tests do.
+     *
+     * @param stages the roster in the order {@link #decide} consults it — copied, so the caller's list
+     *        cannot reorder a run's policy after the echo has already reported it
      */
     DecisionPipeline(List<DecisionStage> stages) {
         this.stages = Collections.unmodifiableList(new ArrayList<>(stages));

@@ -41,12 +41,12 @@ import com.android.commands.monkey.ape.utils.MopData;
  * step, and a stage that resets the stability counter must be visible to the agent immediately, not
  * at the end of a step.
  *
- * <p><b>One write method, on purpose.</b> {@link #resetGraphStableCounter()} exists because the
- * stagnation stage's accepted escape resets that counter today ({@code SataAgent.java:503}), and the
- * counter is <em>not</em> episode state a stage could own: the forced-restart mechanism reads it too
- * (design D5). So it stays with the agent, and the one legitimate stage-side write is a named method
- * rather than a mutable field handed out. No other stage may write agent state, and there is no
- * second write method to make that ambiguous.
+ * <p><b>One write method, on purpose.</b> {@link #resetGraphStableCounter()} exists because
+ * {@link LlmStagnationStage}'s accepted escape resets that counter, and the counter is <em>not</em>
+ * episode state a stage could own: the forced-restart mechanism reads it too (design D5). So it
+ * stays with the agent, and the one legitimate stage-side write is a named method rather than a
+ * mutable field handed out. No other stage may write agent state, and there is no second write
+ * method to make that ambiguous.
  */
 public interface StepContext {
 
