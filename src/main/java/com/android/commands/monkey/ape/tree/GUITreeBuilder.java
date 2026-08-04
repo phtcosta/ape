@@ -649,27 +649,62 @@ public class GUITreeBuilder {
         return result;
     }
 
-    static Map<Naming, Map<GUITreeNode, Name>> namingToGUITreeNodeCache = new HashMap<>();
+    /**
+     * Per-node name memoization, keyed {@code Naming → GUITree → (GUITreeNode → Name)}.
+     *
+     * <p>The middle level is what makes the entries releasable. Keyed directly by node, as it was,
+     * an entry had no way back to the tree that produced it, so {@link #release(GUITree)} could not
+     * find the slice to drop and every {@code (naming, node, Name)} triple lived for the whole run —
+     * with the node, and through it the subtree it belongs to (V12). The tree the node came from is
+     * already a parameter of {@link #getNodeName}, so recovering that association costs nothing.
+     */
+    static Map<Naming, Map<GUITree, Map<GUITreeNode, Name>>> namingToGUITreeNodeCache = new HashMap<>();
 
     public static Name getNodeName(Naming naming, GUITree tree, GUITreeNode node) {
         if (tree.getCurrentNaming() == naming) {
             return node.getXPathName();
         }
-        Name result = Utils.getFromMapMap(namingToGUITreeNodeCache, naming, node);
+        Map<GUITreeNode, Name> nodeNames = Utils.getFromMapMap(namingToGUITreeNodeCache, naming, tree);
+        if (nodeNames == null) {
+            nodeNames = new HashMap<>();
+            Utils.addToMapMap(namingToGUITreeNodeCache, naming, tree, nodeNames);
+        }
+        Name result = nodeNames.get(node);
         if (result == null) {
             result = naming.getName(tree, node);
-            Utils.addToMapMap(namingToGUITreeNodeCache, naming, node, result);
+            nodeNames.put(node, result);
         }
         return result;
     }
 
+    /**
+     * Drops every memoized entry belonging to a tree the model has released.
+     *
+     * <p>All three caches are swept under <em>every</em> naming, not only under the tree's current
+     * one. Refinement probes reach {@link #getStateKey} and {@link #getNodeName} with candidate
+     * namings, so a tree accumulates entries under namings that are not its own; sweeping only the
+     * current naming left those behind, holding the tree — and its whole node subtree — reachable
+     * after it had left {@code State.treeHistory}.
+     *
+     * <p>The sweep also runs before the {@code currentNaming == null} early return. A tree with no
+     * current naming can still have been probed under others, and returning early skipped its
+     * entries entirely. Only {@link Naming#release} keeps that guard, which is its own contract
+     * (INV-TREE-13) and not this method's.
+     */
     public static void release(GUITree removed) {
+        for (Map<GUITree, StateKey> stateKeys : namingToGUITreeCache.values()) {
+            stateKeys.remove(removed);
+        }
+        for (Map<GUITree, Object[]> nodes : namingToGUITreeNodesCache.values()) {
+            nodes.remove(removed);
+        }
+        for (Map<GUITree, Map<GUITreeNode, Name>> nodeNames : namingToGUITreeNodeCache.values()) {
+            nodeNames.remove(removed);
+        }
         Naming naming = removed.getCurrentNaming();
         if (naming == null) {
             return;
         }
-        Utils.removeFromMapMap(namingToGUITreeCache, naming, removed);
-        Utils.removeFromMapMap(namingToGUITreeNodesCache, naming, removed);
         naming.release(removed);
     }
 }

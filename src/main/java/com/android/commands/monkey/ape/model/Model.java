@@ -564,8 +564,26 @@ public class Model implements Serializable {
         this.eventCounters.print();
     }
 
+    /**
+     * Releases everything the model holds on behalf of a removed GUI tree.
+     *
+     * <p>Beyond the naming manager's own release, this sweeps the actions of the tree's owning
+     * state and drops their references into it (V24). Both release call sites —
+     * {@code StatefulAgent.checkAndRefreshNewState} and replay's {@code refreshNewState} — reach
+     * here already, so the sweep covers both with no new wiring, in the same cycle as the
+     * {@code GUITreeBuilder} cache sweep.
+     *
+     * <p>The state is null-guarded: a tree can be released before it has been attached to one.
+     */
     public void release(GUITree removed) {
         this.namingManager.release(removed);
+        State owner = removed.getCurrentState();
+        if (owner == null) {
+            return;
+        }
+        for (ModelAction action : owner.getActions()) {
+            action.releaseResolved(removed);
+        }
     }
 
 }

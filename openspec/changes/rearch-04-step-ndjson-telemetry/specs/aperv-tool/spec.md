@@ -87,9 +87,16 @@ The module SHALL provide `aperv_tool/analysis/trace_ndjson.py`, a read-only read
 - materialized the fields the sink omits at their defaults (`mop`, `mop_frontier`, `wtg`, `coverage`, `menu`, `form` at `0`; `new_state` and `activity_changed` at `false`);
 - re-derived `activity_has_mop` on the step side from the record's `ACT` entry and on the outcome side via `out.target` → `STATE.act` → `ACT.mop`;
 - expanded the run-relative `t` to epoch milliseconds via `RUN_START.t0`, where an absolute clock is wanted;
-- attached the step's `llm[]` sub-events and its `out` section to the same row, so the three-way join by `step=` no longer exists for any consumer.
+- attached the step's `llm[]` sub-events and its `out` section to the same row, so the three-way join by `step=` no longer exists for any consumer;
+- carried every field of the sub-event through, **including the `sys`/`user`/`resp`/`tool_calls` prompt and response dumps**.
 
 The reader SHALL NOT write to the trace, SHALL NOT emit legacy `[APE-*]` lines, and SHALL NOT run on the collection path — it is an analysis-time component. A malformed record SHALL be skipped and counted in the reader's own diagnostics rather than aborting the read.
+
+**The dumps are named explicitly because dropping them is the easy mistake, and because this reader is the only sanctioned way to read a new trace.** They are on by default, they are the largest single item in the trace, and the throughput gate (`event-sink` INV-SNK-13) prices their per-character escaping — so a reader that discards them leaves the run paying the whole cost of data no analysis can reach. The failure is not hypothetical in the other direction either: the analysis that consumed them, `calibracao/decompose_nomatch.py`, pairs each `[APE-LLM-TEL]` with the `[APE-LLM-RESPONSE]` that produced it to decompose `no_match` causes, and that pairing was the gate of a change decision. Its successor over new traces needs `resp`. The new schema makes the pairing free — call and response share one record — so losing the field at the reader would give back exactly what the re-encoding bought. If the dumps are ever judged too expensive, the decision to make is the flag (`TelemetryParams.llmPromptDump`, default on), not a silent drop one layer down: written-and-unreadable is the one state that costs everything and returns nothing.
+
+The reader SHALL additionally expose the run-level records it encounters — `MOP_DATA`, `PIPELINE` and `LLM_ACK` — as attributes alongside the `RUN_START` header it already surfaces, since the step-row iteration has no natural place for them. Without this they are unreachable: this reader is the sole mechanism for consuming a post-change trace, so a record it skips is a record no conformant analysis can read, and `MOP_DATA.wtgEdges` and `PIPELINE.candidates` are precisely the two quantities this change added — one because `transitions` had been misread as the frontier gate for months, the other because "the arm turned it off" and "this application's data could not support it" were otherwise indistinguishable across 25 of 40 applications. Writing that census and leaving it unread would reproduce, one layer up, the defect the census was added to end.
+
+**`RUN_END` SHALL NOT be exposed**, and this asymmetry is deliberate rather than an oversight in the list above. Owner decision D5 is that no consumer reads it; an attribute is the first step toward `if not run_end: ...`, which is the exit contract D5 refuses. The other three are load and assembly census, not a termination signal, so exposing them creates no such gradient. Truncated-run detection remains post-hoc over timestamps.
 
 `clock_logcat_join.py` SHALL be migrated onto this reader in this change. Its `[APE-STEP]` regex and its entire UTC-offset reconstruction — the year-candidate search, the quarter-hour rounding, the anchor selection, and `alignment_residual_ms` — SHALL be deleted, not disabled: the D4 logcat heartbeat places step and violation on the same clock, so the reconstruction has nothing left to reconstruct.
 
@@ -106,6 +113,18 @@ The deletion has one precondition, and it is not a formality (`event-sink` INV-S
 - **WHEN** `clock_logcat_join.py` joins a new-format trace against a logcat containing the D4 heartbeat lines
 - **THEN** the step↔violation join SHALL be computed directly from the shared logcat clock
 - **AND** the module SHALL contain no UTC-offset reconstruction, no year-candidate search, and no `alignment_residual_ms`
+
+#### Scenario: the prompt dumps survive the reader
+
+- **WHEN** a step's `llm[]` entry carries `sys`, `user` and `resp` because the prompt-dump flag is at its default
+- **THEN** the row the reader yields SHALL carry all three, with the newlines the widget list contains restored exactly as the jar escaped them
+- **AND** no analysis SHALL need a second parser over the same trace to reach them
+
+#### Scenario: the load census is reachable and the termination record is not
+
+- **WHEN** a trace carries `MOP_DATA`, `PIPELINE`, `LLM_ACK` and `RUN_END`
+- **THEN** the reader SHALL expose the first three as attributes, so `wtgEdges` and the candidate census can be read without a second parser
+- **AND** it SHALL expose no `RUN_END` accessor, so no consumer can come to depend on its presence (D5)
 
 ### Requirement: Frozen Legacy-Corpus Readers Are Not Migrated
 

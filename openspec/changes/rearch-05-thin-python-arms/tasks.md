@@ -1,91 +1,42 @@
 # Tasks — rearch-05-thin-python-arms
 
-**Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. **The ape worktree does not cover rv-android**, where almost every task below lands — that repository needs its own branch (procedure doc §4). This stage is the one that commits in both: group 10 is the ape-side deletion.
+**Worktree** (decided 2026-08-03): all 7 stages are implemented in a git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`.
 
-Cross-repo change: the **ape jar is not modified** — presets, fail-fast validation and the `RUN_START` echo are stage-2 deliverables, already deployed, and nothing here rebuilds them. Almost all edits land in rv-android (`modules/aperv-tool/`), with one deliberate exception: group 10 deletes stage 2's transitional test scaffolding from the ape repo. Deleting a test edits the ape repo without modifying the jar, and that scope is stated here rather than discovered at apply time — stage 2 built those tests against the pre-change Python output, and this stage is the one that makes that output obsolete, so this stage is the one that must kill them.
+**Rewritten 2026-08-04.** The predecessor carried 52 tasks, 47 of which drove rv-android work from this repository against a stale picture of it — 27 surviving arms where `gh95-thin-python-arms` had already shipped 8, a 52-pair mapping where the module has 50, and deletion tasks for constants (`ARM_DEFINING_KEYS`, `LLM_ARM_KEYS`, `_CAL_LLM_COMMON`, `_APE_PURE_ARM_FLAGS`) that were already gone. Nineteen arms it instructed an implementer to *re-express* had been deleted. It also minted `INV-APV-40`…`44` in rv-android's invariant namespace, conflicting with `gh95`'s definitions of the same IDs. See `proposal.md` for the divergence table and `design.md` D1/D2 for why the fix is structural rather than arithmetic.
 
-Constraints from `design.md` apply to every group: the 27 surviving arm names are frozen and `ape_pure`/`bfs` are retired (INV-APV-42, design D2), the regeneration diff must be empty after every arm-editing task (INV-APV-44), and no task may add any `RUN_START` read-back (INV-APV-43, owner D1). Group order is dependency order; groups 3–6 each end by re-running the migration diff.
+**Scope of this change, stated rather than discovered**: the rv-android side belongs to `gh95` and is done — no task below edits that repository. The jar is not modified; no `src/main` file is touched and the deployed binary is byte-identical. What lands here is a **test-tree deletion** plus two spec de-framings. Deleting a test edits the ape repo without changing the jar.
 
-## 1. Preconditions, inventory, and baseline capture (BEFORE any edit)
+## 1. Confirm the counterpart before editing (read-only, no rv-android edits)
 
-- [ ] 1.1 Verify the stage-2 dependency: the ape-rv.jar deployed in `modules/aperv-tool/src/aperv_tool/tools/aperv/` resolves presets, fail-fast rejects an unknown key, and emits `RUN_START` (one smoke run on the RVSec AVD; record jar sha256 and the ape repo commit it was built from). If any piece is missing, STOP — this change is blocked on `rearch-02-runspec`
-- [ ] 1.2 Confirm the rearch-02 resolution holds in the deployed jar (design Open Question 1, RESOLVED): `ape.apePureMode` aborts as a retired key and an unknown `--ape` value aborts — confirming `ape_pure` and `bfs` are retired variants (deleted in group 3; owner ratified at artifact approval)
-- [ ] 1.3 Confirm the arm-ownership coordination is clear: `gh90-e3-decisive-run-setup` is archived (2026-08-02); **`gh88-cal-llm-control` (47/58, untouched since 2026-07-24) is the live blocker** — it owns cal-arm definitions this change re-expresses. Do not start group 3 until gh88 lands or the owner explicitly releases the cal arms; rebase on whatever merged, and never edit arms owned by an in-flight change
-- [ ] 1.4 Re-verify the inventory at HEAD: 29 arms in `get_variants()`, 52 pairs in `APERV_PROPERTY_MAPPING`, 18 `ARM_DEFINING_KEYS`, 11 `LLM_ARM_KEYS`, 18-key `_APE_PURE_ARM_FLAGS`; correct the design's numbers if the tree moved
-- [ ] 1.5 Sweep every mapped `ape.*` key against the deployed jar's accepted-key vocabulary (RunSpec/Feature tables, not the old `Config`); record the dead-key list (expected: `ape.mopWeightActivity`, `ape.apePureMode`; possibly more post-stage-2/4)
-- [ ] 1.6 Write `tests/migration/capture_arm_baseline.py` and generate `tests/migration/arm_effective_baseline.json` covering all 29 arms' effective configurations from the **unmodified** tool.py; commit both
-- [ ] 1.7 Write `tests/migration/test_arm_regeneration_diff.py` (per-arm empty-diff assertion against the baseline; not-yet-migrated arms compare via their current expansion so the test is green from day one)
-- [ ] 1.8 Run `/rv-test-run modules/aperv-tool` (suite + migration test green pre-change)
+- [ ] 1.1 Re-read the module source rather than this change's snapshot — the discipline whose absence produced the rewrite. In `rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py`, confirm: `get_variants()` returns the 8 names (`default`→`sata`, `sata_mop`, `sata_llm`, `sata_mop_llm`, `mop_on_llm_off`, `mop_off_llm_off`, `mop_on_llm_70`); `APERV_PROPERTY_MAPPING` has 50 pairs; `ARM_DEFINING_KEYS`/`LLM_ARM_KEYS`/`_CAL_LLM_COMMON`/`ape_pure`/`sata_mop_widget`/`cal_a*` are absent. If any of this has moved, correct `design.md`'s Context block **before** touching a test — the numbers there are a snapshot with a date on it, not a contract
+- [ ] 1.2 Confirm `gh95`'s state and its remaining gates: it was 37/44 on 2026-08-04 with only group 7 pending (final regeneration diff 7.1, lint, verify, review, docs-sync, owner sign-off 7.6, counterpart closure 7.7). **Task 2.x is gated on `gh95` task 7.1 having run green** — the regeneration diff is what replaces the fixtures this change deletes (design D3), so deleting them while the diff is unproven removes a net before its replacement is demonstrated, not after
+- [ ] 1.3 **The dangling counterpart reference — resolved here, so nothing waits on a decision.** `gh95` refers to the ape side by task number in two places: its task 7.7 (*"Mark task 8.5a of the ape-side `rearch-05-thin-python-arms` satisfied"*) and its `proposal.md` (*"**Satisfies** task 8.5a…"*). **There is no task 8.5a in this file and there will not be one.** The obligation 8.5a described was *"open a change in rv-android carrying this stage's counterpart delta, rather than hand-editing that repo's `openspec/specs/`"* — and it is discharged **structurally**, not by a task: `gh95` is that change, it exists, and this rewrite delegates the whole matrix to it (design D1). So `gh95` 7.7 closes against this change as a whole. Record that reading here; do not create a numbered task to receive the pointer, which would re-import the coupling this rewrite removed
+- [ ] 1.3a Ask the owner to de-number `gh95`'s two references — point them at the change, not at a task ordinal, so neither side's renumbering can dangle again. **Not done by this change**: on 2026-08-04 `gh95`'s `tasks.md`, `design.md` and `specs/aperv/spec.md` all carried uncommitted owner edits, and `git add` on any of them would sweep that in-flight work into a `plan(gh95)` commit. The fix is two lines and is safe once that tree is clean; it is cosmetic in any case, because 1.3 already makes the ape side readable without it
 
-## 2. Properties writer and configure() (mechanism before arms)
+## 2. Retire stage 2's transitional Python-contract scaffolding
 
-- [ ] 2.1 Restate `_push_properties()` per design D4: `ape.preset` line first, `ape.mopDataPath` when pushed, then override pass-through only; `ConfigurationError` on an unmapped override key; bool serialization unchanged
-- [ ] 2.2 Extend `configure()` validation: `preset` present and non-empty, `overrides` a dict; **shrink `APERV_AVAILABLE_STRATEGIES` to `["sata", "random"]`** (the deletion `rearch-02-runspec` delegates here — `bfs`/`dfs` are not agent types and would pass Python validation only to abort on the device), with a unit test asserting both are rejected before any device interaction
-- [ ] 2.3 Update/restate the properties-writer and configure tests (`TestPushProperties`, `TestArmProperties`, `TestConfigure`) for the new output contract; keep seed-not-in-properties and lowercase-bool assertions
-- [ ] 2.4 Run `/rv-test-run modules/aperv-tool`
+Stage 2 pinned the jar against the *pre-change* Python output so it could deploy without touching `tool.py` (`rearch-02-runspec` group 6). `gh95` rewrote that output, so the pins now assert a contract that no longer exists — two of the five fixtures (`sata_mop_widget.properties`, `ape_pure.properties`) pin arms that have been retired outright. They are deleted here, in the stage that invalidates them, not left to rot as a frozen copy of a superseded deployment (P3). Stage 2 declared this death itself: its design says stage 5 replaces the fixtures with the real contract, and its task 6.3 says the pin holds "until stage 5".
 
-## 3. Arm re-expression — baseline arms
+- [ ] 2.1 Delete `RunSpecCompatTest.java` (301 lines) and the five per-arm fixtures it pins — `src/test/resources/compat/{sata,sata_llm,sata_mop_llm,sata_mop_widget,ape_pure}.properties` — together with the directory's `README.md`, which documents the byte-for-byte capture and the named `tool.py` it was captured from
+- [ ] 2.2 Move the retired-key coverage the fixtures also carried into `RunSpecAbortTest`, whose subject is the retired-key list itself and which was never transitional: `src/test/resources/compat/negative/{ape_pure_mode,mop_weight_activity}.properties`. Either re-home the two fixtures or restate them inline — whichever leaves `RunSpecAbortTest` self-contained. **Do this before 2.1 lands**, so the coverage is never absent from the suite even transiently
+- [ ] 2.3 Replace `PresetsTest`'s fixture-equivalence assertions (`:205-250`, every `CompatFixtures.resolve(...)` call site) with tests of the contract this stage establishes: `Presets.resolve(name)` returns the declared base vector, explicit keys override it, and the merged result passes the same validation as an explicit plan — asserted against the preset definitions, **never** against a captured copy of `tool.py`'s output. Keep every assertion in the class that does not read a fixture
+- [ ] 2.4 Delete `CompatFixtures.java` once 2.1 and 2.3 leave it unread (it is the fixture loader, and those two are its only callers). Its constants `MOP_DATA_PATH` and `LLM_URL` are still wanted by the rewritten `PresetsTest` — re-home them rather than inlining two magic strings, and check for other readers before deleting rather than trusting this note
+- [ ] 2.5 **Confirm, concretely, that nothing is lost.** Before declaring 2.1–2.4 done, enumerate what `RunSpecCompatTest` asserted and show for each item either (a) `gh95`'s typed regeneration diff covers it, or (b) the rewritten `PresetsTest`/`RunSpecAbortTest` covers it. If some assertion falls in neither, **do not delete it** — record the gap and route it to `gh95` (design: Error Handling, row 3). This task is the reason the deletion is safe; do not tick it by assertion
+- [ ] 2.6 Delete `rearch-02` task 6.4's verification note ("zero Python changes needed") wherever it is still cited as a live property. After this stage it is a historical fact about stage 2, not a standing guarantee
+- [ ] 2.7 Run `/sdd-test-run ape.runtime` (the whole surface of this group lives there)
 
-- [ ] 3.1 Re-express `default`, `sata`, `random` as `preset="aperv"` + empty/near-empty overrides (derive deltas as `effective(arm) − effective(preset)`, per design D3)
-- [ ] 3.2 Delete the retired variants `ape_pure` and `bfs` (design D2/Open Question 1 resolution); record both as documented removals in the arm report
-- [ ] 3.3 Re-run the regeneration diff — must be empty for all migrated arms, with the two retirements listed as documented removals
-- [ ] 3.4 Run `/rv-test-run modules/aperv-tool`
+## 3. Record the correction so stages 6 and 7 do not repeat it
 
-## 4. Arm re-expression — MOP arms
+- [ ] 3.1 Append a dated entry to the **`## Status log`** section of `docs/plans/20260802_rearchitecture_roadmap.md` (`:243`): stage 5's ape side is a test-tree deletion, the Python side was delivered by `gh95`, and the numbers that moved (27→8 arms, 2→21 retirements, 52→50 pairs). Current-state wording (P4) — a dated observation, not a narrative of the correction
+- [ ] 3.1a While in that file, fix what the same drift left in it: the `## Standing constraints` entry on the `rearch-counterparts` branch (`:102`) argues its merge ordering from *"23 of 29 arms push `ape.apePureMode`"*. There are no longer 29 arms and none pushes that key — `gh95` deleted the mapping entry. **The constraint itself still holds and MUST NOT be weakened**: the hazard is a post-stage-2 jar meeting a `tool.py` that still pushes a retired key, and the deployed `tool.py` in `modules` is still the pre-`gh95` one. Correct the count, keep the ordering
+- [ ] 3.2 Record the failure mode itself, not just its instance, as a new bullet in the roadmap's **`## Standing constraints (apply to every change)`** section (`:73`) — the section that already carries the cross-repo branch rules and the invariant-dissolution rule, and the one a stage implementer reads before starting. It is a constraint, not a status entry, so it does not belong in the log. The bullet SHALL state: **a change that plans another repository's work from this one will drift, and nothing detects it** — the artifact is not next to the code, so no test, build or review in either repository fails when they diverge. The remedy is the ownership split this stage made explicit: name the counterpart change as the owner of its side and point at it, never copy its roster, its numbers or its invariant IDs. Cite this stage as the worked example (27 vs 8 arms, and `INV-APV-40`…`44` minted in both trees with conflicting content), and name **`rearch-07` at 0/45 against `gh96` at 49/55** as the next place it can happen
+- [ ] 3.3 Check whether `rearch-06-memory-surgical` (11/29) carries any task written against the predecessor's arm picture; if so, file the correction there rather than fixing it silently here
 
-- [ ] 4.1 Re-express `sata_mop_widget` as `preset="mop"`, `mop_data` kept top-level, with `sata_mop` bound to the same object. `sata_mop` is the primary name — 4,096 traces and 1,066 consolidation files carry it, `sata_mop_widget` has produced none — so it is the one that must not move (INV-APV-42)
-- [ ] 4.2 Re-express `sata_mop_activity` and `sata_mop_act_frontier` as `preset="mop"` + reach deltas
-- [ ] 4.3 Re-run the regeneration diff — must be empty for all surviving arms (the two retirements are listed, not diffed)
-- [ ] 4.4 Run `/rv-test-run modules/aperv-tool`
+## 4. Verification
 
-## 5. Arm re-expression — LLM arms
-
-- [ ] 5.1 Re-express `sata_llm` (`preset="llm"`) and `sata_mop_llm` (`preset="llm_mop"`, empty overrides)
-- [ ] 5.2 Re-express the six frozen gh43 arms as `preset="llm_mop"` + prompt/dose deltas (design D8: frozen means effective-config-frozen; any diff vs their old jar-default inheritance goes to the owner as a declared divergence, never silently absorbed)
-- [ ] 5.3 Re-express `cal_a1`…`cal_a9` as `preset="llm_mop"` + frontier deltas + per-arm LLM deltas; carry the per-arm hypothesis comments (H1/H2/H3, control lineage) onto the new dicts
-- [ ] 5.4 Re-run the regeneration diff — must be empty for all surviving arms (the two retirements are listed, not diffed)
-- [ ] 5.5 Run `/rv-test-run modules/aperv-tool`
-
-## 6. Arm re-expression — gh90 decisive-run arms
-
-- [ ] 6.1 Re-express `mop_on_llm_off`, `mop_off_llm_off`, `mop_on_llm_70` per design D3(c)/(d); keep the INV-APV-29/30 rationale comments (MOP-off keeps `mop_data` and navigation) and the normative-name comment at the definition site
-- [ ] 6.2 Keep `llm_snap_tolerance_px=150` as an ordinary `overrides` entry of `mop_on_llm_70`; keep `expected_jar_git_sha`/`expected_jar_sha256` Python-only (INV-APV-34 pairing untouched)
-- [ ] 6.3 Re-run the regeneration diff — must be empty for all surviving arms (the two retirements are listed, not diffed)
-- [ ] 6.4 Run `/rv-test-run modules/aperv-tool`
-
-## 7. Dead keys and kill-switch duplication removal
-
-- [ ] 7.1 Delete `mop_weight_activity` and `ape_pure_mode` from `APERV_PROPERTY_MAPPING`, plus any further dead entries found by the 1.5 sweep
-- [ ] 7.2 Delete the substrate spread dicts: `_BASELINE_ARM_FLAGS`, `_APE_PURE_ARM_FLAGS` (the 18-key kill-switch mirror), `_MOP_SUBSTRATE`, `_LLM_FLAGS`, `_FRONTIER_SUBSTRATE`, `_MOP_OFF_OVERRIDES`, `_CAL_LLM_COMMON`
-- [ ] 7.3 Re-run the regeneration diff — must be empty for all surviving arms (the two retirements are listed, not diffed)
-- [ ] 7.4 Run `/rv-test-run modules/aperv-tool`
-
-## 8. Guard retirement
-
-- [ ] 8.1 Delete `ARM_DEFINING_KEYS`, `LLM_ARM_KEYS`, `_ARM_DEFINING_EXEMPT` from `tool.py`; update the module docstring and `get_variants()` docstring to the preset+overrides contract (current-state comments only, P4)
-- [ ] 8.2 Retire the constant-vs-constant guard tests in `tests/test_aperv_tool.py`: `TestArmDefiningGuard`, the INV-APV-14 explicitness and table-pin tests in `TestFrozenArmVariants`, the INV-APV-26/27 tests, the cal-arm plan-table pins, and the gh90 expansion-diff tests; delete `_EXPECTED_ARM_DEFINING_MAPPING` and companions
-- [ ] 8.3 Restate the surviving structural assertions in their trivial form: the 27 frozen names present and `ape_pure`/`bfs` absent, `sata_mop is sata_mop_widget` (the frozen-corpus name still resolves), gh90 single-factor contrasts asserted directly on `overrides` dicts, snap-tolerance pairing (INV-APV-34) and provenance (INV-APV-33) untouched
-- [ ] 8.4 Verify by grep that `tool.py` contains no `RUN_START` parsing and no echo-vs-intent logic (INV-APV-43, owner D1)
-- [ ] 8.5 Update `modules/aperv-tool/docs/architecture.md` and `modules/aperv-tool/CLAUDE.md` (the `ape_pure` row of its variant table dies with the variant)
-- [ ] 8.5a **Cross-repo OpenSpec instrument**: rv-android's `openspec/specs/aperv/spec.md` MUST NOT be edited directly (that repo's CLAUDE.md forbids hand-writing OpenSpec artifacts). Open a change in rv-android via `openspec-new-change` carrying this stage's counterpart delta — arm-definition requirements restated as preset + overrides, the variant/properties tables reduced, `ape_pure`/`bfs` rows removed, and "Arm-Defining Flag Completeness (FR20)" REMOVED with the substitute recorded (regeneration diff + level-0 echo) — and let that repo's archive/sync apply it
-- [ ] 8.6 Run `/rv-test-run modules/aperv-tool`
-
-## 9. Final verification and owner sign-off
-
-- [ ] 9.1 Final full regeneration diff over all migrated arms; produce the human-readable per-arm report (empty, or the owner-approved declared divergences with their new arm names, plus the two documented retirements `ape_pure`/`bfs`)
-- [ ] 9.2 One smoke run per preset family (`sata`, `sata_mop_act_frontier`, `sata_llm`, `sata_mop_llm`) on the RVSec AVD: run completes, `RUN_START` first line reconstructs the arm, `ape.properties` on device matches the preset+deltas contract
-- [ ] 9.3 Run `/rv-qa-lint-fix modules/aperv-tool`
-- [ ] 9.4 Run `/rv-verify modules/aperv-tool`
-- [ ] 9.5 Invoke `/rv-code-reviewer` via Skill tool over the rv-android diff (`modules/aperv-tool`); the ape-side diff of group 10 is reviewed with `/sdd-code-reviewer`
-- [ ] 9.6 Owner sign-off task: present the final diff report and the smoke evidence; on approval, delete `tests/migration/test_arm_regeneration_diff.py` and archive `arm_effective_baseline.json` + the final diff output under `modules/aperv-tool/docs/` as the migration record (INV-APV-44 — the check is one-time)
-- [ ] 9.7 Run `/rv-docs-sync modules/aperv-tool`
-
-## 10. Retire stage 2's transitional Python-contract scaffolding (ape repo)
-
-Stage 2 pinned the jar against the *pre-change* Python output so it could deploy without touching `tool.py` (`rearch-02-runspec` group 6). This stage rewrites that output — task 2.1 restates `_push_properties` — so the pins now assert a contract that no longer exists. They are deleted here, in the change that invalidates them, not left to rot as a frozen copy of a superseded deployment (P3).
-
-- [ ] 10.1 Delete `RunSpecCompatTest` and the per-arm fixture properties files it reads (`rearch-02` tasks 6.1/6.2: the four campaign-arm fixtures plus the `ape_pure` fixture). The retired-key coverage those fixtures also carried — `ape.apePureMode`, `ape.mopWeightActivity` — moves to `RunSpecAbortTest`, whose subject is the retired-key list itself and which is not transitional
-- [ ] 10.2 Delete `PresetsTest`'s fixture-equivalence assertions (`rearch-02` task 6.3: "`Presets.resolve(name)` + deployment keys ≡ the campaign fixture's resolved plan"). Replace them with tests of the contract this stage establishes: `Presets.resolve(name)` returns the declared base vector, explicit keys override it, and the merged result passes the same validation as an explicit plan — asserted against the preset definitions, never against a captured copy of `tool.py`'s output
-- [ ] 10.3 Delete `rearch-02` task 6.4's verification note ("zero Python changes needed") from the change's task log if it is still cited anywhere as a live property; after this stage it is a historical fact about stage 2, not a standing guarantee
-- [ ] 10.4 Confirm the equivalence the deleted fixtures used to provide is now carried by the regeneration migration check (INV-APV-44, group 9): that check compares *effective configurations*, which is the property the fixtures approximated, and it is itself one-time by design
-- [ ] 10.5 Run `mvn test` in the ape repo — the suite is green with the transitional tests gone and the preset-contract tests in their place
+- [ ] 4.1 `mvn test` — full suite green with the transitional tests gone and the preset-contract tests in their place. Baseline before this change: **1088 tests, 0 failures, 19 skipped**; expect the count to fall by what `RunSpecCompatTest` contributed and to hold otherwise
+- [ ] 4.2 Confirm the jar is untouched: `git diff --stat` shows no `src/main` path. A red suite in this stage cannot be a jar regression, and this task is what makes that statement checkable
+- [ ] 4.3 Run `/sdd-qa-lint-fix src/test/java`
+- [ ] 4.4 Run `/sdd-verify ape`
+- [ ] 4.5 Run `/sdd-code-reviewer` over the ape-side diff
+- [ ] 4.6 Run `/opsx:verify rearch-05-thin-python-arms` before archiving

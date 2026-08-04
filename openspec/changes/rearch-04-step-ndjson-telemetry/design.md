@@ -66,7 +66,7 @@ never through Logger.
 
 | Component | Responsibility | Input | Output |
 |-----------|---------------|-------|--------|
-| `ape.telemetry.JsonBuf` (new, ~80 LOC) | JSON serialization into a reused `StringBuilder`; full escaping; one-line guarantee | primitive values, strings | one NDJSON line (no raw newline ever) |
+| `ape.runtime.Json.Buf` (**extends** the class `rearch-02` shipped, not a new one) | JSON serialization into a reused `StringBuilder`; full escaping; one-line guarantee | primitive values, strings | one NDJSON line (no raw newline ever) |
 | `ape.telemetry.EventSink` (new interface) | Observation surface; all methods `void`, never throw into the loop | step/decision/LLM/outcome data as primitives+strings | NDJSON lines on `System.out` |
 | `ape.telemetry.NdjsonSink` (new) | Record lifecycle (open→append→close at N+1), ID tables, run-level records, counters for `RUN_END` | sink calls | trace records |
 | `ape.telemetry.NoopSink` (new) | Neutrality-test double; every method a no-op | sink calls | nothing |
@@ -170,9 +170,11 @@ One entry per routing attempt in the step, in occurrence order (a `BadStateExcep
 
 The outcome of step N only exists during step N+1's `updateGraph()` — the exact fact the join buffer (`StatefulAgent.java:117-124`) already encodes. The sink keeps **one** pending record: `beginStep` opens it (lazily, at selection start, so LLM sub-events occurring before the final action is known still land in it), `decision` fills `dec` when `resolveNewAction` finalizes, `outcome` closes+writes it under the same single-shot, reference-equality guard the `[APE-OUTCOME]` line uses today (`:1024-1045`). If the next `beginStep` arrives with the previous record still pending (non-model action, restart, refinement discard — the cases where today no `[APE-OUTCOME]` is emitted), the pending record is closed **without** an `out` member and written. Nothing is deferred beyond what is already deferred; cost stays ~1 stdout write per step. Alternative considered: write two records (decision at N, outcome at N+1) — rejected: it re-creates the analyst-side join D2 exists to kill.
 
-### D-2 — Hand-written serializer, not `org.json`
+### D-2 — Hand-written serializer, not `org.json`; one class, extended rather than duplicated
 
-`org.json.JSONObject` is available on-device, but: (i) it is hash-ordered — field order would be non-deterministic across runs, hurting goldens, diffs, and gzip ratio; (ii) its escaping behavior varies across Android releases and is not under test here; (iii) per-record object graphs allocate. `JsonBuf` (~80 LOC) appends into one reused `StringBuilder`, escapes `"` `\` and all of U+0000–U+001F (shorthands `\n \r \t \b \f`, ` ` for NUL, plus U+2028/U+2029 — the JS line separators), passes non-ASCII through (the stream is UTF-8), and **never emits a raw newline** — the record terminator is the single `\n` written by the sink around the record. `org.json` is used only in JVM tests, as the round-trip parser (it is already on the test classpath).
+`org.json.JSONObject` is available on-device, but: (i) it is hash-ordered — field order would be non-deterministic across runs, hurting goldens, diffs, and gzip ratio; (ii) its escaping behavior varies across Android releases and is not under test here; (iii) per-record object graphs allocate.
+
+The serializer this decision calls for **already exists**: `rearch-02` shipped `ape.runtime.Json` for the `RUN_START` line, and its javadoc states the contract — this stage grows the writer, not the format. What stage 4 adds to it is the nested `Json.Buf` (the streaming writer; `Json.object(Map)` builds a value tree per call, the wrong shape for one record per step across a run) and the two code points the escape set was missing. It does **not** add a second class: two implementations of how a control character leaves this process is how they drift, and the trace would then have two answers for the same byte depending on which record it sat in (P3). The permanent test that keeps the single format honest is the agreement assertion — the same value tree through `Json.object(Map)` and through `Json.Buf` renders the same line. `Json.Buf` appends into one reused `StringBuilder`, escapes `"` `\` and all of U+0000–U+001F (shorthands `\n \r \t \b \f`, ` ` for NUL, plus U+2028/U+2029 — the JS line separators), passes non-ASCII through (the stream is UTF-8), and **never emits a raw newline** — the record terminator is the single `\n` written by the sink around the record. `org.json` is used only in JVM tests, as the round-trip parser (it is already on the test classpath).
 
 ### D-3 — Dictionary events with run-local integer IDs; static facts live on the entry
 
@@ -188,7 +190,9 @@ Teardown chain (all inside the existing `safeStep` isolation — INV-EXPL-16/29 
 
 ### D-6 — Heartbeat: `Log.i`, plan flag, default on (owner D4)
 
-One write-only line per step — `Log.i("ApeRvHb", "s=<N> t=<tRel>")` — emitted where the step envelope is captured (the `beginStep` site), behind `TelemetryParams.heartbeat` (property `ape.telemetryHeartbeat`, default `true`). `t` is the same run-relative value the record carries, so the trace↔logcat mapping is exact; the violation↔step join runs in the Python analysis pipeline against the logcat clock — no runtime APE↔logcat coupling, and the jar never reads logcat.
+One write-only line per step — `Log.i("ApeRvHb", "s=<N> t=<tRel>")` — emitted where the step envelope is captured (the `beginStep` site), behind `TelemetryParams.heartbeat` (property `ape.telemetryHeartbeat`, default `true`).
+
+`ApeRvHb` stopped being this design's proposal and became a cross-repository constant on 2026-08-04: the counterpart change declares `TAG_APERV_HEARTBEAT = "ApeRvHb"` once in `rvsec` and appends it to `LogcatManager.default_tags`, and `clock_logcat_join.py` matches the heartbeat line against it. The jar's constant is therefore not a free choice and its comment SHALL name the counterpart declaration site — a mismatch between the two literals is invisible from either side alone. Verified read-only at the same date: `_align_clocks()` and `alignment_residual_ms` are still present in `clock_logcat_join.py`, which is what INV-SNK-14 requires until a captured run demonstrates the lines arriving. `t` is the same run-relative value the record carries, so the trace↔logcat mapping is exact; the violation↔step join runs in the Python analysis pipeline against the logcat clock — no runtime APE↔logcat coupling, and the jar never reads logcat.
 
 ### D-7 — Legacy deletion, with the replay reader preserved
 
@@ -216,8 +220,8 @@ Sink methods never propagate a `Throwable` into the exploration loop: each publi
 
 | Requirement / Invariant | Implementation | Test |
 |-------------|---------------|------|
-| INV-SNK-01 one line per record | `JsonBuf` + `NdjsonSink.write` | permanent JVM unit: no raw `\n` for adversarial inputs |
-| INV-SNK-02 escaping round-trip | `JsonBuf.val(String)` | JVM round-trip via `org.json` parse (newline, quotes, backslash, NUL, spaces, non-ASCII) — Sec. 9.12 |
+| INV-SNK-01 one line per record | `Json.Buf` + `NdjsonSink.write` | permanent JVM unit: no raw `\n` for adversarial inputs |
+| INV-SNK-02 escaping round-trip | `Json.Buf.value(String)`, shared with `Json.object(Map)` | JVM round-trip via `org.json` parse (newline, quotes, backslash, NUL, spaces, non-ASCII) — Sec. 9.12 |
 | INV-SNK-03 exactly one StepRecord per step | `NdjsonSink` lifecycle | JVM unit: scripted step sequence → record count == step count |
 | INV-SNK-04/05 envelope 1×, defaults omitted, tri-state exemptions | record writer | JVM unit: zero boosts absent; `patched` tri-state preserved |
 | INV-SNK-06 dictionary-before-reference | `NdjsonSink` ID tables | JVM unit: first-sight ordering |
@@ -234,17 +238,21 @@ Sink methods never propagate a `Throwable` into the exploration loop: each publi
 
 ## API Design
 
-### `JsonBuf`
+### `Json.Buf` (nested in the class `rearch-02` shipped)
 
 ```java
-final class JsonBuf {                    // zero deps, reused via reset()
-    JsonBuf reset();
-    JsonBuf beginObject();  JsonBuf endObject();
-    JsonBuf beginArray();   JsonBuf endArray();
-    JsonBuf name(String key);
-    JsonBuf value(String s);             // full escaping; null → JSON null
-    JsonBuf value(long n);  JsonBuf value(double d);  JsonBuf value(boolean b);
-    String  toLine();                    // completed record; contains no '\n'
+public final class Json {                       // ape.runtime.Json, zero deps
+    public static String object(Map<String, ?> members);   // value tree; RunSpecEcho's entry point
+
+    public static final class Buf {             // streaming writer, reused via reset()
+        public Buf reset();
+        public Buf beginObject();  public Buf endObject();
+        public Buf beginArray();   public Buf endArray();
+        public Buf name(String key);
+        public Buf value(String s);             // full escaping; null → JSON null
+        public Buf value(long n);  public Buf value(double d);  public Buf value(boolean b);
+        public String toLine();                 // completed record; contains no '\n'
+    }
 }
 ```
 
@@ -254,28 +262,49 @@ Preconditions: balanced begin/end (assertion-checked in tests, not at runtime). 
 
 ```java
 interface EventSink {                    // all void; never throws into the loop
+    int ABSENT = -1;                     // the tri-states' third state, and 0 is taken
+
     void beginStep(int step, long tRelMs, String activity, boolean activityHasMop,
                    String stateKey);     // opens pending record; interns ACT/STATE ids;
-                                         // closes a still-pending predecessor without `out`
+                                         // closes a still-pending predecessor without `out`;
+                                         // re-entering the same step keeps the open record
     void decision(String action, String decisionSource, String pickChannel,
                   int priority, int mop, int mopFrontier, int wtg, int coverage,
-                  int menu, int form, int patched /*-1 absent*/,
-                  int cfChanged /*-1 absent*/, String cfAction /*null unless changed*/);
+                  int menu, int form, String wtgSource /*null unless wtg != 0*/,
+                  int patched /*ABSENT*/, int cfChanged /*ABSENT*/,
+                  String cfAction /*null unless changed*/);
     void decisionNonModel(String action, String decisionSource, String pickChannel);
-    void llmCall(/* call, mode, tool, qwenX/Y, pxX/Y, result, reason, repair, mcls,
-                    ncls, ndist, widgets, tokIn, tokOut, ms, text, sys, user, resp */);
+    void mopExposure(int boosted, int total);          // from the MOP widget pass, at its own site
+    void componentLaunch(int result, String error);    // after dispatch, which is when it exists
+    void llmDump(String system, String user, String response, String toolCalls);
+    void llmCall(int call, String mode, String tool, int qwenX, int qwenY, int pixelX,
+                 int pixelY, String result, String reason, String repair,
+                 String matchedClass, String nearestClass, double nearestDistance,
+                 int widgets, int tokensIn, int tokensOut, long ms, String text);
     void llmError(String cause, String detail);
     void llmBreakerOpen(int trips);
-    void outcome(boolean newState, String targetStateKey, boolean activityChanged);
+    void outcome(boolean newState, String targetStateKey, String targetActivity,
+                 boolean targetActivityHasMop, boolean activityChanged);
     void flushPendingStep();             // teardown: writes pending with out:{"resolved":false}
-    void mopData(String status, String reason, String pkg, int windows, int widgets);
+    void mopData(/* status, reason, pkg, windows, widgets, flagged, droppedNoId, wtgEdges,
+                    handlersUnmatched, syntheticLambda, recovered, mopActivities,
+                    mopActsAugmented */);
+    void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates);
     void llmAck(String serverModel);
-    void pipeline(List<String> stages, List<String> passes);
-    void runEnd(String reason, RunCounters counters);
+    void runEnd(String reason, RunCounters counters);  // added by group 4, with RunCounters
 }
 ```
 
 `RunCounters` is a plain value object filled at teardown from `LlmRouter` accessors (which replace `printSummary`) plus step/dictionary counts maintained by the sink itself.
+
+**Four signatures differ from this section's first draft, each because the record the spec mandates could not otherwise be produced.** They are recorded here rather than left to the implementation, since the sketch is what the next group reads.
+
+- `outcome` carries the target's **activity** and its MOP flag, not only the state key. The target state can be seen for the first time at outcome time — that is what a new state *is* — and its `STATE` dictionary entry has to name an activity, because the outcome-side `activity_has_mop` is derived by the reader as `out.target → STATE.act → ACT.mop` (D-3). Without it the derivation breaks for exactly the new states the run exists to find.
+- `mopExposure` is its own call rather than two more parameters on `decision`, because the pair is computed inside the MOP widget pass — the site that emits `[APE-RV] MOP boost` today — and threading it out to `resolveNewAction` would add a scoring-context accessor that `dec.wtgsrc` was deliberately designed to avoid.
+- `componentLaunch` is its own call because of ordering: the launch result does not exist when the decision is recorded. This is precisely why the retired `[APE-STEP]` line could never carry it, and the reason the record can is that it closes at N+1.
+- `llmDump` stages the prompt/response text for the next sub-event instead of riding `llmCall`'s parameter list. The dumps exist before the call's outcome does — the retired `[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]` lines preceded their `[APE-LLM-TEL]` line for the same reason — so staging is what lets an attempt abandoned before it maps keep the prompt that produced it.
+
+`decision` also gains `wtgSource` (task 3.1a's stamp, carried on the action like `wtgBoost` itself), and `pipeline` gains the candidate census that the `PIPELINE` record requires. `mopData` takes the full census of the run-level requirement rather than the five fields sketched here.
 
 ## Data Flow
 
@@ -312,7 +341,7 @@ interface EventSink {                    // all void; never throws into the loop
 
 | Layer | What | How |
 |-------|------|-----|
-| JVM unit (permanent) | `JsonBuf` escaping round-trip + one-line invariant (Sec. 9.12); StepRecord lifecycle, dictionary ordering, tri-state `patched`, defaults omission; teardown order (`flushPendingStep` first, `runEnd` last); discriminator | `mvn test`, existing suite conventions |
+| JVM unit (permanent) | `Json.Buf` escaping round-trip, and its agreement with `Json.object(Map)`, + one-line invariant (Sec. 9.12); StepRecord lifecycle, dictionary ordering, tri-state `patched`, defaults omission; teardown order (`flushPendingStep` first, `runEnd` last); discriminator | `mvn test`, existing suite conventions |
 | Neutrality (permanent gate) | sink on/off, same seed ⇒ identical action sequence (Sec. 9.8) | rearch-01 parity harness with `NdjsonSink` vs `NoopSink` |
 | Python unit | reader golden: NDJSON fixture → expected typed rows (dictionary resolution, defaults materialization, `llm[]` and `out` joined onto their step); `clock_logcat_join` over a new-format trace plus a heartbeat logcat; gzip round-trip and non-fatal failure | pytest in aperv-tool |
 | Acceptance | regenerate the 2026-07-24 calibration report tables from a sample new trace (Sec. 9.11) | rv-android side, sample run via rv-platform |

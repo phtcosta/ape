@@ -733,10 +733,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 if (removed == null) {
                     throw new IllegalStateException("At least two GUI trees.");
                 }
+                GUITree last = newState.getLatestGUITree();
+                // The equivalence is computed before the release cycle, not after it:
+                // isTopNamingEquivalent reaches GUITreeBuilder.getStateKey(topNaming, removed),
+                // which memoizes, so asking afterwards re-inserted a cache entry for the tree
+                // that had just been released and made release() the second-to-last touch
+                // instead of the last (V12). The value is unaffected — a state key is a pure
+                // function of the naming and the tree, and neither is mutated by release.
+                boolean topNamingEquivalent = isTopNamingEquivalent(removed, last);
                 GUITreeBuilder.release(removed);
                 model.release(removed);
-                GUITree last = newState.getLatestGUITree();
-                if (isTopNamingEquivalent(removed, last)) {
+                if (topNamingEquivalent) {
                     Logger.iprintln("Checking trivial new state: top naming equivalent.");
                     retry = Math.min(2, retry); // at most try twice
                 } else {

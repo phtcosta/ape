@@ -37,6 +37,13 @@ import java.util.Map;
  * that stage grows the writer, not the format, so a {@code RUN_START} line captured today parses
  * unchanged afterwards.
  *
+ * <p>There are two entry points onto one format. {@link #object(Map)} renders a value tree and is
+ * what the run-level records use, where a map per line is nothing; {@link Buf} writes field by
+ * field into a buffer that outlives the record, which is what a record per step needs. They are
+ * the same renderer — {@code Buf} calls the same {@code appendString}/{@code appendNumber} — and a
+ * test asserts that the same tree through either one is the same line, so "grows the writer, not
+ * the format" stays true rather than merely intended.
+ *
  * <p>The value grammar is small on purpose: strings, numbers, booleans, null, {@code Map} objects
  * and {@code Collection} arrays, nested freely. Anything else raises rather than falling back to
  * {@code toString()} — a silent {@code toString()} is how a record acquires a field that looks
@@ -110,11 +117,20 @@ public final class Json {
      * is worse than failing where the value was formed.
      */
     private static void appendNumber(StringBuilder out, Number value) {
-        double magnitude = value.doubleValue();
+        refuseNonFinite(value, value.doubleValue());
+        out.append(value.toString());
+    }
+
+    /**
+     * Refuses the three doubles JSON cannot spell. The value and the magnitude are separate
+     * arguments because they are not always the same object: on the boxed path the {@link Number}
+     * is what the message should name and its {@code doubleValue()} is what the test needs, while a
+     * primitive {@code double} arrives as both.
+     */
+    private static void refuseNonFinite(Object value, double magnitude) {
         if (Double.isNaN(magnitude) || Double.isInfinite(magnitude)) {
             throw new IllegalArgumentException("JSON has no representation for " + value);
         }
-        out.append(value.toString());
     }
 
     private static void appendString(StringBuilder out, String value) {
@@ -143,6 +159,14 @@ public final class Json {
                 case '\t':
                     out.append("\\t");
                     break;
+                case '\u2028':
+                case '\u2029':
+                    // Legal JSON unescaped, and still a line break for every reader in the
+                    // JavaScript family. A record carrying one raw would parse everywhere and
+                    // split in exactly the tools that read it line by line, which is the failure
+                    // this class exists to make impossible rather than rare.
+                    out.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
+                    break;
                 default:
                     if (c < 0x20) {
                         // Every remaining control character, including the ones a widget's text can
@@ -156,5 +180,138 @@ public final class Json {
             }
         }
         out.append('"');
+    }
+
+    /**
+     * One record under construction, written field by field into a buffer that survives it.
+     *
+     * <p>{@link Json#object(Map)} builds a value tree per call: the map, the boxed numbers and the
+     * collections holding them are all allocated to be discarded a line later. That is the right
+     * shape for the handful of run-level records and the wrong one for a record per step across a
+     * whole run, which is what this class is for — {@link #reset()} returns the same
+     * {@link StringBuilder} to empty, so a step at steady state costs the characters of its own
+     * line and nothing else.
+     *
+     * <p>Nesting is the caller's obligation: {@code beginObject}/{@code endObject} and
+     * {@code beginArray}/{@code endArray} must balance, and inside an object every value must be
+     * preceded by its {@link #name(String)}. Unbalanced use is a programming error, caught by the
+     * tests rather than by a runtime check on the step path — a guard there would cost every step
+     * to protect against a defect that cannot reach production without failing a test first.
+     * Commas are not the caller's obligation: the buffer knows whether the current level already
+     * holds a member, which is the one piece of bookkeeping a hand-written record is likely to get
+     * wrong.
+     *
+     * <p>Every writing method returns the buffer, so one record is one chained expression and the
+     * shape of the call site is the shape of the line it produces.
+     */
+    public static final class Buf {
+
+        private final StringBuilder out = new StringBuilder(512);
+
+        /** Whether the current nesting level already holds a member, hence needs a separator. */
+        private boolean afterMember;
+
+        /** Returns the buffer to empty, ready for the next record. */
+        public Buf reset() {
+            out.setLength(0);
+            afterMember = false;
+            return this;
+        }
+
+        /**
+         * Opens an object, wherever an object may stand: the start of a record, the value after a
+         * {@link #name(String)}, or an element of an array — which is why it emits a separator
+         * first, exactly as any other value does.
+         */
+        public Buf beginObject() {
+            comma();
+            out.append('{');
+            afterMember = false;
+            return this;
+        }
+
+        /** Closes the innermost object, which thereby becomes a member of whatever encloses it. */
+        public Buf endObject() {
+            out.append('}');
+            afterMember = true;
+            return this;
+        }
+
+        /** Opens an array, in any of the positions {@link #beginObject()} may be opened in. */
+        public Buf beginArray() {
+            comma();
+            out.append('[');
+            afterMember = false;
+            return this;
+        }
+
+        /** Closes the innermost array, which thereby becomes a member of whatever encloses it. */
+        public Buf endArray() {
+            out.append(']');
+            afterMember = true;
+            return this;
+        }
+
+        /** Opens a member of the enclosing object. The key is escaped like any other string. */
+        public Buf name(String key) {
+            comma();
+            appendString(out, key);
+            out.append(':');
+            afterMember = false;
+            return this;
+        }
+
+        /** Appends a string value, or JSON {@code null} for a null reference. */
+        public Buf value(String value) {
+            comma();
+            if (value == null) {
+                out.append("null");
+            } else {
+                appendString(out, value);
+            }
+            afterMember = true;
+            return this;
+        }
+
+        public Buf value(long value) {
+            comma();
+            out.append(value);
+            afterMember = true;
+            return this;
+        }
+
+        /**
+         * Appends a floating-point value.
+         *
+         * @throws IllegalArgumentException for {@code NaN} and the two infinities
+         */
+        public Buf value(double value) {
+            refuseNonFinite(value, value);
+            comma();
+            out.append(value);
+            afterMember = true;
+            return this;
+        }
+
+        public Buf value(boolean value) {
+            comma();
+            out.append(value);
+            afterMember = true;
+            return this;
+        }
+
+        /**
+         * The completed record as one line, with no trailing newline: the record terminator is the
+         * single newline the sink writes around it, and this string never contains one of its own.
+         */
+        public String toLine() {
+            return out.toString();
+        }
+
+        private void comma() {
+            if (afterMember) {
+                out.append(',');
+            }
+        }
     }
 }

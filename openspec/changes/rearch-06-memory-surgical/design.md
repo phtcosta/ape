@@ -52,6 +52,75 @@ All readers of `getResolvedGUITreeAction()`/`getResolvedGUITree()`/`getResolvedN
 
 **Audit verdict (V24):** no consumer reads the resolved *references* of an action after the owning state's resolution cycle has moved on, except through agent-held field snapshots (`currentGUITreeAction` etc.), which are independent copies remapped by `updateModel` (`:264-290`) and unaffected by clearing the `ModelAction` fields. In particular, **no path reads references into a released tree** (B3's ordering proof closes the only candidate window). The scalar `resolvedSaturation` is the single cross-step semantic output and is preserved. The V24 fix is therefore safe exactly in the form D3 gives it: clear references **when their tree is released**, never the scalar.
 
+## Audit Ratification at Implementation HEAD (tasks 1.1–1.4)
+
+Ratified 2026-08-04 against `c73067a` (branch `rearch-b`, forked from `rearch` after stage 3's group 3, in the second worktree `../ape-rearch-b` — see "Worktree" below). The tables above were produced at HEAD `5dcf225`; stages 2 and 3 have moved the code since, so the line numbers recorded here supersede theirs. Every row was re-derived from the greps the tasks prescribe, not copied.
+
+### 1.1 — Ordering precondition: stage 2 applied, stage 4 **not**
+
+- `saveGraph`/`readGraph`/`sataModel.obj`: absent from `src/main/java`. The only two occurrences are retired-key abort messages in `KeyOwnership.java:259,:265`. **Stage 2 has landed.**
+- `saveActionHistory`/`action-history.log`: **alive** — `Model.saveActionHistory` (`Model.java:97`), `StatefulAgent.saveActionHistory` (`:1908-1910`), invoked from the teardown chain at `:1863` (`safeStep("saveActionHistory", …)`). **Stage 4 has not landed.**
+
+**Verdict: group 3 (V11) is BLOCKED**, exactly as this task anticipated. Consumer A1 is still live and still re-resolves every deep record through the rich `GUITreeAction`, so the snapshot shape cannot be applied without breaking it. Re-sequencing: group 3 runs after `rearch-04-step-ndjson-telemetry` deletes A1. Groups 2 and 4 proceed — neither depends on stages 2/4.
+
+### 1.2 — Table A (`actionHistory` / `ActionRecord`), gate for group 3
+
+Exhaustive at implementation HEAD; no unclassified consumer. Amendments:
+
+| Row | At `5dcf225` | At `c73067a` | Status |
+|---|---|---|---|
+| A1 | `Model.java:97-124`, `StatefulAgent:1850-1852` | `Model.java:97`, `StatefulAgent:1908-1910` (call `:1863`) | Alive — see 1.1 |
+| A2 | remap loop `:302-316`, guard `:308` | loop `:357-371`, guard `:362` (`isModelAction() && requireTarget()`) | Unchanged in substance |
+| A3 | `recoverCurrentState :968-1001`, called `:743` | `:1017`, called `:792` | Unchanged in substance |
+| A4 | `_actionHistory :167`, window `:1779-1781`, writer `:1721` | `:159`, window `:1834-1836`, accessor `:311` | **Four new call sites** (below) |
+| A5 | `reducer/ape/Reducer.java:139-160` | unchanged | Ratified at 1.4 |
+| A6 | writers `Model:167-174`, `MonkeySourceApe:1032`, `ApeAgent:161` | `Model:167-172`, `MonkeySourceApe:1033`, `ApeAgent:162` | Unchanged in substance |
+
+**A4 amendment.** Stage 3 gave the LLM prompt window four new readers — `StepContext.actionHistory()` (`:96`) and the three LLM stages (`LlmNewStateStage:65`, `LlmStagnationStage:79`, `LlmRandomStage:66`) — which reach it through the pipeline context instead of the agent field. Same structure (`ApePromptBuilder.ActionHistoryEntry`, capped at 5), still **not** `Model.actionHistory`. The row's purpose is to prevent exactly this confusion, and it now covers four more sites. `State.randomlyPickActionRecorded` (`State.java:179,:187`) matches the grep on the substring `Record` and is unrelated to either structure.
+
+**Verdict:** table A holds; no new reader of deep records. The gate is satisfied on its own terms, and group 3 remains blocked by 1.1 alone.
+
+### 1.3 — Table B (resolved objects), gate for group 4
+
+All eight rows hold. Amendments, by row:
+
+- **B1 (guarded same-step).** The scoring passes moved into `ape.agent.scoring` with stage 3's roster: `MopWidgetPass:47-49`, `WtgPass:52-54`, `FrontierPass:67-69`, `MopFrontierPass:78-79` (was `:72-73`), `CoveragePass:44`, `MopScorer:157-160`, `FormCompletion:47-50,:103-106`; `adjustActionsByGUITree` is now `StatefulAgent:1642-1645` (was `:1587-1590`). Guard unchanged (`isResolvedAt(timestamp)`).
+- **B2 (unguarded same-step).** `MonkeySourceApe:650,:743,:951-959`; `StatefulAgent:1208,:1537,:1696-1700,:1733,:1800`; `LlmRouter:492,:528,:538,:678,:712,:734,:814`; `MopScorer:211` (null-safe). **New row B2′ — `ApeAgent.checkInput` (`:190`)**: reads `getResolvedNode()` on the action being executed; its sole caller is the decision chain at `ApeAgent:363` (`checkInput(checkFuzzing(checkRestart(updateStateInternal(…))))`), same step and same action. The table produced at `5dcf225` did not list it; it is classified B2 here and constrains nothing.
+- **B3 (refinement).** `NamingFactory:1166,:1188` (was `:1158-1195`); the sort comparator is `StatefulAgent:946` (was `:890-928`). **Ordering proof re-checked and intact**: `buildAndValidateNewState` (`StatefulAgent:779`) runs `preCheckTrivialNewState()` (`:781`) **before** `validateAllNewActions()` (`:782`) — the design cited `:732`-before-`:733`; the pair moved together and kept its order. Refinement therefore still never sees a reference into a tree released this step.
+- **B4 (cross-step scalar).** `ActionFilter:62`, `OnlyAddedUnsaturatedActionFilter:32`, `StateActionDiffer:74,:85,:99`, `SataAgent:377,:395` (was `:358,:376`), `State:539,:544-549`. **Two sites the table did not list** — `StatefulAgent:1652` and `:1662`, inside `adjustActionsByGUITree`'s guarded loop — read `isSaturated()` / `getTarget().isSaturated()`, i.e. the float, never the references. They belong to B4 and add no constraint beyond "preserve `resolvedSaturation`", which D3 already imposes.
+- **B5 (dead code).** Still caller-free, both. `Model.update(ModelAction)` single-arg (`Model.java:451`, reading `getResolvedNode` at `:462`): the only `.update(` call sites in `src/main/java` are the two-arg `model.update(action, guiAction)` (`StatefulAgent:326,:338,:344`), `model.update(GUITree)` (`:322,:335,:341`) and the unrelated `MessageDigest.update` in `RunSpec:433-436`. `ModelAction.isOverAbstracted` (`:161`): definition only, zero callers across `src/main/java` and `reducer/`.
+- **B6 (`ActionRecord.resolveModelAction`).** Still alive (`Model.java:78-94`, `resolveAt` at `:89`/`:91`), because stage 4 has not landed. It **writes** the fields at teardown and reads no reference across steps, so it is not a V24 constraint; it dies with A1 in group 3.
+- **B7 (diagnostic rendering).** `ModelAction.resolvedInfo:185`, `toJSONObject:339`; plus the two try/catch null-safe readers `LlmRouter:897` and `ApePromptBuilder:810`. Tolerant of cleared references by construction.
+- **B8 (replay).** `ReplayAgent:111` → `StatefulAgent.refreshNewState` (`:650`), whose release site is inside it. Ratified at 1.4.
+
+**Verdict: no consumer reads resolved *references* across steps or into a released tree; the single cross-step semantic output is the scalar `resolvedSaturation` (B4). Group 4 is GO** in exactly the form D3 gives it. `Model.release` (`Model.java:567-569`) is still the two-line delegation to `namingManager.release`, so task 4.2's insertion point is unchanged.
+
+### 1.4 — Replay / reducer
+
+- **`reducer/` is outside the Maven build.** `pom.xml` declares no `sourceDirectory` and contains no reference to `reducer`, so the default `src/main/java` is the only source root and `reducer/ape/Reducer.java` never enters `target/ape-rv.jar`. Row A5 ratified unchanged.
+- **`ReplayAgent:111` is the sole caller of `refreshNewState`** (`StatefulAgent:650`); the two remaining grep matches are prose (`StatefulAgent:748`, `Config.java:91`). Row B8 ratified unchanged.
+
+Both rows ratified — group 2's only precondition is satisfied.
+
+### Task 2.4 residue: two clauses the JVM cannot reach (owner decision 2026-08-04: leave the task open)
+
+`GUITreeBuilderReleaseTest` covers the first two clauses of task 2.4 and passes (5 assertions). The other two are **not reachable from a JVM unit test**, for the reason `rearch-01` already recorded as finding 2.1-a (`OracleScaffold` javadoc): a `GUITree` is assembled from `AccessibilityNodeInfo`, which is not on the test classpath, so no real tree or node can be constructed off device.
+
+| Clause | Status |
+|---|---|
+| release empties all three cache slices for the tree | Covered |
+| entries under a non-current naming are also removed | Covered — and strengthened: with `currentNaming == null` on the fixtures, *every* naming in the maps is non-current, so the sweep is asserted with no current-naming slice to fall back on |
+| the recheck sequence never re-caches a released tree | **Not reachable** — needs `checkAndRefreshNewState`, which calls `getRootInActiveWindowSlow`, `captureBitmap` and `buildState`. The rearch-01 harness deliberately enters *below* this path |
+| a live tree's evicted entry recomputes to an equal value | **Not reachable** — needs `naming.getName(tree, node)` against a real node |
+
+The fixtures are `Unsafe`-allocated `GUITree`/`Naming` instances used **only as cache keys**. That is faithful for what is asserted — neither class overrides `equals`/`hashCode`, so the caches key on identity, and the sweep reads nothing from either object — and it does not stretch to the two clauses above, which need the objects to *behave*, not merely to be distinct. `Unsafe.allocateInstance` is the established technique in this test tree (`OracleScaffold:299-303`).
+
+Task 2.4 **stays open** (owner decision, 2026-08-04): the box is the record of the residue. Task 2.3's ordering fix therefore ships with its rationale argued at the call site and the `Config`-independent half of its effect asserted, but without an executable regression test — a gap stated here rather than papered over by renaming the clause into something the JVM can reach. If a later stage puts a device-backed integration path in reach (stage 6's own group 5 runs the standalone emulator), the recheck clause is the natural thing to pin there.
+
+### Worktree note (deviation from the procedure doc, recorded deliberately)
+
+`docs/20260803_procedimento_worktree_rearch.md` §1 fixes one worktree on branch `rearch` for all seven stages. Stage 3 is in flight there in a concurrent session, so this stage runs in a **second** worktree, `../ape-rearch-b` on branch `rearch-b`, forked from `rearch` at `c73067a` and merged back into `rearch` when the group closes. The procedure's reason for a single worktree — avoiding seven create/merge cycles for what `master` sees as one delivery — is untouched by this: `rearch-b` never reaches `master` except through `rearch`. The file surface was checked for disjointness before forking: groups 2 and 4 touch `GUITreeBuilder`, `ModelAction` and `Model`, of which stage 3's remaining groups (4–8: `ape.llm`, `ape.agent.scoring`, `SataAgent`, `StatefulAgent`, `State`, `ApePromptBuilder`) touch none — the single overlap is task 2.3's edit to `StatefulAgent.checkAndRefreshNewState`, a different method from stage 3's group-6 `Config`-read sweep in the same file. `mvn package` was run in the new worktree before any edit (procedure §2) and is green; the resulting jar is `8434dd8b…`, which is *not* comparable to the E3 baseline `386ce08d…` because stages 2 and 3 have landed in between.
+
 ## Architecture
 
 No new components, no new subsystems (P1). Three local mechanisms:
