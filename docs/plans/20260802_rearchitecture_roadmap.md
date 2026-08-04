@@ -444,3 +444,69 @@ Open coordination items — status 2026-08-03:
   is therefore pure in the precise sense that *nothing it states turns anything on* — its resolved
   feature set is exactly that arm-neutral inheritance, not the empty set. The empty-set assertion
   the task text implies is false, and the test asserts the true form instead of being loosened.
+
+- 2026-08-04 — **Stage 2 group 9 (change hygiene) implemented: `rearch-02-runspec` 47/49.**
+  Tasks 9.1–9.2 closed; **only group 8, the device smoke, remains.** The group changed no
+  production Java, added no test, touched no golden and no Python — the whole diff is four
+  artifact files (`design.md`, `tasks.md`, `specs/exploration/spec.md`, `specs/run-spec/spec.md`).
+  Gate re-observed *before* the change rather than trusted from the handoff: **956 tests, 0
+  failures, 19 skipped**, BUILD SUCCESS, with the decomposition unchanged (13 `@Ignore` —
+  `ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3,
+  `GUITreeBuilderPasswordTest` 1 — plus 6 `Assume` in `SglangLiveTest`, `SGLANG_URL` unset);
+  `git status --short src/test/resources/goldens` empty (INV-ORA-07 holds); working tree carrying
+  only the five `rearch-07` files of a concurrent session, which were left alone and excluded from
+  the commit. `tool.py` re-checked at sha256 `aba920ea…c93ae8` at the moment it was relied on, and
+  the rv-android tree confirmed on `rearch-counterparts`.
+
+  **9.1 — eight divergences between the artifacts and the tree, all resolved in favour of the
+  code.** The roster claims were sound (25 features: 15 root, 7 MOP-family, 3 LLM-family; 10
+  retired keys, matching the fail-fast enumeration). What had gone stale: (a) the key split in
+  D-2, `60 base / 9 retired` → **`59 / 10`**, the total 121 unchanged because retiring
+  `ape.saveStates` in group 5 *moved* a key between columns instead of adding one — a retirement
+  that raised the total would mean a key nobody had owned; (b) the claim, in both the inert-key
+  rule and the Testing Strategy table, that the compat fixtures were checked against **all 29
+  arms** — five are covered (the four campaign arms plus `ape_pure`) and the other 24 are not,
+  which is task 6.1's deliberate scope and is now stated as such; (c) four test classes in the
+  Mapping table that exist under other names (`FeatureDependencyTest`→`FeatureDerivationTest`,
+  `RunStartEchoTest`→`RunSpecEchoTest`, `TearDownOrderTest`→`StatefulAgentCoverageDumpOrderTest`
+  + `StatefulAgentTearDownTest`, "grep-guard test"→`DeviceInputChannelAbsenceTest`), plus a row
+  pairing RunContext ownership with INV-RUN-06/07 instead of D-12; (d) a Mapping row promising a
+  deserialization absence guard that was never written; (e) the device-smoke row still naming
+  `scripts/run_emulator.sh`; (f) the second Open Question, closed by group 5's seven-method dead
+  set and still listed as open; (g) task 8.1's ownership; (h) task 6.2's implied empty feature set.
+  Group 6's three arm-neutral jar-default activations were also recorded in D-3, where no artifact
+  had carried them, with the consequence stated once: **what an arm states is not what the run
+  does**, so a configuration read off `tool.py` alone is incomplete.
+
+  **9.2 — the three dissolutions are in order; the coverage clause is not.** INV-ARCH-06 records
+  INV-RUN-05 as its substitute (echoed in D-2's inert-key rule and in INV-RUN-05's own
+  parenthetical) and INV-ARCH-01 is removed with its subject under D3 — both already correct.
+  INV-EXPL-03 read *"Nothing replaces it"* and now names **INV-RUN-07**: the substitution is a
+  widening, from "the content of this one file" to "no artifact of a previous run is read at all",
+  which is the property worth carrying — a reintroduced serializer violates the invariant before
+  it can produce a file whose content anyone would need to describe.
+
+  **Two coverage gaps, recorded rather than ticked.** Six of INV-RUN-01..08 map to a named test.
+  **INV-RUN-07 has none**: the retired persistence keys are covered by
+  `RunSpecAbortTest.everyRetiredKeyAbortsWithItsOwnReason` and the deletion of `Graph.readGraph` /
+  `--ape-model` is compile-enforced, but neither proves the *absence* of a read-back path.
+  **INV-RUN-08 is partial**: `DeviceInputChannelAbsenceTest`'s scan covers `ThreadLocalRandom`,
+  one of the three mechanisms the invariant names, leaving `Math.random` and unseeded `Random`
+  unscanned. A manual audit shows the tree satisfies both today (no `ObjectInputStream`/
+  `readObject`/`readGraph`; no `Math.random`; the two `new Random(` sites seeded, and
+  `RandomHelper`'s unseeded field initializer replaced by `RunContext.initialize` before any
+  component draws). What is missing is the guard against re-introduction, of the kind INV-RUN-06
+  already has. Writing the two guards is out of a hygiene group's scope and is an owner decision;
+  9.2 therefore ticks as *confirmation performed*, not as *coverage complete*.
+
+  **Group 8's ownership is corrected: it is assistant-executed.** Task 8.1 and the earlier handoff
+  prompts called the device check "owner-executed" — that is superseded by owner instruction of
+  2026-08-04. The permanent rule is unchanged and is what makes the correction coherent: an
+  emulator is never managed by hand (no `emulator`, no `adb emu kill`, no manual boot-wait or
+  install), and `rv-experiment`/`rv-platform` own the whole lifecycle, so driving the smoke through
+  them *is* bringing the emulator up and down. The `scripts/run_emulator.sh` + adb fallback is
+  dropped from the task: the platform route is the whole route. Group 8 also carries a live
+  precondition of its own — running it means deliberately `mvn install`-ing the stage-2 jar over
+  the deployed one, which every other task of this workstream forbids — so it needs the owner's
+  explicit go-ahead, with the previous jar's `ls -l`/`sha256sum` captured first (the jar is
+  gitignored, so git will not restore it).
