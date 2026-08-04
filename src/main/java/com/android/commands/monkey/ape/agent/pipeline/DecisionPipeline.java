@@ -133,10 +133,12 @@ public final class DecisionPipeline {
      * is what keeps this method — where INV-DP-01 and INV-DP-03 actually live — assertable from a
      * plan and a fake, with no device.
      *
-     * <p><b>The context is not one.</b> Design D3 sketched assembly as reading the plan and the run
-     * context; the stages' run-scoped collaborators reach them through {@link StepContext} per step
-     * instead, so a context parameter here would be one nothing reads. Task 7.1, which moves the LLM
-     * units and the pipeline itself onto {@code RunContext}, is where that changes.
+     * <p><b>The context is not a parameter, and the pipeline is not the context's.</b> The stages'
+     * run-scoped collaborators reach them through {@link StepContext} per step, so a context parameter
+     * here would be one nothing reads. Ownership runs the same way round: this method binds the
+     * agent's action producers, and the run context is established before any agent exists, so the
+     * pipeline belongs to the agent that assembles it. The LLM units are the context's because they
+     * have no agent in them (design D15).
      *
      * @param spec the run's resolved plan — the sole authority on which candidates assemble
      * @param collaborators the agent behaviours the assembled stages invoke

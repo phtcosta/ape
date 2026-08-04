@@ -227,6 +227,11 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         // Assembly is here rather than in StatefulAgent because the stages bind this class's action
         // producers, and it is safe at this point for the same reason the scoring pipeline's is: the
         // bindings are method references, so nothing is invoked before the constructor finishes.
+        //
+        // It is also why the pipeline is the agent's and not the run context's (design D15): binding
+        // those producers needs an agent, and the context is established before one exists — which is
+        // what makes the spec read above possible at all. The context owns the LLM units instead,
+        // which have no agent in them.
         this.decisionPipeline = DecisionPipeline.fromSpec(spec, this);
     }
 
