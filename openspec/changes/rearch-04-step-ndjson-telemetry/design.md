@@ -190,7 +190,9 @@ Teardown chain (all inside the existing `safeStep` isolation — INV-EXPL-16/29 
 
 ### D-6 — Heartbeat: `Log.i`, plan flag, default on (owner D4)
 
-One write-only line per step — `Log.i("ApeRvHb", "s=<N> t=<tRel>")` — emitted where the step envelope is captured (the `beginStep` site), behind `TelemetryParams.heartbeat` (property `ape.telemetryHeartbeat`, default `true`). `t` is the same run-relative value the record carries, so the trace↔logcat mapping is exact; the violation↔step join runs in the Python analysis pipeline against the logcat clock — no runtime APE↔logcat coupling, and the jar never reads logcat.
+One write-only line per step — `Log.i("ApeRvHb", "s=<N> t=<tRel>")` — emitted where the step envelope is captured (the `beginStep` site), behind `TelemetryParams.heartbeat` (property `ape.telemetryHeartbeat`, default `true`).
+
+`ApeRvHb` stopped being this design's proposal and became a cross-repository constant on 2026-08-04: the counterpart change declares `TAG_APERV_HEARTBEAT = "ApeRvHb"` once in `rvsec` and appends it to `LogcatManager.default_tags`, and `clock_logcat_join.py` matches the heartbeat line against it. The jar's constant is therefore not a free choice and its comment SHALL name the counterpart declaration site — a mismatch between the two literals is invisible from either side alone. Verified read-only at the same date: `_align_clocks()` and `alignment_residual_ms` are still present in `clock_logcat_join.py`, which is what INV-SNK-14 requires until a captured run demonstrates the lines arriving. `t` is the same run-relative value the record carries, so the trace↔logcat mapping is exact; the violation↔step join runs in the Python analysis pipeline against the logcat clock — no runtime APE↔logcat coupling, and the jar never reads logcat.
 
 ### D-7 — Legacy deletion, with the replay reader preserved
 
