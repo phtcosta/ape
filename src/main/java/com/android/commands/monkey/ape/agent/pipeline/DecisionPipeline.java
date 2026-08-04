@@ -120,6 +120,47 @@ public final class DecisionPipeline {
     }
 
     /**
+     * Builds the run's pipeline: the candidates {@code spec} assembles, constructed in candidate
+     * order, echoed once (INV-DP-01).
+     *
+     * <p><b>Why the collaborators are a parameter.</b> Gating is a question about the plan and
+     * construction is a question about the agent, and only the first belongs to {@link RunSpec}. The
+     * stages that produce actions need the agent's action producers, so assembly binds each into the
+     * narrow function object its stage takes; naming {@link StageCollaborators} rather than the agent
+     * is what keeps this method — where INV-DP-01 and INV-DP-03 actually live — assertable from a
+     * plan and a fake, with no device.
+     *
+     * <p><b>The context is not one.</b> Design D3 sketched assembly as reading the plan and the run
+     * context; the stages' run-scoped collaborators reach them through {@link StepContext} per step
+     * instead, so a context parameter here would be one nothing reads. Task 7.1, which moves the LLM
+     * units and the pipeline itself onto {@code RunContext}, is where that changes.
+     *
+     * @param spec the run's resolved plan — the sole authority on which candidates assemble
+     * @param collaborators the agent behaviours the assembled stages invoke
+     * @return the pipeline for this run; never empty, since the terminal candidate has no gate
+     */
+    public static DecisionPipeline fromSpec(RunSpec spec, StageCollaborators collaborators) {
+        List<DecisionStage> stages = new ArrayList<>();
+        for (Candidate candidate : assembledCandidates(spec)) {
+            switch (candidate) {
+                case BUDGET:
+                    stages.add(new BudgetStage(collaborators::selectNewActionForTrivialActivity));
+                    break;
+                case SATA_CHAIN:
+                    stages.add(new InlineLadderStage(collaborators));
+                    break;
+                default:
+                    // The candidates between these two are blocks the extraction has not reached
+                    // yet: they still run inside the terminal stage, in their ladder positions, so
+                    // constructing nothing here is what keeps a step's decision unchanged. The last
+                    // extraction task turns this branch into the error it will then be.
+                    break;
+            }
+        }
+        return new DecisionPipeline(stages);
+    }
+
+    /**
      * Which candidates {@code spec} assembles, in the fixed candidate order.
      *
      * <p>The plan-to-roster mapping, separated from stage construction so that what a plan implies

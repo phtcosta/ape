@@ -1,6 +1,7 @@
 package com.android.commands.monkey.ape.oracle;
 
 import com.android.commands.monkey.ape.agent.SataAgent;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.llm.LlmRouter;
@@ -14,6 +15,7 @@ import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.Config;
@@ -483,11 +485,7 @@ public final class OracleScaffold {
         // jar-default Config (design D2), so a MOP arm at its defaults reproduces exactly the
         // launcher gate the capture ran under (activityTriggerEnabled true). A non-MOP preset gets
         // no MopParams at all, which closes the same gate the absent MopData already closed.
-        if (preset.hasMopData()) {
-            TestRunSpecs.installMop();
-        } else {
-            TestRunSpecs.install();
-        }
+        RunSpec spec = preset.hasMopData() ? TestRunSpecs.installMop() : TestRunSpecs.install();
 
         OracleSataAgent agent = allocate(OracleSataAgent.class);
         Graph graph = new Graph();
@@ -539,6 +537,13 @@ public final class OracleScaffold {
         // owns every later write (SataAgent.java:522,529) and the driver is forbidden from touching
         // it at all (INV-ORA-05). See ScenarioScript.getStepsSinceLauncherFiring().
         setField(agent, "_stepsSinceLauncherFiring", script.getStepsSinceLauncherFiring());
+
+        // The decision policy the constructor would have assembled (SataAgent.java), built from the
+        // same plan installed above and against this agent's own action producers. Last, because
+        // nothing it binds may be read before every field it reaches through is set — this is the
+        // injection profile adapting to a relocated collaborator, the one adaptation INV-ORA-07
+        // permits while the extraction is in flight.
+        setField(agent, "decisionPipeline", DecisionPipeline.fromSpec(spec, agent));
 
         RandomHelper.seed(script.getSeed());
         agent.pinned = new Random(script.getSeed());

@@ -42,6 +42,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -69,6 +70,7 @@ import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
+import com.android.commands.monkey.ape.agent.pipeline.StepContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
@@ -93,7 +95,7 @@ import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
 
-public abstract class StatefulAgent extends ApeAgent implements GraphListener {
+public abstract class StatefulAgent extends ApeAgent implements GraphListener, StepContext {
 
     private static final boolean debug = false;
 
@@ -253,6 +255,64 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     protected ActivityBudgetTracker getBudgetTracker() {
         return _budgetTracker;
+    }
+
+    // --- StepContext: what a decision stage may know about the step being decided ----------------
+    //
+    // The agent is the view rather than a snapshot handed to it, for the reason design D13 records:
+    // the stages run in sequence within one step and one of them writes graphStableCounter, so a copy
+    // would be stale before the step ended. Every method below reads live off this object, which also
+    // means the oracle harness needs nothing injected for the context — it allocates the agent, and
+    // the agent is the context.
+
+    @Override
+    public State newState() {
+        return newState;
+    }
+
+    @Override
+    public GUITree newGUITree() {
+        return newGUITree;
+    }
+
+    @Override
+    public int graphStableCounter() {
+        return graphStableCounter;
+    }
+
+    @Override
+    public int timestamp() {
+        return getTimestamp();
+    }
+
+    @Override
+    public Random random() {
+        return getRandom();
+    }
+
+    @Override
+    public MopData mopData() {
+        return getMopData();
+    }
+
+    @Override
+    public Graph graph() {
+        return getGraph();
+    }
+
+    @Override
+    public ActivityBudgetTracker budgetTracker() {
+        return getBudgetTracker();
+    }
+
+    @Override
+    public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() {
+        return _actionHistory;
+    }
+
+    @Override
+    public void resetGraphStableCounter() {
+        graphStableCounter = 0;
     }
 
     public void updateModel(Model newModel) {

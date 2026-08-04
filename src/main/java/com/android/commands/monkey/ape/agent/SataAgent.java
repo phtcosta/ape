@@ -46,6 +46,9 @@ import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.BaseActionFilter;
 import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.SubsequenceFilter;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
+import com.android.commands.monkey.ape.agent.pipeline.StageResult;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.runtime.RunContext;
@@ -69,7 +72,7 @@ import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import android.content.ComponentName;
 
-public class SataAgent extends StatefulAgent {
+public class SataAgent extends StatefulAgent implements StageCollaborators {
 
 
     SubsequenceFilter unsaturatedActionsFilter = new SubsequenceFilter() {
@@ -204,6 +207,15 @@ public class SataAgent extends StatefulAgent {
     private int[] actionCounters;
     private ActivityNode backToActivity;
 
+    /**
+     * The run's decision policy, assembled once from the plan (INV-DP-01).
+     *
+     * <p>The oracle harness allocates its agent without running a constructor, so this field is one
+     * of the ones it injects; {@code OracleScaffold.newAgent} assembles it from the same
+     * {@code fromSpec} against the preset's plan.
+     */
+    private final DecisionPipeline decisionPipeline;
+
     public SataAgent(MonkeySourceApe ape, Graph graph) {
         this(ape, graph, defaultEpsilon);
     }
@@ -214,6 +226,10 @@ public class SataAgent extends StatefulAgent {
 
 
         this.actionCounters = new int[SataEventType.values().length];
+        // Assembly is here rather than in StatefulAgent because the stages bind this class's action
+        // producers, and it is safe at this point for the same reason the scoring pipeline's is: the
+        // bindings are method references, so nothing is invoked before the constructor finishes.
+        this.decisionPipeline = DecisionPipeline.fromSpec(RunContext.current().spec(), this);
     }
 
     @Override
@@ -463,29 +479,27 @@ public class SataAgent extends StatefulAgent {
                 }
             }
         }
-        // gh9: budget exhaustion check — before LLM hooks
-        // Soft constraint: when exhausted, try trivial activity navigation.
-        // If unavailable, fall through to normal SATA chain (no BACK, no RESTART).
-        // EVENT_RESTART caused restart loops; MODEL_BACK caused stuck loops.
-        // Fallthrough is the correct behavior — lets SATA chain handle exploration.
-        if (Config.activityBudgetEnabled && getBudgetTracker().isBudgetExhausted(newState.getActivity())) {
-            ModelAction trivial = selectNewActionForTrivialActivity();
-            if (trivial != null) {
-                Logger.iformat("[APE-RV] Budget exhausted for %s, navigating to trivial activity", newState.getActivity());
-                trivial.setDecisionSource(ModelAction.DecisionSource.Budget);
-                trivial.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
-                return trivial;
-            }
-            // Fall through to normal SATA chain — budget is advisory, not blocking
-        }
+        return decisionPipeline.decide(this);
+    }
 
+    /**
+     * The rungs of the ladder this class still decides itself.
+     *
+     * <p>The pipeline's roster ends in a stage that calls this, so every step is decided by the
+     * pipeline while the extraction is walking the ladder from the top. What is left here is
+     * whatever has not become a stage yet, in its original order and with its original predicates.
+     *
+     * @return the step's decision, always a {@code SELECT}
+     */
+    @Override
+    public StageResult decideInlineLadder() {
         // LLM new-state hook
         if (actionBufferSize() == 0 && newState.getActions().size() > 2
                 && _llmRouter != null && _llmRouter.shouldRouteNewState(_isNewState)) {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "new-state", getTimestamp());
             if (result != null) {
-                return acceptLlmResult(result);
+                return selected(acceptLlmResult(result));
             }
         }
         // LLM stagnation hook (single-shot at midpoint). Keeps its own fixed
@@ -504,7 +518,7 @@ public class SataAgent extends StatefulAgent {
                     newState.getActions(), getMopData(), _actionHistory, "stagnation", getTimestamp());
             if (result != null) {
                 graphStableCounter = 0;
-                return acceptLlmResult(result);
+                return selected(acceptLlmResult(result));
             }
         }
         // LLM random hook (probabilistic, fires with Config.llmPercentage probability)
@@ -513,7 +527,7 @@ public class SataAgent extends StatefulAgent {
             ModelAction result = _llmRouter.selectAction(newGUITree, newState,
                     newState.getActions(), getMopData(), _actionHistory, "random", getTimestamp());
             if (result != null) {
-                return acceptLlmResult(result);
+                return selected(acceptLlmResult(result));
             }
         }
         // mop-census-launcher (Lever B): cadence-based MOP-activity launcher. Fires every
@@ -547,8 +561,8 @@ public class SataAgent extends StatefulAgent {
                 _activityTriggerLaunchCount++; // budget consumed only on an actual launch (INV-CT-12)
                 Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);
                 // Package captured from MopData (never from the class name — INV-CT-04).
-                return new ActivityTriggerAction(getMopData().getPackageName(),
-                        candidate.className, buildDeepLinkUri(candidate));
+                return selected(new ActivityTriggerAction(getMopData().getPackageName(),
+                        candidate.className, buildDeepLinkUri(candidate)));
             }
         }
         // gh11: component triggering (probabilistic, fires with Config.componentPercentage)
@@ -561,39 +575,57 @@ public class SataAgent extends StatefulAgent {
         resolved = selectNewActionFromBuffer();
         if (resolved != null) {
             logActionSelected(resolved, SataEventType.USE_BUFFER);
-            return resolved;
+            return selected(resolved);
         }
         resolved = selectNewActionBackToActivity();
         if (resolved != null) {
             logActionSelected(resolved, SataEventType.TRIVIAL_ACTIVITY);
-            return resolved;
+            return selected(resolved);
         }
         resolved = selectNewActionEarlyStageForward();
         if (resolved != null) {
             logActionSelected(resolved, SataEventType.EARLY_STAGE);
-            return resolved;
+            return selected(resolved);
         }
         resolved = selectNewActionForTrivialActivity();
         if (resolved != null) {
             logActionSelected(resolved, SataEventType.TRIVIAL_ACTIVITY);
-            return resolved;
+            return selected(resolved);
         }
         resolved = selectNewActionEarlyStageBackward();
         if (resolved != null) {
             logActionSelected(resolved, SataEventType.EARLY_STAGE);
-            return resolved;
+            return selected(resolved);
         }
         resolved = selectNewActionEpsilonGreedyRandomly();
         if (resolved != null) {
             logActionSelected(resolved, SataEventType.EPSILON_GREEDY);
-            return resolved;
+            return selected(resolved);
         }
         resolved = handleNullAction();
         if (resolved != null) {
             logActionSelected(resolved, SataEventType.NULL);
-            return resolved;
+            return selected(resolved);
         }
         throw new BadStateException("No available action on the current state");
+    }
+
+    /**
+     * Wraps a decided action with the decision-source label that names who decided it.
+     *
+     * <p>The label is read off the action rather than chosen here: the pick sites stamp a
+     * {@link ModelAction}'s provenance themselves, and a non-model action's source is derived from
+     * its type the same way {@code [APE-STEP]}'s non-model branch derives it. That is what INV-DP-04
+     * requires — one vocabulary, and the stage's label equal to what telemetry will print.
+     *
+     * @param action the action the ladder settled on
+     * @return the {@code SELECT} result carrying it
+     */
+    private static StageResult selected(Action action) {
+        String source = action instanceof ModelAction
+                ? ((ModelAction) action).getDecisionSource().name()
+                : nonModelDecisionSource(action.getType()).name();
+        return StageResult.select(action, source);
     }
 
     protected ModelAction selectNewActionEarlyStageBackward() {
@@ -1434,7 +1466,8 @@ public class SataAgent extends StatefulAgent {
         }
     }
 
-    protected ModelAction selectNewActionForTrivialActivity() {
+    @Override
+    public ModelAction selectNewActionForTrivialActivity() {
         final Set<ActivityNode> trivialActivities = collectTrivialActivities();
         if (trivialActivities.isEmpty()) {
             return null;

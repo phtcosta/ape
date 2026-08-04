@@ -75,7 +75,7 @@ public interface DecisionStage {
 
 ### Requirement: Pipeline Assembly from the RunSpec
 
-`DecisionPipeline.fromSpec(RunSpec, RunContext)` SHALL be the single assembly point. It SHALL append stages in the fixed order `Budget → LlmNewState → LlmStagnation → LlmRandom → MopLauncher → ComponentTrigger → SataChain`, skipping every stage whose gating feature is absent from the plan (INV-DP-03):
+`DecisionPipeline.fromSpec(RunSpec, StageCollaborators)` SHALL be the single assembly point — the plan decides which stages exist, the collaborators supply the agent behaviours each one invokes (design D14). It SHALL append stages in the fixed order `Budget → LlmNewState → LlmStagnation → LlmRandom → MopLauncher → ComponentTrigger → SataChain`, skipping every stage whose gating feature is absent from the plan (INV-DP-03):
 
 | Stage | Present when |
 |---|---|

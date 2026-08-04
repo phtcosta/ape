@@ -292,11 +292,12 @@ it makes "which stages does this plan imply" a pure function of the plan — ass
 resolution enforces them, so repeating the root would be a second guard for a fact the plan
 guarantees. `fromSpec` adds only the construction step, over this table.
 
-**`fromSpec`'s "never returns an empty pipeline" postcondition binds from task 2.7**, when the
-terminal stage exists. Until then `decide()` throws `IllegalStateException` on an exhausted roster
-rather than returning null, so the interim violation is loud and cannot reach a run silently. Group
-1 therefore landed everything in task 1.3 except `fromSpec` itself, and left that box open by owner
-decision rather than relocating its text.
+**`fromSpec`'s "never returns an empty pipeline" postcondition holds from task 2.1**, because every
+interim roster ends in a terminal stage (see the extraction seam below). `decide()` still throws
+`IllegalStateException` on an exhausted roster, which is the enforceable form of INV-DP-06, but no
+roster the extraction produces is exhaustible. Group 1 landed everything in task 1.3 except
+`fromSpec` itself — no stage class existed to construct — and left that box open by owner decision
+rather than relocating its text; it closes with task 2.1.
 
 **INV-DP-04's label equality is asserted, not enforced at the factory.** `StageResult.select` checks
 both arguments non-null and stops there. Validating the label against `ModelAction`'s stamped
@@ -316,11 +317,68 @@ knows the stages, so a per-stage wiring at the agent would have to duplicate it.
 agent's `onVisitStateTransition` to this method and task 7.1 owns the ordering guarantee (agent
 counters first, then stages).
 
+### D14 — What task 2.1 settled: how a stage reaches the agent (recorded 2026-08-04, after implementation)
+
+D2 enumerates what a stage may *read* and stops there, which left the first extraction with a
+question no artifact answered: `BudgetStage` needs `selectNewActionForTrivialActivity()` and
+`SataChainStage` will need all seven rung methods, and all of them are `protected` on the agent and
+none is in `StepContext`'s surface. Recorded here so groups 3–7 inherit the answer — task 6.5's
+grep-guard and task 7.1's wiring both depend on where the stages get their collaborators.
+
+**Stages reach the agent through `StageCollaborators`, not through `StepContext`.** The new interface
+`com.android.commands.monkey.ape.agent.pipeline.StageCollaborators` names the agent behaviours
+assembly binds into stages. The split is the point: `StepContext` is what the step *is* — the state,
+the tree, the counters, the seeded stream, read live once per step by every stage — while
+`StageCollaborators` is what the agent *does*, the action producers the ladder invoked as protected
+methods. Putting the seven rung methods and the trivial-activity search onto `StepContext` is exactly
+the god object this design's own risk row commits to preventing.
+
+**Assembly binds; stages hold narrow function objects.** `fromSpec` reduces each collaborator to the
+narrowest form its stage needs — a `Supplier<ModelAction>` for `BudgetStage`, the rung table's
+(supplier, `SataEventType`) pairs of D12 for the chain — so no stage holds the whole collaborator
+surface and a stage unit test supplies a lambda rather than an implementation. This is D12's own
+wording taken literally, with `ScoringPass`/`ScoringContext` as the local precedent: collaborators
+travel through a seam, behaviour lives in the unit.
+
+**Why an interface rather than the agent class.** `fromSpec` is where INV-DP-01 (one assembly, one
+echo) and INV-DP-03 (feature absent = stage absent) actually live. Named against `SataAgent`, those
+two properties would only be assertable on a device; named against `StageCollaborators`, a fake makes
+the roster a pure function of the plan — which is what `DecisionPipelineFromSpecTest` asserts, and
+what task 3.4's per-preset matrix needs in order to assert the echo line rather than only the
+candidate list.
+
+**The signature is `DecisionPipeline.fromSpec(RunSpec spec, StageCollaborators collaborators)`; the
+`RunContext` parameter is dropped.** D3 sketched assembly as reading the plan and the run context,
+but gating is a question about the plan and construction is a question about the agent, and the
+stages' run-scoped collaborators arrive per step through `StepContext` — so a context parameter here
+is one nothing reads (P1). Task 7.1, which moves the LLM units and the pipeline itself onto
+`RunContext`, is where that changes. "Single assembly point" is unaffected.
+
+**The extraction seam: `InlineLadderStage`.** Until task 2.7 lands `SataChainStage`, `fromSpec`
+assembles `InlineLadderStage` for the `SATA_CHAIN` candidate — a package-private stage delegating to
+`StageCollaborators.decideInlineLadder()`, which is the part of the ladder the extraction has not
+reached yet, still on `SataAgent` in its original order with its original predicates. Every interim
+roster therefore satisfies INV-DP-06, which means `DecisionPipeline.decide` is the live decision path
+of real runs and of every golden from task 2.1 onwards rather than only after the last extraction,
+and each extraction task reads as one block moving out of that remainder into a stage in front of it.
+That is what lets a red golden be attributed to a single move — the property this group's one-task-
+one-gate rhythm exists to buy. Both `InlineLadderStage` and `decideInlineLadder()` are replaced by
+`SataChainStage` at task 2.7.
+
+**The production `StepContext` implementation is `StatefulAgent` itself**, not a field holding a view.
+D13 allowed "the agent (or its inner class)"; the agent won on the harness. `OracleScaffold` allocates
+its agent through `Unsafe`, so a field would have to be injected, and its production and harness
+constructions could then drift — the way the duplicated `ScoringContext` already can.
+
+**The oracle's injection profile adapted, which INV-ORA-07 permits.** `OracleScaffold.newAgent` also
+injects the assembled `decisionPipeline`, built by the same `fromSpec` against the preset's installed
+plan and the agent's own producers. No golden and no scenario script changed.
+
 ## API Design
 
-### `DecisionPipeline.fromSpec(RunSpec spec, RunContext ctx) -> DecisionPipeline`
+### `DecisionPipeline.fromSpec(RunSpec spec, StageCollaborators collaborators) -> DecisionPipeline`
 
-Preconditions: spec validated (rearch-02 fail-fast already ran); ctx holds MopData/LLM units iff the corresponding features are in the plan. Postconditions: stage list fixed for the run, order as D3, one `[APE-ARCH] stages=[...]` line emitted. Never returns an empty pipeline (`SataChain` always present).
+Preconditions: spec validated (rearch-02 fail-fast already ran); `collaborators` is the agent whose action producers the assembled stages invoke (D14). Postconditions: stage list fixed for the run, order as D3, one `[APE-ARCH] stages=[...]` line emitted. Never returns an empty pipeline (the terminal stage has no gate).
 
 ### `DecisionPipeline.decide(StepContext ctx) -> Action`
 

@@ -10,16 +10,16 @@
 
 - [x] 1.1 Create `StageResult` (single final class, private ctor, `Kind` enum `SELECT|CONTINUE|SIDE_EFFECT`, static factories `select(Action, String)`/`continueChain()` singleton/`sideEffect(String)`, wrong-variant accessors throw `IllegalStateException`) — design D1
 - [x] 1.2 Create `DecisionStage` interface (`name()`, `decide(StepContext)`, default no-op `onStateTransition(StateTransition)`) and `StepContext` (read surface per design; single write method `resetGraphStableCounter()`) — design D2
-- [ ] 1.3 Create `DecisionPipeline` (`fromSpec(RunSpec, RunContext)` assembly + `[APE-ARCH] stages=[...]` echo; `decide(StepContext)` loop: first `SELECT` wins, `SIDE_EFFECT` recorded and continues, terminal stage never `CONTINUE`s) — INV-DP-01/02/05/06
+- [x] 1.3 Create `DecisionPipeline` (`fromSpec(RunSpec, RunContext)` assembly + `[APE-ARCH] stages=[...]` echo; `decide(StepContext)` loop: first `SELECT` wins, `SIDE_EFFECT` recorded and continues, terminal stage never `CONTINUE`s) — INV-DP-01/02/05/06
 - [x] 1.4 Unit tests: `StageResult` totality and accessor contract; pipeline loop preemption/side-effect/terminal semantics with stub stages; assembly echo content
 - [x] 1.5 Run `/sdd-doc-code` on the three new files
 - [x] 1.6 Run `/sdd-test-run` (new tests green; suite untouched otherwise)
 
 ## 2. Extract the stages one by one (goldens after EACH task)
 
-> Wire the pipeline into `selectNewActionNonnull()` incrementally: extracted blocks become stages; not-yet-extracted blocks remain inline after the `decide()` call of a partial pipeline. The logging prologue (`:450-462`) stays in the method. Every predicate moves **verbatim** (conjunct order, short-circuits, conditional RNG draws — INV-DP-10).
+> Wire the pipeline into `selectNewActionNonnull()` incrementally: extracted blocks become stages, and the blocks not yet extracted stay inline on the agent, reached through the roster's terminal stage (`InlineLadderStage`, design D14) so that every interim roster still decides every step through `decide()`. The logging prologue (`:450-462`) stays in the method. Every predicate moves **verbatim** (conjunct order, short-circuits, conditional RNG draws — INV-DP-10).
 
-- [ ] 2.1 `BudgetStage` — extract `:468-477`; Select trivial (`DecisionSource.Budget`, `PickChannel.SATA_OTHER`, the `:474` return) or Continue (null-trivial and non-exhausted paths); assembled only when the plan carries the activity-budget feature. Unit test both paths; **goldens green**
+- [x] 2.1 `BudgetStage` — extract `:468-477`; Select trivial (`DecisionSource.Budget`, `PickChannel.SATA_OTHER`, the `:474` return) or Continue (null-trivial and non-exhausted paths); assembled only when the plan carries the activity-budget feature. Unit test both paths; **goldens green**
 - [ ] 2.2 `LlmGate` shared precondition helper (buffer-empty ∧ actions > 2) + `LlmNewState` stage — extract `:480-487`, accept step from `acceptLlmResult` (`:425-432`, incl. the `MODEL_LLM_TAP` resolution guard). Unit test precondition/trigger/accept/decline; **goldens green** (stubbed LLM scripts)
 - [ ] 2.3 `LlmStagnation` stage — extract `:493-506`; move `stagnationHookFired` from `StatefulAgent:128` into the stage; wire the agent's `onVisitStateTransition` to forward edges to `stage.onStateTransition` (re-arm at the former `:1436` site, which is deleted); counter reset on accepted escape via `StepContext` (`:503` parity). Unit tests: burn-on-fire (null and non-null), re-arm-on-new-edge, `>=` midpoint, no re-arm on escape reset; **goldens green**
 - [ ] 2.4 `LlmRandom` stage — extract `:508-515`; coin drawn only after `LlmGate`, before breaker, seeded RNG from `RunContext`. Unit test draw ordering; **goldens green**
