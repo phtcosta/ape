@@ -1103,3 +1103,120 @@ Open coordination items — status 2026-08-03:
      the router's own predicates read `Config.llmOnNewState`/`llmOnStagnation`/`llmPercentage`
      **unguarded**, so they read the jar default even for a plan that does not carry the feature;
      today assembly masks it, and 4.6's deletion of those conjuncts removes it.
+
+- 2026-08-04 — **Stage 3 group 4 closed: `LlmRouter` is deleted and its five successors are the
+  production path. `rearch-03-decision-pipeline` is 27/53.** Four tasks landed since the last
+  entry: 4.5 `LlmEngine` (`8416c305`), 4.6 the wiring and the oracle rework (`aeec13ae`), 4.7 the
+  deletion (`598b00c8`), 4.8 the doc pass (`076a7c4b`). Group 5 was not begun.
+
+  **The gates, with the skip decomposition rather than the bare total.** The 19 skips are 13
+  `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3,
+  `GUITreeBuilderPasswordTest` 1) plus 6 `Assume` in `SglangLiveTest`, which *run* when `SGLANG_URL`
+  is exported — so a total is only comparable at a constant environment.
+
+  | Commit | Task | Tests | Failures | Skipped |
+  |---|---|---:|---:|---:|
+  | `8416c305` | 4.5 | 1084 | 0 | 19 |
+  | `aeec13ae` | 4.6 | 1098 | 0 | 19 |
+  | `598b00c8` | 4.7 | 1067 | 0 | 19 |
+  | `076a7c4b` | 4.8 | 1067 | 0 | 19 |
+
+  The parity gate held at 14/14 after each of the four; `git status --short
+  src/test/resources/goldens` printed nothing throughout (INV-ORA-07); `openspec validate --strict`
+  stayed clean and `--specs --strict` 21 passed; the task count stayed 53.
+
+  **Neither the +14 nor the −31 is drift.** 4.6 added assertions the old shape could not express —
+  the five migrated `stagnationMidpointReached` statics, a coin group that drives the real draw at a
+  *stated* rate instead of against a jar default, and per-hook counts of gate consultations. 4.7's
+  fall decomposes as −32 (`LlmRouterTest`) −4 (`LlmRouterToolSchemaTest`) +3 moved +1 retargeted +1
+  newly written.
+
+  - **What the five own.** `LlmClient`: the transport and the breaker composed, `allows()` with the
+    once-per-episode OPEN log latch, the `[APE-LLM-CONFIG]` manifest, and the tools-schema builders
+    — now `buildToolsSchema(boolean, String)`, taking the prompt variant explicitly where the
+    router resolved it implicitly. `ScreenshotStep`: dimension probing, capture and encode, with
+    the failure-stage seam intact so a null capture and a null encode never collapse into one
+    cause. `CoordinateMapper`: the normalize/denormalize wrap, the two boundary bands, `map` and
+    the fixTextEdit conversion, the dead-pair ban (`banKey`/`isDeadPair`/strikes/`recordLlmOutcome`)
+    and the nearest-widget calculation. `LlmTelemetry`: the counters, the four line families, the
+    once-per-run ACK latch and `printSummary`. `LlmEngine`: the nine-step orchestration, never
+    throwing, and the *judgement* — which outcome an answer is — handed over as a `Verdict` for the
+    telemetry unit to record.
+
+  - **The three stages now own their own trigger predicates.** Each evaluates its agent-side
+    conjunct — `ctx.isNewState()`, the pure `stagnationMidpointReached`, the coin — and only then
+    consults the `LlmClient.allows()` breaker gate, so the short-circuit and the draw position are
+    unchanged (INV-DP-10). The redundant mode conjuncts were deleted rather than carried: by D3 and
+    INV-DP-03 the feature's absence is the stage's absence, so inside the stage each was
+    necessarily true.
+
+  - **The oracle rework, and why one substitution was load-bearing.** `ScriptedLlmRouter` became
+    `ScriptedLlm`, which extends nothing and hands out `gateFor(hook)` (a `BooleanSupplier`) and
+    `engine()`. `OracleScaffold.installScriptedLlm` substitutes, per LLM stage, the gate and the
+    engine — and on the probabilistic stage **also the `Random` field**, with a scaffold-owned `new
+    Random(0L)`. Omitting that last one would have moved four committed baselines: assembly hands
+    the stage the agent's own generator, the same one the epsilon-greedy rungs draw from, and an
+    overridden verdict still *consumes* a draw. A consumed draw shifts every later draw of a seeded
+    run.
+
+  - **Correcting the part-3 prompt's "no scenario changes" claim.** No scenario script and no
+    golden changed — that half holds. What the claim missed is that the harness's *observation
+    window* shrank: a hook now reaches the script only after its own agent-side conjunct held, so
+    `PreemptionGoldenTest`'s `consultedAt(2)` and `consultedAt(3)` fell from all three hooks to the
+    probabilistic one alone, and `ScriptedLlm`'s "declared but never consulted" check moved from
+    per-hook to per-block. Both were rewritten to the true behaviour with the reason inline rather
+    than loosened. The reformulation loses no protection: the bug the check was written for is the
+    shared precondition short-circuiting, which blocks all three at once, and the per-hook form
+    never caught "declared but agent-conjunct false" anyway.
+
+  - **Correcting why `ape.graphStableRestartThreshold` is inert in the harness.** Not because the
+    counters top out at 7. Because `Config.graphStableRestartThreshold` is a `static final` read
+    from System properties at class init (`Config.java:50`), which no `RunSpec` value writes: the
+    restart test at `StatefulAgent:1127` therefore still reads 100 regardless of the plan, and it
+    sits above the oracle's entry point in any case. The **plan** value reaches two sites and
+    exactly one decision — `LlmStagnationStage`'s midpoint (`DecisionPipeline:160`); the other,
+    `LlmClient`'s `stagnation_threshold=` manifest field (`RunContext:94`), is write-only.
+    **Note for group 6**: that static read is one of 6.4's remaining sites, and `SataAgent:22`
+    still carries an unused static import of the same field.
+
+  - **4.7 deleted far more than it moved, and said so before doing it.** Of `LlmRouterTest`'s 32:
+    3 guards moved to `CoordinateMapperMappingTest`, 1 was retargeted, 3 merged into one assertion
+    group in `LlmTelemetryTest`, 11 were already covered by the stage tests 4.6 wrote, 4 by
+    `LlmClientTest`/`ToolCallParserTest`/`CoordinateMapperOffTreeTapTest`/`ConfigTest`, 6 were
+    vacuous, 2 were dropped deliberately and 2 were trivial. Three dropped things are worth naming.
+    **Six boundary tests passed an empty actions list**, so `map` returned null at the no-candidates
+    branch whatever the boundary branch would have decided — they proved nothing about the band
+    they named; the top band, which nothing else covered, got the honest form instead.
+    **`mapToModelAction_useSites_readConfigNotLiterals` asserted the source *contains* four
+    `Config.` reads**, the opposite of what this change is for (6.5's grep-guard asserts zero), so
+    it was deleted rather than retargeted. **INV-RTR-09 is the one this task could have destroyed
+    silently**: its check read `LlmRouter.java` off disk, so deleting the file would have made it
+    pass vacuously *at runtime*, not fail at compile time. It now lives in `LlmRandomStageTest` and
+    sweeps the whole decision path (`agent/pipeline` + `llm`) rather than one named file.
+
+  - **One handoff fact was wrong in the reader's favour, and checking cost minutes.** The session
+    prompt held that deleting `LlmRouterToolSchemaTest` would lose the pin on "the default prompt
+    variant is `ape_current`", because `grep promptVariant src/main/java/.../runtime/` returned
+    nothing. The key is `ape.llmPromptVariant` — the `llm` prefix is why the grep missed it — and
+    it is a registered plan key defaulting to `ape_current` (`Feature.java:166`,
+    `KeyOwnership.java:208`), pinned by `LlmClientTest.manifestReportsTheValuesTheRequestsWillCarry`
+    on a plan that does not state it and again on `LlmTelemetry`'s decision line. No coverage was
+    lost and no compensating test was needed.
+
+  - **Two artifact corrections, through `openspec-update-change`, before any code moved.** Task
+    4.7's destination table named `LlmRouterDeadPairTest`, `LlmRouterCoordinateMappingTest`,
+    `LlmRouterMappingTest` and `LlmRouterTelemetryTest` — all four migrated away by 4.3 and 4.4 —
+    and its "67 unit tests" was therefore wrong; `design.md`'s risk entry carried the same stale
+    67 and now records how the risk actually resolved. 53 tasks before and after: editing a table
+    inside a task line adds no checkbox.
+
+  - **4.8 was an audit, and its honest output was three re-flows.** The five units carry 1,479 lines
+    with five symbols lacking javadoc, and all five classify as skip under `sdd-doc-code`'s own
+    table — two value-type constructors over already-documented fields, a private JSON-envelope
+    builder, a no-arg constructor, and a `safe`-prefixed one-liner following the same undocumented
+    idiom as its sibling in `ApePromptBuilder`. What the pass did find was three ragged line wraps
+    left by 4.7's own comment sweep. Nothing was written to make the task look worked on.
+
+  - **The `router` vocabulary is gone from `src/main` and the `llm` tests** (P4): it had become the
+    name of a class that no longer exists. `ScenarioScript`'s `routeRandom` stays — it names a step
+    routed to the LLM, which still happens, and the scenario format is frozen by INV-ORA-07.
