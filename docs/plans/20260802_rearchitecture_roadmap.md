@@ -1394,3 +1394,159 @@ Open coordination items — status 2026-08-03:
 
   **Group 6 was not started**, and `SataAgent:22`'s unused static import of
   `graphStableRestartThreshold` was left alone as the 6.4 note records.
+
+- 2026-08-04 — **Stage 3 group 6 closed: the decision path no longer reads `Config`, and the guard
+  that says so can fail. `rearch-03-decision-pipeline` is 41/53.** Seven commits: the artifact
+  update group 6 was owed (`adf88b0b`), then 6.1 (`9273ecb2`), 6.2 (`ea7d61c7`), 6.3 (`4d8d5b53`),
+  6.4 (`0eb42a22`), 6.5 (`6be9d537`), 6.6 (`a18245ad`). Group 7 was not begun. All work is in
+  `ape-rearch` on `rearch`; `git worktree list` still shows exactly two worktrees and no `rearch-b`.
+  `docs/handoff/` is still untracked and was left alone.
+
+  **The gates, with the skip decomposition rather than the bare total.** The 19 skips are 13
+  `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3,
+  `GUITreeBuilderPasswordTest` 1) plus 6 `Assume` in `SglangLiveTest`; `SGLANG_URL` was unexported
+  throughout, so the environment was constant across every row.
+
+  | Commit | Task | Tests | Failures | Skipped |
+  |---|---|---:|---:|---:|
+  | `adf88b0b` | artifacts | — | — | — |
+  | `9273ecb2` | 6.1 | 1124 | 0 | 19 |
+  | `ea7d61c7` | 6.2 | 1124 | 0 | 19 |
+  | `4d8d5b53` | 6.3 | 1126 | 0 | 19 |
+  | `0eb42a22` | 6.4 | 1126 | 0 | 19 |
+  | `6be9d537` | 6.5 | 1130 | 0 | 19 |
+  | `a18245ad` | 6.6 | 1130 | 0 | 19 |
+
+  The parity gate held at **14/14** after every task; `git status --short src/test/resources/goldens`
+  printed nothing throughout (INV-ORA-07); `openspec validate --strict` stayed clean, `--specs
+  --strict` 21 passed, and the task count stayed **53**.
+
+  **The +6 is +2 at 6.3 (the paired tiebreak test and its counterfactual twin) and +4 at 6.5 (the
+  guard).** Group 6 rewrites the selection ladder's own reads — `SataAgent.selectNewActionNonnull()`
+  *is* the oracle's entry point, unlike the scoring pipeline of group 5, which runs above it — so a
+  golden diff here would have been a real regression. None appeared.
+
+  **The census the tasks quoted was of the wrong quantity, in both directions.** `Config`'s fields
+  are `public static final`, so a read takes two source forms: qualified, or bare behind an
+  `import static`. Eleven files in `src/main` import the second way. A grep for `Config\.` reports
+  neither count — it misses every bare read *and* matches the `import static` lines, which are
+  declarations, not reads. Counted with both forms enumerated and the import lines excluded:
+
+  | Class | Before (qual. + static-imported) | Task/D9 claimed | After |
+  |---|---:|---:|---:|
+  | `SataAgent` | 10 + 6 = **16** over 11 keys | 25 | **0** |
+  | `StatefulAgent` | 10 + 16 = **26** over 20 keys | ~30 | **0** |
+  | `State` | 2 + 0 = **2** | 2 ✓ | **1** (the residue) |
+  | `ApePromptBuilder` | 1 + 0 = **1** | 1 ✓ | **0** |
+  | `MopCounterfactual` | 1 + 0 = **1** | not named by any task | **0** |
+
+  `SataAgent`'s row is smaller than D9's because groups 1–4 had already moved the launcher pair,
+  `componentPercentage`, `llmPercentage`, `activityBudgetEnabled` and `graphStableRestartThreshold`
+  into the stages. **The previous handoff's own correction (41 and 21) was wrong the same way**: it
+  counted the import lines as reads and double-counted the qualified occurrences. This is learning
+  59 landing precisely where it warned it would.
+
+  **Where the reads went.** Both agents hold an `ExplorationParams` field assigned in the
+  constructor and read as a field at each site. Reaching the run context is injection at assembly
+  and a violation at decision time, and putting the only plan consultation in the constructor is
+  what makes that difference structural rather than a convention. The field sits on `StatefulAgent`,
+  not `SataAgent` where 6.1 first put it: both classes read from it, and a second field on the
+  subclass would shadow this one — including for the oracle harness, whose `setField` walks the
+  hierarchy and stops at the first match. Four values resolve to primitives instead, because their
+  params object does not exist on every plan: `mopTargetPickCap` and `mopDataPath` (`MopParams`),
+  `stepTelemetryEnabled` (`TelemetryParams`), and `defaultEpsilon`, which the delegating constructor
+  needs before any field exists. `RunSpec` grew the named accessors these sites read, following
+  group 5's shape.
+
+  **D9 was wrong about `mopDataPath`**, and it was not a bookkeeping error: it claimed rearch-02 had
+  already replaced those reads, and both were live at `StatefulAgent:178`/`:179`, loading the MOP
+  substrate. They now come from `MopParams.dataPath()`, null exactly when the MOP feature is absent
+  — the feature is *derived* from that key being set, so `requireMopArm` reads the null exactly as it
+  read an unset `Config` field. Three more keys D9 listed only under "…" (`maxIdleTimeoutMs`,
+  `fuzzingActivityVisitThreshold`, `maxExtraPriorityAliasedActions`) were swept too: 6.5's guard
+  asserts zero over the class, and an unclassified read is still a read.
+
+  **What 6.5's guard actually asserts, and in what scopes.** Four assertions over
+  `agent/pipeline/**`, `agent/scoring/**`, `llm/**`, `utils/MopScorer.java` and the three swept
+  classes: (a) no `Config` read in **either** form, resolving each file's static imports and then
+  looking for their bare use, with comments stripped first so prose about the invariant cannot trip
+  it; (b) `modelMenuEnabled` pinned at **exactly one occurrence**; (c) no static
+  `leastVisitedPriorityTiebreak` read anywhere in `src/main`; (d) no ambient `RunContext.current()`
+  in the units that exist only as injected collaborators. `MopScorer` is named explicitly because it
+  lives in `ape/utils`, outside every package the task's original wording listed — the omission that
+  would have exempted it by accident. Each scope is resolved and asserted non-empty before it is
+  searched, so a guarded file that moves fails loudly instead of leaving the guard passing over
+  nothing (learning 72).
+
+  **What it deliberately does not cover**, stated in its own javadoc: `RunContext.current()` in
+  `SataAgent` (4 occurrences) and `StatefulAgent` (6), which is legitimate at assembly and for
+  fetching the LLM collaborators, and which no source scan can tell from a decision-time read; and
+  any parameter reached through a helper in a file outside the scopes, which no source scan sees
+  through a call.
+
+  **The guard was shown able to fail in each form it claims to catch**, and two probes changed it.
+  Red on: a qualified read in `SataAgent`; a static-imported read in `MopScorer`;
+  `RunContext.current()` in `ScoringParams`; a second `modelMenuEnabled` occurrence; a static
+  `leastVisitedPriorityTiebreak` read in `MopCounterfactual`; and a guarded file renamed, which fails
+  on the scope assertion. Every probe was reverted. **The residue probe found a real defect**: the
+  first draft collected reads into a `Set`, so a second read of the same field hid behind the first
+  and the "exactly one" pin certified nothing. It counts occurrences now. **A second probe was
+  itself wrong** — it added only an `import static`, with no use, and the guard correctly stayed
+  green: an unused import is a declaration, not a read, which is the same distinction that makes
+  `SataAgent:22`'s dead import not a read either.
+
+  **The `greedyPickLeastVisited` parameter.** The argument comes from
+  `exploration.leastVisitedPriorityTiebreak()` at `SataAgent`'s epsilon-greedy call site, false when
+  the tiebreak feature is absent (the `ape_pure` arm). The single-argument overload was deleted
+  rather than kept delegating: it had no production caller and its only behaviour was the implicit
+  `Config` read the task removes (P3). **`MopCounterfactual` had to move with it** — it mirrors the
+  same tie rule and read the same static, so leaving it would let the counterfactual disagree with
+  the branch it stands in for on any `ape_pure` plan, making `cf_changed` wrong with nothing to
+  notice. The handoff said not to touch that file; 6.5's clause (c) — "zero anywhere in `src/main`",
+  which predates this session's artifact update — requires it, and the disagreement is a real defect
+  rather than an out-of-order tidy.
+
+  **What the paired test proves that no golden could.** One fixed action set, one fixed set of visit
+  counts, differing priorities, called with `true` and then `false`, asserting the two calls pick
+  **different** actions. This is where every priority boost — MOP, WTG, coverage — becomes a chosen
+  action, on the 85-98% of decisions the greedy path takes. An argument wired wrong here degrades MOP
+  guidance while every stage reports the same structure: same roster, same rungs, same lines, and no
+  golden record moves, because a golden records which action was chosen under one fixed plan, not
+  whether the plan's value reached the comparison. Nothing else in the suite would go red. The
+  priorities the test states appear nowhere in production, so the result can only carry them by
+  having travelled through the argument under test (the 5.5a discipline).
+
+  **The `modelMenuEnabled` residue, as a current decision rather than a deferral.** It stays, and it
+  is not a decision-time read at all: it gates which actions a `State` is *built* with, during model
+  construction, from a value the plan freezes at load. Threading plan state through
+  `Model`/`State`/naming construction to reach it would be a model-layer change with no
+  decision-path payoff. The rationale now sits at the read site, and the guard pins it at exactly one
+  occurrence so it cannot grow a sibling.
+
+  **6.4 was one line and 6.6 was close to nothing** (learning 57). `ApePromptBuilder` takes the
+  variant by constructor from `LlmParams`; `getPromptVariant()` and the no-argument constructor are
+  deleted, so the thirteen test construction sites name the variant they exercise. For 6.6,
+  `/sdd-qa-lint-fix` is not in this session's Skill registry, so its `SKILL.md` was read and followed
+  by hand — and its own rule decides this repo: Java maps to checkstyle, which the skill states has
+  no auto-fix, and which is neither installed here nor configured. What the pass did find is the
+  class of issue this sweep could have created: eight orphaned imports across the three rewritten
+  files. All eight predate the sweep; they were removed anyway, because the file a task rewrites is
+  the file that task's lint step owns.
+
+  **Two `OracleScaffold` injection-profile adaptations** (INV-ORA-07, recorded in comments beside the
+  existing two): the swept parameters — `exploration`, `mopTargetPickCap`, `stepTelemetryEnabled` —
+  are now injected from the same plan the harness already installs. `stepTelemetryEnabled` in
+  particular had to be injected rather than left at the allocator's `false`, or the harness would
+  have silently stopped emitting the telemetry the jar default turns on.
+
+  **Where the scouting turned out to be wrong.** Besides the census and `mopDataPath` above: the
+  handoff pointed at `openspec/specs/decision-pipeline/spec.md` as a file to read first, and there is
+  no such file — `decision-pipeline` is a capability this change *introduces*, so INV-DP-01..12 live
+  only in the change's delta at `openspec/changes/rearch-03-decision-pipeline/specs/`. INV-DP-12 was
+  widened there this session to require what the guard now checks: it named stages, engines, LLM
+  units and scoring passes, but not `MopScorer` or the swept classes, and it did not say that a read
+  takes three forms.
+
+  **Still inherited and still left alone**: the stale anchor `StatefulAgent.java:1475-1478` in
+  `openspec/specs/parity-oracle/spec.md:201`, in `rearch-06/design.md:237` and in this file at
+  `:173`.
