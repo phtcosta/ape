@@ -492,15 +492,6 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      */
     @Override
     public StageResult decideInlineLadder() {
-        // LLM random hook (probabilistic, fires with Config.llmPercentage probability)
-        if (actionBufferSize() == 0 && newState.getActions().size() > 2
-                && _llmRouter != null && _llmRouter.shouldRouteRandom()) {
-            ModelAction result = _llmRouter.selectAction(newGUITree, newState,
-                    newState.getActions(), getMopData(), _actionHistory, "random", getTimestamp());
-            if (result != null) {
-                return selected(LlmGate.accept(result, this::resolveSynthesizedTap));
-            }
-        }
         // mop-census-launcher (Lever B): cadence-based MOP-activity launcher. Fires every
         // Config.activityTriggerStagnationStep passes through this block (a dedicated per-pass
         // counter, decoupled from graphStableCounter), launching the next unvisited activity from

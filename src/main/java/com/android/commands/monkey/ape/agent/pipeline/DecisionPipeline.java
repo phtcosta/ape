@@ -154,6 +154,10 @@ public final class DecisionPipeline {
                     stages.add(new LlmStagnationStage(collaborators.llmRouter(),
                             collaborators::resolveSynthesizedTap));
                     break;
+                case LLM_RANDOM:
+                    stages.add(new LlmRandomStage(collaborators.llmRouter(),
+                            collaborators::resolveSynthesizedTap));
+                    break;
                 case SATA_CHAIN:
                     stages.add(new InlineLadderStage(collaborators));
                     break;
