@@ -11,7 +11,7 @@ import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
 
 /**
- * Unit tests for {@link State#greedyPickLeastVisited(ActionFilter)}.
+ * Unit tests for {@link State#greedyPickLeastVisited(ActionFilter, boolean)}.
  *
  * <p>Verifies that priority is used as a tiebreaker when multiple actions
  * share the same minimum visitedCount (INV-SEL-01..03).
@@ -96,7 +96,7 @@ public class StateTest {
         actionsField.setAccessible(true);
         actionsField.set(state, new ModelAction[]{a0, a1, a2});
 
-        assertSame(a0, state.greedyPickLeastVisited(ALL));
+        assertSame(a0, state.greedyPickLeastVisited(ALL, true));
     }
 
     /**
@@ -115,7 +115,7 @@ public class StateTest {
         actionsField.setAccessible(true);
         actionsField.set(state, new ModelAction[]{a0, a1, a2});
 
-        assertSame(a1, state.greedyPickLeastVisited(ALL));
+        assertSame(a1, state.greedyPickLeastVisited(ALL, true));
     }
 
     /**
@@ -137,7 +137,7 @@ public class StateTest {
         actionsField.setAccessible(true);
         actionsField.set(state, new ModelAction[]{a0, a1, a2, a3, a4, a5});
 
-        assertSame(a4, state.greedyPickLeastVisited(ALL));
+        assertSame(a4, state.greedyPickLeastVisited(ALL, true));
     }
 
     /**
@@ -156,7 +156,7 @@ public class StateTest {
         actionsField.setAccessible(true);
         actionsField.set(state, new ModelAction[]{a0, a1, a2});
 
-        ModelAction result = state.greedyPickLeastVisited(ALL);
+        ModelAction result = state.greedyPickLeastVisited(ALL, true);
         // First encountered with min visitedCount and max priority wins
         assertSame(a0, result);
     }
@@ -177,7 +177,7 @@ public class StateTest {
         actionsField.setAccessible(true);
         actionsField.set(state, new ModelAction[]{a0, a1});
 
-        assertSame(a0, state.greedyPickLeastVisited(ALL));
+        assertSame(a0, state.greedyPickLeastVisited(ALL, true));
     }
 
     /**
@@ -196,7 +196,7 @@ public class StateTest {
         actionsField.setAccessible(true);
         actionsField.set(state, new ModelAction[]{a0, a1, a2});
 
-        assertSame(a0, state.greedyPickLeastVisited(ALL));
+        assertSame(a0, state.greedyPickLeastVisited(ALL, true));
     }
 
     /**
@@ -206,7 +206,7 @@ public class StateTest {
     public void testNoMatchingActions_returnsNull() throws Exception {
         State state = createState(new ModelAction[0]);
 
-        assertNull(state.greedyPickLeastVisited(ALL));
+        assertNull(state.greedyPickLeastVisited(ALL, true));
     }
 
     /**
@@ -226,7 +226,7 @@ public class StateTest {
         // Filter that excludes the first action
         ActionFilter excludeFirst = action -> action != a0;
 
-        assertSame(a1, state.greedyPickLeastVisited(excludeFirst));
+        assertSame(a1, state.greedyPickLeastVisited(excludeFirst, true));
     }
 
     /**
@@ -245,17 +245,70 @@ public class StateTest {
         actionsField.set(state, new ModelAction[]{submit, field});
 
         assertSame("excluded submit skipped despite lowest visitedCount",
-                field, state.greedyPickLeastVisited(ALL, submit));
+                field, state.greedyPickLeastVisited(ALL, submit, true));
         assertSame("null exclusion → unchanged least-visited behavior",
-                submit, state.greedyPickLeastVisited(ALL, null));
+                submit, state.greedyPickLeastVisited(ALL, null, true));
+    }
+
+    /**
+     * The tiebreak argument decides the pick — the only thing that can catch it being wired wrong.
+     *
+     * <p>One fixed action set, one fixed set of visit counts, differing priorities, passed to
+     * {@code greedyPickLeastVisited} twice: once with {@code true}, once with {@code false}. The
+     * two calls SHALL pick different actions. This is the seam where every priority boost — MOP,
+     * WTG, coverage — becomes a chosen action, and the greedy path takes 85-98% of decisions, so an
+     * argument wired wrong here degrades MOP guidance while every stage still reports the same
+     * structure: same roster, same rungs, same lines, no golden moves. Nothing else in the suite
+     * would go red.
+     *
+     * <p>The priorities are stated here and appear nowhere in production, so the result can only
+     * carry them by having travelled through the argument under test.
+     */
+    @Test
+    public void testTiebreakArgumentDecidesThePick() throws Exception {
+        State state = createState(new ModelAction[0]);
+        // Tied on the lowest visit count; boosted is the one a priority boost would steer to.
+        ModelAction first = createAction(state, 37, 2);
+        ModelAction boosted = createAction(state, 537, 2);
+        ModelAction visited = createAction(state, 57, 5);
+
+        Field actionsField = State.class.getDeclaredField("actions");
+        actionsField.setAccessible(true);
+        actionsField.set(state, new ModelAction[]{first, boosted, visited});
+
+        ModelAction withTiebreak = state.greedyPickLeastVisited(ALL, true);
+        ModelAction withoutTiebreak = state.greedyPickLeastVisited(ALL, false);
+
+        assertSame("tiebreak on: the boost reaches the greedy path", boosted, withTiebreak);
+        assertSame("tiebreak off: the tie falls back to array order (upstream APE)",
+                first, withoutTiebreak);
+        assertNotSame("the argument is load-bearing, not decorative",
+                withTiebreak, withoutTiebreak);
+    }
+
+    /**
+     * The same contrast through {@code MopCounterfactual}, which mirrors the tie rule. A
+     * counterfactual that disagreed with the branch it stands in for would misreport {@code
+     * cf_changed} on every {@code ape_pure} run, and no factual assertion would notice.
+     */
+    @Test
+    public void testCounterfactualHonoursTheSameTiebreakArgument() throws Exception {
+        State state = createState(new ModelAction[0]);
+        ModelAction first = createAction(state, 37, 2);
+        ModelAction boosted = createAction(state, 537, 2);
+        java.util.List<ModelAction> candidates = java.util.Arrays.asList(first, boosted);
+
+        assertSame("tiebreak on: higher priority wins the tie", boosted,
+                MopCounterfactual.leastVisitedWithoutMopWeights(candidates, true));
+        assertSame("tiebreak off: candidate order wins the tie", first,
+                MopCounterfactual.leastVisitedWithoutMopWeights(candidates, false));
     }
 
     // -----------------------------------------------------------------------
-    // rv-scoring-pipeline task 4.2: leastVisitedPriorityTiebreak seam.
-    // The static final gate cannot be flipped in-JVM, so the OFF branch (upstream
-    // array-order ties) is asserted through the pure beatsLeastVisited seam; the
-    // wired ON path is covered by the greedyPickLeastVisited tests above and the
-    // OFF wiring by the device smoke (task 7.6).
+    // The leastVisitedPriorityTiebreak seam. The flag is a parameter of
+    // greedyPickLeastVisited, so both branches are reachable through the real
+    // entry point; testTiebreakArgumentDecidesThePick below is what proves the
+    // argument is load-bearing. The tests here pin the pure seam it delegates to.
     // -----------------------------------------------------------------------
 
     @Test

@@ -850,6 +850,16 @@ public final class RunSpec {
             return has("ape.fuzzingActivityVisitThreshold")
                     ? integer("ape.fuzzingActivityVisitThreshold") : 0;
         }
+
+        /**
+         * Whether a tie on the lowest visit count is broken by the highest priority, which is what
+         * lets every boost reach the greedy path. False when the tiebreak feature is absent — the
+         * {@code ape_pure} arm, where ties fall back to array order as upstream APE resolves them.
+         */
+        public boolean leastVisitedPriorityTiebreak() {
+            return has("ape.leastVisitedPriorityTiebreak")
+                    && bool("ape.leastVisitedPriorityTiebreak");
+        }
     }
 
     /** Present exactly when the plan carries {@link Feature#MOP}. */

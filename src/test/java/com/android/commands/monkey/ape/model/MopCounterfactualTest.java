@@ -151,7 +151,7 @@ public class MopCounterfactualTest {
         List<ModelAction> candidates = Arrays.asList(mopTarget, neverVisited);
 
         assertSame("without the boost the fall-through takes the least-visited action",
-                neverVisited, MopCounterfactual.leastVisitedWithoutMopWeights(candidates));
+                neverVisited, MopCounterfactual.leastVisitedWithoutMopWeights(candidates, true));
     }
 
     @Test
@@ -159,7 +159,7 @@ public class MopCounterfactualTest {
         ModelAction boosted = action(600, 500, 0, 1);     // MOP-free priority 100
         ModelAction stronger = action(400, 0, 0, 1);      // MOP-free priority 400
         assertSame(stronger, MopCounterfactual.leastVisitedWithoutMopWeights(
-                Arrays.asList(boosted, stronger)));
+                Arrays.asList(boosted, stronger), true));
     }
 
     @Test
@@ -180,7 +180,7 @@ public class MopCounterfactualTest {
 
     @Test
     public void emptyCandidateSetsAreInert() {
-        assertNull(MopCounterfactual.leastVisitedWithoutMopWeights(new ArrayList<ModelAction>()));
+        assertNull(MopCounterfactual.leastVisitedWithoutMopWeights(new ArrayList<ModelAction>(), true));
         assertNull(MopCounterfactual.highestPriorityWithoutMopWeights(new ArrayList<ModelAction>()));
         assertNull(MopCounterfactual.replayRoulette(new ArrayList<ModelAction>(), 0, 100));
     }

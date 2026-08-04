@@ -576,14 +576,16 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
             // the fall-through it pre-empted — the least-visited pick with MOP weights zeroed.
             final ModelAction excluded = submitExcluded;
             mopTarget.setCounterfactualPick(counterfactual(() -> MopCounterfactual
-                    .leastVisitedWithoutMopWeights(candidatesOf(newState, cappedFilter, excluded))));
+                    .leastVisitedWithoutMopWeights(candidatesOf(newState, cappedFilter, excluded),
+                            exploration.leastVisitedPriorityTiebreak())));
             return mopTarget;
         }
         if (egreedy()) { // TODO: this is different from Sarsa.
             Logger.iformat("Try to select the least visited action.");
             // Least-visited pick: priority (and any boost) is only a tie-break, not the
             // reason for selection — SATA.
-            ModelAction leastVisited = newState.greedyPickLeastVisited(cappedFilter, submitExcluded);
+            ModelAction leastVisited = newState.greedyPickLeastVisited(cappedFilter, submitExcluded,
+                    exploration.leastVisitedPriorityTiebreak());
             if (leastVisited != null) {
                 leastVisited.setDecisionSource(ModelAction.DecisionSource.SATA);
                 leastVisited.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
