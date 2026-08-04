@@ -651,3 +651,56 @@ Open coordination items — status 2026-08-03:
   **Group 2 is not started.** It extracts the ladder block by block with the goldens as the gate
   after *every* task (INV-DP-09), which is why the session boundary is here: group 1 is the last
   point at which a green golden proves nothing about one's own edit.
+
+- 2026-08-04 — **Stage 3 group 2, tasks 2.1–2.5 landed: `rearch-03-decision-pipeline` 12/53.**
+  The ladder is now the pipeline for its first five rungs. Gate observed *before* the work rather
+  than trusted from the handoff: **984 tests, 0 failures, 19 skipped**, BUILD SUCCESS, decomposition
+  13 `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest`
+  3, `GUITreeBuilderPasswordTest` 1) + 6 `Assume` in `SglangLiveTest` with `SGLANG_URL` unset. After
+  2.5: **1020 / 0 / 19**, the +36 being this group's own tests, decomposition unchanged. The five
+  golden classes (14 tests) were re-run after **every** task and are green at each of the five
+  commits; `git status --short src/test/resources/goldens` empty throughout (INV-ORA-07 holds).
+
+  **The §4.3 question was settled at 2.1 and is recorded as design D14.** Stages reach the agent
+  through a second, narrow seam — `StageCollaborators` — while `StepContext` keeps exactly the
+  read surface D2 enumerates. `StepContext` is what the step *is*; `StageCollaborators` is what the
+  agent *does*. Assembly reduces each collaborator to the narrowest function object its stage takes,
+  so no stage holds the whole surface. Naming an interface rather than `SataAgent` is what keeps
+  `fromSpec` — where INV-DP-01 and INV-DP-03 actually live — assertable from a plan and a fake
+  instead of only on a device. The signature is `fromSpec(RunSpec, StageCollaborators)`: the
+  `RunContext` parameter of D3's sketch was dropped as one nothing reads, and the delta spec was
+  corrected to match. Task 7.1 is where the context returns.
+
+  **The extraction seam is `InlineLadderStage`, and it is why the goldens can attribute a failure.**
+  It carries whatever the extraction has not reached yet as the roster's terminal stage, so every
+  interim roster satisfies INV-DP-06 and `decide()` is the live decision path of real runs and of
+  every golden from task 2.1 onwards — not only after the last extraction. Each task then reads as
+  one block moving out of that remainder into a stage in front of it. It and
+  `StageCollaborators.decideInlineLadder()` are both replaced by `SataChainStage` at task 2.7. This
+  supersedes the earlier note that the interim gap was guarded only by `decide()` throwing on an
+  exhausted roster: the throw remains, but no interim roster is exhaustible.
+
+  **The production `StepContext` is `StatefulAgent` itself.** The harness allocates its agent through
+  `Unsafe`, so a field holding a view would have to be injected and its production and harness
+  constructions could drift — the way the duplicated `ScoringContext` already can.
+
+  **A red golden at 2.2, and it was right.** All four LLM golden tests failed with "the agent never
+  consulted the new-state hook". The stage was correctly absent: `OracleScaffold`'s presets installed
+  their plan without `ape.llmUrl`, so the LLM feature was not in it. The preset now states the URL,
+  exactly as it already had to state its MopParams once the launcher gate moved into the plan. It is
+  a plan value only — the router is still injected and nothing in the harness opens a socket. This is
+  the injection profile adapting, the one adaptation INV-ORA-07 permits.
+
+  **Two relocations changed where an artifact must be read from, not what it says.** The stagnation
+  single shot and the launcher's cadence counter are now stage fields, so `PreemptionGoldenTest`
+  reaches them through `DecisionPipeline.stages()`. Assertion content is unchanged; what changed is
+  that a test observing another owner's episode state has to say so out loud, which is INV-DP-07
+  working rather than an inconvenience.
+
+  **`isNewState` went onto `StepContext` through the design's gate, not around it.** It is the
+  new-state hook's whole trigger argument and is set once per step, so it is per-step data; routing
+  it through `StageCollaborators` would have hidden a datum behind a behaviour seam purely to avoid
+  touching the enumeration that exists to be touched. Design and delta spec both updated.
+
+  **Tasks 2.6–2.9 are not started.** The session stopped at a green golden with 2.5's boxes ticked,
+  which is the outcome the group-2 handoff asked for over a complete but unattributable group.
