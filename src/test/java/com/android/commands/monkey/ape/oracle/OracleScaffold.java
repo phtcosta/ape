@@ -16,6 +16,7 @@ import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
@@ -573,6 +574,14 @@ public final class OracleScaffold {
         setField(agent, "graphStableCounter", 0);
         setField(agent, "backToActivity", null);
         setField(agent, "epsilon", Config.defaultEpsilon);
+        // The selection ladder's own parameters now arrive by injection rather than off Config's
+        // statics, so the scaffold takes them from the same plan it installed above — the injection
+        // profile adapting to a relocated collaborator, the one adaptation INV-ORA-07 permits while
+        // the extraction is in flight. No golden moves: these are the jar defaults the goldens were
+        // captured over, reaching the same read sites by a different route.
+        setField(agent, "exploration", spec.exploration());
+        setField(agent, "mopTargetPickCap",
+                spec.has(Feature.MOP) ? spec.mop().targetPickCap() : 0);
         // The decision policy the constructor would have assembled (SataAgent.java), built from the
         // same plan installed above and against this agent's own action producers. Last, because
         // nothing it binds may be read before every field it reaches through is set — this is the

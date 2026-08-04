@@ -716,6 +716,140 @@ public final class RunSpec {
         public boolean formCompletionEnabled() {
             return has("ape.formCompletionEnabled") && bool("ape.formCompletionEnabled");
         }
+
+        /** The epsilon the agent starts a run at, before any dynamic adjustment. */
+        public double defaultEpsilon() {
+            return dbl("ape.defaultEpsilon");
+        }
+
+        /**
+         * Whether epsilon tracks the coverage gap instead of staying at its start value; false when
+         * the dynamic-epsilon feature is absent, which is the only condition under which
+         * {@link #minEpsilon()} and {@link #maxEpsilon()} are not in the plan.
+         */
+        public boolean dynamicEpsilon() {
+            return has("ape.dynamicEpsilon") && bool("ape.dynamicEpsilon");
+        }
+
+        /** The floor of the dynamic epsilon band. Read only when {@link #dynamicEpsilon()} is true. */
+        public double minEpsilon() {
+            return dbl("ape.minEpsilon");
+        }
+
+        /** The ceiling of the dynamic epsilon band. Read only when {@link #dynamicEpsilon()} is true. */
+        public double maxEpsilon() {
+            return dbl("ape.maxEpsilon");
+        }
+
+        /** Discretionary BACK/MENU re-picks allowed per (activity, type); zero or less disables the cap. */
+        public int backMenuPickCap() {
+            return integer("ape.backMenuPickCap");
+        }
+
+        /** Below this many known activities, none of them counts as trivial. */
+        public int trivialActivityRankThreshold() {
+            return integer("ape.trivialActivityRankThreshold");
+        }
+
+        /** Whether the trivial-activity escape may walk back rather than only navigate forward. */
+        public boolean doBackToTrivialActivity() {
+            return bool("ape.doBackToTrivialActivity");
+        }
+
+        /** Whether greedy candidates come from the action differ rather than a fresh state scan. */
+        public boolean useActionDiffer() {
+            return bool("ape.useActionDiffer");
+        }
+
+        /** Whether a buffer refill may reuse a path the run has already walked. */
+        public boolean fillTransitionsByHistory() {
+            return bool("ape.fillTransitionsByHistory");
+        }
+
+        /** Whether a refill that history cannot serve falls back to a graph transition. */
+        public boolean fallbackToGraphTransition() {
+            return bool("ape.fallbackToGraphTransition");
+        }
+
+        /** Steps without a new activity before the agent forces a restart. */
+        public int activityStableRestartThreshold() {
+            return integer("ape.activityStableRestartThreshold");
+        }
+
+        /** Steps without graph growth before the agent forces a restart. */
+        public int graphStableRestartThreshold() {
+            return integer("ape.graphStableRestartThreshold");
+        }
+
+        /** Steps without a new state before the agent forces a restart. */
+        public int stateStableRestartThreshold() {
+            return integer("ape.stateStableRestartThreshold");
+        }
+
+        /** Whether the model absorbs each observed tree; false freezes it after construction. */
+        public boolean evolveModel() {
+            return bool("ape.evolveModel");
+        }
+
+        /** The throttle every step pays, before the per-situation additions. */
+        public int baseThrottle() {
+            return integer("ape.baseThrottle");
+        }
+
+        /** The ceiling every throttle addition is clamped to. */
+        public int maxThrottle() {
+            return integer("ape.maxThrottle");
+        }
+
+        /** Extra throttle when the action is unvisited. */
+        public int throttleForUnvisitedAction() {
+            return integer("ape.throttleForUnvisitedAction");
+        }
+
+        /** Extra throttle when the step crosses an activity boundary. */
+        public int throttleForActivityTransition() {
+            return integer("ape.throttleForActivityTransition");
+        }
+
+        /** How long a step may idle before the agent stops waiting for the screen. */
+        public long maxIdleTimeoutMs() {
+            return lng("ape.maxIdleTimeoutMs");
+        }
+
+        /** How many aliased actions may each add base priority to a state's action. */
+        public int maxExtraPriorityAliasedActions() {
+            return integer("ape.maxExtraPriorityAliasedActions");
+        }
+
+        /** Whether the run writes the GUI tree as XML on every step. */
+        public boolean saveGUITreeToXmlEveryStep() {
+            return bool("ape.saveGUITreeToXmlEveryStep");
+        }
+
+        /** The master screenshot switch; the two flags below only narrow it. */
+        public boolean takeScreenshot() {
+            return bool("ape.takeScreenshot");
+        }
+
+        /** Whether a screenshot is taken on every step. */
+        public boolean takeScreenshotForEveryStep() {
+            return bool("ape.takeScreenshotForEveryStep");
+        }
+
+        /** Whether a screenshot is taken when the step lands on a state the run had not seen. */
+        public boolean takeScreenshotForNewState() {
+            return bool("ape.takeScreenshotForNewState");
+        }
+
+        /**
+         * Visits below which an activity is still fuzzing-eligible; zero when the fuzzing feature
+         * is absent, which reads as "no activity qualifies" — the same thing an absent mechanism
+         * means everywhere else in this file.
+         */
+        public int fuzzingActivityVisitThreshold() {
+            return has("ape.fuzzingActivityVisitThreshold")
+                    ? integer("ape.fuzzingActivityVisitThreshold") : 0;
+        }
     }
 
     /** Present exactly when the plan carries {@link Feature#MOP}. */
@@ -796,6 +930,14 @@ public final class RunSpec {
          */
         public double componentPercentage() {
             return dbl("ape.componentPercentage");
+        }
+
+        /**
+         * Re-picks allowed per MOP target before it stops being offered; zero or less disables the
+         * cap. Owned by {@code MOP} itself, so a plan that carries this object carries the key.
+         */
+        public int targetPickCap() {
+            return integer("ape.mopTargetPickCap");
         }
     }
 

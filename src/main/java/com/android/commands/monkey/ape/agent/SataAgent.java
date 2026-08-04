@@ -15,14 +15,6 @@
  */
 package com.android.commands.monkey.ape.agent;
 
-import static com.android.commands.monkey.ape.utils.Config.defaultEpsilon;
-import static com.android.commands.monkey.ape.utils.Config.doBackToTrivialActivity;
-import static com.android.commands.monkey.ape.utils.Config.fallbackToGraphTransition;
-import static com.android.commands.monkey.ape.utils.Config.fillTransitionsByHistory;
-import static com.android.commands.monkey.ape.utils.Config.graphStableRestartThreshold;
-import static com.android.commands.monkey.ape.utils.Config.trivialActivityRankThreshold;
-import static com.android.commands.monkey.ape.utils.Config.useActionDiffer;
-
 import java.util.ArrayList;
 import java.util.function.Supplier;
 import java.util.Arrays;
@@ -50,6 +42,7 @@ import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
 import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
@@ -61,7 +54,6 @@ import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.model.ActionType;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.RandomHelper;
@@ -215,20 +207,43 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      */
     private final DecisionPipeline decisionPipeline;
 
+    /**
+     * The plan's exploration parameters, taken once here and read as a field at every selection
+     * site below (INV-DP-12). The ladder used to read these off {@code Config}'s statics — some
+     * qualified, most through {@code import static}, which is why a grep for {@code Config.} never
+     * reported the real count. Reaching the run context is legitimate at assembly and forbidden at
+     * decision time, and this field is what makes the difference structural: the constructor is the
+     * only place the plan is consulted.
+     *
+     * <p>The oracle harness allocates its agent without running a constructor, so this is one of
+     * the fields it injects, from the same plan it installs.
+     */
+    private final RunSpec.ExplorationParams exploration;
+
+    /**
+     * The MOP target re-pick cap, resolved here rather than read through {@link #exploration}
+     * because it belongs to {@code MopParams}, which does not exist on a plan without MOP. Zero
+     * disables the cap, which is what a run with no MOP targets to cap means.
+     */
+    private final int mopTargetPickCap;
+
     public SataAgent(MonkeySourceApe ape, Graph graph) {
-        this(ape, graph, defaultEpsilon);
+        this(ape, graph, RunContext.current().spec().exploration().defaultEpsilon());
     }
 
     public SataAgent(MonkeySourceApe ape, Graph graph, double epsilon) {
         super(ape, graph);
         this.epsilon = epsilon;
 
+        RunSpec spec = RunContext.current().spec();
+        this.exploration = spec.exploration();
+        this.mopTargetPickCap = spec.has(Feature.MOP) ? spec.mop().targetPickCap() : 0;
 
         this.actionCounters = new int[SataEventType.values().length];
         // Assembly is here rather than in StatefulAgent because the stages bind this class's action
         // producers, and it is safe at this point for the same reason the scoring pipeline's is: the
         // bindings are method references, so nothing is invoked before the constructor finishes.
-        this.decisionPipeline = DecisionPipeline.fromSpec(RunContext.current().spec(), this);
+        this.decisionPipeline = DecisionPipeline.fromSpec(spec, this);
     }
 
     @Override
@@ -518,7 +533,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         // navigation-essential BACK sites (selectNewActionBackToActivity, backToTrivialActivity,
         // checkBackTrack, handleNullAction) never consult backMenuPicks (INV-SEL-NAV-03).
         String activity = newState.getActivity();
-        int cap = Config.backMenuPickCap;
+        int cap = exploration.backMenuPickCap();
         String backKey = backMenuPickKey(ActionType.MODEL_BACK, activity);
         String menuKey = backMenuPickKey(ActionType.MODEL_MENU, activity);
         ModelAction back = newState.getBackAction();
@@ -782,7 +797,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      * null, or the cap is disabled. Instance method — mutates only {@code backMenuPicks}.
      */
     private void recordBackMenuPick(ActionType type, String activity) {
-        int cap = Config.backMenuPickCap;
+        int cap = exploration.backMenuPickCap();
         String key = backMenuPickKey(type, activity);
         if (recordMopPick(backMenuPicks, key, cap)) {
             Logger.iformat("[APE-RV] BACK/MENU capped: activity=%s type=%s picks=%d",
@@ -798,7 +813,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     @Override
     protected boolean menuPickEligible(String activity) {
         return eligibleForMopPick(backMenuPicks,
-                backMenuPickKey(ActionType.MODEL_MENU, activity), Config.backMenuPickCap);
+                backMenuPickKey(ActionType.MODEL_MENU, activity), exploration.backMenuPickCap());
     }
 
     /**
@@ -807,7 +822,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      * disabled. Read-only — never mutates the actions or {@code backMenuPicks}.
      */
     private List<ModelAction> dropCappedBackMenu(List<ModelAction> candidates, String activity) {
-        int cap = Config.backMenuPickCap;
+        int cap = exploration.backMenuPickCap();
         if (cap <= 0) {
             return candidates;
         }
@@ -829,7 +844,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      */
     private ModelAction pickCappedMopTarget(Iterable<ModelAction> candidates, ModelAction excluded,
             String activity) {
-        int cap = Config.mopTargetPickCap;
+        int cap = mopTargetPickCap;
         Iterable<ModelAction> eligible = candidates;
         if (cap > 0) {
             List<ModelAction> filtered = new ArrayList<>();
@@ -856,7 +871,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     }
 
     protected ModelAction fillTransition(State[] states) {
-        return fillTransition(states, fillTransitionsByHistory, fallbackToGraphTransition);
+        return fillTransition(states, exploration.fillTransitionsByHistory(),
+                exploration.fallbackToGraphTransition());
     }
 
     protected ModelAction fillTransition(State[] states, boolean byHistory, boolean fallback) {
@@ -945,7 +961,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      * @return
      */
     protected List<ModelAction> getGreedyActions(State from, State to) {
-        if (useActionDiffer) {
+        if (exploration.useActionDiffer()) {
             return this.actionDiffer.getUnsaturated(from, to);
         }
         return to.collectActions(new BaseActionFilter() {
@@ -1139,7 +1155,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     }
 
     protected double computeDynamicEpsilon() {
-        if (!Config.dynamicEpsilon) {
+        if (!exploration.dynamicEpsilon()) {
             return epsilon;
         }
         UICoverageTracker tracker = getCoverageTracker();
@@ -1147,7 +1163,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
             return epsilon;
         }
         float coverageGap = tracker.getCoverageGap(newState);
-        return Config.minEpsilon + (Config.maxEpsilon - Config.minEpsilon) * coverageGap;
+        return exploration.minEpsilon()
+                + (exploration.maxEpsilon() - exploration.minEpsilon()) * coverageGap;
     }
 
     @Override
@@ -1162,7 +1179,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
 
     protected Set<ActivityNode> collectTrivialActivities() {
         ActivityNode[] activities = getGraph().getActivityNodes();
-        if (activities.length <= trivialActivityRankThreshold) {
+        if (activities.length <= exploration.trivialActivityRankThreshold()) {
             return Collections.emptySet();
         }
         Arrays.sort(activities, new Comparator<ActivityNode>() {
@@ -1305,7 +1322,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                 return refillBuffer(path);
             }
         }
-        if (doBackToTrivialActivity) {
+        if (exploration.doBackToTrivialActivity()) {
             return backToTrivialActivity(trivialActivities);
         }
         return null;
@@ -1515,7 +1532,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         if (ActionFilter.ENABLED_VALID_UNVISITED.include(next.getBackAction())
                 && eligibleForMopPick(backMenuPicks,
                         backMenuPickKey(ActionType.MODEL_BACK, next.getActivity()),
-                        Config.backMenuPickCap)) {
+                        exploration.backMenuPickCap())) {
             Logger.iprintln("Find a greedy (unvisited) back action.");
             // Chosen because Back is unvisited, not because of any boost — SATA.
             ModelAction backAction = next.getBackAction();
