@@ -89,7 +89,7 @@
   - **Transition-event forwarding, exactly once per visited edge, agent counters first and then stages** (INV-DP-07) — the one part of this task that is neither done nor covered, and it needs a unit assertion because **no golden can see it**: `OracleScaffold` `Unsafe`-allocates its agent, so `StatefulAgent`'s `graph.addListener(this)` never runs and the harness's agent is not a `GraphListener` at all. A hook that stopped being called, or that ran before the agent's own counter bookkeeping, would leave the parity gate 14/14. Also correct `DecisionPipeline.fromSpec`'s javadoc, which still forward-references the move as this task's (P4)
 - [x] 7.2 Verify `StageResult.select` labels equal stamped `ModelAction` provenance on every stage (unit assertion per stage; INV-DP-04) — the stage-4 telemetry handle
 - [x] 7.3 Delete dead residue: former inline-block comments, the triplicated precondition text, unused imports; P4 pass over touched files (no migration-history comments)
-- [ ] 7.4 Run `/sdd-verify` on the module
+- [x] 7.4 Run `/sdd-verify` on the module
 
 ## 8. Verification
 
