@@ -42,7 +42,9 @@ import java.util.Set;
 
 import com.android.commands.monkey.ape.Agent;
 import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.runtime.RunSpecEcho;
 import com.android.commands.monkey.ape.runtime.RunSpecException;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
@@ -747,12 +749,19 @@ public class Monkey {
                 System.out.println(abort);
                 return -6;
             }
+            // The context is established from the plan and the seed, and establishing it is what
+            // seeds APE's RandomHelper with the same value mRandom was built from (INV-EXPL-14) —
+            // one seeding point rather than a call sitting loose in this method. mSeed is in scope
+            // here and not in the MonkeySourceApe constructor, which receives the already-built
+            // Random and cannot recover the seed from it.
+            RunContext.initialize(runSpec, mSeed);
+            // INV-RUN-03: the run's provenance goes out before anything can fail. Emitting here
+            // rather than after the device calls below means a run that dies bringing the device
+            // up still leaves a trace that says what it was going to be.
+            RunSpecEcho.emit(RunContext.current(), System.out);
+
             AndroidDevice.initializeAndroidDevice(mAm, mWm, mPm);
             AndroidDevice.checkInteractive();
-            // INV-EXPL-14: seed APE's RandomHelper with the same seed as mRandom so a run is
-            // reproducible. mSeed is only in scope here, not in the MonkeySourceApe constructor
-            // (which receives the already-constructed Random, from which the seed is unrecoverable).
-            com.android.commands.monkey.ape.utils.RandomHelper.seed(mSeed);
             mEventSource = new MonkeySourceApe(mRandom, mMainApps, mThrottle,
                     mRandomizeThrottle, mPermissionTargetSystem, mOutputDirectory, runSpec);
             mEventSource.setVerbose(mVerbose);

@@ -53,9 +53,13 @@ import java.util.Map;
  */
 public final class Presets {
 
+    /** Campaign arm {@code sata}: RV exploration on, no MOP substrate, no LLM. */
     public static final String APERV = "aperv";
+    /** Campaign arm {@code sata_mop_widget}: {@link #APERV} plus the four MOP scoring weights. */
     public static final String MOP = "mop";
+    /** Campaign arm {@code sata_llm}: {@link #APERV} plus the LLM sampling block. */
     public static final String LLM = "llm";
+    /** Campaign arm {@code sata_mop_llm}: the MOP weights and the LLM block together. */
     public static final String LLM_MOP = "llm_mop";
 
     private static final List<String> NAMES = Collections.unmodifiableList(

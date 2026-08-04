@@ -208,13 +208,15 @@ Both are computed once inside `resolve` and echoed; nothing else consumes them (
 One line, one JSON object, emitted immediately after successful resolution and before agent/source construction:
 
 ```json
-{"type":"RUN_START","v":1,"run_id":"<id>","seed":12345,"agent":"sata",
+{"type":"RUN_START","v":1,"run_id":"<id>","t0":1785805297464,"seed":12345,"agent":"sata",
  "preset":"explicit","features":["MODEL_MENU","MOP","WTG","..."],
  "params":{"ape.defaultEpsilon":0.05,"ape.mopWeightDirect":500,"...":"..."},
  "inert":["ape.llmPercentageNoSubstrate"],
  "digest":"a1b2c3d4e5f60718","props_digest":"…",
  "build":{"sha":"<git-sha>","time":"<utc>"}}
 ```
+
+`t0` was absent from this sketch and present in the run-spec delta's requirement; the requirement is what group 4 implemented, and the sketch is corrected here to match. It is the device epoch millisecond of emission, and it is the base that stage 4's relative step offsets resolve against — without it a trace's timeline is only readable next to the host's own clock.
 
 - **Serializer**: a minimal hand-rolled JSON emitter (strings/numbers/booleans/flat maps and arrays) with real escaping of quote/backslash/control characters and a hard one-line guarantee. It is deliberately the seed of the stage-4 serializer (same class, grown later) — `RUN_START` is already shaped as one NDJSON record, so the stage-4 sink adopts it unchanged.
 - **`params`** carries every effective non-default parameter plus the activation keys of every active feature — the completeness bar is report test 9.6: *the line alone reconstructs the arm without consulting `tool.py`*. Defaults are omitted (they are recoverable from `build.sha`).
@@ -284,9 +286,11 @@ The two-argument form delegates with `PROPERTIES_DIGEST_NONE`, the both-files-ab
 
 `static current()`, `static initialize(RunSpec, long seed)` (once; second call throws), `static installForTest(RunSpec)`, `spec()`, `runId()`, `rng()` (the seeded `RandomHelper`-backed stream).
 
-### `RunSpecEcho.emit(RunSpec spec, PrintStream out)`
+### `RunSpecEcho.emit(RunContext context, PrintStream out)`
 
 Post: exactly one `\n`-terminated line; serializer escapes all control characters; emitting twice is a bug guarded by `RunContext.initialize`'s once-only contract.
+
+The signature takes the **context**, not the spec — corrected at apply time, group 4. The sketch above originally read `emit(RunSpec, PrintStream)`, which cannot produce the record D-7 specifies: `run_id` is required in the line, and per D-12 the run identity belongs to `RunContext`, not to `RunSpec` (`RunSpec.runId()` is only the harness-supplied override, null on every current deployment). Passing the spec while reaching for a static holder to fill in the rest would have made the parameter decorative. This is the same shape as the group-1 `presetName` finding: where an API sketch and a requirement disagree, the requirement is what the code has to satisfy.
 
 ## Data Flow
 

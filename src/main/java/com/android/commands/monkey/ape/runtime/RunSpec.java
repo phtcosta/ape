@@ -530,10 +530,12 @@ public final class RunSpec {
         return inert;
     }
 
+    /** Identifies the <em>arm</em>: two runs of the same effective plan share this digest. */
     public String digest() {
         return digest;
     }
 
+    /** Identifies the <em>input</em>: which properties files, byte for byte, this run read. */
     public String propertiesDigest() {
         return propertiesDigest;
     }

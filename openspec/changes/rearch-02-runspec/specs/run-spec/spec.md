@@ -205,9 +205,11 @@ The line SHALL be produced by a serializer that escapes quotes, backslashes, and
 
 ### Requirement: Run Identity and Seed
 
-`RunSpec.seed` SHALL be the Monkey `-s` value, and `RunContext.initialize` SHALL be the single point that calls `RandomHelper.seed(seed)` (INV-EXPL-14 unchanged). `runId` SHALL be the `ape.runId` value when present (a recognized key; no current deployment pushes it) and otherwise self-generated, deterministic in format (`<utc-compact>-<seed>-<digest-prefix>`), and echoed in `RUN_START`.
+`RunSpec.seed` SHALL be the seed `Monkey` resolved — the `-s` value when one was passed, and otherwise the value `Monkey` derived for itself — and `RunContext.initialize` SHALL be the single point that calls `RandomHelper.seed(seed)` (INV-EXPL-14 unchanged). `runId` SHALL be the `ape.runId` value when present (a recognized key; no current deployment pushes it) and otherwise self-generated, deterministic in format (`<utc-compact>-<seed>-<digest-prefix>`), and echoed in `RUN_START`.
 
-**Recording the seed and having one are two different things, and today only the first is in hand.** The harness appends `-s <seed>` only when a seed is configured, and none was: across the decisive campaign's 360 traces the string appears nowhere except as a widget resource id in one application, and none of the 115 `ape.*` keys in the configuration echo is a seed, RNG or determinism key. So a `RUN_START` that faithfully records the seed will, for a deployment unchanged in this respect, faithfully record its absence. Two consequences follow and neither is this capability's to fix alone: the parity oracle's premise — the same decisions *under the same seed* — has no counterpart in any existing artifact, and the harness change that supplies one belongs to the thin-arms stage.
+**Recording the seed and choosing it are two different things, and today only the first is in hand.** *(Corrected at apply time, group 4. The earlier text here said `RUN_START` would faithfully record the seed's **absence**. It will not, because there is no absence to record.)* The harness appends `-s <seed>` only when a seed is configured (`tool.py:1380-1382`) and none was — which is why the flag appears in none of the decisive campaign's 360 traces except as a widget resource id in one application, and why none of the 115 `ape.*` keys in the configuration echo is a seed, RNG or determinism key. But `Monkey` does not run unseeded when `-s` is absent: it manufactures one, `mSeed = System.currentTimeMillis() + System.identityHashCode(this)` (`Monkey.java:679-681`), before the `--ape` branch is reached, and both `mRandom` and `RandomHelper` are built from that value. `RunSpec.seed` is therefore always a real number and `RUN_START.seed` is always full.
+
+What has been missing is not the seed but **control over it**, and the distinction changes what this echo buys. From this stage on a run is individually reproducible from its own trace — bounded by two things a seed does not reach: the trajectory depends on the observed GUI tree and therefore on device timing, and at least one unseeded `Random` remains in the tree until INV-RUN-08 closes it. The parity oracle's premise — the same decisions *under the same seed* — is thus satisfiable per run as of stage 2. What the thin-arms stage still owes is a seed that is **designed rather than incidental**: an incidental seed is reproducible only after the fact, and cannot be used to pair two arms on the same randomness.
 
 **When that change is made, a single constant seed across the campaign SHALL NOT be it.** The three replicas per (application, arm) are today the only estimator of run-to-run variation the design has; pinning one seed for all runs would collapse that estimator to zero and buy per-run reproducibility with the loss of the noise floor every effect size is read against. The seed SHALL be a deterministic function of the run's identity — application, arm and replica — so that each run is individually reproducible while replicas still sample the nondeterminism. Note also that reproducibility is bounded from the other side regardless: `RandomHelper` is not the only source of variation, since the trajectory depends on the observed GUI tree and therefore on device timing, and at least one unseeded `Random` exists in the tree (INV-RUN-08 is what closes that second hole, and it is specified here precisely because the seed alone does not).
 
@@ -218,11 +220,11 @@ The line SHALL be produced by a serializer that escapes quotes, backslashes, and
 - **WHEN** the `tool.py` deployment launches a run (it pushes no `ape.runId`, before or after the stage-2 edit)
 - **THEN** the jar SHALL generate a `run_id` and echo it in `RUN_START`
 
-#### Scenario: no seed configured
+#### Scenario: no seed configured on the command line
 
 - **WHEN** the harness launches a run without `-s`, as every run of the decisive campaign was launched
-- **THEN** `RUN_START` SHALL record the seed as it resolved, so that the absence is legible in the trace rather than inferable from a grep that returns nothing
-- **AND** no component SHALL substitute a default seed to make the field look populated
+- **THEN** `RUN_START` SHALL record the seed `Monkey` derived for the run, which is the value both `mRandom` and `RandomHelper` were built from — so the trace states the randomness the run actually had, rather than an empty field the reader must interpret
+- **AND** no component SHALL substitute a *different* seed for the echo than the one in force, in either direction: neither a placeholder to fill the field nor a blank to signal that nobody chose it
 
 #### Scenario: corpus basis echoed when supplied
 
