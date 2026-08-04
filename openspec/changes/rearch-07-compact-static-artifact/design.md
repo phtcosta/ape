@@ -4,7 +4,7 @@
 
 Stage 7 of 7 of the re-architecture selected in `docs/analise_fable-selecao.md` (rev. 3, Sec. 6.6 last row, Sec. 10 item 7). The jar currently parses the **full** static-analysis JSON on-device (`src/main/java/com/android/commands/monkey/ape/utils/MopData.java`, 1212 LOC): a whole-file `org.json` DOM parse of `reachability[]` + `windows[]` + `transitions[]` + `components{}`, guarded by a pre-read footprint budget (`PARSE_FOOTPRINT_FACTOR = 6`, `MopData.java:160-167`) and a repo-unique `catch (OutOfMemoryError)` (`MopData.java:328`, verified V19). Corpus measurement over a 134-file working set (superseded as the gate corpus — see "Corpus provenance" below) confirms Ling's T7: `reachability[]` (call-graph) is **57.7 % of aggregate bytes** (up to 77 % per file); `windows[]` is 5.0 % and `transitions[]` 10.1 % (46 % in the worst case, `eu.vranckaert.worktime`, dominated by exact-duplicate edges — the same duplicates `tool.py`'s current compaction already strips). The explorer consumes none of these sections directly at runtime — they are parse-time inputs to a small set of derived projections (widget MOP flags, MOP-activity sets, WTG click view, OPTIONSMENU gateways, component trigger surface).
 
-On the Python side, `modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py` locates the full JSON (`_find_static_analysis_file`, `:889`), minifies/dedups/enriches it (`_compact_static_analysis_json`, `:917` — a *lossless* shrink that exists purely to clear the jar's footprint guard), and pushes it to `/data/local/tmp/static_analysis.json`. When the JSON is absent it **warns and continues**, so a MOP arm silently runs without MOP guidance (`tool.py:1499-1503`, verified V21).
+On the Python side, `modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py` locates the full JSON (`_find_static_analysis_file`, `:889`), minifies/dedups/enriches it (`_compact_static_analysis_json`, `:917`), and pushes it to `/data/local/tmp/static_analysis.json`. Two of those three operations are lossless shrinking that exists purely to clear the jar's footprint guard; the third — the listener enrichment of `INV-APV-32` — is not, and it changes what the jar computes (see D10). When the JSON is absent it **warns and continues**, so a MOP arm silently runs without MOP guidance (`tool.py:1499-1503`, verified V21).
 
 This change inverts the boundary: a **host-side generator** derives a compact, explorer-shaped artifact from the full JSON at preparation time; the jar's `MopData` is rewritten to consume **only** that format; the full-JSON parser — including the OOM catch and the `too-large` degradation class — is deleted; and absence of the artifact under a MOP plan becomes fail-fast on both sides (composing with rearch-02's plan validation and the existing INV-MOP-22 abort). The `Target`→`MOP` vocabulary boundary (gh13 D7) moves into the generator: the compact wire format speaks `MOP`; `*Target` keys survive only where the generator reads the full JSON.
 
@@ -161,6 +161,49 @@ This is the directory `-Dmop.corpusDir` names. `data/instrumented_apks/` — cit
    Task 4.1 converts these into exact counts of apps that genuinely exercise each rule (flagged-and-dropped widgets, recovered handlers, re-keyed dialogs, A′ sets that differ) and fails the gate if any of the four is exercised by **zero** apps — at which point the missing case is covered by a synthetic fixture in the Python unit suite instead.
 
    Note for the record: `labnex` and `duress` — the two apps the parser-fidelity investigation named as losing 100 % of per-widget granularity to empty ids (`docs/20260622_investigacao_mop.md`) — are **not** in this corpus, and their static-analysis JSONs are not present anywhere in the workspace. The 229-app empty-id population is what covers that case instead; it is broader than the two named apps and actually available.
+
+### D10 — The listener enrichment (INV-APV-32) is retired, not relocated
+
+An earlier revision of this design described `_compact_static_analysis_json` as a *lossless* shim and
+its deletion as something "the derivation subsumes". That is true of two of its three operations and
+false of the third, which is the one that changes what the jar computes.
+
+The enrichment writes `handlerReachesTarget = handlerDirectlyReachesTarget = reachesTarget(handler)`
+onto **every** listener of every pushed document. Because `MopData.deriveWidgetMopFlags` prefers
+producer-supplied values, the producer-precedence branch therefore fires on every widget in
+production, with two consequences nobody recorded: `directMop` stopped meaning "the handler invokes a
+monitored operation in its own body" and became a synonym of the any-depth bit, so every flagged
+widget scored at `ape.mopWeightDirect`; and the D8 synthetic-lambda recovery of INV-MOP-30, which
+lives only in the branch the enrichment bypasses, has never executed in a production run.
+
+The enrichment was introduced because the producer's 0-hop bit is false for every handler in the
+measured corpus, so `mopWeightDirect` never fired. The generator does not carry that redefinition
+forward. A normative rule may not encode a corpus observation: that no handler among 168,503 in the
+pinned 345 apps is 0-hop is a fact about those apps, and an app whose `onClick` calls
+`Cipher.getInstance` directly is exactly the case the weight was defined to reward. Collapsing the
+axes would also make the wire format lie — the `mop` map's four values would only ever carry two —
+and would keep a general call-graph fix (D8 desugaring affects every app built with lambda listeners;
+61,057 wrapper handlers in the corpus fail the exact join) masked in order to protect a
+corpus-specific one.
+
+Alternatives considered: **preserve the enrichment inside `derive`**, which buys strict behavioural
+identity with today's production at the cost of the three points above and of deleting INV-MOP-30 as
+dead rather than relocating it; and **a union of both**, `direct` from the enrichment and `transitive`
+including the recovery, which keeps the 500 tier firing but is neither the producer's semantics nor
+today's behaviour. Both rejected: the rule must be derivable from the producer's contract alone.
+
+Consequence, measured over the pinned corpus and stated so the cutover commit does not claim an
+identity it does not have: flagged widgets rise from 3,733 to 4,965 (the recovery reaching 10 apps and
+1,232 widgets, 8 apps changing their flagged set — `redreader` from 502 to 1,623), and every widget
+that was flagged under the enrichment moves from the direct tier to the transitive tier uniformly, so
+the ordering *among* MOP widgets is unchanged while the magnitude of the MOP signal against other
+weights is not. Runs from before and after this stage are not substrate-comparable, and no campaign
+may mix arms across the cut.
+
+This also fixes the gate's oracle: the corpus files are raw producer output, so the equivalence gate
+already compares against `MopData` on the un-enriched JSON, which is the correct oracle under this
+decision. Task 4.3's rule — "the old parser is the oracle, never adjust the oracle" — stands, and
+specifically forbids enriching the corpus to make a divergence disappear.
 
 ## API Design
 

@@ -71,7 +71,8 @@ Unknown JSON keys within a supported `formatVersion` are ignored (INV-MOP-11). T
 - **WHEN** a wire widget has `"mop": {"click": "both", "scroll": "none"}`
 - **THEN** `isDirectMop("click")==true` and `isTransitiveMop("click")==true`; `isDirectMop("scroll")==false` and `isTransitiveMop("scroll")==false` (explicit `none` entry, no aggregate fallback)
 - **AND** `isDirectMop("longClick")==true` (key absent ⇒ aggregate fallback; aggregates are the OR of the respective bits over the map)
-- **AND** the wire values decode to independent direct/transitive bits (`none`=00, `direct`=10, `transitive`=01, `both`=11) — the encoding is lossless with respect to the two per-event maps the full-JSON derivation produced, asserting no implication between the bits
+- **AND** the wire values decode to the two bits positionally (`none`=00, `direct`=10, `transitive`=01, `both`=11), losslessly with respect to the two per-event maps the full-JSON derivation produced
+- **AND** the loader SHALL decode `direct` faithfully rather than rejecting it, even though a conforming generator never emits it: `direct` implies `transitive` at derivation time (`static-analysis-entrypoints` INV-DRV-01), so the reachable value set is `none`/`transitive`/`both` and the `direct`-alone encoding exists only so the decoder stays positional
 
 #### Scenario: Flag-selected MOP-activity set
 - **WHEN** the artifact carries `mopActivities=["A"]` and `mopActivitiesAugmented=["A","B"]`
