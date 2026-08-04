@@ -706,6 +706,16 @@ public final class RunSpec {
         public boolean fuzzInputTyped() {
             return has("ape.fuzzInputTyped") && bool("ape.fuzzInputTyped");
         }
+
+        /** The per-action coverage boost; zero when the coverage feature is absent. */
+        public int coverageBoostWeight() {
+            return has("ape.coverageBoostWeight") ? integer("ape.coverageBoostWeight") : 0;
+        }
+
+        /** Form filling and submission; false when the form feature is absent. */
+        public boolean formCompletionEnabled() {
+            return has("ape.formCompletionEnabled") && bool("ape.formCompletionEnabled");
+        }
     }
 
     /** Present exactly when the plan carries {@link Feature#MOP}. */
@@ -723,12 +733,40 @@ public final class RunSpec {
             return bool("ape.mopStrictPackageMatch");
         }
 
+        /**
+         * The direct-MOP widget boost. Owned by {@code MOP} itself, so a plan that carries this
+         * object carries the key — but read defensively like its siblings, since the caller that
+         * derives {@code ScoringParams} treats an absent weight and a zero weight alike.
+         */
+        public int weightDirect() {
+            return has("ape.mopWeightDirect") ? integer("ape.mopWeightDirect") : 0;
+        }
+
+        /** The transitive-MOP widget boost; see {@link #weightDirect()} on presence. */
+        public int weightTransitive() {
+            return has("ape.mopWeightTransitive") ? integer("ape.mopWeightTransitive") : 0;
+        }
+
+        /** Zero when the WTG feature is absent. */
+        public int weightWtg() {
+            return has("ape.mopWeightWtg") ? integer("ape.mopWeightWtg") : 0;
+        }
+
+        /** The generic unvisited-activity frontier boost; zero when that feature is absent. */
+        public int frontierBoostWeight() {
+            return has("ape.frontierBoostWeight") ? integer("ape.frontierBoostWeight") : 0;
+        }
+
         /** Zero when the gateway feature is absent. */
         public int weightOpenMenu() {
             return has("ape.mopWeightOpenMenu") ? integer("ape.mopWeightOpenMenu") : 0;
         }
 
-        /** Zero when the frontier feature is absent. */
+        /**
+         * The MOP-conditioned frontier boost (unvisited AND MOP-bearing), the strictly narrower
+         * sibling of {@link #frontierBoostWeight()}. Zero when the MOP-frontier feature is absent,
+         * which is its jar default.
+         */
         public int frontierWeight() {
             return has("ape.mopFrontierWeight") ? integer("ape.mopFrontierWeight") : 0;
         }
