@@ -16,6 +16,16 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- Override with -Drvsec_home=... to point at a different workspace -->
         <rvsec_home>${user.home}/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec</rvsec_home>
+
+        <!--
+            Sentinels for the build provenance stamp. git-commit-id overwrites both project
+            properties when a .git directory is present; when it is absent the plugin is skipped
+            (failOnNoGitDirectory=false) and these values are what BuildInfo is filtered with.
+            Declaring them here is what makes "unknown" a sentinel rather than an unfiltered
+            ${git.commit.id.abbrev} literal compiled into the dex.
+        -->
+        <git.commit.id.abbrev>unknown</git.commit.id.abbrev>
+        <git.build.time>unknown</git.build.time>
     </properties>
 
     <dependencies>
@@ -71,6 +81,57 @@
 
     <build>
         <plugins>
+            <!--
+                Build provenance, step A (initialize): read the built tree's short sha and build
+                time out of .git into project properties. The stamp has to be a compiled constant
+                and not a packaged resource: d8 dexes only .class entries, so a .properties file
+                bundled into ape-rv-classes.jar never reaches ape-rv.jar and reads back null on
+                device. generateGitPropertiesFile is therefore off — the jar must keep containing
+                exactly one entry, classes.dex.
+            -->
+            <plugin>
+                <groupId>io.github.git-commit-id</groupId>
+                <artifactId>git-commit-id-maven-plugin</artifactId>
+                <version>9.0.1</version>
+                <executions>
+                    <execution>
+                        <id>resolve-git-revision</id>
+                        <phase>initialize</phase>
+                        <goals><goal>revision</goal></goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- A tree without .git still builds; the sentinels in <properties> stand in. -->
+                    <failOnNoGitDirectory>false</failOnNoGitDirectory>
+                    <generateGitPropertiesFile>false</generateGitPropertiesFile>
+                    <!-- UTC so the stamp reads the same wherever the jar was built. -->
+                    <dateFormatTimeZone>UTC</dateFormatTimeZone>
+                    <dateFormat>yyyy-MM-dd'T'HH:mm:ss'Z'</dateFormat>
+                    <includeOnlyProperties>
+                        <includeOnlyProperty>^git\.commit\.id\.abbrev$</includeOnlyProperty>
+                        <includeOnlyProperty>^git\.build\.time$</includeOnlyProperty>
+                    </includeOnlyProperties>
+                </configuration>
+            </plugin>
+
+            <!--
+                Build provenance, step B (generate-sources): filter
+                src/main/java-templates/**/BuildInfo.java into
+                target/generated-sources/java-templates, which the goal adds to the compile roots.
+                Runs after step A, so the properties are resolved before the template is filtered.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>templating-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>filter-src</id>
+                        <goals><goal>filter-sources</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
             <!-- Explicit compiler plugin version — default 3.1 does not support <release> -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

@@ -26,10 +26,10 @@ Gate: this change may only be applied after `rearch-01-parity-oracle` is impleme
 
 ## 2. Build provenance stamp (independent of group 1)
 
-- [ ] 2.1 `pom.xml`: add `git-commit-id-maven-plugin` (`failOnNoGitDirectory=false`, sentinel `unknown`, UTC) and `templating-maven-plugin` (`filter-sources`), per the archived gh14 wiring
-- [ ] 2.2 Create `src/main/java-templates/com/android/commands/monkey/ape/runtime/BuildInfo.java` with `GIT_SHA` / `JAR_BUILT` constants and private constructor (no `SCHEMA`, no `[APE-BUILD]` banner — design D-8)
-- [ ] 2.3 `mvn clean package`: assert generated `BuildInfo` has no `${…}` residue; short sha findable via `unzip -p target/ape-rv.jar classes.dex | strings`; no new jar resources
-- [ ] 2.4 Unit test `BuildInfoTest` (constants non-null/non-placeholder)
+- [x] 2.1 `pom.xml`: add `git-commit-id-maven-plugin` (`failOnNoGitDirectory=false`, sentinel `unknown`, UTC) and `templating-maven-plugin` (`filter-sources`), per the archived gh14 wiring
+- [x] 2.2 Create `src/main/java-templates/com/android/commands/monkey/ape/runtime/BuildInfo.java` with `GIT_SHA` / `JAR_BUILT` constants and private constructor (no `SCHEMA`, no `[APE-BUILD]` banner — design D-8)
+- [x] 2.3 `mvn clean package`: assert generated `BuildInfo` has no `${…}` residue; short sha findable via `unzip -p target/ape-rv.jar classes.dex | strings`; no new jar resources
+- [x] 2.4 Unit test `BuildInfoTest` (constants non-null/non-placeholder)
 
 ## 3. Bootstrap wiring + fail-fast
 

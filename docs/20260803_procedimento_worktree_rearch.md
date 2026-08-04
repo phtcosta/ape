@@ -42,6 +42,18 @@ simples, e o SDK não põe `build-tools/` no `PATH` por conta própria — só `
 `rvandroid_tools:0.9.1`). Sem isso o build morre na fase `package`, *depois* de compilar — o que se
 parece com uma falha de código e não é.
 
+**O carimbo de proveniência mente dentro da worktree.** A partir do grupo 2 do estágio 2 o `pom.xml`
+grava `BuildInfo.GIT_SHA` via `git-commit-id-maven-plugin`, e numa worktree vinculada o `.git` é um
+*arquivo* (`gitdir: <main>/.git/worktrees/ape-rearch`). O plugin normaliza esse ponteiro para o
+diretório comum do repositório principal e carimba o HEAD do **`master`**, não o da `rearch`: um build
+feito em `61274ba` sai marcado `b7baa68`. Verificado nas versões 9.0.1 e 10.0.0 do plugin, e também com
+`useNativeGit=true` — não é questão de versão nem de backend, e por isso nenhuma opção foi acrescentada
+ao pom para contorná-la. Num clone normal (`.git` diretório) o carimbo está correto, confirmado por
+build de controle. Consequência prática: **o `GIT_SHA` de um jar construído na worktree não serve para
+identificar o que ele contém** — enquanto os sete estágios estiverem em voo, use o sha do commit da
+`rearch` que você mesmo construiu. Como nenhum jar de worktree é deployado (o `mvn install` que copia
+para o `aperv-tool` não é rodado daqui), nenhum jar entregue carrega o carimbo errado.
+
 **Execução de 2026-08-03**: worktree criada em `b7baa68`, `mvn package` e `mvn test` verdes antes de
 qualquer edição. Dois números que valem como linha de base: o `target/ape-rv.jar` da worktree saiu
 sha256 `386ce08d…`, **byte-idêntico ao jar medido na corrida decisiva E3** — o que confirma de uma vez
