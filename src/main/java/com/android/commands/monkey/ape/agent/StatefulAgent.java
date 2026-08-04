@@ -17,10 +17,6 @@ package com.android.commands.monkey.ape.agent;
 
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.ObjectOutputStream;
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -71,7 +67,6 @@ import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
-import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.SystemBroadcastCatalog;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 import com.android.commands.monkey.ape.utils.Utils;

@@ -8,7 +8,6 @@ import org.junit.Test;
 
 import com.android.commands.monkey.ape.ActionFilter;
 import com.android.commands.monkey.ape.naming.Name;
-import com.android.commands.monkey.ape.naming.Namer;
 
 /**
  * Unit tests for {@link State#greedyPickLeastVisited(ActionFilter, boolean)}.

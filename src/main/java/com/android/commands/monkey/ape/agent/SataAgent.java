@@ -45,7 +45,6 @@ import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
-import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.MopCounterfactual;
@@ -57,7 +56,6 @@ import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.RandomHelper;
-import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
