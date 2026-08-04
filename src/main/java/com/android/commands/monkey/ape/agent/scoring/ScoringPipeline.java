@@ -12,11 +12,17 @@ import com.android.commands.monkey.ape.utils.Logger;
 
 /**
  * rv-scoring-pipeline (INV-ARCH-03/04/05). The single assembly point and runner for the RV scoring
- * passes. {@link #fromParams} constructs the seven passes in fixed order, keeps only the enabled
- * ones, and logs the assembly once as {@code [APE-ARCH] passes=[...]}; nothing else builds a
- * pipeline.
- * {@link #apply} is the one RV addition to {@code StatefulAgent.adjustActionsByGUITree()} after the
- * (byte-identical upstream) base-priority loop.
+ * passes. {@link #fromParams} constructs the seven passes in the fixed order
+ *
+ * <pre>MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion</pre>
+ *
+ * keeps only the enabled ones, and logs the assembly once as {@code [APE-ARCH] passes=[...]};
+ * nothing else builds a pipeline. Seven are constructed, and a default plan keeps six of them: the
+ * MOP-frontier weight is zero unless a plan states otherwise, which is a gate being shut and not a
+ * pass being missing — {@link #candidates} is what says so in the trace.
+ *
+ * <p>{@link #apply} is the one RV addition to {@code StatefulAgent.adjustActionsByGUITree()} after
+ * the (byte-identical upstream) base-priority loop.
  */
 public final class ScoringPipeline {
 

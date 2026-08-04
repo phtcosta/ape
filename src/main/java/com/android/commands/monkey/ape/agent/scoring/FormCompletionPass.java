@@ -9,8 +9,9 @@ import com.android.commands.monkey.ape.utils.Logger;
  * rv-scoring-pipeline: the form-completion boost, extracted verbatim from the inline block in
  * {@code StatefulAgent.adjustActionsByGUITree()}. When the state carries ≥1 unfilled EditText, raises
  * the priority of every unfilled field and of a single submit candidate so the form is filled then
- * submitted. Scoring semantics owned by {@code form-completion}. This is the only pass with a new
- * boolean gate ({@code formCompletionEnabled}) — the inline block had no off switch before this change.
+ * submitted. Scoring semantics owned by {@code form-completion}. It is the one pass gated by a
+ * boolean rather than by a weight or by the presence of MOP data: form completion has no natural
+ * "zero" to switch it off with.
  * No-op (no boost, no log) on states with no unfilled EditText (INV-FORM-01).
  */
 public final class FormCompletionPass implements ScoringPass {
