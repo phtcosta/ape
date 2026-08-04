@@ -149,6 +149,61 @@ public class ScoringPipelineTest {
                 "MopFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
     }
 
+    // ---- the injection is real: one context, two params, two rosters --------
+
+    @Test
+    public void twoParamsOverOneContextAssembleDifferentPipelines() {
+        // The contrast that a decorative parameter could not produce. One ScoringContext object,
+        // used twice; two ScoringParams differing in exactly one field; two different rosters. No
+        // Config is mutated and no plan is installed, because there is nothing global left for the
+        // assembly to consult (INV-ARCH-11).
+        StubScoringContext ctx = new StubScoringContext();
+        ctx.mopData = mopWithWtg();
+
+        ScoringPipeline without = ScoringPipeline.fromParams(withoutMopFrontier(), ctx);
+        ScoringPipeline with = ScoringPipeline.fromParams(allOn(), ctx);
+
+        assertFalse("weight 0 keeps MopFrontierPass out",
+                without.passNames().contains("MopFrontierPass"));
+        assertTrue("a positive weight puts it in",
+                with.passNames().contains("MopFrontierPass"));
+        assertEquals("and nothing else moved", without.size() + 1, with.size());
+    }
+
+    /**
+     * The empty pipeline, reached through the real entry point. This is the case that used to need
+     * the retired {@code apePureMode} switch and could not be produced in this JVM at all, so
+     * INV-ARCH-02's strict no-op was asserted through the package-private constructor instead.
+     *
+     * <p>It takes both halves, and that is the point worth pinning: zeroing every weight is not
+     * enough, because {@code MopWidgetPass} and {@code MenuGatewayPass} gate on the substrate
+     * alone. An arm that wants no scoring states no MOP data path either — which is what "a plan
+     * carrying no scoring feature" means, since the data path is the MOP feature's activation key.
+     */
+    @Test
+    public void aPlanWithNoScoringFeatureAssemblesNothing() {
+        StubScoringContext ctx = new StubScoringContext(); // no substrate
+        ScoringPipeline p = ScoringPipeline.fromParams(
+                new ScoringParams(0, 0, 0, 0, 0, 0, 0, false), ctx);
+
+        assertEquals(Collections.<String>emptyList(), p.passNames());
+        assertEquals(0, p.size());
+        assertEquals("the census still records all seven as candidates", 7, p.candidates().size());
+    }
+
+    @Test
+    public void zeroedWeightsAloneDoNotEmptyThePipeline() {
+        // The complement of the case above, asserted so the two halves cannot be confused: with
+        // the substrate present, the two MopData-gated passes survive every weight being zero.
+        StubScoringContext ctx = new StubScoringContext();
+        ctx.mopData = mopWithWtg();
+
+        ScoringPipeline p = ScoringPipeline.fromParams(
+                new ScoringParams(0, 0, 0, 0, 0, 0, 0, false), ctx);
+
+        assertEquals(Arrays.asList("MopWidgetPass", "MenuGatewayPass"), p.passNames());
+    }
+
     // ---- the candidate census: what the pass list does NOT say (5.2a) --------
 
     @Test
