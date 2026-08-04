@@ -840,3 +840,66 @@ Open coordination items — status 2026-08-03:
   **Group 2 is complete: 2.1–2.9 all ticked.** Group 3's four permanent tests (3.1–3.4) are not
   started and change no production code; group 4, the `LlmRouter` decomposition, is the next real
   extraction and was deliberately not begun here.
+
+- 2026-08-04 — **Stage 3 group 3 closed: the four permanent architectural tests landed,
+  `rearch-03-decision-pipeline` 19/53.** Gate observed before the work and again after: **1030 →
+  1042 tests, 0 failures, 19 skipped**, BUILD SUCCESS, decomposition unchanged on both sides at 13
+  `@Ignore` (`ImageProcessorIntegrationTest` 5, `ImageProcessorTest` 4, `ApePinchOrZoomEventTest` 3,
+  `GUITreeBuilderPasswordTest` 1) + 6 `Assume` in `SglangLiveTest` with `SGLANG_URL` unset. The
+  twelve added tests are the whole delta: no production file was touched, `git status --short
+  src/test/resources/goldens` was empty throughout (INV-ORA-07 holds), and no scenario script
+  changed. `openspec validate --strict` clean, `--specs --strict` 21 passed.
+
+  **What each test actually pins, and what it deliberately does not.** The group's difficulty was
+  judgement, not typing: two of the four tasks were largely discharged already, and the honest
+  output was to find the gap each one still left rather than to restate an existing assertion under
+  a new name.
+
+  - **3.4** (`DecisionPipelineFromSpecTest` 5 → 9) asserts the four *shipped* arms, resolved as a
+    device receives them — preset name plus the deployment keys a preset omits. `DecisionPipelineTest`
+    already covers what each feature gates, so what was left to get wrong is which features an arm
+    states.
+  - **3.1** (`HardPreemptionTest`, 3 tests) states the plan instead of shipping it, which is the only
+    way to reach the fourth contender: no preset assembles `ComponentTrigger`, so `OracleScaffold`
+    cannot produce a step where its coin is live. Two of its three tests are controls — the same step
+    re-run with the model declining, watching the launcher fire and then the coin spend itself —
+    because "no trigger fired and no rung ran" is trivially true of a step where nothing else could
+    have fired anyway.
+  - **3.2** (`HardPreemptionTest` 3 → 4) reads the cadence across a preempted step *within one run*.
+    `PreemptionGoldenTest` pins finding 3.3-1 twice already, both times as a contrast between two
+    agents; INV-DP-08 is written about one run. Cadence two, three steps, the launcher firing on the
+    third and not the second — which says both halves at once, and says them behaviourally, the way
+    `MopLauncherStageTest` reads these counters.
+  - **3.3** (`LlmStructuralFallbackTest` 3 tests + `LlmRouterTest` 31 → 32) splits across two seams.
+    Decline and timeout are already pinned by `goldens/llm/baseline.ndjson` steps 1–2; what is new is
+    the composition over an assembled pipeline, run on two plans so that "the configured remainder"
+    is `SataChain`/`SATA` in one and `MopLauncher`/`Component` in the other. A test that only ever saw
+    `SATA` would pass against a hardcoded chain.
+
+  **The artifacts got three things wrong and the session owed an update for all of them.** Task
+  3.4's text said `mop` adds launcher/trigger — it adds neither — and that `llm`/`llm_mop` add "the
+  enabled LLM stages", which is two by its own reading and three in fact. **The handoff's own
+  prediction was wrong the same way**: it read `Feature`'s `LLM_RANDOM("ape.llmPercentage",
+  POSITIVE, "0")` as a default and concluded the random stage is absent, when that column is the
+  *neutral* value and the jar default is `0.02` (`KeyOwnership.java:216`). Learning 46 had already
+  been written about exactly this column and it still caught a careful reader; the test went red on
+  its first run and the assembly was right. Task 3.3's text presumed a scriptable breaker-open that
+  INV-ORA-03 forbids. Task 4.7's migration table counted `LlmRouterTest` at 31, now 32. All four
+  corrections went through `openspec-update-change` in one commit, together with a renamed assembly
+  scenario — it was titled "full llm_mop plan assembles all stages" while describing a feature set no
+  arm states, which is the same confusion the task text fell into.
+
+  **One gap found and closed on the way, worth naming.** `LlmRouter.breakerAllows()`'s open-episode
+  latch — the thing that keeps a 60-second breaker window from writing dozens of identical trace
+  lines — had no test anywhere. `LlmCircuitBreakerTest` covers the state machine and
+  `LlmRouterTest.shouldRouteRandom_circuitBreakerOpen_returnsFalse` covers the conjunct, but nothing
+  covered the latch. It does now, and task 4.1 inherits it.
+
+  **`PipelineFixture` is new test-only scaffolding.** 3.1 and 3.3 assert opposite halves of one
+  mechanism, so they want the same plan, census, router and collaborators and differ only in the
+  verdict; the shared parts live in a fixture class, which is what `FakeStepContext` already is one
+  level down.
+
+  **Group 3 is complete: 3.1–3.4 all ticked.** Group 4 — the `LlmRouter` decomposition into five
+  units, with the class deleted and its 67 tests migrated — is the next real extraction and was
+  deliberately not begun here.
