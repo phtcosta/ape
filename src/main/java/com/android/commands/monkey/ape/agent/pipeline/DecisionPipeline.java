@@ -150,6 +150,10 @@ public final class DecisionPipeline {
                     stages.add(new LlmNewStateStage(collaborators.llmRouter(),
                             collaborators::resolveSynthesizedTap));
                     break;
+                case LLM_STAGNATION:
+                    stages.add(new LlmStagnationStage(collaborators.llmRouter(),
+                            collaborators::resolveSynthesizedTap));
+                    break;
                 case SATA_CHAIN:
                     stages.add(new InlineLadderStage(collaborators));
                     break;
@@ -233,6 +237,11 @@ public final class DecisionPipeline {
         for (DecisionStage stage : stages) {
             stage.onStateTransition(edge);
         }
+    }
+
+    /** The assembled stages, in order. */
+    public List<DecisionStage> stages() {
+        return stages;
     }
 
     /** The assembled stages' names, in order — the content of the {@code [APE-ARCH]} echo. */

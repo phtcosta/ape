@@ -71,8 +71,9 @@ import java.util.Map;
  *       mechanism of finding 3.3-1: an LLM block that returns above it never reaches the increment).
  *       A driver that reset or advanced it between steps would erase precisely the interaction the
  *       preemption golden exists to pin (INV-ORA-05).</li>
- *   <li>{@code stagnationHookFired} — episode state, set true by the ladder on any stagnation
- *       consultation and never cleared by the production loop mid-episode. One run is one episode.</li>
+ *   <li>the stagnation stage's single-shot flag — episode state, burned by the stage on any
+ *       stagnation consultation and re-armed only by a new edge, of which the driver records none.
+ *       One run is one episode.</li>
  *   <li>{@code _activityTriggerLaunchCount} and {@code _triggerRoundRobinIndex} — the launcher's own
  *       run-scoped counters, advanced by the block that reads them.</li>
  *   <li>the graph's edges. No {@code StateTransition} is ever recorded: the driver moves the agent to

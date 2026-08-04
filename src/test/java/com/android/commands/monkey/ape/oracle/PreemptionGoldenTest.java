@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionStage;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.Config;
 
@@ -231,7 +233,7 @@ public class PreemptionGoldenTest {
         assertTrue("but it answers false: the stub honors firedThisEpisode",
                 router.routedAt(3).isEmpty());
         assertTrue("and the episode's flag stays burned",
-                boolField(agent, "stagnationHookFired"));
+                stagnationShotBurned(agent));
 
         // --- the cadence counter, after the run: reset at the fire, then two ordinary passes
         assertEquals("the counter restarted from the firing point and advanced once per later step",
@@ -309,7 +311,7 @@ public class PreemptionGoldenTest {
         assertEquals("the stagnation hook was consulted and declined",
                 "declined", records.get(0).getLlm());
         assertTrue("the shot is burned by the consultation, whatever the answer",
-                boolField(agent, "stagnationHookFired"));
+                stagnationShotBurned(agent));
         assertEquals("a decline does not reset the counter",
                 STABLE_COUNTER, intField(agent, "graphStableCounter"));
         assertEquals("and the step still produced a decision, below the LLM blocks",
@@ -330,7 +332,7 @@ public class PreemptionGoldenTest {
         assertEquals("the stagnation hook accepted", "accepted", records.get(0).getLlm());
         assertEquals("an accept resets the counter", 0, intField(agent, "graphStableCounter"));
         assertTrue("and burns the shot on the same path",
-                boolField(agent, "stagnationHookFired"));
+                stagnationShotBurned(agent));
     }
 
     // ---- helpers --------------------------------------------------------------------------------
@@ -357,6 +359,25 @@ public class PreemptionGoldenTest {
 
     private static boolean boolField(Object target, String name) throws Exception {
         return (Boolean) OracleScaffold.getField(target, name);
+    }
+
+    /**
+     * Whether the stagnation episode has spent its single shot.
+     *
+     * <p>The flag lives in the stage that owns it rather than on the agent (INV-DP-07), so reading it
+     * means going through the assembled roster. That is the point of the invariant: nothing outside
+     * the stage can reach the flag by ordinary means, and a test that wants to observe it has to say
+     * out loud whose state it is.
+     */
+    private static boolean stagnationShotBurned(OracleSataAgent agent) throws Exception {
+        DecisionPipeline pipeline =
+                (DecisionPipeline) OracleScaffold.getField(agent, "decisionPipeline");
+        for (DecisionStage stage : pipeline.stages()) {
+            if (stage.name().equals(DecisionPipeline.Candidate.LLM_STAGNATION.stageName())) {
+                return boolField(stage, "firedThisEpisode");
+            }
+        }
+        throw new IllegalStateException("this preset assembles no stagnation stage");
     }
 
     /**

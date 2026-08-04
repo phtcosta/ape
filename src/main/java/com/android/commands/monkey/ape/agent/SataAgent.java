@@ -435,6 +435,20 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>Forwards the edge to the stages after the agent's own bookkeeping has run, which is the
+     * order the episode state depends on: the stagnation stage re-arms on exactly the transitions
+     * that reset the stability counter it reads, so re-arming before the reset would show it the
+     * previous step's counter.
+     */
+    @Override
+    public void onVisitStateTransition(StateTransition edge) {
+        super.onVisitStateTransition(edge);
+        decisionPipeline.onStateTransition(edge);
+    }
+
+    /**
      * Resolves a synthesized off-tree tap against {@code newState} so it carries a
      * {@code GUITreeAction} before dispatch (llm-coordinate-tap, D7).
      *
@@ -478,25 +492,6 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      */
     @Override
     public StageResult decideInlineLadder() {
-        // LLM stagnation hook (single-shot at midpoint). Keeps its own fixed
-        // graphStableRestartThreshold / 2 point on purpose: mop-census-launcher moved the LAUNCHER
-        // off graphStableCounter entirely (it now fires on a dedicated cadence counter), so the two
-        // mechanisms no longer share any firing point. cmpft5 runs the LLM OFF, so there is no
-        // interaction; an enabled LLM hook here still runs before the launcher block below.
-        if (actionBufferSize() == 0 && newState.getActions().size() > 2
-                && _llmRouter != null
-                && _llmRouter.shouldRouteStagnation(graphStableCounter, stagnationHookFired)) {
-            // The episode's single shot is spent here, whatever the LLM answers: a null result is a
-            // failed attempt, not an unused one, and the restart at the full threshold is what
-            // follows if the stagnation persists.
-            stagnationHookFired = true;
-            ModelAction result = _llmRouter.selectAction(newGUITree, newState,
-                    newState.getActions(), getMopData(), _actionHistory, "stagnation", getTimestamp());
-            if (result != null) {
-                graphStableCounter = 0;
-                return selected(LlmGate.accept(result, this::resolveSynthesizedTap));
-            }
-        }
         // LLM random hook (probabilistic, fires with Config.llmPercentage probability)
         if (actionBufferSize() == 0 && newState.getActions().size() > 2
                 && _llmRouter != null && _llmRouter.shouldRouteRandom()) {

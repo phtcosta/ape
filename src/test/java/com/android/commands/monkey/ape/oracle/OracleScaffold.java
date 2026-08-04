@@ -82,7 +82,8 @@ import java.util.Set;
  *   <tr><td>{@code actionCounters} (int[])</td><td>SataAgent</td><td>{@code logEvent} on every selected rung; {@code printCounters()} in the logging preamble</td></tr>
  *   <tr><td>{@code epsilon}</td><td>SataAgent</td><td>{@code computeDynamicEpsilon()} floor; set to {@code Config.defaultEpsilon}, the value the production constructor passes</td></tr>
  *   <tr><td>{@code backToActivity}</td><td>SataAgent</td><td>null keeps {@code selectNewActionBackToActivity()} out of {@code AndroidDevice} (see the boundary below)</td></tr>
- *   <tr><td>{@code _isNewState}, {@code graphStableCounter}, {@code stagnationHookFired}</td><td>StatefulAgent</td><td>the LLM hooks' agent-side arguments and episode state; the driver rewrites them per step</td></tr>
+ *   <tr><td>{@code _isNewState}, {@code graphStableCounter}</td><td>StatefulAgent</td><td>the LLM stages' agent-side arguments; the driver rewrites them per step</td></tr>
+ *   <tr><td>{@code decisionPipeline}</td><td>SataAgent</td><td>the run's assembled policy, built by {@code DecisionPipeline.fromSpec} from the preset's plan; the stages own their own episode state, which starts armed</td></tr>
  *   <tr><td>{@code _stepsSinceLauncherFiring}</td><td>SataAgent</td><td>the launcher's cadence counter; <b>seeded once here</b> from the scenario and never touched again (design D2, INV-ORA-05)</td></tr>
  * </table>
  *
@@ -538,10 +539,9 @@ public final class OracleScaffold {
         setField(agent, "actionCounters", new int[sataEventTypeCount()]);
         setField(agent, "actionDiffer", new StateActionDiffer());
 
-        // --- episode state; the driver rewrites the first three per step
+        // --- episode state; the driver rewrites the first two per step
         setField(agent, "_isNewState", false);
         setField(agent, "graphStableCounter", 0);
-        setField(agent, "stagnationHookFired", false);
         setField(agent, "backToActivity", null);
         setField(agent, "epsilon", Config.defaultEpsilon);
         // The launcher's cadence counter is seeded once, here, and never touched again: the ladder
