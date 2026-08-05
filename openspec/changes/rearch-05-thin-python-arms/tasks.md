@@ -92,17 +92,82 @@ being rescued. Always dry-run in a sandbox (`cp -r openspec <scratch>/` and arch
 abort is per-capability and stops at the first failure, so the sandbox is how the whole list is seen
 at once.
 
-- [ ] 5.1 Set-diff every `MODIFIED` block against the current main spec and classify each of the 6
+- [x] 5.1 Set-diff every `MODIFIED` block against the current main spec and classify each of the 6
       pairwise — rename / deliberate replacement / genuine loss. The classification is the
-      deliverable; a count is not one
-- [ ] 5.2 Restate renames under the main spec's header, replace bodies where this change contradicts
+      deliverable; a count is not one — **done 2026-08-05. The set-diff reproduced this group's
+      table exactly (6 unpaired, 3 requirements, `kept = 0` on all three), and the classification
+      came out four renames, two deliberate replacements, and — checking rather than assuming — no
+      genuine loss.** The one this group flagged as a possible loss is not one, and the reason is
+      the `rearch-03` precedent this file names: check whether an unmodified requirement already
+      carries the claim.
+
+      | Capability :: scenario | Class | Where the claim goes |
+      |---|---|---|
+      | `Default variant resolved` | **rename** | The claim was `get_variants()["default"]["strategy"] == "sata"` — a roster assertion, and the roster is exactly what design D1 delegates. Restated under its own header as the prohibition itself: read this requirement for the list of variants, including which is the default, and it directs you to rv-android |
+      | `sata_mop variant is wired (replaces Phase 4 placeholder)` | **rename**, *not* a loss | It carried two claims. The roster half (`strategy == "sata"` for a named arm) is the delegation. The operative half — `mop_data == "static_analysis"` drives the artifact push — **is already carried by `execute_tool_specific_logic() Flow`, which this change does not modify**: step 5 of its numbered flow plus its three scenarios `sata_mop — JSON present` / `sata_mop — JSON absent` / `sata variant — no JSON push`. So nothing is lost by restating the header over the orchestration-key claim. This is the `rearch-03` pattern repeating: an apparent loss covered by a requirement the change leaves alone |
+      | `Valid strategy configured` | **rename** | Same claim, new config shape: `{"strategy","throttle_ms"}` becomes `{"strategy","preset","overrides"}`. `throttle_ms` was never a real key of this contract — it is a preset value |
+      | `Invalid strategy raises ConfigurationError` | **rename**, strengthened | Restated over the `bfs`/`dfs` rejection, which is the same claim made specific: the whitelist shrinks to `["sata","random"]`, so the two retired values now raise before any device interaction instead of reaching a jar that would abort on them |
+      | `current campaign arm resolves unchanged` | **rename** | Its instance is unrestatable — the arm it named, `sata_mop_widget`, is one of `gh95`'s 21 retirements — so the header now carries the general rule that instance illustrated: no preset ⇒ resolve from explicit keys and jar defaults, validated identically |
+      | `the Python edit precedes the jar` | **deliberate replacement**, half kept | Its `AND WHEN` half (a file carrying `ape.apePureMode` aborts with `reason=retired_key` before step 1) still holds exactly and is restated. Its first half — the four campaign arms and `ape_pure` run end-to-end *"with `_push_properties` and every other arm-dict entry untouched"* — is what `gh95` falsified by rewriting `_push_properties`, and is dropped rather than reworded. **Where the claim went**: the ordering it asserted is one `gh95` has already performed. The abort it depends on is additionally carried by the unmodified `Total Fail-Fast Validation` requirement, whose scenario `retired kill-switch key aborts with its decision` states it independently — so even the kept half is belt-and-braces, not sole custody |
+- [x] 5.2 Restate renames under the main spec's header, replace bodies where this change contradicts
       them (stating the contradiction in the delta's prose), and restate genuine losses. Before
-      declaring a loss, check whether an unmodified requirement already carries the claim
-- [ ] 5.3 `openspec archive rearch-05-thin-python-arms --yes` completes without aborting, verified in
+      declaring a loss, check whether an unmodified requirement already carries the claim — **done
+      2026-08-05; the set-diff is at 0 and `openspec validate --strict` is clean.** Every header was
+      **extracted from the main spec by a script that asserts each match is exactly one whole line**,
+      never retyped, and which refuses to write if a target header is already present in the delta
+      (learnings 5 and 6 — `#### Scenario: Default variant resolved` is not a prefix of anything
+      here, but the guard is the point, not the luck). Four headers were re-anchored onto delta
+      scenarios that already carried the right body; two had no delta counterpart and were written:
+      `sata_mop variant is wired (…)` over the `mop_data` orchestration-key claim, and `the Python
+      edit precedes the jar` over its surviving half. Both deltas carry a prose paragraph saying, once,
+      why headers now read oddly against their bodies and that this is the archive's cost. **One thing
+      the sandbox taught that is worth knowing next time: `openspec archive` prints `delta Purpose
+      ignored` and does not sync a delta's `## Purpose` into the main spec** — so that prose survives
+      in the archived change, and a reader of the *main* spec sees the mismatch without the
+      explanation. The requirement bodies, which do sync, carry the substance
+- [x] 5.3 `openspec archive rearch-05-thin-python-arms --yes` completes without aborting, verified in
       a sandbox copy first. Confirm afterwards that the restated scenarios are present in the synced
       main specs **carrying this change's bodies** — a scenario that pairs but syncs the wrong body
-      is worse than one that aborts
-- [ ] 5.4 Before choosing when to archive, measure the order against the changes this one shares
+      is worse than one that aborts — **verified in a sandbox on 2026-08-05: the archive completes
+      clean** (`aperv-tool: update`, `run-spec: update`, `Totals: + 0, ~ 3, - 0, → 0`, no abort). The
+      body check was then done by reading all three synced requirements out of the sandbox's main
+      specs, not by trusting the exit code, and each carries this change's text: `Tool Variants` has
+      the preset+overrides definition and the roster delegation with the old five-row variant table
+      and its `throttle_ms` mandate gone; `configure() Method` has the `["sata", "random"]` whitelist
+      in place of `["sata", "random", "bfs", "dfs"]`; `Explicit-Key Resolution…` has the de-framed
+      requirement text with stage 2's "the case for the entire current Python deployment" paragraph
+      gone. **The real archive is not run here** — it is the owner's to sequence (see 5.4), and this
+      task's subject is that it *would* succeed
+- [x] 5.4 Before choosing when to archive, measure the order against the changes this one shares
       requirements with, as `rearch-03` and `rearch-04` both did: `rearch-07` also modifies
       `aperv-tool`. Measure **marginal** cost (unpaired before vs after the other's archive), never
       block-against-block — the two figures differed by 7× for `rearch-03` and 4.5× for `rearch-04`
+      — **measured 2026-08-05 in four disposable sandboxes, in both directions, and the answer is
+      that this change's archive order is free.** `rearch-04` also modifies `aperv-tool`, so it was
+      measured too rather than only the one this task names.
+
+      | Order | Marginal cost |
+      |---|---|
+      | `rearch-05` first → `rearch-07` | **0** (27 unpaired before, 27 after) |
+      | `rearch-05` first → `rearch-04` | **0** (0 before, 0 after) |
+      | `rearch-04` first → `rearch-05` | **0** (`rearch-04` archives clean; `rearch-05` still 0) |
+      | `rearch-07` first → `rearch-05` | **0** |
+
+      **Why it is free, which matters more than the zeros**: three changes modify `aperv-tool` and
+      all three modify *disjoint requirements* of it. This change owns `Tool Variants` and
+      `configure() Method`; `rearch-07` owns `execute_tool_specific_logic() Flow` and others. The
+      pairwise interaction that cost `rearch-03` 7× and `rearch-04` 4.5× arises only when two changes
+      modify the same requirement, and none of these do. So this change can be archived whenever the
+      owner wants, in any order, and nothing is bought by waiting.
+
+      **Side finding for the owner, from the same run: `rearch-07` cannot archive at all as it
+      stands.** Its dry-run aborts on `aperv-tool MODIFIED failed for header "### Requirement:
+      execute_tool_specific_logic() Flow" — current spec contains scenario(s) not present in the
+      modified block: "sata_mop — JSON present", "sata_mop — JSON absent", "sata variant — no JSON
+      push"`, and it carries **27** unpaired scenarios across four capabilities (15 of them in one
+      `mop-guidance` requirement). That is `rearch-07`'s own pairing work, unaffected by this change
+      and not started here. It also independently confirms the owner's 2026-08-05 decision on the
+      `This specification` → `This requirement` narrowing: `execute_tool_specific_logic() Flow` is a
+      requirement `rearch-07` already modifies, so had this change widened its scope to de-name that
+      requirement, the two would have collided on one requirement and manufactured exactly the
+      pairwise cost this measurement shows does not otherwise exist

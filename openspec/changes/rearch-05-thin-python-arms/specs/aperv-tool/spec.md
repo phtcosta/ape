@@ -14,6 +14,10 @@ So this delta **mints no `INV-APV-*` invariant**, restates no arm roster, and ad
 
 The capability's four standing invariants (`INV-APERV-01`…`04` — registry key, device JAR path, configure-before-execute, timeout ownership) are untouched. They have a genuine ape-side subject: `INV-APERV-02` asserts the device JAR path against `pom.xml`'s `mvn install` target, which lives in this repository.
 
+**On the scenario headers below, which name arms that this delta's own text says it will not name.** `openspec archive` pairs scenarios **by name** inside a `MODIFIED` block and cannot tell a rename from a deletion, so a name the main spec carries and this block does not aborts the sync; `REMOVED` + `ADDED` of one requirement is rejected outright, and `RENAMED` rewrites only a requirement's header, so a scenario name cannot be re-anchored. All four of this capability's main-spec scenario names are therefore kept verbatim, carrying this change's bodies. Two of them (`Default variant resolved`, `sata_mop variant is wired (replaces Phase 4 placeholder)`) are exactly the roster vocabulary this delta retires, and their bodies now say that the roster is not asserted here and that `mop_data` is an orchestration key — which is the substance, stated under a name that has become a historical label. The mismatch is the tool's cost and is paid once, here, rather than by dropping a scenario.
+
+**Scope of the roster prohibition, stated so it does not contradict a requirement this delta leaves alone.** The prohibition below binds the `Tool Variants` requirement — where a roster would be a *copy* of rv-android's. It is not a ban on the string `sata_mop` appearing anywhere in the capability: `execute_tool_specific_logic() Flow`, which this delta does not modify, names variants as the trigger for a behaviour (`mop_data == "static_analysis"` ⇒ push the artifact), and that is a statement about the flow, not an enumeration anyone must keep current. Written as "this specification" the sentence would have been false about its own capability the moment it synced.
+
 ## MODIFIED Requirements
 
 ### Requirement: Tool Variants
@@ -26,7 +30,7 @@ The capability's four standing invariants (`INV-APERV-01`…`04` — registry ke
 
 No variant SHALL carry a full property expansion.
 
-**The roster is not held in this repository.** Which variants exist, their frozen names, their preset assignments and their override deltas are owned by rv-android's `aperv` capability (`rv-android/openspec/specs/aperv/spec.md`) and maintained through that repository's own OpenSpec workflow. This specification SHALL NOT enumerate variant names, and a reader needing the current roster SHALL consult that spec rather than this one.
+**The roster is not held in this repository.** Which variants exist, their frozen names, their preset assignments and their override deltas are owned by rv-android's `aperv` capability (`rv-android/openspec/specs/aperv/spec.md`) and maintained through that repository's own OpenSpec workflow. This requirement SHALL NOT enumerate variant names, and a reader needing the current roster SHALL consult that spec rather than this one.
 
 This is a deliberate constraint on where the roster may be written, not an oversight. A variant name is the resume-identity key and the consolidation column key of the frozen corpus; it is retired and consolidated by campaign decisions that happen in rv-android. An enumeration maintained here can only be a copy, and a copy that drifts silently is worse than a pointer that is occasionally inconvenient — this requirement previously held such a copy, and it was wrong in two different eras before anyone noticed.
 
@@ -46,10 +50,20 @@ This is a deliberate constraint on where the roster may be written, not an overs
 - **WHEN** `ape.properties` is generated for any variant
 - **THEN** `strategy`, `mop_data`, `seed`, `expected_jar_git_sha` and `expected_jar_sha256` SHALL NOT appear in it
 
-#### Scenario: The roster is not asserted here
+#### Scenario: Default variant resolved
 
-- **WHEN** this specification is read for the list of available variants
+- **WHEN** this requirement is read for the list of available variants — including which name is the
+  default and what it resolves to
 - **THEN** it SHALL NOT contain one, and SHALL direct the reader to rv-android's `aperv` capability
+
+#### Scenario: sata_mop variant is wired (replaces Phase 4 placeholder)
+
+- **WHEN** a variant that needs the compacted static-analysis artifact is read
+- **THEN** it SHALL carry `mop_data` as a top-level Python-only orchestration key, alongside its
+  `preset` and `overrides`
+- **AND** `mop_data` SHALL NOT appear in the generated `ape.properties`, which names the artifact
+  through `ape.mopDataPath` instead
+- **AND** which variants set it SHALL NOT be asserted here (see the preceding scenario)
 
 ---
 
@@ -59,7 +73,7 @@ This is a deliberate constraint on where the roster may be written, not an overs
 
 The whitelist SHALL shrink from `["sata", "random", "bfs", "dfs"]` — the deletion `rearch-02-runspec` delegates to this stage. `bfs` and `dfs` were never agent types: `ApeAgent.createAgent` (`src/main/java/com/android/commands/monkey/ape/agent/ApeAgent.java:68-96`) recognizes exactly `sata`, `random` and `replay`, with every other value previously falling through silently to `new SataAgent` (verified V9). Accepting them Python-side would let a run pass local validation and abort on the device, reintroducing the silent-degradation class stage 2 exists to remove. `replay` is legal in the jar but is NOT accepted here: it requires `--ape-replay <log>`, which this tool never passes.
 
-#### Scenario: Valid preset arm configured
+#### Scenario: Valid strategy configured
 
 - **WHEN** `configure({"strategy": "sata", "preset": "mop", "overrides": {}})` is called
 - **THEN** `self._tool_config["preset"]` SHALL equal `"mop"`
@@ -70,7 +84,7 @@ The whitelist SHALL shrink from `["sata", "random", "bfs", "dfs"]` — the delet
 - **WHEN** `configure({"strategy": "sata"})` is called
 - **THEN** `ConfigurationError` SHALL be raised naming the missing `preset` key
 
-#### Scenario: Retired strategy rejected Python-side, not on the device
+#### Scenario: Invalid strategy raises ConfigurationError
 
 - **WHEN** `configure({"strategy": "bfs", "preset": "aperv"})` or `configure({"strategy": "dfs", "preset": "aperv"})` is called
 - **THEN** `ConfigurationError` SHALL be raised before any device interaction

@@ -10,6 +10,8 @@ What survives the edit is the behavior, which was never transitional: **when no 
 
 This delta touches nothing else in the capability. The preset resolution requirement, the fail-fast validation classes, the `RUN_START` echo, and the run-identity requirements are all unchanged by this stage.
 
+**On the two scenario headers below, which read oddly against their own bodies.** `openspec archive` pairs scenarios **by name** inside a `MODIFIED` block, and cannot tell a rename from a deletion — a name the main spec carries and this block does not aborts the sync, and there is no way to re-anchor a name (`REMOVED` + `ADDED` of one requirement is rejected outright, and `RENAMED` rewrites only a requirement's header). Both of this requirement's main-spec scenario names are therefore kept verbatim, carrying this change's bodies. `current campaign arm resolves unchanged` now states the general rule the campaign-arm case was one instance of, because the arm it named (`sata_mop_widget`) is one of `gh95`'s 21 retirements and cannot be restated. `the Python edit precedes the jar` keeps the half of its claim that still holds — a file carrying the retired key aborts before step 1 — and drops the half `gh95` falsified, which asserted that `_push_properties` and every arm-dict entry were untouched. That second scenario is also where task 2.6 lands: `openspec/specs/run-spec/spec.md:134` was the last place in this repository where stage 2's "zero Python changes" premise was still stated as a live property, and this is the edit that retires it. The mismatch between name and body is the tool's cost, and it is paid here rather than by dropping a scenario.
+
 ## MODIFIED Requirements
 
 ### Requirement: Explicit-Key Resolution When No Preset Is Named
@@ -18,11 +20,20 @@ When `ape.preset` is absent, the plan SHALL be derived from the explicit `ape.*`
 
 This case is not a compatibility affordance and does not depend on any particular caller. It is what a run with no properties file resolves to, and it is the reason a bare standalone invocation of the jar is a valid run: the plan is the jar's declared defaults, validated like any other.
 
-#### Scenario: no preset resolves from explicit keys and jar defaults
+#### Scenario: current campaign arm resolves unchanged
 
 - **WHEN** a properties file sets `ape.mopDataPath` and `ape.mopWeightDirect=500` and names no `ape.preset`
 - **THEN** resolution SHALL succeed with `preset="explicit"`, the `MOP` feature active, and every unset key at its jar default
 - **AND** the resulting plan SHALL pass exactly the validation a preset-resolved plan passes
+
+#### Scenario: the Python edit precedes the jar
+
+- **WHEN** a properties file carrying `ape.apePureMode` reaches a jar that has retired the key —
+  the state a deployment is in whenever a post-stage-2 jar is installed against a `tool.py` that
+  still writes it
+- **THEN** resolution SHALL abort with `reason=retired_key key=ape.apePureMode` before step 1,
+  rather than resolving and running as some other plan
+- **AND** the ordering SHALL therefore be a deployment precondition and not a preference
 
 #### Scenario: bare standalone run
 
