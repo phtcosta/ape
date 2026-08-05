@@ -1778,3 +1778,50 @@ Open coordination items — status 2026-08-03:
   rewritten underneath them. The failure mode that allowed it is now a standing constraint above,
   and the ape-side `aperv-tool` capability stops enumerating the roster entirely: it states the
   preset-plus-overrides *contract* and points at rv-android for which arms exist.
+
+- 2026-08-05 — **Stage 7's archive pairing closed (`rearch-07` group 9, 27 → 29 → 0).** The change
+  could not archive: `openspec archive` matches scenarios by name and cannot tell a rename from a
+  deletion, so 27 names the main specs carried and its `MODIFIED` blocks did not aborted the sync
+  and would have dropped the rest silently if forced. Group 9 was written, approved and worked —
+  the fourth consecutive stage to need one, after `rearch-03` group 9, `rearch-04` group 12 and
+  `rearch-05` group 5. Classification: **14 renames, 2 deliberate replacements, 8 relocations with
+  a home verified by reading the receiving test, 2 already carried by a sibling requirement of the
+  same delta, 3 restatements averting a loss.** No genuine loss.
+
+  **The number is 29, not 27, and that is where this pairing differs from `rearch-05`'s.** That
+  change measured its archive order at 0 in every direction because the changes touching
+  `aperv-tool` modify *disjoint* requirements of it. `rearch-04` modifies three of the same
+  requirements as `rearch-07` (`execute_tool_specific_logic() Flow`, `Cadence-Based MOP Activity
+  Launch`, `MopData — Load Status Line and Fail-Fast`), so the count depends on the order. The owner
+  decided to pair against the **union**, which is the only choice correct under either order: the
+  archive aborts on a main-spec scenario missing from the block and never on a surplus one.
+
+  **Archive order is therefore constrained, and the constraint is new.** Measured marginally in
+  disposable sandboxes, both directions: `rearch-04` first → `rearch-07` costs **0**; `rearch-07`
+  first → `rearch-04` costs **4** (`Properties file carries preset plus deltas only`, `MOP arm —
+  derivation failure fails the task`, `deep link dispatched from the wire field`, `activity without
+  a deep link falls back to the explicit component` — all scenarios `rearch-07` *adds* to
+  requirements `rearch-04` also modifies). **Archive `rearch-04` before `rearch-07`.** It is free,
+  it is the natural stage order, and the alternative is doing `rearch-04`'s pairing work for four
+  scenarios that exist only because stage 7 went first.
+
+  **Two findings the pairing produced rather than confirmed.** `component-triggering :: arm contrast
+  is the launched set` had no counterpart in stage 7's delta and no sibling requirement carrying it:
+  the `rearch-03` rewrite of that requirement and stage 7's restatement on top of it both simply
+  forgot it, and it pins the census contrast the launcher result rests on. And the five A′
+  relocations pointed at a `static-analysis-entrypoints` requirement that stated the union in prose
+  with **no scenario for it** — a named home that was only plausible. Both restored; the second by
+  adding `Activity sets — the A′ union draws on three sources, distinctly` to the ADDED block, which
+  carries no drop risk.
+
+  Sandbox archive green in both orders (`Totals: + 5, ~ 7, - 6, → 0`), with the synced bodies read
+  out of the sandbox's main specs rather than inferred from the exit code. Suite **1123 / 0 failures
+  / 19 skipped**, measured twice in-session. `rearch-07` is 49/51 — the two open boxes are
+  `/sdd-code-reviewer` and the post-archive `## Purpose` sweep, which `openspec archive` does not
+  sync and which bit session 16 on `run-spec`.
+
+  **What stage 7 still owes, and to whom.** `mvn install` is gated twice — the `rearch-counterparts`
+  merge has not happened (`gh97` at 31/61) and the build is delegated to `gh97` 6.2 — so task 7.1 is
+  landing-and-verification only, and no jar was installed. `gh97` 6.1's precondition ("stages
+  `rearch-03`…`rearch-07` complete") is **not satisfiable today**: `rearch-04` is 74/78 and
+  `rearch-06` is 25/29.

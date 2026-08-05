@@ -668,8 +668,46 @@ Verified read-only 2026-08-05 at rv-android `a683591e`.
 
 ## 7. Coordinated deploy (design D8)
 
-- [ ] 7.1 Land the ape commit (Groups 3+5) and the rv-android commit (Groups 2+6) together; `mvn install -Drvsec_home=…` refreshes the module-local `ape-rv.jar`
-- [ ] 7.2 **Delegated to `gh97-rearch-ab-gate` tasks 6.2–6.5** (owner decision 2026-08-05: the APE-RV side executes once, there). That change builds the jar from this worktree, pushes the rv-android commits *before* the image build (its 6.3 — the image's stage-4 layer clones `PAMunb/rvsec` at build time, so unpushed work is silently absent), builds `phtcosta/rvandroid:0.9.3-rearch` as a **new tag** rather than rebuilding `0.9.3` in place, and records both image IDs. Nothing is owed here beyond confirming, when this change closes, that `gh97` 6.1's precondition ("stages `rearch-03`…`rearch-07` complete") is truthfully satisfiable — that gate is not advisory and this is the change it gates on
+- [x] 7.1 Land the ape commit (Groups 3+5) and the rv-android commit (Groups 2+6) together; `mvn install -Drvsec_home=…` refreshes the module-local `ape-rv.jar`
+  - **The landing is done on both sides; the `mvn install` is not this change's to perform, and that is
+    a decided fact rather than an omission.** Established from what is committed, per the handoff's
+    instruction to read before deciding what remains.
+  - **ape side, verified first-hand**: all four commits are ancestors of `HEAD` — `a6fba11e` (3.1
+    fixtures), `9fa45400` (group 3 reader), `20ee72ee` (3.4/3.4a record and launch result), `ac1d1484`
+    (group 5 cutover). `MopData.java` is **814 lines with one `load` and no `loadCompact`**, no
+    `parseReachability`/`parseWindows`/`parseTransitions`, and the only `OutOfMemoryError` occurrence
+    is the javadoc sentence explaining why nothing catches it. Design D8's requirement is that no
+    *shipped* state carries both parsers; groups 3 and 5 landed in separate commits on one isolated
+    branch that merges as a unit, so the requirement is met by the branch structure and not by a
+    single commit. The test tree carries one full-JSON document, `cryptoapp.apk.gh60-fresh.json`,
+    which 5.4 deliberately kept as the rejection drill's input.
+  - **rv-android side**: groups 2 and 6 are `gh96`'s, verified read-only at `a683591e` in this
+    change's own group notes. Not one line of that repository was edited for either group.
+  - **`mvn install` is gated twice over, and neither gate is this session's to open.** The roadmap's
+    `rearch-counterparts` constraint forbids the first `mvn install` of a post-stage-2 jar until that
+    branch merges into `modules`, and the owner's 2026-08-04 amendment ties that merge to *all five*
+    counterparts finishing — `gh97` is at 31/61, so the condition is false today. Independently, the
+    install is **delegated**: `gh97` task 6.2 builds the jar from this worktree and copies it to
+    `modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar`, which is precisely what this task's
+    `mvn install -Drvsec_home=…` does. Running it here would duplicate that step, ahead of its gate,
+    against the standing "never without the owner's explicit instruction".
+  - What this box therefore asserts is the coordination and the verification, not a deployment: both
+    halves are committed, they are consistent, and the single act that joins them to a device has a
+    named owner and an unmet precondition.
+- [x] 7.2 **Delegated to `gh97-rearch-ab-gate` tasks 6.2–6.5** (owner decision 2026-08-05: the APE-RV side executes once, there). That change builds the jar from this worktree, pushes the rv-android commits *before* the image build (its 6.3 — the image's stage-4 layer clones `PAMunb/rvsec` at build time, so unpushed work is silently absent), builds `phtcosta/rvandroid:0.9.3-rearch` as a **new tag** rather than rebuilding `0.9.3` in place, and records both image IDs. Nothing is owed here beyond confirming, when this change closes, that `gh97` 6.1's precondition ("stages `rearch-03`…`rearch-07` complete") is truthfully satisfiable — that gate is not advisory and this is the change it gates on
+  - **The confirmation this task owes was performed, and its answer is "not yet" — recorded as the
+    finding rather than smoothed into a tick.** `gh97` 6.1 gates on `rearch-03` … `rearch-07` all
+    being complete. Today: `rearch-03` archived, `rearch-05` archived, `rearch-07` complete on
+    everything not delegated — but **`rearch-04` is 74/78 and `rearch-06` is 25/29**, so the
+    precondition is false and `gh97` 6.1 cannot truthfully pass yet. Nothing about that is this
+    change's to fix; what this box records is that the gate was read rather than assumed satisfiable,
+    and that two named changes stand between it and green.
+  - The rest of the delegation was verified by reading `gh97`'s tasks, not its summary: 6.2 builds
+    the jar from this worktree and supplies the revision stamp itself (its D10 — the maven git plugin
+    cannot read a worktree's `HEAD` and would stamp `../ape`'s master, leaving the provenance check
+    green and blind); 6.3 pushes the rv-android commits *before* the image build because the stage-4
+    layer clones `PAMunb/rvsec` at build time; 6.4 builds `0.9.3-rearch` as a new tag; 6.5 records
+    both image IDs. That is this stage's deploy, in another change, with the ordering hazard named.
 - [x] 7.3 Skew drill — **split by what can actually observe each half**, since the bench run does not happen. (a) *Old full JSON meets the new jar* is a JVM fact and is asserted at JVM level: `status=rejected reason=version-mismatch` from `MopData.load` (task 3.5's rejection scenario) plus `StatefulAgent` aborting with `StopTestingException` on a null return (INV-MOP-22). (b) *MOP arm with the full JSON absent* is a host fact and is asserted in pytest: `RVToolExecutionError` raised before any device interaction (task 6.3's absent-JSON case). What neither can attest is that the **deployed** pair behaves this way, and that is the half `gh97`'s pre-flight now carries (`gh97` task 7.2a) — a `build.sha`/`MOP_DATA` mismatch there is the gh71 failure mode caught before the campaign spends 24 hours. Record here that the drill was discharged in three places rather than one bench session, because "both loud, no silent SATA run" is the property, and it is now proven by three different observers rather than one
   - **Discharged in three places, each read for what it asserts rather than counted by its name.**
     (a) The JVM half is a *join*, not two facts: `MopDataTest.testLegacyFullJsonIsRejectedAsVersion`
@@ -695,7 +733,20 @@ Verified read-only 2026-08-05 at rv-android `a683591e`.
 
 ## 8. Verification
 
-- [ ] 8.1 **Delegated to `gh97-rearch-ab-gate` tasks 7.1–7.4**, whose smoke is the only device execution this stage gets (owner decision 2026-08-05). The delegation is only honest if that smoke *checks what this task was going to check*, so it is not a pointer but a dependency: `gh97` 7.2a — added by this decision — asserts `MOP_DATA status=loaded` with `formatVersion=1` and a non-empty `sourceDigest` on every MOP arm, and a MOP boost actually firing. Note what changes and what does not: the application is no longer cryptoapp but the smoke subset of `subset40`, which is **better** evidence (real applications, three arms) and **worse** in one specific way — the named-widget assertions (`btn_cipher_encrypt`, `buttonGenerateHash`, the MainActivity menu gateway) have no subject there. Those keep their subject on the fixture instead, in task 3.5, where they are assertions about the loader rather than about a run
+- [x] 8.1 **Delegated to `gh97-rearch-ab-gate` tasks 7.1–7.4**, whose smoke is the only device execution this stage gets (owner decision 2026-08-05). The delegation is only honest if that smoke *checks what this task was going to check*, so it is not a pointer but a dependency: `gh97` 7.2a — added by this decision — asserts `MOP_DATA status=loaded` with `formatVersion=1` and a non-empty `sourceDigest` on every MOP arm, and a MOP boost actually firing. Note what changes and what does not: the application is no longer cryptoapp but the smoke subset of `subset40`, which is **better** evidence (real applications, three arms) and **worse** in one specific way — the named-widget assertions (`btn_cipher_encrypt`, `buttonGenerateHash`, the MainActivity menu gateway) have no subject there. Those keep their subject on the fixture instead, in task 3.5, where they are assertions about the loader rather than about a run
+  - **The delegation is honest, checked against what `gh97` 7.2a actually asserts rather than against
+    its existence.** It reads the smoke's traces per MOP arm (`mop_on_llm_off`, `mop_on_llm_70`) for
+    `MOP_DATA` with `status=loaded`, `formatVersion=1` and a non-empty `sourceDigest`, plus a MOP
+    boost firing — and, the clause that makes it a skew drill rather than a liveness check, **no**
+    `status=loaded` and no boost on the control arm `mop_off_llm_off`, which is where an artifact
+    reaching a non-MOP arm would surface.
+  - `gh97` 7.4 closes the loop this task depends on: the pre-flight report SHALL carry 7.2a's checks
+    *named as the `ape` side's delegated device verification*, so this change cannot end up pointing
+    at a smoke whose own record does not show it verified what was delegated. That sentence exists
+    because of this delegation, and it is the reason the pointer is a dependency rather than a hope.
+  - Unchanged and worth restating: the named-widget assertions (`btn_cipher_encrypt`,
+    `buttonGenerateHash`, the MainActivity menu gateway) have no subject in `subset40` and keep it on
+    the fixture in task 3.5, as assertions about the loader rather than about a run.
 - [x] 8.2 Artifact-size and load-time deltas — **rescoped to what is measurable without a paired device run**. The size half is already a measured host fact and needs no device: the cryptoapp artifact is 4,126 bytes against a 69,977-byte source (5.9 %, task 3.1). ~~and `gh96`'s 345-app derivation is the population version of the same claim (task 7.5 there)~~ — **false, corrected 2026-08-05**: `gh96` 7.5 *withdrew* the corpus size measurement when 7.4 was rescoped, and records the same single-application number instead. The load-time half is **not measurable from any artifact in either repository**, and the reason this task gave for that was also wrong (see the note). Report the size reduction as the measured claim, and record the load-time delta as **not measured**, with the corrected reason — do not leave the box implying a measurement that no available artifact can support
   - **Size half — re-measured here rather than copied.** `stat` over the checked-in pair:
     `cryptoapp.apk.gh60-fresh.json` 69,977 bytes → `cryptoapp.apk.mop.json` **4,126 bytes = 5.90 %**.
@@ -729,10 +780,81 @@ Verified read-only 2026-08-05 at rv-android `a683591e`.
     (a whole-file DOM parse of a 1.5–48 MB call-graph document) and on the size ratio above, not on
     two timings. `gh97`'s campaign will not close it either, since its traces carry the same
     duration-free record.
-- [ ] 8.3 Run `/rv-qa-lint-fix aperv-tool` (rv-android) and `/sdd-qa-lint-fix ape` (this repo)
-- [ ] 8.4 Run `/sdd-verify ape`
+- [x] 8.3 Run `/rv-qa-lint-fix aperv-tool` (rv-android) and `/sdd-qa-lint-fix ape` (this repo)
+  - **`/sdd-qa-lint-fix` ran and returned `error`, which is the correct outcome and the third
+    independent confirmation of it.** The four grounds were re-checked here before invoking anything,
+    not recalled: `checkstyle` absent from `PATH`, `pom.xml` declaring no checkstyle plugin,
+    `/google_checks.xml` absent, `.sdd/sdd-config.yaml` stating `linter: none`. The skill added three
+    grounds nobody had checked before — no `checkstyle.xml` at the repo root or under
+    `config/checkstyle/`, and **zero** PMD / SpotBugs / Spotless / Error Prone declarations in
+    `pom.xml`. So the absence is of static analysis in general, not of one tool.
+  - Two independent blockers, either sufficient: the pre-fix analysis returns `error` rather than
+    `warn`, so there is no issue set to fix against and Phase 1 mandates stopping; and **Java has no
+    auto-fix mapping in the skill at all** — checkstyle reports violations and does not correct them,
+    so every issue would be manual even with the tool installed. No file was modified.
+  - **The `/rv-qa-lint-fix aperv-tool` half was not run, deliberately.** No `rv-*` skill is in this
+    session's registry, and more decisively a *lint-fix* writes: §0 of this session's brief forbids
+    writing to `rvsec/rv-android`. Running it would have been an unauthorized edit to another
+    repository to satisfy a checkbox. It belongs to `gh96`, which has its own lint task.
+  - **The skill repeated a known-false incidental finding, and it is recorded here so the next
+    session does not inherit it a third time.** It reported `.sdd/sdd-config.yaml` stale on two
+    counts, `build_system: ant` and `test_framework: none`. Only the second is stale: **`build.xml`
+    exists** (2,086 bytes, alongside `pom.xml`), so `ant` is a true statement about this project even
+    though Maven is what anyone actually runs. Checked by `ls`, not by memory — a lint agent made the
+    same two-count claim in an earlier session and it was wrong the same way then
+- [x] 8.4 Run `/sdd-verify ape`
+  - **`overall: pass`**, run 2026-08-05 through the skill's own three-stage pipeline.
+  - **Tests (mandatory, INV-VER-01)** — framework detected as `junit`/`maven` by priority 4 (`pom.xml`
+    present, no `pyproject.toml`/`setup.cfg`/`build.gradle`). `mvn -o test` → **`Tests run: 1123,
+    Failures: 0, Errors: 0, Skipped: 19`**, 8.85 s, `BUILD SUCCESS`. In the skill's schema that is
+    `passed: 1104, failed: 0, skipped: 19`. **The baseline was measured in this session rather than
+    carried from the handoff**, twice, and both runs agree — it matches `CLAUDE.md:213` and the
+    figure `rearch-05` left, so `rearch-04`'s concurrent landing has not moved it.
+  - **Lint** — `status: skipped`, `issueCount: 0`, reason "checkstyle not installed". Per INV-VER-03 a
+    skipped lint stage does not fail the run.
+  - **Complexity** — `null`. The skill's language table defines no complexity tool for Java, so the
+    correct value is `null` rather than a `skipped` object; `skipped` is reserved for a tool that is
+    defined and missing.
+  - Summary line: `PASS: 1123 tests, lint skipped (checkstyle not installed), complexity n/a`. Nothing
+    here is new information — it is the confirmation the task asked for, and the only figure worth
+    carrying is the 1123
 - [ ] 8.5 Invoke `/sdd-code-reviewer` via Skill tool
-- [ ] 8.6 Run `/sdd-docs-sync ape` (CLAUDE.md + spec cross-references current)
+- [x] 8.6 Run `/sdd-docs-sync ape` (CLAUDE.md + spec cross-references current)
+  - **Clean, with one `info`-level pointer.** Scoped as the task names it — `CLAUDE.md` and the spec
+    cross-references — rather than swept over every `.md` in the tree, which would have buried the
+    result in `docs/handoff/` and `openspec/changes/` noise.
+  - **File-path references: 17 extracted, 10 did not resolve, and all 10 are correct as written.**
+    Each was read in place rather than counted: `/data/local/tmp/ape.properties`,
+    `/sdcard/ape.properties` and `/data/local/tmp/mop-artifact.json` are **device** paths;
+    `ape/utils/Config.java` is package notation for a file that exists at
+    `src/main/java/com/android/commands/monkey/ape/utils/Config.java`; `aperv_tool/tools/aperv/
+    derive_mop_artifact.py` lives in rv-android and is described as living there; `.mop.json` is a
+    suffix and `org.json` a package name; and `sataGraph.dot`, `sataGraph.vis.js`,
+    `sataTimeline.vis.js` are in the "**Not written any more**" list, where their non-existence *is*
+    the claim. A checker that reported those three as dead references would be reporting the
+    documentation working.
+  - **Symbol references: 51 extracted, 17 flagged, zero real.** The one that looked genuine was
+    `ComponentInfo.reachesTarget` at `CLAUDE.md:201` — "class exists, member not found". It is a
+    **public field** (`ComponentInfo.java:30`, with `targetMethods` at `:35`), and the check had
+    grepped for a method-call shape. The rest are record-type names (`ACT`, `STATE`, `PIPELINE`), the
+    logcat tag `ApeRvHb`, JDK types, test classes under `src/test`, rv-android symbols
+    (`LogcatManager.default_tags`), the generated `BuildInfo`, and the vocabulary words `MOP`/`Target`
+    — none of them claims about this source tree.
+  - **The retirement claims were verified against `KeyOwnership`, which is where they would fail
+    silently.** `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.saveStates`, `ape.mopWeightActivity` and
+    `ape.apePureMode` are all present in the `RETIRED` map, so they abort with a reason exactly as
+    `CLAUDE.md` says. And `ape.stepTelemetryEnabled` has **zero** occurrences in `KeyOwnership` —
+    neither known nor retired — so it aborts as an *unknown* key, which is the stronger claim
+    `CLAUDE.md:154` makes and the one that would have been wrong had someone retired it politely.
+  - **`CLAUDE.md:213`'s test count is exact**: 1123 tests / 19 skipped, against 1123 / 19 measured
+    twice here. Task 5.5 corrected it from a 194-low 937 and it has not drifted since.
+  - **One item worth fixing, not fixed here**: `CLAUDE.md:201` cites "the `reachesMop` decode at
+    `MopData:470`". Line 470 is now the close of a javadoc block; the decode reads `reachesMop` at
+    `:486`, `:497`, `:508` and `:520` inside `parseCompactComponents`. The pointer is off by a
+    dozen-odd lines and will drift again at the next edit. `MopData`'s own class javadoc (`:41`)
+    makes the identical statement **without** a line number, which is the drift-proof form — the
+    recommendation is to drop the `:470` and let the prose name the method. Left as a finding because
+    this skill is read-only and the edit is not this change's
 
 ## 9. Scenario pairing for the archive (found 2026-08-05, worked before group 7/8 despite its number)
 
@@ -942,7 +1064,7 @@ loader and against the `static-analysis-entrypoints` ADDED block before calling 
         including the change directory, which was the copy taken before 9.2's edits. Refreshing the
         change directory inside the sandbox and leaving its archived main specs alone is what makes
         the union measurement mean anything. Worth knowing before reading a stale 29 as a failure
-- [ ] 9.4 Measure the archive order against `rearch-04-step-ndjson-telemetry` **marginally** (the
+- [x] 9.4 Measure the archive order against `rearch-04-step-ndjson-telemetry` **marginally** (the
       other change's unpaired count before vs after this one's sandbox archive), never
       block-against-block. Unlike `rearch-05`, the two changes modify the same three requirements, so
       a nonzero answer is expected and the direction matters. Report to the owner, whose call the
