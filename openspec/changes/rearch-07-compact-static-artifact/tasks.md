@@ -519,8 +519,52 @@ what task 2.7 already designated as the permanent protection) and `gh97`'s campa
     cut, which is the strongest behavioural evidence this stage has that the projection is
     unchanged: three seeded end-to-end decision traces, produced by the old parser and reproduced by
     the new reader. Headers and `goldens/README.md` updated; no decision line touched.
-- [ ] 5.5 Update `CLAUDE.md` (MopData naming note, `mopDataPath` artifact description) and run `/sdd-doc-code src/main/java/com/android/commands/monkey/ape/utils/MopData.java`
-- [ ] 5.6 Run `/sdd-test-run ape` (full `mvn test` — 145-test suite adjusted for the removed seams)
+- [x] 5.5 Update `CLAUDE.md` (MopData naming note, `mopDataPath` artifact description) and run `/sdd-doc-code src/main/java/com/android/commands/monkey/ape/utils/MopData.java`
+  - The `sdd-*` skills are not in this session's registry (the standing condition of this stage), so
+    the skill's action was run directly as a documentation audit of the file: read every javadoc and
+    comment against the code it sits on and correct what the cutover falsified.
+  - **The audit found a false clause, which is the reason to run it rather than assume the 5.1
+    rewrite left the file clean.** The class javadoc claimed "no `*Target` key reaches it" and that
+    the class "translates nothing". Both are wrong on the same two names: the wire carries
+    `hasTargetMethods` — the generator's own compaction of the signature list, read at `:535` — and
+    `parseCompactComponents` decodes `reachesMop` **into a field named `reachesTarget`**, which is a
+    rename, in the opposite direction to D7's. Corrected to name the two survivors and to state what
+    genuinely left: `reachability[]`, `directlyReachesTarget` and the listener × handler
+    cross-reference. `ComponentInfo` had this right already (its two field javadocs name the wire
+    keys), so the defect was confined to the class that asserts the boundary.
+  - Second finding, smaller: the `forTest` section header said "(package-private)" and the methods
+    are `public`. They have to be — their callers are in `ape.agent` and `ape.agent.scoring`, not in
+    `ape.utils`. Header corrected and the factory given a javadoc saying what it is for (query-layer
+    tests that state the structures instead of authoring an artifact that derives to them) and the
+    one thing it does not build (the gateway set, which only `load` recomputes).
+  - `CLAUDE.md`, five edits. The naming note now says the D7 boundary **left the jar** and names the
+    two `Target` survivors, matching the corrected javadoc rather than pointing at it. `mopDataPath`
+    describes the compact artifact at `/data/local/tmp/mop-artifact.json` and says the full JSON is
+    never pushed and is rejected if it is. The `mopStrictPackageMatch` line compares against the
+    artifact, not "the JSON". The test-APK table gained the `.mop.json` row and marks the `.json` as
+    the generator's input; the `Source:` block says the artifact is **derived, not copied**, names
+    `derive_mop_artifact.py`, and warns that hand-editing it breaks the `source.digest` chain.
+  - **The stale test count was 937 against a measured 1131** — 194 low, exactly the drift the
+    handoff predicted. Its skip breakdown ("13 `@Ignore` … 6 `Assume` in `SglangLiveTest`") was
+    re-derived from the surefire XMLs rather than trusted: 5+4+3+1 `@Ignore` across
+    `ImageProcessorIntegrationTest`/`ImageProcessorTest`/`ApePinchOrZoomEventTest`/
+    `GUITreeBuilderPasswordTest` = 13, plus `SglangLiveTest`'s 6 = 19. Correct as written, so only
+    the total moved. Note for whoever reads those XMLs next: `target/surefire-reports/` is not
+    cleaned by `mvn test` and still holds reports for classes group 5 deleted, so summing it gives
+    1237 — the maven summary line is the number, the directory is not.
+- [x] 5.6 Run `/sdd-test-run ape` (full `mvn test` — 145-test suite adjusted for the removed seams)
+  - `mvn -o test` → **1131 tests, 0 failures, 19 skipped** (~8.4 s). Run twice: once at `ac1d1484`
+    before touching anything, to confirm the tree was as the handoff left it, and again after 5.5's
+    documentation edits. Same number both times, which is what a comment-only change owes.
+  - The task's "145-test suite" is a figure from the change's authoring and was never true of this
+    tree; it is not adjusted-for-the-removed-seams, it is stale by an order of magnitude.
+  - **The drop from 1207 is stated as measured on both sides, not derived by subtraction.** 1207 was
+    measured at task 4.3 with the equivalence gate in the tree; 1131 is measured here. The 76
+    difference is the count of tests group 5 deleted with their subject (the old parser's suites and
+    the one-shot gate) — a number that happens to reconcile, not the evidence for either figure.
+  - This is not the last movement: `rearch-05` deletes `RunSpecCompatTest` (13 tests, 301 lines), so
+    the baseline a later session should expect is 1118, and a session that finds 1131 after
+    `rearch-05` lands has a merge problem rather than a lucky suite.
 
 ## 6. Python push switch (BREAKING — lands only with Group 5)
 

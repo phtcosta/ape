@@ -52,13 +52,19 @@ adb shell CLASSPATH=/data/local/tmp/ape-rv.jar app_process /system/bin \
 | File | Description |
 |------|-------------|
 | `test-apks/cryptoapp.apk` | Instrumented APK from rv-android experiment `cli_experiment_20260305_155802_9bd8c909` |
-| `test-apks/cryptoapp.apk.json` | Static analysis JSON for Phase 3 MOP-guided scoring (`ape.mopDataPath`) |
+| `test-apks/cryptoapp.apk.json` | Full static-analysis JSON — the generator's **input**, never pushed to a device |
+| `test-apks/cryptoapp.apk.mop.json` | Compact MOP artifact derived from it — what `ape.mopDataPath` points at |
 
 Source:
 ```
 rv-android/results/cli_experiment_20260305_155802_9bd8c909/instrumented_apks/cryptoapp.apk
 rv-android/results/cli_experiment_20260305_155802_9bd8c909/instrumented_apks/cryptoapp.apk.json
 ```
+
+The `.mop.json` is not copied — it is **derived** from the `.json` beside it by rv-android's
+`aperv_tool/tools/aperv/derive_mop_artifact.py`, which is where every derivation rule now lives.
+Regenerate it from that repository rather than editing it: it is canonical JSON (sorted keys, no
+spaces) and a hand edit breaks the `source.digest` chain that joins a run to its analysis input.
 
 Configuration can be overridden via `/data/local/tmp/ape.properties` or `/sdcard/ape.properties` on the device.
 
@@ -180,19 +186,19 @@ externally supplied replay log through it.
 - `takeScreenshot` / `saveGUITreeToXmlEveryStep` — debug output
 - `takeScreenshotForEveryStep` / `saveGUITreeToXmlEveryStep` — per-step PNG/XML artifacts; **both default `false`** for throughput (INV-EXPL-17). The aperv-tool deployment pulls neither artifact and the LLM path uses its own on-demand `ScreenshotCapture`; re-enable for local debugging with `ape.takeScreenshotForEveryStep=true` / `ape.saveGUITreeToXmlEveryStep=true` in `ape.properties`
 - `defaultGUIThrottle` — delay between actions
-- `mopDataPath` — path to static analysis JSON on device (null = MOP scoring disabled)
+- `mopDataPath` — path to the compact MOP artifact on device, `/data/local/tmp/mop-artifact.json` as aperv-tool pushes it (null = MOP scoring disabled). The full static-analysis JSON is never pushed and is rejected if it is (`version-mismatch`)
 - `mopWeightDirect` / `mopWeightTransitive` — MOP scoring weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost)
 
 Five keys are owned by the plan rather than by `Config`, and are read through `RunContext.current().spec()`:
 - `ape.mopWeightOpenMenu` → `spec().mop().weightOpenMenu()` — boost on the MODEL_MENU action when the activity's OPTIONSMENU is a MOP gateway (default 250; gh13 T1.2)
 - `ape.fuzzInputTyped` → `spec().exploration().fuzzInputTyped()` — type-aware EditText fuzzing from static `inputType`/`hint` (default true; set false for the random-string generator — gh13 T1.3 rollback knob)
-- `ape.mopStrictPackageMatch` → `spec().mop().strictPackageMatch()` — reject `MopData.load` when the JSON package/mainActivity diverges from the runtime values (default false = warn-only; gh13 T1.7)
+- `ape.mopStrictPackageMatch` → `spec().mop().strictPackageMatch()` — reject `MopData.load` when the artifact's package/mainActivity diverges from the runtime values (default false = warn-only; gh13 T1.7)
 - `ape.activityTriggerEnabled` → `spec().mop().activityTriggerEnabled()` — include activities in component triggering (default **true**)
 - `ape.mopFrontierWeight` → `spec().mop().frontierWeight()` — boost for unvisited actions on MOP-reachable widgets (default 0 = pass disabled)
 
 `MopParams` is absent on an arm whose plan carries no MOP feature; the two sites reachable on such an arm read that absence as "off".
 
-- Naming: the static-analysis JSON wire format uses `Target` vocabulary (`reachesTarget`/`directlyReachesTarget`/`targetMethods`); aperv's Java model uses `MOP` (the only targets aperv consumes are JavaMOP operations). The boundary lives in the `MopData` class javadoc — `*Target` appears only where JSON is read (gh13 D7)
+- Naming: the static analyser generalized its output to any target method set, so its JSON speaks `Target` (`reachesTarget`/`directlyReachesTarget`/`targetMethods`) while aperv, an exclusively JavaMOP consumer, speaks `MOP`. That boundary (gh13 D7) **no longer sits in the jar**: the host-side generator is the only component that reads the analyser's document, so it performs the rename and the wire arrives speaking MOP (`mop`, `mopActivities`, `reachesMop`). Two `Target` names survive on this side and are worth knowing about rather than being surprised by — the wire key `hasTargetMethods` (the generator's own compaction of the signature list, kept as-is) and the Java field names `ComponentInfo.reachesTarget`/`targetMethods`, which the `reachesMop` decode at `MopData:470` feeds. What is genuinely gone is the *cross-reference*: no `reachability[]`, no `directlyReachesTarget`, no listener join reaches the device
 - `llmUrl` — SGLang base URL (null = LLM disabled); e.g., `http://10.0.2.2:30000/v1`
 - `llmOnNewState` / `llmOnStagnation` — toggle LLM modes (default: true)
 - `llmModel` / `llmTemperature` / `llmTopP` / `llmTopK` — LLM sampling params
@@ -204,7 +210,7 @@ Five keys are owned by the plan rather than by `Config`, and are read through `R
 
 ## Notes
 
-- Unit + integration test suite: `mvn test` (937 tests, 19 skipped — 13 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
+- Unit + integration test suite: `mvn test` (1131 tests, 19 skipped — 13 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
 - Known issue: `OutOfMemoryError` is possible on long runs, because every `State` keeps its `GUITree`s in `treeHistory` and the `Graph` keeps every `State` — the heap grows with the number of distinct states a run reaches. That is the only retention by design. The `GUITreeBuilder` naming caches and a `ModelAction`'s resolved references are cleared when their tree is released, and the diagnostic action history holds primitive snapshots plus a single depth-1 recovery point, whose tree a live state owns anyway. Nothing bounds or evicts `Graph`, `treeHistory` or the naming structures: such a bound changes exploration behavior, so it waits on a heap profile by retention root. `OutOfMemoryError` is not caught — the process dies and the supervisor marks the task FAILED and retries it
 - Pre-compiled `ape.jar` is included in repo for convenience

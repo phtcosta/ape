@@ -33,8 +33,15 @@ import com.android.commands.monkey.ape.telemetry.EventSink;
  * {@code targetMethods}) while aperv, an exclusively JavaMOP consumer, speaks <em>MOP</em>. That
  * translation used to happen here, on device, and it no longer does: the artifact generator is the
  * one component that reads the analyser's document, so it performs the rename and ships
- * {@code mop}, {@code mopActivities} and {@code reachesMop}. This class therefore cross-references
- * nothing and translates nothing — no {@code *Target} key reaches it (design D7, relocated by D2).
+ * {@code mop}, {@code mopActivities} and {@code reachesMop} (design D7, relocated by D2).
+ *
+ * <p>Two {@code Target} names survive on this side, and stating them is more useful than claiming
+ * the vocabulary is uniform: the wire key {@code hasTargetMethods} — the generator's own compaction
+ * of the signature list, not a producer key — and the fields {@code ComponentInfo.reachesTarget}
+ * and {@code targetMethods}, which {@link #parseCompactComponents} feeds from {@code reachesMop}
+ * and {@code hasTargetMethods}. So one rename does still happen here, on exactly one field. What
+ * left with the parser is the thing the boundary was really about: no {@code reachability[]}, no
+ * {@code directlyReachesTarget}, no listener × handler cross-reference reaches the device at all.
  *
  * <h3>Reader, not parser</h3>
  *
@@ -98,9 +105,18 @@ public class MopData {
     }
 
     // -------------------------------------------------------------------------
-    // Test factory (package-private) — builds a MopData from pre-built structures.
+    // Test factory — builds a MopData from pre-built structures, bypassing the wire.
     // -------------------------------------------------------------------------
 
+    /**
+     * Builds a MopData directly from the query structures, for tests about the <em>query</em> layer
+     * rather than about the reader: scoring, frontier and trigger suites state the widget map and
+     * the activity set they want instead of authoring an artifact that derives to it.
+     *
+     * <p>Public rather than package-private because its callers are not: the scoring and agent
+     * suites live in {@code ape.agent} and {@code ape.agent.scoring}. It builds no gateway set —
+     * a caller that needs one goes through {@link #load}, which is where the recompute lives.
+     */
     public static MopData forTest(Map<String, Map<String, Widget>> widgetData,
                            Set<String> mopActivities,
                            Map<String, List<WtgTransition>> wtgTransitions) {
