@@ -469,6 +469,13 @@ what task 2.7 already designated as the permanent protection) and `gh97`'s campa
     rv-android edit to a file outside the group-6 authorization of §0, so it is **owed, not done**:
     it belongs to `gh96` task 2.7 and needs the owner's word before it lands. Nothing regresses
     meanwhile — the two flanking cases pin the assembly — but the box is not honest without this.
+  - **Owed item discharged 2026-08-05**, owner-authorized: `gh96` group 10 (`bb593ff6` plan,
+    `7a9c2da2` feat) adds `test_deep_link_scheme_and_host_without_path`. The "nothing regresses
+    meanwhile" hedge above turned out to be the weaker claim: mutating the generator to keep the host
+    only when a path accompanies it fails **exactly that one test** and none of the other 67, so the
+    two flanking cases pin the extremes and not the rule — both are satisfied by a version that
+    treats host and path as one optional unit. All six Lever B assertions now have a permanent home
+    on the side that computes the URI.
   - What stays on the jar side is the pair the task names, in `ActivityFrontierTest`:
     `testTriggerActionCarriesTheWireDeepLinkOrNull` (the candidate's `deepLinkUri` reaches
     `ActivityTriggerAction` **verbatim**, and null stays null, which is what `MonkeySourceApe` reads
