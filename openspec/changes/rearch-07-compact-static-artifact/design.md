@@ -23,7 +23,7 @@ Every production read of `MopData` in `src/main`, established by exhaustive call
 | `hasWtgData()` / `getWtgTransitions(activity)` | `WtgPass`, `FrontierPass`, `MopFrontierPass`, `MopScorer.scoreWtg`, `StatefulAgent.frontierBoost` | `WtgTransition.widgetName`, `WtgTransition.targetActivity` — **`widgetClass` has zero production readers** |
 | `getReceivers()` / `getServices()` | `StatefulAgent.buildTriggerTuples`, `dispatchTrigger`, `triggerLogLine` | `className`, `componentType` (log), `reachesTarget`, `intentFilters[].actions`, `intentFilters[].categories`, `targetMethods` (**emptiness test only**), `permission` (log via `hasPermissionGate`) |
 | `getProviders()` | `buildProviderTuples`, `buildContentCommand` | `className`, `reachesTarget`, `authorities` |
-| `getActivities()` | `MopLauncherStage.selectTriggerCandidate` (`:106`); **`MopLauncherStage.buildDeepLinkUri`** (`:195`, called at `:117` inside the MOP cadence launcher, consumed at `MonkeySourceApe.java:962-975`); `MopData.augmentActivitiesFromSources` (A′ source 2, parse-time) | `className`, `isMain`, `permission`; **`intentFilters[].actions` and `intentFilters[].data.{schemes,hosts,paths}`** — the deep-link inputs. `reachesTarget` is read here **only** at parse time by A′ source 2: `MopLauncherStage` is forbidden to consult it (it false-negatives lambda-triggered activities), so no exploration-time reader of an activity's flag exists |
+| `getActivities()` | `MopLauncherStage.selectTriggerCandidate` (`:106`); **`MopLauncherStage.buildDeepLinkUri`** (`:195`, called at `:117` inside the MOP cadence launcher, consumed at `MonkeySourceApe.java:962-975`); `MopData.augmentActivitiesFromSources` (A′ source 2, parse-time) | `className`, `isMain`, `permission`; **`intentFilters[].actions` and `intentFilters[].data.{schemes,hosts,paths}`** — the deep-link inputs. `reachesTarget` is read here **only** at parse time by A′ source 2: `MopLauncherStage` is forbidden to consult it (it false-negatives lambda-triggered activities), so no exploration-time reader of an activity's flag exists. It stays on the wire nonetheless (owner decision 2026-08-05), unlike `exported`: it is the input A′ is derived from, so shipping it lets the group-4 gate compare the derivation against its own source instead of taking `mopActivitiesAugmented` on trust |
 | `hasComponents()` | `ComponentTriggerStage:69` gate | non-emptiness |
 | `getPackageName()` / `getMainActivity()` | trigger `ComponentName` (INV-CT-04), `selectTriggerCandidate`, T1.7 strict-match | scalars |
 | `getReachability()`, `getWindows()`, `getWindow(id)`, `getTransitions()`, `isWidgetlessSubstrate()`, `getDroppedFlaggedNoId()` | **tests only** (`MopDataTest`) | — parse-time inputs to the projections above; never read at exploration time |
@@ -259,9 +259,9 @@ Same signature, same null-on-failure contract (INV-MOP-01), same status-line/rec
     "providers":  [{"className": "…", "isMain": false,
                      "permission": null, "reachesMop": true, "authorities": "…"}]
   },
-  "stats": {"windows": 5, "widgetsTotal": 51, "flagged": 2, "droppedFlaggedNoId": 0,
-            "orphanDialogs": 0, "handlersUnmatched": 0, "syntheticLambda": 0,
-            "recovered": 0, "wtgEdges": 12, "dedupedTransitions": 0}
+  "stats": {"windows": 5, "widgetsTotal": 51, "flagged": 3, "droppedFlaggedNoId": 0,
+            "orphanDialogs": 0, "handlersUnmatched": 5, "syntheticLambda": 1,
+            "recovered": 1, "wtgEdges": 12, "dedupedTransitions": 0}
 }
 ```
 

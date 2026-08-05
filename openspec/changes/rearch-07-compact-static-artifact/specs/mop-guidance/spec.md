@@ -55,8 +55,9 @@ Unknown JSON keys within a supported `formatVersion` are ignored (INV-MOP-11). T
 - **WHEN** `MopData.load()` is called on the `cryptoapp.apk.mop.json` fixture derived from `cryptoapp.apk.gh60-fresh.json`
 - **THEN** the returned `MopData` SHALL be non-null
 - **AND** `getPackageName()=="br.unb.cic.cryptoapp"`, `getMainActivity()=="br.unb.cic.cryptoapp.MainActivity"`
-- **AND** the only MOP-flagged widgets SHALL be `buttonGenerateHash` (MessageDigestActivity) and `btn_cipher_encrypt` (CipherActivity), both `transitiveMop==true`, `directMop==false`
-- **AND** `activityHasMop` SHALL be true for `MessageDigestActivity` and `CipherActivity` and false for `MainActivity` (default flag state)
+- **AND** the MOP-flagged widgets SHALL be exactly three: `buttonGenerateHash` (MessageDigestActivity), `btn_cipher_encrypt` (CipherActivity), and `executeButton` (CryptographyActivity) — all `transitiveMop==true`, `directMop==false`
+- **AND** the third SHALL be there because of the D8 synthetic-lambda recovery and for no other reason: `executeButton`'s handler is `CryptographyActivity$$ExternalSyntheticLambda0:onClick`, which no `reachability[]` signature matches exactly, and it is flagged only through the enclosing class's reaching `lambda$setupExecuteButton$0` (INV-DRV-01). A fixture asserting two widgets is asserting that the recovery did not run
+- **AND** `activityHasMop` SHALL be true for `MessageDigestActivity`, `CipherActivity` and `CryptographyActivity`, and false for `MainActivity` (default flag state)
 - **AND** `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true` (gateway via WTG edges to the MOP sub-activities, INV-MOP-13)
 - **AND** the `spinnerMessageDigest` widget SHALL carry its 13 `entries` and its metadata fields
 - **AND** `getActivities().size()==4`; `getProviders().size()==1` with `authorities=="br.unb.cic.cryptoapp.androidx-startup"`; `getReceivers().isEmpty()`; `getServices().isEmpty()`; every component `reachesMop==false`
@@ -181,7 +182,7 @@ Fail-fast composition (kills the V21 silent-degradation class end to end):
 When `Config.mopDataPath` is unset, behavior is unchanged (MOP scoring disabled, no status record required beyond the absence of a load).
 
 #### Scenario: successful load emits provenance and counters
-- **WHEN** `MopData.load` parses a v1 artifact derived from a full JSON whose SHA-256 is `d`, with 51 widgets, 2 flagged, 0 dropped, 12 WTG edges
+- **WHEN** `MopData.load` parses a v1 artifact derived from a full JSON whose SHA-256 is `d`, with 51 widgets, 3 flagged, 0 dropped, 12 WTG edges
 - **THEN** one `status=loaded` record SHALL be emitted carrying `formatVersion=1`, `sourceDigest=d`, and those counters
 
 #### Scenario: rejected load names the reason

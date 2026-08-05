@@ -51,11 +51,12 @@ Derivation preconditions: `document["complete"] == true` and a non-null `package
 
 #### Scenario: cryptoapp derivation matches the known ground truth
 - **WHEN** `derive` runs on `cryptoapp.apk.gh60-fresh.json`
-- **THEN** the artifact SHALL flag exactly `buttonGenerateHash` and `btn_cipher_encrypt` (both `transitive` on their click events; no `direct` flag anywhere)
-- **AND** `mopActivities` SHALL equal `{MessageDigestActivity, CipherActivity}` (base names)
+- **THEN** the artifact SHALL flag exactly `buttonGenerateHash`, `btn_cipher_encrypt` and `executeButton` (all `transitive` on their click events; no `direct` flag anywhere)
+- **AND** `mopActivities` SHALL equal `{MessageDigestActivity, CipherActivity, CryptographyActivity}` (base names)
+- **AND** `executeButton` SHALL be flagged **only** through the D8 recovery: its handler `CryptographyActivity$$ExternalSyntheticLambda0:onClick` has no exact `reachability[]` signature, and the flag comes from the enclosing class's reaching `lambda$setupExecuteButton$0`. This makes the fixture a live test of INV-DRV-01's recovery rather than only of the exact-join path — a derivation that skipped the recovery would still satisfy every other clause of this scenario
 - **AND** `optionsMenus` SHALL contain the `MainActivity` record, and the `wtg` map SHALL carry the click edges from `MainActivity` to both MOP sub-activities
 - **AND** `components.activities` SHALL have 4 entries, `providers` 1 entry with `authorities=="br.unb.cic.cryptoapp.androidx-startup"`, every component `reachesMop==false`
-- **AND** `stats.windows==5`, `stats.flagged==2`
+- **AND** `stats.windows==5`, `stats.widgetsTotal==51`, `stats.flagged==3`, `stats.handlersUnmatched==5`, `stats.syntheticLambda==1`, `stats.recovered==1`
 
 #### Scenario: incomplete full JSON refuses to derive
 - **WHEN** `derive` runs on a document with `complete` absent or `false`
