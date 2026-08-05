@@ -74,8 +74,6 @@ public final class MopWidgetPass implements ScoringPass {
      * scores the node's own short id plus its ancestors (≤ 2 up) and descendants (≤ 2 down) via
      * {@link MopScorer#score}, returning the maximum. {@code containmentHit[0]} is set true when the
      * winning boost came from an ancestor/descendant rather than the exact id (hit-rate telemetry).
-     * Moved from {@code StatefulAgent} unchanged, now taking {@code MopData} and the two MOP
-     * weights as parameters.
      */
     private static int mopBoostWithContainment(String activity, GUITreeNode node,
                                                String eventType, boolean[] containmentHit,

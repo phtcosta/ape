@@ -24,10 +24,17 @@ import static org.junit.Assert.assertTrue;
  * happens in {@code adjustActionsByGUITree()}, above this oracle's entry point, so no golden record
  * can depend on one. Their guard belongs to {@code rearch-03} INV-ARCH-12.
  *
- * <p>{@code ape.llmPercentage} is likewise absent, and for a reason worth stating: an LLM preset
- * states the key in its own plan rather than inheriting the jar's, and the scaffold substitutes the
- * stream the coin is drawn from (design D3), so no LLM preset's golden depends on that default at
- * all.
+ * <p><b>Two keys the harness deliberately moves off their jar defaults are absent from this table,
+ * and both belong here so the two files agree about what the LLM presets actually run under</b>
+ * ({@code OracleScaffold.newAgent} records the same pair as INV-ORA-07 injection-profile
+ * adaptations). {@code ape.llmPercentage=1.0}: an LLM preset states the key in its own plan rather
+ * than inheriting the jar's, and the scaffold substitutes the stream the coin is drawn from (design
+ * D3), so no LLM preset's golden depends on that default at all.
+ * {@code ape.graphStableRestartThreshold=10}: the stagnation stage evaluates the real midpoint
+ * predicate, which at the jar default of 100 would sit at 50 while every scenario's counter is 0, 5,
+ * 6 or 7. Lowering it cannot trigger a forced restart, because {@code onGraphStable} is reached only
+ * from {@code checkStable()} at the end of {@code updateStateInternal} and this oracle drives
+ * {@code ladder()} directly — so no golden depends on that default either.
  */
 final class LadderConfigGuard {
 

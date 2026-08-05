@@ -133,7 +133,7 @@ public class Config {
     // identical to pre-change. Arm axis: sata_mop_widget (false) vs sata_mop_activity (true).
     public static final boolean mopActivitySourceComponents = Config.getBoolean("ape.mopActivitySourceComponents", false);
     // mop-census-launcher: launcher firing CADENCE in selection steps — the launcher fires every
-    // this-many passes through its block (shouldFireLauncher on a dedicated per-step counter),
+    // this-many passes through its block (MopLauncherStage.shouldFire on a dedicated per-step counter),
     // decoupled from graphStableCounter. Default 50. A value <= 0 clamps to 50 at load.
     // The property name (ape.activityTriggerStagnationStep) is deliberately KEPT even though the
     // mechanism is no longer stagnation-gated: renaming it would require editing the rv-android

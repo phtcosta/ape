@@ -159,7 +159,7 @@ public final class DecisionPipeline {
                 case LLM_STAGNATION:
                     stages.add(new LlmStagnationStage(collaborators.llmEngine(),
                             collaborators::llmBreakerAllows,
-                            spec.exploration().integer("ape.graphStableRestartThreshold"),
+                            spec.exploration().graphStableRestartThreshold(),
                             collaborators::resolveSynthesizedTap));
                     break;
                 case LLM_RANDOM:

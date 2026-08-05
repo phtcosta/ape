@@ -89,6 +89,9 @@ public class StaticConfigReadGuardTest {
     private static final Pattern STATIC_IMPORT =
             Pattern.compile("import\\s+static\\s+com\\.android\\.commands\\.monkey\\.ape\\.utils"
                     + "\\.Config\\.(\\w+)\\s*;");
+    private static final Pattern WILDCARD_STATIC_IMPORT =
+            Pattern.compile("import\\s+static\\s+com\\.android\\.commands\\.monkey\\.ape\\.utils"
+                    + "\\.Config\\.\\*\\s*;");
     private static final Pattern QUALIFIED = Pattern.compile("\\bConfig\\.(\\w+)");
     private static final Pattern AMBIENT = Pattern.compile("RunContext\\s*\\.\\s*current\\s*\\(\\s*\\)");
 
@@ -110,6 +113,27 @@ public class StaticConfigReadGuardTest {
                 + "behavioural parameter of a decision SHALL arrive by injection at assembly "
                 + "(INV-DP-12). Both forms count: a qualified Config.<field> and a bare identifier "
                 + "behind an import static.", Collections.emptyList(), offences);
+    }
+
+    /**
+     * The one way a bare read could hide from {@link #STATIC_IMPORT}: a wildcard static import binds
+     * every {@code Config} field without naming one, so there would be no identifier for the sweep
+     * above to look for and every bare read behind it would pass through invisibly. No guarded file
+     * imports that way today, which is what makes the sweep's "either form" claim true rather than
+     * merely untested — so the absence is asserted instead of relied on.
+     */
+    @Test
+    public void noGuardedFileWildcardStaticImportsConfig() throws IOException {
+        List<String> offences = new ArrayList<>();
+        for (Path file : guardedFiles()) {
+            if (WILDCARD_STATIC_IMPORT.matcher(codeOf(file)).find()) {
+                offences.add(SRC.relativize(file).toString());
+            }
+        }
+        Collections.sort(offences);
+        assertEquals("a wildcard static import of Config binds every field without naming one, so "
+                + "the bare-identifier sweep has nothing to search for and INV-DP-12's second form "
+                + "stops being checked in that file", Collections.emptyList(), offences);
     }
 
     @Test

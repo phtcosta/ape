@@ -505,9 +505,11 @@ public final class OracleScaffold {
         //   ape.graphStableRestartThreshold=10 — the stagnation stage now evaluates the real
         //   midpoint predicate, and at the jar default of 100 the midpoint is 50 while every
         //   scenario's graphStableCounter is 0, 5, 6 or 7. At 10 the midpoint is 5, which is the
-        //   value the scenarios were written around. This does not touch the forced restart: that
-        //   reads the static Config field, which no plan writes, and it sits above this harness's
-        //   entry point in any case.
+        //   value the scenarios were written around. This does not touch the forced restart, and the
+        //   reason is the harness's boundary rather than where the threshold is read: onGraphStable
+        //   consults the same plan value, but it is reached only from checkStable() at the end of
+        //   updateStateInternal, and this harness drives agent.ladder() directly. No scenario ever
+        //   runs the restart check, so lowering the threshold cannot trigger one.
         //
         //   ape.llmPercentage=1.0 — the probabilistic stage now draws a real coin, and at the jar
         //   default of 0.02 a scripted random hook would be refused ~98% of the time. At 1.0 the

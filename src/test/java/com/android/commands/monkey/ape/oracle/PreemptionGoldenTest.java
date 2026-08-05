@@ -55,7 +55,7 @@ import static org.junit.Assert.assertTrue;
  * {@code EVENT_TRIGGER_ACTIVITY}. That combination is only reachable on a single step: the LLM
  * blocks must be consulted and decline, and only then does control reach {@code :522}, so the
  * cadence has to be met on a step that also routes. It cannot be split across two steps — a
- * launcher fire resets the counter to 0 and {@code shouldFireLauncher} is an exact equality
+ * launcher fire resets the counter to 0 and {@code MopLauncherStage.shouldFire} is an exact equality
  * ({@code :781}), so one scenario can fire the launcher exactly once. <b>One scenario file
  * therefore carries both requirements</b>, and no second preemption golden is needed: step 1 is
  * simultaneously the "decline falls through to the launcher" scenario and the "cadence resumes from

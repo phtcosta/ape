@@ -13,7 +13,7 @@ import static org.junit.Assert.assertNull;
  *
  * <h2>The two MOP mechanisms this golden pins</h2>
  * <ol>
- *   <li><b>The cadence launcher.</b> {@code shouldFireLauncher} is an exact equality against
+ *   <li><b>The cadence launcher.</b> {@code MopLauncherStage.shouldFire} is an exact equality against
  *       {@code Config.activityTriggerStagnationStep} (50), and the counter's increment is the
  *       block's first statement, so a run starting at 0 fires on its 50th pass. The scenario
  *       declares the counter seeded at 48 (design D2), which puts the fire on step 1 — where a
