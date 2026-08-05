@@ -190,18 +190,33 @@ Config"` on a body that reads the plan. That cost is the tool's, not this change
 - [x] 9.4 For genuine losses, restate the scenario in the delta. `"arm contrast is the launched set"`
       and `"High percentage (70%)"` are the two known ones — restated, plus the two `llm-routing`
       cases (17, 18) the earlier sweep had not reached
-- [ ] 9.5 `openspec archive rearch-03-decision-pipeline --yes` completes without aborting
+- [x] 9.5 `openspec archive rearch-03-decision-pipeline --yes` completes without aborting — **run
+      2026-08-05**: `+ 11, ~ 16, - 1`, seven capabilities updated, `decision-pipeline` created. The
+      five restated scenarios were confirmed present in the main specs afterwards, carrying this
+      change's bodies
 
-**9.5 is proven executable and deliberately not run** (2026-08-05). Against a sandbox copy of
-`openspec/` the command completes: `+ 11, ~ 16, - 1`, seven capabilities updated, `decision-pipeline`
-created. What it waits on is the archive *order*, because three changes modify the same requirement,
-`component-triggering :: Cadence-Based MOP Activity Launch`. Measured on the sandbox rather than
-argued: archiving this change costs **`rearch-07` nothing** (zero new unpaired scenarios — it may
-archive before or after, freely) and costs **`rearch-04` exactly three** — `Stage-stamped provenance
-equals the StageResult label`, `Budget stage early-return attributed` and `Launcher step attributed
-Component`, the three scenarios this change adds to `action-selection :: Per-action decision-source
-telemetry`, which `rearch-04` also modifies without carrying them. `rearch-04` must then carry them
-into its own block. Both changes already owe far more to the same guard independently of this one —
-48 unpaired scenarios in `rearch-04`, 27 in `rearch-07`, measured before this group's edits — so the
-group-9 sweep is work each of them still faces, not a debt this change creates.
+**The order it was run in was chosen on a measurement, not on convenience.** This change shares
+modified requirements with two open ones — four with `rearch-04` (`Per-action decision-source
+telemetry`, `Cadence-Based MOP Activity Launch`, `Action Selection Pipeline`, `Scoring Pipeline
+Assembly from Config`) and one with `rearch-07` (the cadence launcher) — and because a MODIFIED
+block *replaces* the requirement, whichever change archives second must carry the winner's
+scenarios. The order is therefore not free, and it is asymmetric:
+
+| Order | Marginal cost | Paid by |
+|---|---|---|
+| this change first | **+3** on `rearch-04`, **+0** on `rearch-07` | `rearch-04` |
+| `rearch-04` first | **+9** on this change | this change, reopened after closing |
+| `rearch-07` first | **+4** on this change | this change, reopened after closing |
+
+The three `rearch-04` owes are `Stage-stamped provenance equals the StageResult label`, `Budget stage
+early-return attributed` and `Launcher step attributed Component` — the scenarios this change adds to
+`action-selection :: Per-action decision-source telemetry`, recorded as an obligation in that
+change's own group 9.
+
+**Marginal, not gross, and the distinction decided this.** The gross difference between this
+change's blocks and `rearch-04`'s is 23 scenarios, and 3 with `rearch-07`. Twenty of the first and
+all three of the second were already owed to the *pre-archive* main spec — they sit inside the 48
+and 27 unpaired scenarios those changes carried independently of this one, measured before this
+group's edits. So this archive adds three items to a bill of 48 and nothing to a bill of 27: the
+group-9 sweep is work each of them already faced, not a debt this change created.
 

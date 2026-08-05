@@ -66,190 +66,128 @@ The two modes target different exploration bottlenecks:
 
 ---
 ## Requirements
-### Requirement: LlmRouter Lifecycle
-
-`LlmRouter` SHALL be constructed in `StatefulAgent`'s constructor when `Config.llmUrl` is non-null. The constructor SHALL create and wire all infrastructure components:
-- `SglangClient` with `Config.llmUrl`, `Config.llmModel`, `Config.llmTemperature`, `Config.llmTopP`, `Config.llmTopK`, `Config.llmMaxTokens` (default `1024`), `Config.llmTimeoutMs`
-- `LlmCircuitBreaker` with default thresholds (3 failures, 60s recovery)
-- `ScreenshotCapture` (no-arg constructor)
-- `ImageProcessor` (no-arg constructor)
-- `ToolCallParser` (no-arg constructor)
-- `CoordinateNormalizer` (static utility, no instantiation)
-- `ApePromptBuilder` (no-arg constructor)
-
-The `max_tokens` value SHALL be read once from `Config.llmMaxTokens` and shared by the request body and the `[APE-LLM-CONFIG]` manifest, so the manifest always reports the value actually sent.
-
-**Per-request tool schema:** the constructor SHALL NOT install a single run-wide tools schema on the client. Instead, `LlmRouter` SHALL build two schema constants once at construction — one with and one without the `type_text` tool — and SHALL pass the appropriate one to each `chat()` invocation: the schema **with** `type_text` when the current screen's action list contains at least one input-capable widget (the same `hasInputField` predicate the system message already uses — `llm-prompt` "System Message", Dynamic tool schema), the schema **without** it otherwise. This closes the measured incoherence where the wire schema always advertised `type_text` while the system message conditionally omitted it — the model was offered a tool the prompt said did not exist.
-
-All fields SHALL be final. The router instance SHALL be reused for the entire exploration session. A `totalCalls` field SHALL be initialized to 0 and incremented at the start of each `selectAction()` invocation (per INV-RTR-07).
-
-#### Scenario: LLM URL configured
-
-- **WHEN** `Config.llmUrl` equals `"http://10.0.2.2:30000/v1"`
-- **THEN** `StatefulAgent` SHALL create a `LlmRouter` instance
-- **AND** `_llmRouter` SHALL be non-null for the session
-
-#### Scenario: LLM URL not configured
-
-- **WHEN** `Config.llmUrl` is null
-- **THEN** `StatefulAgent` SHALL set `_llmRouter` to null
-- **AND** no LLM infrastructure objects SHALL be created
-
-#### Scenario: max_tokens sourced from Config at default
-
-- **WHEN** `ape.properties` does not contain `ape.llmMaxTokens`
-- **THEN** the request body SHALL carry `max_tokens=1024`
-- **AND** the `[APE-LLM-CONFIG]` line SHALL carry `max_tokens=1024`
-
-#### Scenario: max_tokens configurable without rebuild
-
-- **WHEN** `ape.properties` contains `ape.llmMaxTokens=2048`
-- **THEN** the request body and the `[APE-LLM-CONFIG]` line SHALL both carry `max_tokens=2048`
-
-#### Scenario: screen with an input field advertises type_text on the wire
-
-- **WHEN** `selectAction()` runs on a screen whose action list contains an EditText
-- **THEN** the request body's `tools` array SHALL contain `type_text`
-- **AND** the system message of the same request SHALL list `type_text` (prompt/wire coherence)
-
-#### Scenario: screen without input fields omits type_text on the wire
-
-- **WHEN** `selectAction()` runs on a screen with no input-capable widget
-- **THEN** the request body's `tools` array SHALL NOT contain `type_text`
-- **AND** the system message of the same request SHALL NOT list `type_text`
-
----
-
 ### Requirement: New-State LLM Mode
 
-When `Config.llmOnNewState` is `true` and the current state is being visited for the first time, the LLM router SHALL be consulted before the SATA strategy chain in `SataAgent.selectNewActionNonnull()`.
+When the plan enables the LLM new-state mode, the `LlmNewState` stage SHALL be assembled into the decision pipeline ahead of the stagnation, random, launcher, trigger, and SATA stages. Its `decide()` SHALL: (1) check the shared LLM precondition — action buffer empty AND the state has more than 2 actions — through the single `LlmGate` helper (the precondition exists in exactly one place; the pre-change triplication is deleted); (2) check the new-state trigger — `_isNewState` captured before `markVisited()` (unchanged capture semantics) — and the `LlmClient.allows()` breaker gate; (3) when all hold, invoke `LlmEngine.selectAction(..., "new-state", step)`; (4) on a non-null result, stamp `DecisionSource.LLM`/`PickChannel.LLM` (and resolve a synthesized `MODEL_LLM_TAP` against the state, unchanged) and return `Select`; otherwise return `Continue`.
 
-The `isNewState` flag is captured in `StatefulAgent.updateStateInternal()` as `boolean isNewState = (newState.getVisitedCount() == 0)` **before** the call to `getGraph().markVisited(newState, timestamp)`. This ensures accurate first-visit detection despite `markVisited()` incrementing the visit count.
-
-The check SHALL occur after `adjustActionsByGUITree()` has assigned priorities (including MOP boosts) and before `selectNewActionFromBuffer()`.
+The stage SHALL run after `adjustActionsByGUITree()` has assigned priorities (unchanged, INV-EXPL-11) and before any SATA rung.
 
 #### Scenario: First visit to new state with LLM enabled
-
-- **WHEN** `SataAgent.selectNewActionNonnull()` is called
-- **AND** `Config.llmOnNewState` is `true`
-- **AND** `_isNewState` is `true`
-- **AND** `_llmRouter` is non-null
-- **AND** `_llmRouter.shouldRouteNewState(true)` returns `true`
-- **THEN** `_llmRouter.selectAction(newGUITree, newState, actions, _mopData, recentActions)` SHALL be called
-- **AND** if the result is non-null, it SHALL be returned immediately (SATA chain skipped)
+- **WHEN** the pipeline reaches `LlmNewState` on a first-visit state with buffer empty and 3+ actions
+- **AND** the breaker allows and `LlmEngine.selectAction(...)` returns a non-null `ModelAction`
+- **THEN** the stage SHALL return `Select` with `decision_source=LLM` (later stages not evaluated)
 
 #### Scenario: First visit but circuit breaker open
-
-- **WHEN** `_isNewState` is `true`
-- **AND** the circuit breaker is OPEN
-- **THEN** `shouldRouteNewState(true)` SHALL return `false`
-- **AND** the SATA strategy chain SHALL execute normally
+- **WHEN** the state is new but `LlmClient.allows()` returns false
+- **THEN** the stage SHALL return `Continue` and no HTTP call SHALL be made
 
 #### Scenario: Revisit of known state
-
 - **WHEN** `_isNewState` is `false`
-- **THEN** the new-state LLM check SHALL be skipped regardless of other conditions
+- **THEN** the stage SHALL return `Continue` regardless of other conditions
 
 #### Scenario: LLM returns null on new state
+- **WHEN** `LlmEngine.selectAction(...)` returns `null`
+- **THEN** the stage SHALL return `Continue` and the remaining pipeline SHALL decide the step
 
-- **WHEN** `selectAction()` returns `null` (LLM failure or unparseable response)
-- **THEN** execution SHALL fall through to the SATA strategy chain (buffer → ABA → trivial → greedy)
-- **AND** a warning SHALL be logged: `[APE-RV] LLM new-state returned null, falling back to SATA`
+#### Scenario: precondition evaluated in one place
+- **WHEN** the three LLM stages evaluate their preconditions on a step
+- **THEN** all three SHALL consult the same `LlmGate` helper (buffer-empty ∧ actions > 2)
+- **AND** no stage SHALL carry its own copy of the precondition expression
 
 ---
 
 ### Requirement: Stagnation LLM Mode
 
-When `Config.llmOnStagnation` is `true` and the current stagnation episode has reached its midpoint, the LLM router SHALL be consulted exactly once per stagnation episode to attempt breaking out of stagnation.
+When the plan enables the LLM stagnation mode, the `LlmStagnation` stage SHALL be assembled after `LlmNewState` and before `LlmRandom`. The stage SHALL be consulted at most once per stagnation episode: the trigger is `graphStableCounter >= threshold / 2` AND the stage's per-episode fired flag is still armed (the pure predicate `stagnationMidpointReached`, owned by the stage). The fired flag SHALL be **owned by the stage** and SHALL be:
 
-The trigger condition is: `graphStableCounter >= Config.graphStableRestartThreshold / 2` AND the hook has not yet fired in the current stagnation episode. A per-episode fired flag SHALL be set when the hook fires and SHALL re-arm (clear) when `graphStableCounter` resets to 0 (a new edge was observed — the existing reset in `StatefulAgent.onVisitStateTransition`). This replaces the previous exact-equality check (`graphStableCounter == threshold / 2`), which — because the counter resets on every new edge — was a 1-step window per episode that virtually never fired: any step in which the counter jumped past or was reset before the exact midpoint silently lost the episode's only chance.
+- burned inside `decide()` whenever the trigger fires — whatever the LLM answers (a null result is a failed attempt, not an unused one; the restart at the full threshold follows if stagnation persists);
+- re-armed by the stage's `onStateTransition(edge)` hook on `NEW_ACTION`/`NEW_ACTION_TARGET` edges (a new edge ends the episode — the same event that resets `graphStableCounter`).
 
-The restart mechanism is unchanged: `StatefulAgent.onGraphStable()` still handles the restart at `counter > threshold`; the LLM hook does not modify it.
+`graphStableCounter` itself remains agent-owned shared exploration state (the forced-restart mechanism consumes it independently); on an accepted escape the stage SHALL reset it to 0 through the `StepContext`'s single declared write method. The restart mechanism is unchanged: `onGraphStable()` still restarts at `counter > threshold`.
 
 #### Scenario: LLM provides escape action at or past the stagnation midpoint
-
-- **WHEN** `graphStableCounter` reaches `graphStableRestartThreshold / 2` (or any greater value with the episode flag still armed)
-- **AND** `Config.llmOnStagnation` is `true`
-- **AND** `_llmRouter` is non-null and the circuit breaker allows
-- **THEN** `_llmRouter.selectAction(...)` SHALL be called and the episode's fired flag SHALL be set
-- **AND** if the result is non-null, the action SHALL be used and `graphStableCounter` SHALL be reset to 0
+- **WHEN** `graphStableCounter` reaches `threshold / 2` (or any greater value with the flag armed), the shared precondition holds, and the breaker allows
+- **THEN** the stage SHALL burn the flag and invoke `LlmEngine.selectAction(..., "stagnation", step)`
+- **AND** on a non-null result it SHALL reset `graphStableCounter` to 0 and return `Select` with `decision_source=LLM`
 
 #### Scenario: hook fires once per episode even when the LLM fails
-
-- **WHEN** the hook fires at the midpoint and the LLM returns null
-- **THEN** the counter continues incrementing and the hook SHALL NOT fire again in this episode (flag set)
-- **AND** if `graphStableCounter` eventually reaches `graphStableRestartThreshold`, `requestRestart()` SHALL be called (existing behavior)
+- **WHEN** the trigger fires and the LLM returns null
+- **THEN** the stage SHALL return `Continue` with the flag burned
+- **AND** the stage SHALL NOT fire again until a new edge re-arms it
+- **AND** if `graphStableCounter` eventually exceeds the full threshold, `requestRestart()` SHALL be called (existing behavior)
 
 #### Scenario: new edge re-arms the episode
-
-- **WHEN** the hook has fired, and a later step discovers a new edge (counter resets to 0)
-- **AND** the graph then stagnates again up to the midpoint
-- **THEN** the hook SHALL fire again (new episode)
+- **WHEN** the flag is burned and a later step records a `NEW_ACTION` edge
+- **THEN** the stage's `onStateTransition` SHALL re-arm the flag
+- **AND** a subsequent stagnation reaching the midpoint SHALL fire again (new episode)
 
 #### Scenario: midpoint skipped by a counter jump still fires
-
-- **WHEN** the counter passes from below the midpoint to above it without ever equaling `threshold / 2` at check time
-- **THEN** the hook SHALL still fire at the first check where `graphStableCounter >= threshold / 2` (the `>=` closes the 1-step window defect)
+- **WHEN** the counter passes from below the midpoint to above it without equaling `threshold / 2` at any check
+- **THEN** the stage SHALL still fire at the first check where `graphStableCounter >= threshold / 2`
 
 #### Scenario: Stagnation mode disabled
-
-- **WHEN** `Config.llmOnStagnation` is `false`
-- **THEN** the LLM SHALL NOT be consulted regardless of counter value
-- **AND** the existing restart behavior SHALL proceed unchanged
+- **WHEN** the plan does not enable the stagnation mode
+- **THEN** the `LlmStagnation` stage SHALL NOT exist in the pipeline
+- **AND** the restart behavior SHALL proceed unchanged
 
 ---
 
 ### Requirement: Action Selection Pipeline
 
-`LlmRouter.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ActionHistoryEntry> recentActions)` SHALL return `ModelAction` or `null`. Pipeline:
+`LlmEngine.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> recentActions, String mode, int step)` SHALL run the LLM decision pipeline over the decomposed units and return `ModelAction` or `null`. The step semantics are **unchanged** from the pre-decomposition `LlmRouter.selectAction`; only the owner of each step changes:
 
-1. `totalCalls++` — counts this attempt regardless of outcome (per INV-RTR-07).
-2. `ScreenshotCapture.capture(deviceWidth, deviceHeight)` → PNG bytes. If null → `breaker.recordFailure()`, log `[APE-RV] LLM screenshot capture failed, skipping LLM step`, emit `[APE-LLM-ERROR] step=<N> cause=screenshot activity=<current activity> detail=<stage>` (INV-RTR-20), return null. A persistent null-capture condition therefore opens the breaker and halts retries for the recovery window.
-4. `ImageProcessor.processScreenshot(pngBytes)` → base64 JPEG. If null → return null.
-5. `ApePromptBuilder.build(tree, state, actions, mopData, base64Image, recentActions)` → messages.
-6. `SglangClient.chat(messages, tools)` → `ChatResponse`, where `tools` is the per-request schema selected by `hasInputField(actions)` ("LlmRouter Lifecycle"). If IOException → `breaker.recordFailure()`, return null.
-7. `ToolCallParser.parse(response)` → `ParsedAction`. If null → `breaker.recordFailure()`, return null.
-8. `CoordinateNormalizer.normalize(parsedAction.x, parsedAction.y, deviceWidth, deviceHeight)` → pixel coords.
-9. `mapToModelAction(pixelX, pixelY, parsedAction.actionType, parsedAction.text, actions, state, deviceWidth, deviceHeight)` → matched widget `ModelAction`, synthesized `LlmTapAction`, or null.
-10. **Dead-pair ban check** (new): when step 9 returned a `matched` or `llm_tap` result, compute that result's ban key and consult the per-run dead-pair record ("Deterministic Dead-Pair Ban"). A dead key SHALL convert the outcome to `no_match` with `reason=dead_pair` and return null. The check runs here — after the mapping, before the return — so a banned decision is a *refused answer*, not a failed pipeline.
-11. `breaker.recordSuccess()` — including for a banned decision (INV-RTR-16: the pipeline succeeded; only its answer was refused).
-12. Outcome classification and return:
-    - A **matched widget** `ModelAction` → `result=matched`, return it.
-    - A synthesized `LlmTapAction` (type `MODEL_LLM_TAP`, off-tree case) → `result=llm_tap`, increment `llmTapCount`, return it.
-    - `null` → `result=no_match`, return null (SATA fallback). The `no_match` telemetry SHALL carry exactly one `reason` from the fixed set `degenerate` (parsed coordinate `(0,0)`), `boundary` (status/navigation band), or `dead_pair` (the mapped result resolved to a banned dead pair). The previous binary rule — `degenerate` when the coordinate is `(0,0)`, else `boundary` — is replaced, because it cannot express the third cause.
+**The argument list is the pre-decomposition one, and it stays that way for a reason worth stating.** `mopData` and `recentActions` are per-step, agent-owned values that step 4 below hands to `ApePromptBuilder.build(...)`, which cannot build a prompt without them. The engine is constructed once per run and owned by `RunContext` (see `LLM Unit Lifecycle and Ownership`), while the per-step view belongs to the stages — so for the engine to source them itself it would have to hold a `StepContext` or the agent, and design D2 exists to prevent exactly that. The calling stage passes them from `ctx.mopData()` and `ctx.actionHistory()`, unchanged.
 
-**type_text handling**: When `mapToModelAction` finds a matching input widget and `parsedAction.text` is non-null, `selectAction()` calls `match.getResolvedNode().setInputText(text)` before returning. The caller receives a ready-to-execute ModelAction. A `type_text` action that matches no input widget returns null (`no_match`) — it is NOT converted to an off-tree tap, because a raw coordinate has no node to receive the text.
+1. `LlmTelemetry` counts the attempt (`totalCalls++`, per INV-RTR-07).
+2. `ScreenshotStep` determines device dimensions and captures the screenshot. Null capture → breaker failure recorded via `LlmClient`, `screenshot_failed` counter + `[APE-LLM-ERROR] cause=screenshot` with activity and failing stage via `LlmTelemetry`, return null.
+3. `ScreenshotStep` resizes and base64-encodes. Null → `image` cause, return null.
+4. `ApePromptBuilder.build(...)` builds the messages; `LlmTelemetry` logs `[APE-LLM-PROMPT]`.
+5. `LlmClient.chat(messages, tools)` — the tools schema chosen by the same `hasInputField` predicate the prompt used (INV-LLM-11). Null → breaker failure, cause read once from the client's error seam (INV-LLM-08), cause counters + `[APE-LLM-ERROR]` via `LlmTelemetry`, return null.
+6. `LlmTelemetry` emits the once-per-run `[APE-LLM-CONFIG-ACK]` on the first successful response (INV-RTR-12) and logs `[APE-LLM-RESPONSE]`.
+7. `ToolCallParser.parse(response)` — including the raw-arguments repair pipeline for native tool-call malformations (`SglangClient.ToolCall.rawArguments` → Level 1 → shared `parseJsonString`), surfacing through the existing `repair=` field (INV-LLM-10, INV-RTR-14). Null → `parse` cause (client seam NOT consulted), return null.
+8. `CoordinateMapper` normalizes coordinates, applies the boundary bands, maps to a `ModelAction` (containment → snap tolerance → off-tree `LlmTapAction` synthesis → `fixTextEdit` conversion → back/long-click preference), and applies the dead-pair ban check (a banned answer is a refused answer: same caller-visible path as `no_match`, breaker still records success — INV-RTR-15/16).
+9. `LlmClient` records breaker success; `LlmTelemetry` accounts tokens/latency, classifies the outcome (`matched`/`llm_tap`/`no_match` + `reason`), computes/receives the nearest-widget fields, and emits `[APE-LLM-TEL]` with the same field set as before.
+10. The engine returns the mapped action or null. It SHALL never throw (INV-RTR-02): an unexpected exception is the `internal` cause. Large temporaries SHALL be nulled in a `finally` block (INV-RTR-06).
 
-**Memory cleanup**: Steps 3-9 SHALL be wrapped in a `try-finally` block that nulls out `pngBytes`, `base64Image`, and `messages`.
+**type_text handling**: unchanged — when the match is an input-capable widget and text is present, `setInputText(text)` is applied before returning.
 
-**Error behavior**: Any step failure → log warning, record circuit breaker failure for network-related failures AND for a null screenshot, return null (SATA fallback). A dead-pair ban is NOT a step failure.
+**Known defect preserved, deliberately.** "Unchanged" here includes a defect measured at 28 of 1,233 LLM responses (2.3%): a `type_text` answer can execute a `MODEL_LONG_CLICK`. The containment pass restricts the candidate's `ActionType` only when the tool is `"click"` (`LlmRouter.java:689`), and `fixTextEdit` returns the match untouched for any tool that is neither `click` nor `long_click` (`:807`), so the long-click preference can win on a `type_text` answer. This stage is behavior-neutral by contract (parity-gated, R8): `CoordinateMapper` SHALL reproduce this path exactly, defect included. The fix is **out of scope here** and belongs to a separate change against `CoordinateMapper`, whose slicing is precisely what makes it testable in a JVM unit. Recording it is mandatory: a silently inherited defect in a newly extracted unit is indistinguishable from a slicing regression when the parity oracle later disagrees.
+
+The dead-pair outcome feedback SHALL continue to flow from the `[APE-OUTCOME]` join-buffer site in `StatefulAgent` into the ban record — now `CoordinateMapper.recordLlmOutcome(...)` reached through `RunContext`'s LLM units — with unchanged key material and strike semantics.
 
 #### Scenario: Full pipeline success
+- **WHEN** `selectAction()` is called with a valid GUITree and the server is responsive, and the LLM returns `click` at coordinates mapping into a widget's bounds
+- **THEN** that `ModelAction` SHALL be returned, the telemetry line SHALL carry `result=matched`, and the breaker SHALL record success
 
-- **WHEN** `selectAction()` is called with a valid GUITree and SGLang is responsive
-- **AND** the LLM returns `click` at normalized coordinates `(450, 300)`
-- **AND** the nearest ModelAction's GUITreeNode bounds contain the pixel coordinates
-- **THEN** that ModelAction SHALL be returned
-- **AND** the telemetry line SHALL carry `result=matched`
-- **AND** `breaker.recordSuccess()` SHALL be called
+#### Scenario: Screenshot capture fails trips the breaker
+- **WHEN** `ScreenshotStep` returns null (secure window)
+- **THEN** the engine SHALL return null with no HTTP request made
+- **AND** the breaker SHALL record a failure and `screenshot_failed` SHALL be counted with its `[APE-LLM-ERROR] cause=screenshot` line
 
-#### Scenario: Off-tree element becomes a coordinate tap
-
-- **WHEN** the LLM pipeline succeeds with a `click` at in-bounds pixel `(600, 900)` on a 1080x1794 device
-- **AND** `mapToModelAction()` finds no widget containing the point and none within Euclidean tolerance
-- **THEN** `selectAction()` SHALL return an `LlmTapAction` of type `MODEL_LLM_TAP` carrying `(600, 900)`
+#### Scenario: Repaired native tool call keeps the repair telemetry
+- **WHEN** the model returns a malformed native `tool_calls` arguments string that `ToolCallParser` recovers via the raw-arguments repair pipeline and the coordinate resolves to a widget
+- **THEN** the `[APE-LLM-TEL]` line SHALL carry `repair=<form>` and the decision SHALL count under both `matched` and `repaired` (INV-LLM-10, INV-RTR-14 unchanged)
 
 #### Scenario: banned result is refused at step 10, not failed
+- **WHEN** the mapped action's ban key has reached the strike threshold
+- **THEN** the engine SHALL return null with `result=no_match reason=dead_pair` telemetry
+- **AND** `LlmClient` SHALL still record success (a refused answer is not a pipeline failure)
+- **AND** the check SHALL run inside step 8 above — after the mapping, before the return — so a banned decision is a refused answer rather than a failed pipeline
 
-- **WHEN** step 9 returns a `matched` result whose ban key is already dead in this run
-- **THEN** `selectAction()` SHALL return null with `result=no_match reason=dead_pair`
-- **AND** `breaker.recordSuccess()` SHALL still be called
-- **AND** `breaker.recordFailure()` SHALL NOT be called
+#### Scenario: Off-tree element becomes a coordinate tap
+- **WHEN** the pipeline succeeds with a `click` at in-bounds pixel `(600, 900)` on a 1080x1794 device
+- **AND** `CoordinateMapper` finds no widget containing the point and none within the snap tolerance
+- **THEN** `selectAction()` SHALL return an `LlmTapAction` of type `MODEL_LLM_TAP` carrying `(600, 900)`
+- **AND** the outcome SHALL be classified `llm_tap`, not `no_match` (the synthesis is a decision, and `Coordinate-to-ModelAction Mapping` owns the unit-level rule this end-to-end path exercises)
 
 #### Scenario: no_match reason is always one of three
-
 - **WHEN** any decision in a run ends as `result=no_match`
 - **THEN** its `[APE-LLM-TEL]` line SHALL carry exactly one `reason` from `degenerate`, `boundary`, `dead_pair`
+- **AND** the closure SHALL hold across the decomposition: `CoordinateMapper` produces the first two and the ban check the third, and `LlmTelemetry` SHALL have no fourth reason to emit
+
+#### Scenario: Engine never throws
+- **WHEN** any unexpected exception occurs inside the engine
+- **THEN** the engine SHALL catch it, count `internal`, emit `[APE-LLM-ERROR] cause=internal`, and return null
 
 ---
 
@@ -549,41 +487,35 @@ The `decisions` denominator for the `[APE-RV] LLM Decision ratio` line SHALL be 
 
 ### Requirement: Probabilistic LLM Routing
 
-`LlmRouter.shouldRouteRandom()` SHALL return `true` when `random.nextDouble() < Config.llmPercentage`, where `random` is the Monkey-seeded `java.util.Random` instance injected via the LlmRouter constructor. This ensures reproducible coin flips when the `--seed` CLI flag is set. The method is also subject to the same guard as existing routing predicates: circuit breaker must allow attempts.
+When the plan enables probabilistic routing (`llm.percentage > 0`), the `LlmRandom` stage SHALL be assembled after `LlmStagnation` and before `MopLauncher`. Its trigger SHALL be `random.nextDouble() < percentage`, evaluated only after the shared `LlmGate` precondition holds, followed by the `LlmClient.allows()` breaker gate — the same conjunct order and short-circuiting as before the restructuring, so the seeded draw sequence is unchanged (`decision-pipeline` INV-DP-10). When `llm.percentage` is `0.0` the stage SHALL NOT exist (no draw is ever consumed — identical to the pre-change short-circuit).
 
-When `Config.llmPercentage` is `0.0`, the method SHALL always return `false` (short-circuit, no random call).
+**Which stream the coin comes from, stated because the run has two.** The draw SHALL come from the **agent's** generator — `ape.getRandom()`, Monkey's `mRandom`, which is what the pre-decomposition router was constructed with — reached through the stage's collaborator. It SHALL NOT come from `RunContext.rng()`. The two are seeded from one number but they are **different `Random` instances**: `RunContext`'s constructor seeds `RandomHelper` from the same value Monkey's own generator was built from, and `SataAgent` draws from both. Moving the coin from one to the other would therefore shift every later `RandomHelper` draw in an LLM arm — a real change in what a device does, and one the parity goldens cannot see, because the oracle's scripted LLM replaces the coin outright (INV-ORA-03). Behavior-neutrality here is a claim about the draw *sequence*, not only about the seed.
 
-`SataAgent.selectNewActionNonnull()` SHALL check `shouldRouteRandom()` after the stagnation hook and before SATA algorithmic strategies. The check SHALL use the same guard conditions as existing hooks: `actionBufferSize() == 0` AND `newState.getActions().size() > 2`.
+The redundant `percentage > 0` conjunct SHALL be dropped when the trigger moves into the stage: it is the stage's own assembly condition (INV-DP-03), so inside the stage it is necessarily true, and it was already the predicate's first conjunct — a zero rate drew no coin before and assembles no stage now, which is what makes the deletion draw-neutral.
 
-When the random hook fires and LLM returns a non-null action, the telemetry mode label SHALL be `"random"`.
+When the stage fires and the engine returns a non-null action, the telemetry mode label SHALL be `"random"`.
 
 #### Scenario: Default 2% routing
-
-- **WHEN** `Config.llmPercentage` is `0.02` (default)
-- **AND** neither new-state nor stagnation triggered on this step
-- **AND** `random.nextDouble()` returns a value < 0.02
-- **AND** the circuit breaker allows attempts
-- **AND** circuit breaker allows
-- **THEN** `shouldRouteRandom()` SHALL return `true`
-- **AND** the LLM call SHALL use mode `"random"` for telemetry
+- **WHEN** `llm.percentage` is `0.02`, no earlier stage selected this step, the precondition holds, `random.nextDouble()` returns a value < 0.02, and the breaker allows
+- **THEN** the stage SHALL invoke the engine with mode `"random"`
 
 #### Scenario: Disabled
-
-- **WHEN** `Config.llmPercentage` is `0.0`
-- **THEN** `shouldRouteRandom()` SHALL always return `false`
-
-#### Scenario: High percentage (70%)
-
-- **WHEN** `Config.llmPercentage` is `0.7`
-- **AND** neither new-state nor stagnation triggered
-- **THEN** `shouldRouteRandom()` SHALL return `true` approximately 70% of the time
+- **WHEN** `llm.percentage` is `0.0`
+- **THEN** the `LlmRandom` stage SHALL NOT be assembled and no coin SHALL be drawn on any step
 
 #### Scenario: Priority order preserved
+- **WHEN** `_isNewState` is `true` and the new-state mode is enabled, with `llm.percentage = 0.7`
+- **THEN** the `LlmNewState` stage SHALL decide the step (hard preemption)
+- **AND** at most one LLM call SHALL be made for that step
 
-- **WHEN** `isNewState` is `true` and `Config.llmOnNewState` is `true`
-- **AND** `Config.llmPercentage` is `0.7`
-- **THEN** the new-state hook SHALL fire (not the random hook)
-- **AND** only one LLM call SHALL be made for that step
+#### Scenario: draw order preserved under the same seed
+- **WHEN** two builds (pre-pipeline and pipeline) run the same preset, seed, and fixtures
+- **THEN** the sequence of `nextDouble()` draws consumed by probabilistic routing SHALL be identical
+
+#### Scenario: High percentage (70%)
+- **WHEN** `llm.percentage` is `0.7`, neither the new-state nor the stagnation stage decided the step, and the precondition holds
+- **THEN** the `LlmRandom` stage's trigger SHALL hold on approximately 70 % of the steps that reach it
+- **AND** the rate SHALL be the plan's value applied to a single draw, never a per-stage rescaling: the stage is assembled with `percentage` and evaluates `nextDouble() < percentage` once per reached step
 
 ---
 
@@ -632,7 +564,7 @@ This capability still has NO consumer of `llmPercentageNoSubstrate`. `LlmRouter`
 
 ### Requirement: Deterministic Dead-Pair Ban
 
-`LlmRouter` SHALL maintain a per-run, in-memory record of **dead pairs** — LLM decisions that already executed in this run without producing a new state — and SHALL refuse to return a result that resolves to a dead pair. Measured motivation: 25.6% of LLM calls (10,081/39,341) re-emit an already-executed (state, coordinate) pair, and those repeats produced **0 new states in 10,081 attempts** (Wilson CI [0.00–0.04]); the anti-repetition prompt instruction exists and is ignored. Banning by subtraction (removing the option) is the externally validated mechanism (Guardian: 36% repetition persists under instruction); the detection is deterministic in the harness — the model is never asked to self-reflect.
+`CoordinateMapper` SHALL maintain a per-run, in-memory record of **dead pairs** — LLM decisions that already executed in this run without producing a new state — and SHALL refuse to return a result that resolves to a dead pair. Measured motivation: 25.6% of LLM calls (10,081/39,341) re-emit an already-executed (state, coordinate) pair, and those repeats produced **0 new states in 10,081 attempts** (Wilson CI [0.00–0.04]); the anti-repetition prompt instruction exists and is ignored. Banning by subtraction (removing the option) is the externally validated mechanism (Guardian: 36% repetition persists under instruction); the detection is deterministic in the harness — the model is never asked to self-reflect.
 
 **Ban keys** (the anchor is always the stable pair, NEVER a list index):
 - an `llm_tap` result is keyed by `(state.getStateKey(), pixelX, pixelY)` — exact emitted-coordinate equality;
@@ -670,9 +602,9 @@ Every share below is computed against a denominator of **6,500 LLM decisions** �
 
 **Scope limit (stated because it bounds what this mechanism can be credited with):** the ban check runs *after* `mapToModelAction` returns — the screenshot, the HTTP call and the parse have already completed. The ban changes which action executes; it does NOT reduce the LLM arm's per-step latency cost. In the calibration corpus that cost is 35% of a 300 s run's budget, and it is the dominant reason the LLM arm executes 0.622× the steps and discovers 0.729× the distinct states of the algorithmic arm on the same wall clock. This mechanism raises yield per decision; it does not address throughput, and it is not expected to close that gap on its own.
 
-**Outcome feedback:** `StatefulAgent` SHALL report the outcome of each executed LLM-originated decision to the router at the point where `new_state` is computed for the `[APE-OUTCOME]` line, using the same single-shot buffered-decision discipline that guards `[APE-OUTCOME]` emission. Only LLM-originated decisions feed the ban record; SATA-selected actions are never banned.
+**Outcome feedback:** `StatefulAgent` SHALL report the outcome of each executed LLM-originated decision to `CoordinateMapper` — reached through `RunContext`'s LLM units, via `recordLlmOutcome(...)` — at the point where `new_state` is computed for the `[APE-OUTCOME]` line, using the same single-shot buffered-decision discipline that guards `[APE-OUTCOME]` emission. The key material and strike semantics are unchanged by the decomposition; only the owner of the record moves. Only LLM-originated decisions feed the ban record; SATA-selected actions are never banned.
 
-**Ban check site and behavior:** in `selectAction()`, after `mapToModelAction` returns a `matched` or `llm_tap` result and before that result is returned, the router SHALL compute the result's ban key; when the key is dead, `selectAction()` SHALL return null — the SATA fallback, the same caller-visible path as `no_match`. The banned decision SHALL emit `[APE-LLM-TEL] result=no_match reason=dead_pair` and increment both `noMatchCount` and a `dead_pair` overlay counter reported on the summary line. The ban SHALL NOT call `breaker.recordFailure()` — the LLM pipeline succeeded; only its answer was refused — so a ban streak can never open the circuit breaker.
+**Ban check site and behavior:** the check lives in `CoordinateMapper`, at the end of its mapping step inside `LlmEngine.selectAction()` (step 8 of the Action Selection Pipeline): once a `matched` or `llm_tap` result is mapped and before it is handed back, `CoordinateMapper` SHALL compute the result's ban key; when the key is dead, the engine SHALL return null — the declared fallback, the same caller-visible path as `no_match`, decided by the remainder of the assembled pipeline (`decision-pipeline` INV-DP-11). `LlmTelemetry` SHALL emit `[APE-LLM-TEL] result=no_match reason=dead_pair` for the banned decision and increment both `noMatchCount` and a `dead_pair` overlay counter reported on the summary line. The ban SHALL NOT record a breaker failure through `LlmClient` — the LLM pipeline succeeded; only its answer was refused — so a ban streak can never open the circuit breaker.
 
 **Memory scope:** the ban record is per-run and in-memory only; no persistence, no cross-run state.
 
@@ -681,10 +613,10 @@ Every share below is computed against a denominator of **6,500 LLM decisions** �
 #### Scenario: repeated dead llm_tap is banned
 
 - **WHEN** an `llm_tap` at `(500, 499)` on state S1 executed earlier in the run and its recorded outcome had `new_state=false`
-- **AND** a later `selectAction()` on state S1 resolves to an `llm_tap` at the same `(500, 499)`
-- **THEN** `selectAction()` SHALL return null (SATA fallback)
+- **AND** a later `LlmEngine.selectAction()` on state S1 resolves to an `llm_tap` at the same `(500, 499)`
+- **THEN** the engine SHALL return null and the remainder of the pipeline SHALL decide the step
 - **AND** the `[APE-LLM-TEL]` line SHALL carry `result=no_match reason=dead_pair`
-- **AND** `breaker.recordFailure()` SHALL NOT be called for this decision
+- **AND** no breaker failure SHALL be recorded through `LlmClient` for this decision
 
 #### Scenario: pair survives four dead executions and dies on the fifth
 
@@ -734,4 +666,54 @@ Every share below is computed against a denominator of **6,500 LLM decisions** �
 
 - **WHEN** a new run starts on the same APK
 - **THEN** the ban record SHALL be empty
+
+### Requirement: LLM Unit Lifecycle and Ownership
+
+When the plan carries the LLM feature, `RunContext` SHALL construct and own the LLM units exactly once at bootstrap, wired from the plan's `LlmParams` (never from static `Config`):
+
+- `LlmClient` — transport + circuit breaker as one unit (`llm-infrastructure` capability): base URL, model, `temperature`, `top_p`, `top_k`, `max_tokens` (default `1024`), `timeout_ms`.
+- `ScreenshotStep` — `ScreenshotCapture` + `ImageProcessor` + device-dimension determination.
+- `ApePromptBuilder` — unchanged, variant from `LlmParams`.
+- `ToolCallParser` — unchanged.
+- `CoordinateMapper` — coordinate normalization, boundary bands (`llmBoundaryTopPct`/`llmBoundaryBottomPct`), snap tolerance floor (`llmSnapTolerancePx`), back/long-click preference, `fixTextEdit`, and the dead-pair ban record.
+- `LlmTelemetry` — all LLM counters, latches, and `[APE-LLM-*]` line emission; prints the summary at teardown.
+- `LlmEngine` — the thin orchestrator of the Action Selection Pipeline over the units above.
+
+The `max_tokens` value SHALL be read once from `LlmParams` and shared by the request body and the `[APE-LLM-CONFIG]` manifest, so the manifest always reports the value actually sent. The manifest line SHALL be emitted once at `LlmClient` construction, with the same fields as before the restructuring.
+
+**Per-request tool schema:** the two schema constants (with and without `type_text`) SHALL be built once at construction and the appropriate one passed to each `chat()` invocation by the same `hasInputField` predicate the system message uses (prompt/wire coherence, INV-LLM-11) — unchanged behavior, now owned by `LlmClient`/`LlmEngine`.
+
+When the plan does NOT carry the LLM feature, none of these units SHALL be constructed and no LLM stage SHALL exist in the decision pipeline (feature absent = stage absent, `decision-pipeline` INV-DP-03; replaces the null `_llmRouter` convention of INV-RTR-01).
+
+All unit references SHALL be final and reused for the entire run; all unit state (counters, latches, ban record, breaker state) is per-run and dies with the process.
+
+#### Scenario: LLM feature in the plan constructs the units once
+- **WHEN** the resolved plan carries the LLM feature with `url=http://10.0.2.2:30000/v1`
+- **THEN** `RunContext` SHALL construct `LlmClient`, `ScreenshotStep`, `ApePromptBuilder`, `ToolCallParser`, `CoordinateMapper`, `LlmTelemetry`, and `LlmEngine` exactly once
+- **AND** one `[APE-LLM-CONFIG]` manifest line SHALL be emitted with the effective values
+
+#### Scenario: LLM feature absent constructs nothing
+- **WHEN** the resolved plan does not carry the LLM feature
+- **THEN** no LLM unit SHALL be constructed and no LLM stage SHALL be assembled
+- **AND** zero LLM-related trace lines SHALL be emitted for the run
+
+#### Scenario: units read the plan, not Config
+- **WHEN** any LLM unit needs a sampling, timeout, boundary, or tolerance parameter during the run
+- **THEN** it SHALL read the value injected from `LlmParams` at construction
+- **AND** no LLM unit SHALL read static `Config` after bootstrap
+
+---
+
+### Requirement: Declared LLM Fallback
+
+The LLM fallback SHALL be declared by the plan (the configured base: `mop` or `aperv`) and realized structurally by the decision pipeline: an LLM stage returns `Continue` on every decline, failure, refused answer, or breaker denial, and the remainder of the assembled pipeline decides the step (`decision-pipeline` INV-DP-11). There SHALL be no in-step retry, no substitute selection inside an LLM stage, and no exception path. The `decision_source` of a fallback-decided step SHALL be the deciding stage's source, never `LLM`.
+
+#### Scenario: timeout falls back to the declared base
+- **WHEN** an `llm_mop` run's LLM call times out at a step where the launcher is at its firing point with an eligible candidate
+- **THEN** the step SHALL be decided by the `MopLauncher` stage with `decision_source=Component`
+
+#### Scenario: decline on an aperv-based LLM arm falls to SATA
+- **WHEN** an `llm` (aperv-base) run's LLM answer is refused (dead pair) on a step
+- **THEN** the step SHALL be decided by the `SataChain` stage
+- **AND** the refused answer SHALL still be telemetered as `result=no_match reason=dead_pair`
 

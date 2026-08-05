@@ -160,3 +160,49 @@ This group gates the archive for the same reason group 10 does: `openspec archiv
 - [x] 11.3 `ui-coverage` delta (**new capability in this change's set**) — `## Invariants` re-anchoring INV-COV-10 onto the first step that produces output (`actionCounters`), with `flushPendingStep` named as outside the boundary; MODIFIED `Coverage Dump Emitted First Among Teardown Writers`, restated by anchored extraction over the main-spec body (chain narrative, the measured-justification paragraph, the scenario title and its `THEN`, and the cut-during-serialization scenario). The 42.3 % measurement is kept as the record of why the requirement exists
 - [x] 11.4 Fix the two residues inside this change's own deltas: `form-completion`'s scenario precondition naming `stepTelemetryEnabled`, and `model`'s two references to `parseRect` as preserved. Both are deltas written against a state the same change removes — the third and fourth instance of a class group 10 found twice
 - [x] 11.5 Audit re-run and `openspec validate` green: **13 → 5**, and all five survivors are correct — each names a deleted mechanism precisely in order to assert it is gone (`exploration`'s two "no legacy file SHALL be written" clauses, `action-selection`'s and `scoring-pipeline`'s "the removed `ape.stepTelemetryEnabled` key aborts plan validation as unknown", and `ui-coverage`'s restated scenario naming both retired boundaries as deleted). **Two properties of the audit are what made it converge, and both are worth carrying forward.** First, it tracks *provenance*, not text: a requirement is dispositioned when this change's delta supplies its effective body or drops it, so what stays flaggable inside a restated delta is a residue — which is how the `form-completion` scenario in 11.4 was caught, on the third pass over a file two earlier passes had already corrected. Second, a delta's `## Invariants` section is kept as a note *beside* the main block rather than replacing it, because that is what archiving does with it; an earlier rebuild that replaced the block reported these invariants as clean and was wrong, which is precisely how INV-MODEL-15 and INV-COV-10 stayed invisible until now
+
+## 12. Scenario pairing for the archive (obligation inherited 2026-08-05)
+
+`rearch-03-decision-pipeline` archived on 2026-08-05, so the main specs this change's deltas replace
+are now **its** text, not the text they were drafted against. Group 10 already anticipated the
+requirement bodies (task 10.3 restated `Action Selection Pipeline` over `rearch-03`'s version); what
+it did not cover is the *scenario set*, which `openspec archive` checks separately and by name.
+
+**The three this change directly owes.** `rearch-03` added them to `action-selection :: Per-action
+decision-source telemetry`, which this change also modifies, so its block must now carry them or the
+archive drops them: `Stage-stamped provenance equals the StageResult label`, `Budget stage
+early-return attributed`, `Launcher step attributed Component`. They are the marginal cost of that
+archive, measured before and after it; nothing else in this change's set moved.
+
+**The rest was already owed, and is larger.** A full set-diff against the current main specs puts
+this change's unpaired scenarios at **51** across 11 requirements — 48 of which predate the
+`rearch-03` archive entirely. The concentration is worth seeing before starting: `LLM Telemetry
+Logging` (11 of 11 unpaired), `Per-action decision-source telemetry` (16 of 17), `Output Persistence
+on Termination` (6 of 8), `Per-Step Decision Outcome Attribution` (4 of 6). A requirement whose
+`kept` count is 0 — `LLM Telemetry Logging`, `Server Model Acknowledgement`, `StatefulAgent — LLM
+Telemetry at tearDown` — is one whose scenarios were renamed wholesale, which is expected here: this
+change renames the *renderings* those scenarios are named after.
+
+**What the mechanism permits, established by `rearch-03` group 9 rather than by guesswork.** The
+matcher is keyed on the scenario name inside the MODIFIED block, so a renamed scenario is
+indistinguishable from a deleted one, and both apparent escapes are closed: `REMOVED` + `ADDED` of
+one requirement is rejected outright, and `RENAMED` only rewrites a requirement's header line before
+running the same scenario check. A renamed scenario therefore keeps the main spec's header and
+carries this change's vocabulary in its body. `--no-validate` is not the answer: the guard produced
+two real findings in `rearch-03`, and here it is aimed at a change whose whole subject is which
+lines a run emits.
+
+- [ ] 12.1 Carry `rearch-03`'s three scenarios into this change's `action-selection` block, restated
+      in this change's vocabulary (they describe decision-source attribution, which the `StepRecord`
+      now carries in `dec` rather than on an `[APE-STEP]` line)
+- [ ] 12.2 Set-diff every MODIFIED block against the current main spec and classify each unpaired
+      scenario pairwise — rename / deliberate replacement / genuine loss — as `rearch-03` group 9
+      did. The classification is the deliverable: a count is not one
+- [ ] 12.3 Restate renames under the main spec's header, replace bodies where this change
+      contradicts them (stating the contradiction in the delta's prose), and restate genuine losses.
+      A scenario asserting a rendering this change deletes is a **replacement**, not a loss — but say
+      so in the prose, since the reader's question will be where the assertion went
+- [ ] 12.4 `openspec archive rearch-04-step-ndjson-telemetry --yes` completes without aborting.
+      Runnable against a sandbox copy of `openspec/` first (`cp -r openspec <scratch>/` and archive
+      there) — the abort is per-capability and stops at the first failure, so the sandbox is how the
+      whole list is seen at once rather than one capability per attempt
