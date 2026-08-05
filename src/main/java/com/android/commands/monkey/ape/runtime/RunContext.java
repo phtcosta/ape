@@ -136,7 +136,11 @@ public final class RunContext {
         // Built before the LLM units because they record through it, and handed to them rather
         // than looked up: this constructor has not yet returned, so `current` is still null and a
         // unit that reached for it here would find nothing.
-        this.sink = new NdjsonSink(System.out);
+        // The telemetry scope is absent exactly when the plan does not carry STEP_TELEMETRY, and a
+        // plan without it still gets the heartbeat: the key's neutral value is its default, and
+        // telemetry is an instrument every arm carries alike.
+        this.sink = new NdjsonSink(System.out,
+                spec.telemetry() == null || spec.telemetry().bool("ape.telemetryHeartbeat"));
 
         if (spec.has(Feature.LLM)) {
             RunSpec.LlmParams llm = spec.llm();

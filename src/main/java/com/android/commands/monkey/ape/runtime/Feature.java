@@ -160,6 +160,11 @@ public enum Feature {
         // is therefore its default — a plan may state it either way whether or not telemetry is on.
         STEP_TELEMETRY.own("ape.llmPromptDump", "true");
 
+        // The heartbeat is one logcat line per step, read by nothing in this process. Its neutral
+        // value is its default for the same reason as the dumps: switching it off changes what an
+        // analysis can join on afterwards and nothing a run decides.
+        STEP_TELEMETRY.own("ape.telemetryHeartbeat", "true");
+
         FUZZING.own("ape.fuzzingRate", "0.02");
         FUZZING.own("ape.fuzzingActivityVisitThreshold", "10");
 

@@ -220,6 +220,7 @@ public final class KeyOwnership {
         feature(Feature.FORM_COMPLETION, "ape.formCompletionEnabled", ValueType.BOOLEAN, "true");
         feature(Feature.STEP_TELEMETRY, "ape.stepTelemetryEnabled", ValueType.BOOLEAN, "true");
         feature(Feature.STEP_TELEMETRY, "ape.llmPromptDump", ValueType.BOOLEAN, "true");
+        feature(Feature.STEP_TELEMETRY, "ape.telemetryHeartbeat", ValueType.BOOLEAN, "true");
         feature(Feature.LEAST_VISITED_TIEBREAK, "ape.leastVisitedPriorityTiebreak", ValueType.BOOLEAN, "true");
         feature(Feature.TREE_ENHANCEMENTS, "ape.treeEnhancementsEnabled", ValueType.BOOLEAN, "true");
 

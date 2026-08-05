@@ -20,6 +20,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import android.util.Log;
+
 import com.android.commands.monkey.ape.runtime.Json;
 import com.android.commands.monkey.ape.utils.Logger;
 
@@ -55,7 +57,44 @@ import com.android.commands.monkey.ape.utils.Logger;
  */
 public final class NdjsonSink implements EventSink {
 
+    /**
+     * The logcat tag of the heartbeat, and a cross-repository constant rather than a local choice.
+     *
+     * <p>rv-platform does not dump the ring buffer after a run; it streams
+     * {@code adb logcat -v <fmt> -s RVSEC:V RVSEC-COV:V …} for the run's duration, a strict tag
+     * allowlist. A heartbeat under any other tag is dropped at the device and never reaches the file
+     * the analysis join reads — inert while looking healthy. The counterpart repository therefore
+     * declares the same literal once, as {@code TAG_APERV_HEARTBEAT = "ApeRvHb"} in
+     * {@code rv-android/modules/rv-platform/.../logcat} ({@code LogcatManager.default_tags}, rvsec
+     * commit {@code eb058ca4}), and {@code clock_logcat_join.py} matches the line against it.
+     * <b>The two literals have to be compared by a human</b>, because a mismatch fails silently on
+     * both sides: the device drops the lines, the capture file looks ordinary, and the join quietly
+     * falls back to the clock reconstruction the heartbeat exists to retire (INV-SNK-14).
+     */
+    public static final String HEARTBEAT_TAG = "ApeRvHb";
+
     private final PrintStream out;
+
+    /**
+     * Whether each step writes its logcat heartbeat ({@code ape.telemetryHeartbeat}, default on).
+     *
+     * <p>The heartbeat exists so that a violation recorded by the instrumented APK and the step that
+     * caused it sit in one file on one clock, which is what lets the analysis join them without
+     * reconstructing the device's UTC offset. It is write-only in the strongest sense: the jar never
+     * reads logcat under any configuration (INV-SNK-10).
+     */
+    private final boolean heartbeat;
+
+    /**
+     * Set when a heartbeat write fails, which stops the heartbeat and nothing else.
+     *
+     * <p>Deliberately not the sink's own latch. A logcat write failing is a device-side condition
+     * with no bearing on the trace, and the trace is the primary artifact — losing it because
+     * logcat hiccuped would trade the record for the convenience built on top of it. The failure is
+     * reported once rather than per step, because a silently absent heartbeat is exactly the mode
+     * INV-SNK-14 exists to prevent.
+     */
+    private boolean heartbeatFailed;
 
     /** The record under construction, reused across the run; the accumulator is {@link #pending}. */
     private final Json.Buf recordBuf = new Json.Buf();
@@ -101,7 +140,7 @@ public final class NdjsonSink implements EventSink {
     private boolean acknowledged;
 
     /**
-     * Creates a sink writing to the given stream.
+     * Creates a sink writing to the given stream, with the heartbeat on.
      *
      * @param out the stream the trace is captured from — {@code System.out} in a run, a buffer in a
      *        test. It is a constructor parameter for exactly that reason: the alternative is tests
@@ -109,7 +148,18 @@ public final class NdjsonSink implements EventSink {
      *        prints.
      */
     public NdjsonSink(PrintStream out) {
+        this(out, true);
+    }
+
+    /**
+     * Creates a sink writing to the given stream.
+     *
+     * @param out the stream the trace is captured from
+     * @param heartbeat whether each step writes its logcat line ({@code ape.telemetryHeartbeat})
+     */
+    public NdjsonSink(PrintStream out, boolean heartbeat) {
         this.out = out;
+        this.heartbeat = heartbeat;
     }
 
     @Override
@@ -132,8 +182,30 @@ public final class NdjsonSink implements EventSink {
             }
             int actId = internActivity(activity, activityHasMop);
             pending.open(step, tRelMs, actId, internState(stateKey, actId));
+            writeHeartbeat(step, tRelMs);
         } catch (Throwable failure) {
             latch("beginStep", failure);
+        }
+    }
+
+    /**
+     * Writes the step's logcat line, on the same {@code t} the record carries.
+     *
+     * <p>Sharing the value rather than reading a clock again is the whole mechanism: the join is
+     * exact because the two stamps are one number, not two readings a few milliseconds apart.
+     *
+     * <p>Its own guard, inside the sink's: a heartbeat is a convenience for the analysis side and
+     * the trace is the artifact, so a logcat failure costs the heartbeat and never the record.
+     */
+    private void writeHeartbeat(int step, long tRelMs) {
+        if (!heartbeat || heartbeatFailed) {
+            return;
+        }
+        try {
+            Log.i(HEARTBEAT_TAG, "s=" + step + " t=" + tRelMs);
+        } catch (Throwable failure) {
+            heartbeatFailed = true;
+            Logger.wformat("heartbeat disabled for the rest of the run: %s", failure);
         }
     }
 
