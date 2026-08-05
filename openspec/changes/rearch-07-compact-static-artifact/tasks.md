@@ -868,7 +868,7 @@ loader and against the `static-analysis-entrypoints` ADDED block before calling 
       most of this list, it is a scenario the `rearch-03` rewrite of the same requirement and this
       change's restatement on top of it both simply forgot, and it pins the argument the study's
       strongest mechanism result rests on.
-- [ ] 9.2 Restate renames under the main spec's header, replace bodies where this change contradicts
+- [x] 9.2 Restate renames under the main spec's header, replace bodies where this change contradicts
       them (stating the contradiction in the delta's prose), and restate genuine losses. Headers are
       **extracted, never retyped**, with each match and each substitution asserted to be exactly one
       whole line, and the script refusing to write when a target header is already present in the
@@ -878,12 +878,70 @@ loader and against the `static-analysis-entrypoints` ADDED block before calling 
       A′ requirement drops 5 against 2 new bodies, so three of its claims need somewhere real to go.
       Finish with the set-diff at **0** and `openspec validate rearch-07-compact-static-artifact
       --strict` clean
-- [ ] 9.3 Dry-run `openspec archive rearch-07-compact-static-artifact --yes` in a disposable sandbox
+
+      **Done 2026-08-05. Set-diff at 0 against today's main specs *and* against the union target,
+      `--strict` clean.** The 29 split mechanically into **10 re-anchors** (a delta body already
+      carried the claim; only its header moved) and **19 bodies written**. The two mechanics are not
+      the two classes — a scenario can be a rename in substance and still need a body written,
+      because the delta simply had no counterpart for it.
+      - **The 10 re-anchors were done by script, and the guard is the point rather than the luck.**
+        Each destination header is *read out of the main spec* and the extracted string is what gets
+        written, so no header is ever retyped. The script asserts the destination matches exactly one
+        whole line in the main spec, the source exactly one whole line in the delta, and that the
+        destination is not already present — refusing to write anything at all if any assertion
+        fails on any pair. It ran dry first, then applied.
+      - **One body was extracted rather than authored**: `Gzip failure is non-fatal and write-only`
+        is `rearch-04`'s and its claim is untouched by this change, so the whole block was lifted
+        from that delta programmatically (header match asserted unique on both sides) instead of
+        being retyped. `transitions present, click edges absent` is the opposite case and *is*
+        authored — the jar no longer sees raw transitions at all, so only half of it survives and
+        restating it was the honest move.
+      - **Three deltas gained a one-paragraph note saying why headers now read oddly**, `mop-guidance`
+        the longest, because its fifteen headers were all written about a parser group 5 deleted.
+        The note says once what a reader would otherwise conclude fifteen times: there is no
+        `reachability[]` to build maps from, no `listeners` to double-count, no `complete` sentinel,
+        and the headers are the archive's cost, not evidence that anything still parses a call graph.
+      - **Row 29's missing destination was fixed rather than papered over.** `static-analysis-entrypoints`
+        stated the A′ union in prose at item 4 with no scenario, so the relocation would have pointed
+        at a requirement that never asserts it. The ADDED block gained `Activity sets — the A′ union
+        draws on three sources, distinctly`, which pins all four claims the five stranded jar-side
+        scenarios carried between them — `{A}` vs `{A,B,C}`, the non-reaching `D` in neither set, the
+        three sources contributing *distinctly*, and `mopActivities ⊆ mopActivitiesAugmented`. Adding
+        to an ADDED requirement is free; the drop risk is a `MODIFIED`-block property.
+      - **The negative check was run too, not just the positive one.** The synced Loader requirement
+        holds 20 scenarios and **zero** occurrences of `getReachability()`, `getWindows()`,
+        `getTransitions()` or `last-write-wins`. The four surviving mentions of `isComplete()`,
+        `"complete": true`, `DataSpec` and `readPermission` were each read in place: all four are
+        deliberate negations ("there SHALL be no `isComplete()`…", "…SHALL NOT exist on the wire"),
+        which is the opposite of the stale text this check was looking for
+- [x] 9.3 Dry-run `openspec archive rearch-07-compact-static-artifact --yes` in a disposable sandbox
       (`cp -r openspec <scratch>/`; the CLI resolves its root from the working directory) and confirm
       it completes without aborting. Then **verify the restated bodies actually landed** by reading
       the sandbox's synced main specs — a scenario that pairs but syncs the wrong body is worse than
       one that aborts, and the exit code cannot tell you which happened. The real archive is **not**
       run here: it is the owner's to sequence, and this task's subject is that it *would* succeed
+
+      **Green in both orders, 2026-08-05**, which is what pairing against the union bought:
+      `Totals: + 5, ~ 7, - 6, → 0` identically whether this change archives against today's main
+      specs or against the post-`rearch-04` ones. No abort, no warning beyond the expected
+      `delta Purpose ignored` (see 9.5).
+      - **The body check was done by reading the synced main specs, not by trusting the exit code.**
+        Sampled across all four capabilities and every disposition class: the three re-anchored
+        `aperv-tool` scenarios all carry the `mop_data == "static_analysis"` bodies (so
+        `sata_mop — JSON absent` now *raises* under a header that used to mandate warn-and-continue,
+        which is the deliberate replacement landing correctly); `arm contrast is the launched set`
+        carries the wire-set clause; `Real cryptoapp fixture…` carries the compact fixture; `Empty
+        short id not bucketed`, `Multiple listeners…` and `source 3` carry their restatements; and
+        `Activity sets — the A′ union…` is present in `static-analysis-entrypoints`.
+      - **Order B was checked for the thing only order B can get wrong**: both `rearch-04`-owned
+        scenarios sync intact — `Gzip failure is non-fatal and write-only` byte-identical to the
+        block it was extracted from, and `transitions present, click edges absent` carrying this
+        change's restatement.
+      - **A sandbox is only as fresh as its copy.** The first re-measurement against the union came
+        back 29 instead of 0, because `openspec` resolves *everything* from the working directory —
+        including the change directory, which was the copy taken before 9.2's edits. Refreshing the
+        change directory inside the sandbox and leaving its archived main specs alone is what makes
+        the union measurement mean anything. Worth knowing before reading a stale 29 as a failure
 - [ ] 9.4 Measure the archive order against `rearch-04-step-ndjson-telemetry` **marginally** (the
       other change's unpaired count before vs after this one's sandbox archive), never
       block-against-block. Unlike `rearch-05`, the two changes modify the same three requirements, so
@@ -893,6 +951,29 @@ loader and against the `static-analysis-entrypoints` ADDED block before calling 
       failure is non-fatal and write-only` and `mop-guidance :: transitions present, click edges
       absent`, both scenarios `rearch-04` adds to requirements this change also modifies). The
       reverse direction cannot be measured until 9.2 is done, because this change aborts today
+
+      **Measured 2026-08-05 in both directions, after 9.2 made the reverse measurable. The order is
+      not free, and it is asymmetric — this is the one place `rearch-05`'s "archive whenever you
+      like" answer does not transfer.**
+
+      | Order | Marginal cost |
+      |---|---|
+      | `rearch-04` first → `rearch-07` | **0** — this change pairs the union, so its 29 are already covered; sandbox archive green |
+      | `rearch-07` first → `rearch-04` | **4** — `rearch-04` acquires four unpaired scenarios and would abort |
+
+      The four are scenarios **this change adds** to requirements `rearch-04` also modifies, so they
+      land in the main spec early and `rearch-04`'s blocks — written before they existed — no longer
+      cover them: `aperv-tool :: Properties file carries preset plus deltas only` and `MOP arm —
+      derivation failure fails the task`, and `component-triggering :: deep link dispatched from the
+      wire field` and `activity without a deep link falls back to the explicit component`.
+
+      **Recommendation to the owner: archive `rearch-04` before `rearch-07`.** It costs nothing, it
+      is the natural stage order (4 before 7), and the alternative is doing `rearch-04`'s pairing
+      work for four scenarios that only exist because this change went first. Note what the
+      asymmetry is *not*: it is not this change being unready — it pairs cleanly in both directions.
+      It is the ordinary consequence of two live changes modifying the same requirements, which is
+      exactly the interaction `rearch-05` measured as absent for itself and which this group's header
+      predicted would be present here
 - [ ] 9.5 After the real archive (owner-sequenced, outside this session), check each of the four
       capabilities' `## Purpose` in `openspec/specs/` **by hand**: `openspec archive` syncs
       requirements only and prints `delta Purpose ignored; <capability> already has one`, which is

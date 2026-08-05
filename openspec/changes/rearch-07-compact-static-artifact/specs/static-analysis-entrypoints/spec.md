@@ -79,6 +79,13 @@ Derivation preconditions: `document["complete"] == true` and a non-null `package
 - **AND** `mopActivities` SHALL nevertheless contain `C` (INV-DRV-02)
 - **AND** consequently `activityHasMop("C")` SHALL be true on-device, so `C` keeps its WTG score, its frontier weight, its `stateMopDensity` contribution and its place in the launcher census — exactly as it does today
 
+#### Scenario: Activity sets — the A′ union draws on three sources, distinctly
+- **WHEN** a document declares a flagged widget on base activity `A`, a `components.activities[]` entry `B` with `reachesTarget == true`, a `reachability[]` class `C` with `componentType == "activity"` and ≥1 reaching method, and a `components.activities[]` entry `D` with `reachesTarget == false`
+- **THEN** `mopActivities` SHALL be `["A"]` and `mopActivitiesAugmented` SHALL be `["A", "B", "C"]`
+- **AND** `D` SHALL appear in neither set: the union adds activities that reach a monitored operation, not every declared activity
+- **AND** the three sources SHALL be exercised **distinctly** — one member per source — because they are not redundant. Source 2 alone is a false negative on any activity whose reach passes through a D8-desugared lambda handler, which the producer's call graph does not traverse; source 3 is the only one immune to that gap, and it is why the union has three members rather than two (device-verified on cryptoapp: all 4 activities report `reachesTarget=false` while `reachability[]` marks `CryptographyActivity` with 13 reaching methods)
+- **AND** the union SHALL be additive: `mopActivities ⊆ mopActivitiesAugmented` on every document, so the on-device flag selects between a set and a superset of it and can never subtract (`mop-guidance` INV-MOP-27)
+
 #### Scenario: deep link derived from the first ACTION_VIEW filter
 - **WHEN** an activity declares an intent-filter with `android.intent.action.VIEW` and `data.schemes == ["myapp"]`, `data.hosts == ["detail"]`, `data.paths == ["/x"]`
 - **THEN** its emitted `deepLinkUri` SHALL be `"myapp://detail/x"`

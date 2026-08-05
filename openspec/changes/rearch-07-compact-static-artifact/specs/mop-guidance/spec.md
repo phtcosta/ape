@@ -51,7 +51,9 @@ Absent-artifact behavior hardens from warn-and-continue to fail-fast: the jar si
 
 Unknown JSON keys within a supported `formatVersion` are ignored (INV-MOP-11). This tolerance is not a compatibility affordance and adds nothing: it is the `org.json` DOM's default behavior — the *absence* of a check — so rejecting unknown keys would mean writing new code, not removing legacy code. Under the coordinated cut (design D8) generator and jar ship together, so an unknown key in a `formatVersion: 1` artifact is a generator↔jar skew signal, visible in the `stats` echo, not a version to accommodate. The file is read once with a single pre-sized allocation and parsed once into an `org.json` DOM. No cross-referencing, flag derivation, dialog re-keying, activity augmentation, or transition processing happens on-device (INV-MOP-35) — those semantics are generator requirements (see the `static-analysis-entrypoints` delta).
 
-#### Scenario: Compact cryptoapp fixture loads every consumed field
+**On the scenario headers below, and this is the capability where it matters most.** `openspec archive` matches scenarios by name and cannot tell a rename from a deletion, so every claim that survives this change under new vocabulary must be restated under the *main spec's* header or the archive silently drops it. This requirement's fifteen headers were all written about the full-JSON parser group 5 deleted, so nearly every one of them now reads oddly against a body about the compact reader: there is no `reachability[]` to build maps from, no `listeners` to double-count, no `complete` sentinel, no D15 `data` block. The headers are the archive's cost and are not evidence that anything still parses a call graph. Three further headers are restated here purely to be matched, their claims being owned elsewhere: the two package-sanity ones belong to the "MopData — Package / MainActivity Sanity Check" requirement of this same delta, and each body says so.
+
+#### Scenario: Real cryptoapp fixture loads every typed field
 - **WHEN** `MopData.load()` is called on the `cryptoapp.apk.mop.json` fixture derived from `cryptoapp.apk.gh60-fresh.json`
 - **THEN** the returned `MopData` SHALL be non-null
 - **AND** `getPackageName()=="br.unb.cic.cryptoapp"`, `getMainActivity()=="br.unb.cic.cryptoapp.MainActivity"`
@@ -68,7 +70,7 @@ Unknown JSON keys within a supported `formatVersion` are ignored (INV-MOP-11). T
 - **AND** emit exactly one `status=rejected reason=version-mismatch` record
 - **AND** with `ape.mopDataPath` set, the run SHALL abort via `StopTestingException` (INV-MOP-22) — never proceed as pure SATA
 
-#### Scenario: Per-event flag decoding preserves fallback semantics
+#### Scenario: Per-event-type reachability maps built
 - **WHEN** a wire widget has `"mop": {"click": "both", "scroll": "none"}`
 - **THEN** `isDirectMop("click")==true` and `isTransitiveMop("click")==true`; `isDirectMop("scroll")==false` and `isTransitiveMop("scroll")==false` (explicit `none` entry, no aggregate fallback)
 - **AND** `isDirectMop("longClick")==true` (key absent ⇒ aggregate fallback; aggregates are the OR of the respective bits over the map)
@@ -96,6 +98,79 @@ Unknown JSON keys within a supported `formatVersion` are ignored (INV-MOP-11). T
 #### Scenario: Unknown keys in a v1 artifact are ignored
 - **WHEN** a `formatVersion: 1` artifact carries an additional unknown top-level or per-widget key
 - **THEN** `load` SHALL succeed and ignore it (INV-MOP-11)
+
+#### Scenario: gh60 D15 component trigger-surface fields parsed
+- **WHEN** `MopData.load()` parses an artifact's `components` block
+- **THEN** the trigger surface SHALL be exactly `permission` (null when no gate, `hasPermissionGate()` false), `intentFilters` carrying `actions` and `categories` only, `hasTargetMethods` on receivers and services, and `authorities` on providers
+- **AND** `IntentFilter.data`, `DataSpec`, `ProviderInfo.readPermission`/`writePermission`, the `targetMethods` signature list and `exported` SHALL NOT exist on the wire **or on the model** — they remain in the host-side full JSON (`static-analysis-entrypoints` §7)
+- **AND** trigger *selection* (INV-MOP-15) SHALL be unchanged by this narrowing: `buildTriggerTuples` reads `reachesMop`, `intentFilters[].actions` and the emptiness of the target-method list, and `buildProviderTuples` reads `reachesMop` and `authorities` — the whole of what it ever read
+- **AND** the removal of `exported` SHALL make the launcher's prohibition on consulting it structural rather than stated (`component-triggering` INV-CT-06): there is no field to consult
+
+#### Scenario: Bug-fix regression — widget transitiveMop derived from gh60 Target keys
+- **WHEN** `MopData.load()` is called on the compact fixture derived from `cryptoapp.apk.gh60-fresh.json`
+- **THEN** the widget `buttonGenerateHash` in `MessageDigestActivity` SHALL have `transitiveMop==true`, `directMop==false` and `isTransitiveMop("click")==true`
+- **AND** `activityHasMop("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity")==true`
+- **AND** `MopScorer.score(<that activity>, "buttonGenerateHash", data, "click")` SHALL return `Config.mopWeightTransitive`
+- **AND** the gateway SHALL hold: `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true`
+- **NOTE**: this scenario **is** the contract that "SATA-MOP is not silently bare APE", and it is the half of it that still lives on this side. The derivation it used to assert — handler signature joined against `reachability[]`, producer precedence, the D8 recovery — is the generator's under INV-DRV-01 and is asserted by `gh96`'s `test_index_reachability_stores_direct_and_transitive`, `test_producer_precedence_wins` and `test_direct_implies_transitive`. What the jar can still fail at, and therefore still asserts here, is decoding a flag that arrived correct into a boost that fires
+
+#### Scenario: Widget metadata extracted on post-task-11 fixture
+- **WHEN** `MopData.load()` is called on the compact cryptoapp fixture
+- **THEN** `getWidget("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity", "editTextMessageDigest")` SHALL carry `inputType=="textPersonName"` and `hint=="Input text ..."`
+- **AND** the Spinner widget `spinnerMessageDigest` SHALL carry `entries.size()==13`, the JCA algorithm list
+- **AND** `type` and `text` SHALL NOT be asserted, because they no longer exist: they had no production reader and left the wire (INV-MOP-35). The empirical floors of the pre-change scenario (`hint` ≥4, `text` ≥11, `inputType` ≥4) are not restated either — the artifact emits a widget only when flagged or metadata-bearing, so a count over the map is a count of the projection, not of the app
+
+#### Scenario: Top-level package and mainActivity sanity check (default warn-only)
+- **WHEN** `MopData.load(path, "x.y.z.OTHER", null)` is called and the artifact's `package=="x.y.z"`
+- **THEN** the returned `MopData` SHALL be non-null and a `WARN` log line SHALL be emitted naming both the expected and the parsed value
+- **AND** this claim is owned in full by the "MopData — Package / MainActivity Sanity Check" requirement of this same delta (scenario `Default warn-only on mismatch`), which this change modifies and whose semantics it leaves unchanged; it is restated here only because the header is one the archive matches on
+
+#### Scenario: Package mismatch rejected in strict mode
+- **WHEN** `Config.mopStrictPackageMatch=true` AND `MopData.load(path, "x.y.z.OTHER", null)` is called on an artifact with `package=="x.y.z"`
+- **THEN** `load` SHALL return `null`, a `WARN` log line SHALL be emitted, and the load record SHALL carry `reason=package-mismatch`
+- **AND** as above, the owning requirement is "MopData — Package / MainActivity Sanity Check" (scenario `Strict-mode rejection on mismatch`)
+
+#### Scenario: OPTIONSMENU window with MOP widget triggers activityHasMopOptionsMenu
+- **WHEN** the artifact's `optionsMenus[]` carries `{activity: "com.x.A", hasFlaggedWidget: true}`
+- **THEN** `activityHasMopOptionsMenu("com.x.A")` SHALL return `true` (condition 1, INV-MOP-13)
+- **AND** the qualification SHALL be computed at load from that record, not read from a precomputed gateway set on the wire: design D3 refuses to ship the set precomputed precisely because condition 2 depends on the flag-selected activity set, which is a run-time choice
+
+#### Scenario: OPTIONSMENU window without MOP widget does not trigger
+- **WHEN** the record for `com.x.B` carries `hasFlaggedWidget: false` AND no WTG click edge from `com.x.B` targets an activity in the selected MOP-activity set
+- **THEN** `activityHasMopOptionsMenu("com.x.B")` SHALL return `false` — both conditions failing, which is the only way to a false
+
+#### Scenario: OPTIONSMENU gateway — menu item navigates to a MOP activity
+- **WHEN** the record for `com.x.C` carries `hasFlaggedWidget: false` but the wire `wtg["com.x.C"]` contains an edge whose `target` is `com.x.CryptoActivity`, and `com.x.CryptoActivity` is in the selected MOP-activity set
+- **THEN** `activityHasMopOptionsMenu("com.x.C")` SHALL return `true` (condition 2, the gateway case)
+- **AND** the test SHALL be against the **selected** set, so the same artifact SHALL yield `false` for `com.x.C` under `mopActivitySourceComponents=false` when `com.x.CryptoActivity` is present only in `mopActivitiesAugmented`. That flip is the whole of the evidence that the recompute reads the selection rather than a fixed set
+
+#### Scenario: Multiple listeners to the same handler do not double-count
+- **WHEN** a widget's wire `mop` map carries `{"click": "direct"}`
+- **THEN** `MopScorer.score(act, id, data, "click")` SHALL return `Config.mopWeightDirect` exactly, never a multiple of it
+- **AND** the double-count this scenario was written against SHALL be **unrepresentable rather than prevented**: `listeners` do not exist on the wire and the map holds one value per normalized event type, so there is no multiplicity for the jar to fold. The OR-idempotence that produced that single value is the generator's (INV-DRV-01, `gh96` `test_index_reachability_merges_duplicate_signatures_by_or`, which merges duplicate signatures by OR rather than by last-write)
+
+#### Scenario: Complete-but-empty JSON parses cleanly (gh51-D5 timeout bucket)
+- **WHEN** `MopData.load()` is called on a `formatVersion: 1` artifact whose `widgets`, `wtg`, `optionsMenus`, activity sets and component lists are all empty
+- **THEN** the returned `MopData` SHALL be non-null
+- **AND** every accessor SHALL return empty (`getReceivers()`, `getServices()`, `getActivities()`, `getProviders()`, `getMopActivities()`, `getWtgTransitions(any)`) and `hasWtgData()` SHALL be `false`
+- **AND** `MopScorer.score(any, any, data, any)` SHALL return `0` without `NullPointerException`
+- **AND** there SHALL be no `isComplete()` and no `complete` sentinel to assert: completeness became a **generation** precondition (`DerivationError` on `complete != true`), so the truncated analysis this bucket was named for is now refused host-side and never reaches a device at all — a strictly earlier failure than the one this scenario used to check
+
+#### Scenario: Duplicate short id — strongest MOP flag retained
+- **WHEN** two widgets of one base activity resolve to the short id `"submit"`, one `direct`-flagged and one unflagged
+- **THEN** the artifact SHALL carry exactly one entry under `widgets.<activity>.submit`, and `getWidget(activity, "submit")` SHALL serve the `direct`-flagged one
+- **AND** the resolution SHALL have happened host-side under the `mopRank` policy of INV-DRV-02 (`gh96` `test_collision_keeps_strongest_flag`, `test_collision_direct_outranks_transitive_resident`); on this side the silent demotion the scenario guards against is **unrepresentable**, a JSON object admitting one value per key
+
+#### Scenario: Duplicate short id — unflagged does not displace flagged regardless of order
+- **WHEN** the same two widgets appear in the reverse order in the producer's document
+- **THEN** the artifact and therefore `getWidget(activity, "submit")` SHALL be identical to the previous scenario's
+- **AND** the order-independence SHALL be the generator's, asserted by `gh96` `test_collision_tie_keeps_first` and the `flagged_first` parametrization of `test_collision_keeps_strongest_flag`, and reinforced by INV-DRV-05: two orderings that derived to different artifacts would break byte-level determinism before they reached the jar
+
+#### Scenario: Empty short id not bucketed
+- **WHEN** a base activity's only MOP-flagged widget carries an empty `idName`
+- **THEN** the artifact SHALL carry no entry under the empty-string key for that activity, and `getWidget(activity, "")` SHALL return null
+- **AND** `activityHasMop(activity)` SHALL still return `true`, and the drop SHALL be counted in `stats.droppedFlaggedNoId`, echoed on the load record as `droppedNoId`
+- **AND** the ordering that makes this possible — mark the activity, *then* drop the widget — is the generator's and is asserted in this change's `static-analysis-entrypoints` delta (`a flagged widget with an empty short id still marks its activity`) and by `gh96` `test_flagged_empty_id_marks_activity`. Deriving the activity set from the emitted map instead would shrink it silently, under a normal `status=loaded`
 
 ---
 
@@ -183,9 +258,15 @@ Fail-fast composition (kills the V21 silent-degradation class end to end):
 
 When `Config.mopDataPath` is unset, behavior is unchanged (MOP scoring disabled, no status record required beyond the absence of a load).
 
-#### Scenario: successful load emits provenance and counters
+#### Scenario: successful load emits counters
 - **WHEN** `MopData.load` parses a v1 artifact derived from a full JSON whose SHA-256 is `d`, with 30 widgets, 3 flagged, 0 dropped, 16 WTG edges
 - **THEN** one `status=loaded` record SHALL be emitted carrying `formatVersion=1`, `sourceDigest=d`, and those counters
+
+#### Scenario: transitions present, click edges absent
+- **WHEN** the artifact's `wtg` map is empty because the producer's document carried transitions but none of them a `click` event
+- **THEN** the `MOP_DATA` record SHALL carry `wtgEdges:0`
+- **AND** it SHALL carry **no** `transitions` field, so the number that does not gate anything cannot be read as the number that does
+- **AND** the jar SHALL have no other number to confuse it with: raw transitions do not exist on the wire (INV-MOP-35), so the deduplication and the click-only filter that produce `wtgEdges` are the generator's (INV-DRV-03) and the field is an echo, not a recount
 
 #### Scenario: rejected load names the reason
 - **WHEN** the file at `mopDataPath` is not a v1 compact artifact
@@ -214,15 +295,31 @@ The selection SHALL happen once at load; every downstream consumer (launcher cen
 
 The key's plan grounding from `rearch-02-runspec` is **carried forward unchanged**: in the run-spec `Feature` model, `ape.mopActivitySourceComponents` activates the `MOP_ACTIVITY_SOURCE` feature, which depends on `MOP`. An explicit `true` on a plan without `ape.mopDataPath` aborts resolution as a missing dependency; with the feature absent, the widget-derived source is the only one that exists (INV-RUN-05 of `run-spec` — the recorded substitute for the dissolved INV-ARCH-06 kill-switch registration). This stage changes only *where the augmented set is computed* (host-side generator instead of on-device union), never the key's ownership or its fail-fast behavior.
 
-#### Scenario: flag off ⇒ widget-derived set only
+#### Scenario: flag off preserves widget-only source
 - **WHEN** `mopActivitySourceComponents=false` and the artifact's augmented set contains an activity absent from the widget-derived set
 - **THEN** `activityHasMop` for that activity SHALL be `false`
 - **AND** the launcher census SHALL NOT include it
 
-#### Scenario: flag on ⇒ augmented set feeds every consumer
+#### Scenario: component-level activity added under the flag
 - **WHEN** `mopActivitySourceComponents=true`
 - **THEN** `getMopActivities()` SHALL equal the wire `mopActivitiesAugmented` set
 - **AND** the OPTIONSMENU-gateway recompute SHALL test condition 2 against it
+
+#### Scenario: union preserves widget-derived entries
+- **WHEN** `mopActivitySourceComponents=true` and activity `com.x.A` is in the artifact's `mopActivities` through a flagged widget
+- **THEN** `activityHasMop("com.x.A")` SHALL remain `true` — turning the flag on SHALL never remove an activity
+- **AND** the additivity SHALL be a property of the wire rather than of the selection: `mopActivities ⊆ mopActivitiesAugmented` holds by construction of the union (INV-DRV-06), asserted outright by `gh96` `test_augmented_superset_of_widget_derived`, so the flag switches between a set and a superset of it and cannot subtract
+
+#### Scenario: non-reaching component not added
+- **WHEN** `mopActivitySourceComponents=true` and `com.x.Plain` has no flagged widget, `reachesMop==false`, and no reaching method in the producer's `reachability[]`
+- **THEN** `activityHasMop("com.x.Plain")` SHALL return `false` under **both** flag states, the activity being in neither wire set
+- **AND** the exclusion SHALL be the generator's: `gh96` `test_augmented_union_three_sources` includes an activity with `reachesTarget: False` and asserts it enters neither `mopActivities` nor `mopActivitiesAugmented`
+
+#### Scenario: reachability-method source flags a lambda-gapped activity (source 3)
+- **WHEN** `mopActivitySourceComponents=true` and `com.x.CryptoActivity` has `components.activities[].reachesTarget==false` and no MOP-flagged widget, BUT its `reachability[]` class (`componentType=="activity"`) carries ≥1 method with `reachesTarget==true`
+- **THEN** it SHALL be present in the artifact's `mopActivitiesAugmented` and absent from `mopActivities`, so `activityHasMop("com.x.CryptoActivity")` SHALL be `true` under the flag and `false` without it
+- **AND** source 3 SHALL remain a distinct source rather than being folded into source 2, for the reason that made it necessary: the producer's call graph does not traverse D8-desugared lambda edges, so an activity whose UI genuinely reaches a monitored operation through a lambda handler is a **false negative at the component level** — device-verified on cryptoapp, where all 4 activities report `reachesTarget=false` while `reachability[]` marks `CryptographyActivity` with 13 reaching methods, `CipherActivity` 2 and `MessageDigestActivity` 1
+- **AND** the three sources contributing distinctly SHALL be asserted by `gh96` `test_augmented_union_three_sources` and by the `Activity sets` scenario of this change's `static-analysis-entrypoints` delta
 
 #### Scenario: explicit activation without MOP data aborts
 - **WHEN** `ape.properties` sets `ape.mopActivitySourceComponents=true` and no `ape.mopDataPath`

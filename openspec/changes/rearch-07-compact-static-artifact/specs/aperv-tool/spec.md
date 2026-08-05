@@ -55,6 +55,8 @@ The tool SHALL NOT read back, parse, or validate any jar output (`RUN_START` inc
 
 No health check step is required (APE has no `--health-check` flag).
 
+**On the scenario headers below.** `openspec archive` matches scenarios by name and cannot tell a rename from a deletion, so a scenario whose claim survives under new vocabulary must keep the *main spec's* header or the archive drops it. Three headers here consequently read in vocabulary this change retires: `sata_mop` and `sata` are arm names `gh95` retired, and "JSON present" / "no JSON push" describe a push path that no longer exists. Read the bodies, which are this change's; the headers are the tool's cost, and this note is the only place it is worth mentioning.
+
 #### Scenario: Properties file carries preset plus deltas only
 
 - **WHEN** `_push_properties()` runs for `sata_mop_act_frontier` with the derived artifact pushed
@@ -69,19 +71,24 @@ No health check step is required (APE has no `--health-check` flag).
 - **THEN** after step 11, `task.result.trace_file` SHALL still hold exactly the captured NDJSON records, unmodified
 - **AND** `<trace>.ndjson.gz` SHALL contain the compressed copy
 
+#### Scenario: Gzip failure is non-fatal and write-only
+
+- **WHEN** compression raises
+- **THEN** a WARNING SHALL be logged, the uncompressed NDJSON trace SHALL remain at `task.result.trace_file`, and the task SHALL complete with the same status it would have had otherwise (D5: no validation, no status logic)
+
 #### Scenario: No exit contract
 
 - **WHEN** a trace ends without a `RUN_END` record (e.g. SIGKILL on timeout before teardown)
 - **THEN** the tool SHALL NOT detect, log, or act on its absence
 - **AND** truncated-run identification remains a post-hoc analysis over trace/logcat timestamps
 
-#### Scenario: MOP arm — artifact derived and pushed
+#### Scenario: sata_mop — JSON present
 - **WHEN** `execute_tool_specific_logic` is called with a `mop_data == "static_analysis"` arm AND `_find_static_analysis_file(task)` returns a valid path
 - **THEN** `_derive_mop_artifact(task)` SHALL return the cached-or-generated `<apk_name>.mop.json`
 - **AND** it SHALL be pushed to `/data/local/tmp/mop-artifact.json`
 - **AND** `ape.properties` SHALL contain `ape.mopDataPath=/data/local/tmp/mop-artifact.json`
 
-#### Scenario: MOP arm — full JSON absent fails the task
+#### Scenario: sata_mop — JSON absent
 - **WHEN** `execute_tool_specific_logic` is called with a `mop_data == "static_analysis"` arm AND no full JSON is found in `task.results_dir`
 - **THEN** `RVToolExecutionError` SHALL be raised naming the expected path
 - **AND** the jar SHALL NOT be launched
@@ -92,7 +99,7 @@ No health check step is required (APE has no `--health-check` flag).
 - **THEN** `RVToolExecutionError` SHALL be raised carrying the derivation error
 - **AND** no partial artifact SHALL be pushed
 
-#### Scenario: non-MOP arm — no static-analysis interaction
+#### Scenario: sata variant — no JSON push
 - **WHEN** `execute_tool_specific_logic` is called with an arm whose config lacks `mop_data`
 - **THEN** no derivation SHALL run, no artifact SHALL be pushed
 - **AND** `ape.properties` SHALL NOT contain `ape.mopDataPath`

@@ -40,6 +40,8 @@ The cadence (`ape.activityTriggerStagnationStep`, default `50`; a configured val
 - **INV-CT-10 (unchanged)**: no `EVENT_TRIGGER_ACTIVITY` action SHALL ever carry a class name matching a `FRAMEWORK_ACTIVITY_PREFIXES` prefix; the denylist SHALL be consulted only inside the stage's candidate eligibility — no second exclusion mechanism.
 - **INV-CT-12 (unchanged)**: when `ape.activityTriggerMaxPerRun` is `N > 0`, the number of `EVENT_TRIGGER_ACTIVITY` actions emitted in a run SHALL never exceed `N`; when `0`, no cap applies. Budget accounting SHALL count only returned actions (an empty candidate scan consumes nothing).
 
+**On the scenario headers below.** `openspec archive` matches scenarios by name and cannot tell a rename from a deletion, so a renamed scenario must keep the main spec's header. Two here read in retired vocabulary as a result: "clamped at load" names a site stage 2 moved to plan resolution, and "launcher disabled" implies a kill switch stage 2 dissolved into feature absence. The bodies are current; the headers are the archive's cost.
+
 #### Scenario: deep link dispatched from the wire field
 - **WHEN** the artifact's activity entry for `com.x.DetailActivity` carries `"deepLinkUri": "myapp://detail/x"` and the stage selects it
 - **THEN** the injected intent SHALL be `ACTION_VIEW` with `Uri.parse("myapp://detail/x")` and `setPackage("com.x")`, with no component set
@@ -92,10 +94,16 @@ The cadence (`ape.activityTriggerStagnationStep`, default `50`; a configured val
 - **WHEN** `activityTriggerMaxPerRun=0` (default) and 10 launches have already been emitted
 - **THEN** the stage SHALL still fire at the next firing point (subject to the other gates)
 
-#### Scenario: invalid values clamped at plan resolution
+#### Scenario: invalid values clamped at load
 - **WHEN** the properties set `ape.activityTriggerStagnationStep=0` and `ape.activityTriggerMaxPerRun=-3`
 - **THEN** plan resolution SHALL clamp them to `50` and `0` respectively and log each clamp
 
-#### Scenario: launcher absent from the plan
+#### Scenario: launcher disabled
 - **WHEN** the plan does not enable activity triggering
 - **THEN** no `MopLauncher` stage SHALL exist, no `EVENT_TRIGGER_ACTIVITY` step SHALL ever be produced, and the probabilistic pool SHALL contain no activities
+
+#### Scenario: arm contrast is the launched set
+- **WHEN** the control arm's census (`ape.mopActivitySourceComponents=false`, so the artifact's `mopActivities`) is `{A}` and the treatment arm's (`=true`, so its `mopActivitiesAugmented`) is `{A, B, C}`
+- **THEN** the control arm's `MopLauncher` SHALL only ever launch `A` while the treatment arm's can launch `A`, `B` and `C`
+- **AND** the contrast SHALL come from the census the stage reads, never from the stage's own firing rule — both arms assemble the same stage with the same cadence, cap and cursor
+- **AND** this SHALL remain true after the union moves host-side: the two sets arrive precomputed on the wire and the stage still reads exactly one of them, selected at load by the flag (`mop-guidance` INV-MOP-27), so relocating *where* the sets are computed changes neither which set an arm reads nor what the contrast measures
