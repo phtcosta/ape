@@ -55,7 +55,8 @@ public class ScreenshotCapture {
      * <p>Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unavailability
      * and permission denial without distinguishing them, so this names the failing <b>stage</b>,
      * not the OS-level reason. Joining the stage and the foreground activity — which LlmTelemetry's
-     * {@code [APE-LLM-ERROR] cause=screenshot} line carries — with the known FLAG_SECURE APK list
+     * surviving {@code [APE-RV] LLM screenshot capture failed} free-text line carries — with the
+     * known FLAG_SECURE APK list
      * is an offline step. {@code OutOfMemoryError} is an {@code Error} and escapes the
      * {@code catch (Exception)} blocks below: it is not folded into the null return, and this seam
      * makes no claim about it.

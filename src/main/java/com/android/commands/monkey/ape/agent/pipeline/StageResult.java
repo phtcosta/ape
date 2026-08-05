@@ -47,8 +47,8 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * <p>The {@code decisionSource} label on a {@code SELECT} is the existing
  * {@link ModelAction.DecisionSource} name (or the derived non-model source) — no second vocabulary.
  * INV-DP-04 requires that, for a {@link ModelAction}, the label equal the provenance the stage
- * stamped on the action itself, which is what keeps {@code [APE-STEP]} and the stage-4 step record
- * from disagreeing about who decided. That equality is asserted per stage rather than enforced here
+ * stamped on the action itself, which is what keeps the stage's label and the step record's
+ * {@code dec.src} from disagreeing about who decided. That equality is asserted per stage rather than enforced here
  * on purpose: this factory runs inside the decision path of a live run, and a mislabelled stage
  * should fail a test, not abort an experiment.
  */

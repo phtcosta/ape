@@ -813,7 +813,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 // checkAppActivity and this fresh topComp fetch (launcher/installer leak)
                 // is deflected with one raw BACK and never modeled — closing the TOCTOU
                 // window at the modeling boundary (INV-EXPL-20). Whitelist packages and a
-                // null topComp bypass the guard. The BACK is raw (not an [APE-STEP]): it is
+                // null topComp bypass the guard. The BACK is raw (no step record): it is
                 // not counted as a step and is invisible to the BACK/MENU pick cap.
                 if (foreignActivityGuard && topComp != null) {
                     String pkg = topComp.getPackageName();

@@ -253,7 +253,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         // branch selects for reasons other than priority, so its action is attributed
         // SATA here — a fresh write that also clears any stale source carried over from
         // a previous step. INV-SEL-04: this only changes which enum value is carried,
-        // never the number of [APE-STEP] lines and never a boost field.
+        // never the number of step records and never a boost field.
         if (action != null && action.isModelAction()
                 && type != SataEventType.EARLY_STAGE && type != SataEventType.EPSILON_GREEDY) {
             ((ModelAction) action).setDecisionSource(ModelAction.DecisionSource.SATA);

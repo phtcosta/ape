@@ -389,7 +389,7 @@ public final class CoordinateMapper {
 
     /**
      * Record the outcome of an executed LLM-originated decision. Called by {@code StatefulAgent} at
-     * the point where {@code new_state} is computed for the {@code [APE-OUTCOME]} line, under the
+     * the point where {@code new_state} is computed for the step record's {@code out}, under the
      * same single-shot buffered-decision discipline that guards that emission — this unit cannot
      * observe outcomes itself.
      *

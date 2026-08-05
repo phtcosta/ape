@@ -246,8 +246,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     /**
      * The MOP-screen bit of an activity (INV-SEL-06): 1 when MOP data is loaded and the activity is
      * in its pre-computed MOP set, 0 otherwise — including whenever `MopData` is null, which is how
-     * a MOP-off arm reports. Serialized on `[APE-STEP]` (where the step started) and on
-     * `[APE-OUTCOME]` (where it landed), the two halves of the evidential link that says whether a
+     * a MOP-off arm reports. Recorded on the step record's `dec` (where the step started) and its
+     * `out` (where it landed), the two halves of the evidential link that says whether a
      * decision happened on, or reached, a monitored screen. The lookup is O(1) over a set built at
      * load time.
      */
@@ -345,7 +345,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             ModelAction prevCurrentAction = currentAction;
             currentAction = model.update(currentAction, currentGUITreeAction);
             // Refinement replaces currentAction with the rebuilt model's object before updateGraph()
-            // runs. Remap the [APE-OUTCOME] buffer through the same mapping, or the reference guard
+            // runs. Remap the outcome buffer through the same mapping, or the reference guard
             // would silently drop the outcome on exactly the non-deterministic (refinement) steps.
             if (lastDecisionAction != null && lastDecisionAction == prevCurrentAction) {
                 lastDecisionAction = currentAction;
@@ -1206,7 +1206,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * activity-frontier (INV-CT-07): the decision source for a non-model action's {@code [APE-STEP]}
+     * activity-frontier (INV-CT-07): the decision source for a non-model action's step record
      * line. {@code EVENT_TRIGGER_ACTIVITY} (the stagnation launcher) is a {@code Component} decision;
      * every other non-model action stays on the {@code SATA} chain that produced it. Pure.
      */
@@ -1272,7 +1272,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * The pick channel for a non-model action's {@code [APE-STEP]} line (INV-SEL-05). These actions
+     * The pick channel for a non-model action's step record (INV-SEL-05). These actions
      * carry no provenance field of their own — they are not {@code ModelAction}s — so the channel is
      * read off the type: {@code EVENT_TRIGGER_ACTIVITY} is the stagnation activity launcher, and
      * every other non-model action is outside the four MOP-sensitive channels. Pure.

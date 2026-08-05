@@ -31,7 +31,7 @@ public class ModelAction extends Action {
 
     /**
      * The mechanism that selected this action, attributed at selection time for
-     * the per-action {@code [APE-STEP]} telemetry (A-5, INV-SEL-04). The SATA chain
+     * the per-action step record (A-5, INV-SEL-04). The SATA chain
      * sets {@code SATA} via {@code logActionSelected}; the LLM hooks and the
      * budget-exhausted early-return set their own source explicitly.
      */
@@ -41,7 +41,7 @@ public class ModelAction extends Action {
 
     /**
      * The selection channel that picked this action, for the {@code pick_channel} field of
-     * {@code [APE-STEP]} (A-5, INV-SEL-05). Independent of {@link DecisionSource}: the source names
+     * the step record (A-5, INV-SEL-05). Independent of {@link DecisionSource}: the source names
      * the mechanism whose boost was largest, the channel names the code path that consumed it.
      * Measured motivation — the unvisited-MOP short-circuit yields 15.1% new states while the
      * MOP-boosted roulette yields 1.4%, and aggregating them under {@code decision_source=MOP}
@@ -82,7 +82,7 @@ public class ModelAction extends Action {
     private float resolvedSaturation;
     private GUITree resolvedTree;
 
-    // A-5 [APE-STEP] telemetry: decision source + per-mechanism boosts applied in
+    // A-5 step-record telemetry: decision source + per-mechanism boosts applied in
     // the most recent adjustActionsByGUITree pass. Boosts are reset each pass.
     private DecisionSource decisionSource = DecisionSource.SATA;
     private PickChannel pickChannel = PickChannel.SATA_OTHER;
@@ -196,7 +196,7 @@ public class ModelAction extends Action {
 
     /**
      * Widget text with {@code \n}/{@code \r} replaced by spaces (INV-SEL-07). This string is
-     * interpolated into the action's {@code toString()}, which every {@code [APE-STEP]} emitter
+     * interpolated into the action's {@code toString()}, which the step record's {@code dec.a}
      * prints, so a multi-line label used to split the line in two: 752 of 166,359 lines in the
      * calibration corpus, distributed unevenly across arms (32–116 each), which biased every
      * {@code decision_source} count by 0.45%. Flattening here fixes all emitters at once.

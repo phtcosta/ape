@@ -21,7 +21,7 @@ import com.android.commands.monkey.ape.model.State;
  */
 public interface ScoringPass {
 
-    /** Stable identifier for the {@code [APE-ARCH] passes=[...]} assembly log and for tests. */
+    /** Stable identifier for the {@code PIPELINE} record's passes/candidates lists and for tests. */
     String name();
 
     /**

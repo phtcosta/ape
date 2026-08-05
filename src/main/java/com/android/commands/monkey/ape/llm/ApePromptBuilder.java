@@ -871,7 +871,7 @@ public class ApePromptBuilder {
 
     /**
      * Widget text with {@code \n}/{@code \r} replaced by spaces, so one element occupies one line
-     * of the element list and of the {@code [APE-LLM-PROMPT] user_text=} dump (INV-PRM-05). The
+     * of the element list and of the LLM sub-event's {@code user} dump field (INV-PRM-05). The
      * metadata suffix already does this via {@code capMeta}; the identifier is the other half. The
      * prompt's own multi-line structure is intentional and untouched — only widget-derived text is
      * flattened.

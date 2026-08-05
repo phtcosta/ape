@@ -282,7 +282,7 @@ public class SglangClient {
             }
 
             // Server-reported model from the envelope (nullable; absence is not a parse failure).
-            // Enables the caller's [APE-LLM-CONFIG-ACK] server-model acknowledgement.
+            // Enables the caller's LLM_ACK server-model acknowledgement record.
             String serverModel = (root.has("model") && !root.isNull("model"))
                     ? root.optString("model", null)
                     : null;
