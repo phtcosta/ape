@@ -471,6 +471,7 @@ public class NdjsonSinkTest {
         latching.flushPendingStep();
         latching.mopData("loaded", null, "com.foo", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
         latching.llmAck("qwen3-vl-8b");
+        latching.runEnd("timeout", null, null);
 
         assertEquals("after the first failure the sink stops emitting for the rest of the run",
                 2, written.size());
@@ -487,6 +488,67 @@ public class NdjsonSinkTest {
         sink.flushPendingStep();
 
         assertTrue(lines().isEmpty());
+    }
+
+    // --- RUN_END (INV-SNK-09) ---------------------------------------------------------------------
+
+    @Test
+    public void runEndCarriesTheReasonTheStepSpanAndTheCounters() throws Exception {
+        sink.beginStep(1, 1_500L, "com.foo/.Main", true, "S1");
+        sink.outcome(false, "S1", "com.foo/.Main", true, false);
+        sink.beginStep(2, 9_800L, "com.foo/.Detail", false, "S2");
+        sink.outcome(false, "S2", "com.foo/.Detail", false, false);
+
+        RunCounters counters = new RunCounters();
+        counters.calls = 5;
+        counters.matched = 3;
+        counters.timeout = 1;
+        sink.runEnd("timeout", null, counters);
+
+        JSONObject record = runEnd();
+        assertEquals("timeout", record.getString("reason"));
+        assertFalse("an orderly ending has nothing to name", record.has("detail"));
+        assertEquals("steps is the count of records written, not of steps attempted",
+                2, record.getInt("steps"));
+        // The span, not the budget: a run alive and idle for most of its budget is exactly what
+        // these two separate from one that explored for all of it.
+        assertEquals(1_500L, record.getLong("t_first_step"));
+        assertEquals(9_800L, record.getLong("t_last_step"));
+
+        JSONObject countersJson = record.getJSONObject("counters");
+        assertEquals("two activities were seen", 2, countersJson.getInt("acts"));
+        assertEquals("and two states", 2, countersJson.getInt("states"));
+        assertEquals(5, countersJson.getJSONObject("llm").getInt("calls"));
+        assertEquals(3, countersJson.getJSONObject("llm").getInt("matched"));
+        assertEquals(1, countersJson.getJSONObject("llm").getInt("timeout"));
+    }
+
+    @Test
+    public void aRunThatWroteNoStepRecordCarriesNoStepSpan() throws Exception {
+        // A run that died before its first selection. Zeros here would say it began and ended at
+        // the time origin, which is a claim; absence says only that there is nothing to report.
+        sink.runEnd("crash", "java.lang.IllegalStateException", null);
+
+        JSONObject record = runEnd();
+        assertEquals(0, record.getInt("steps"));
+        assertFalse(record.has("t_first_step"));
+        assertFalse(record.has("t_last_step"));
+        assertEquals("a crash names the exception that ended the run",
+                "java.lang.IllegalStateException", record.getString("detail"));
+    }
+
+    @Test
+    public void aPlanWithNoLlmCarriesNoLlmCounterBlock() throws Exception {
+        // Not a zeroed block: seventeen zeros would read as an LLM that was asked nothing, and the
+        // control arm's whole point is that it has none to ask.
+        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1");
+        sink.flushPendingStep();
+        sink.runEnd("timeout", null, null);
+
+        JSONObject counters = runEnd().getJSONObject("counters");
+        assertFalse("an arm with no LLM has no LLM counters", counters.has("llm"));
+        assertTrue("the sink's own counts are there either way", counters.has("acts"));
+        assertTrue(counters.has("states"));
     }
 
     // --- neutrality by shape (INV-SNK-07) ---------------------------------------------------------
@@ -522,6 +584,7 @@ public class NdjsonSinkTest {
         noop.mopData("loaded", null, "com.foo", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0);
         noop.pipeline(Arrays.asList("a"), Arrays.asList("b"), new LinkedHashMap<String, Boolean>());
         noop.llmAck("qwen3-vl-8b");
+        noop.runEnd("timeout", null, new RunCounters());
 
         assertTrue(lines().isEmpty());
     }
@@ -562,6 +625,15 @@ public class NdjsonSinkTest {
             }
         }
         return steps;
+    }
+
+    private JSONObject runEnd() throws Exception {
+        for (JSONObject record : records()) {
+            if ("RUN_END".equals(record.optString("type", null))) {
+                return record;
+            }
+        }
+        throw new AssertionError("no RUN_END record was written");
     }
 
     private JSONObject onlyStepRecord() throws Exception {

@@ -2,6 +2,7 @@ package com.android.commands.monkey.ape.llm;
 
 import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.telemetry.NdjsonSink;
+import com.android.commands.monkey.ape.telemetry.RunCounters;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -93,8 +94,32 @@ public class LlmTelemetryTest {
         return out.toString();
     }
 
-    private static String captureSummary(LlmTelemetry telemetry) {
-        return trace(telemetry::printSummary);
+    /**
+     * The {@code counters.llm} block of the {@code RUN_END} record these totals produce.
+     *
+     * <p>The counters are asserted through the record rather than off the value object, for the
+     * same reason the sub-events are: what a run owes an offline reader is a field in the trace
+     * under the name that reader looks for, and the value object alone cannot say whether that
+     * name was written.
+     */
+    private JSONObject llmCounters(LlmTelemetry telemetry) throws Exception {
+        sink.runEnd("timeout", null, telemetry.counters());
+        for (String line : new String(captured.toByteArray(), StandardCharsets.UTF_8).split("\n")) {
+            JSONObject record = new JSONObject(line);
+            if ("RUN_END".equals(record.optString("type"))) {
+                return record.getJSONObject("counters").getJSONObject("llm");
+            }
+        }
+        throw new AssertionError("no RUN_END record was written");
+    }
+
+    /**
+     * The decisions denominator, derived here exactly as a consumer derives it: the three completed
+     * outcomes plus the seven abandoned causes. No ratio is stored in the record, so this is the
+     * only place it exists.
+     */
+    private static int decisions(RunCounters counters) {
+        return counters.matched + counters.llmTap + counters.noMatch + counters.failures();
     }
 
     private static int countOccurrences(String haystack, String needle) {
@@ -121,48 +146,41 @@ public class LlmTelemetryTest {
     }
 
     // -------------------------------------------------------------------------
-    // The summary's decisions denominator
+    // The counter block of RUN_END, and its decisions denominator
     // -------------------------------------------------------------------------
 
     @Test
-    public void summaryExposesLlmTapField() {
-        String out = captureSummary(telemetry());
-        assertTrue("summary must expose the llm_tap field, got: " + out, out.contains("llm_tap=0"));
-        // Adjacent counters remain present and separate.
-        assertTrue(out.contains("matched=0"));
-        assertTrue(out.contains("no_match=0"));
-        // A run that abandoned nothing still names all seven causes, each at zero: an offline reader
-        // joins on the field being present, so an absent field and a zero one are different facts.
-        // screenshot_failed is a peer cause here, not a subset of another (INV-RTR-11).
-        for (String field : new String[]{"screenshot_failed=0", "timeout=0", "http_error=0",
-                "conn_error=0", "parse_error=0", "image_error=0", "internal_error=0"}) {
-            assertTrue("summary must expose " + field + ", got: " + out, out.contains(field));
-        }
-        assertFalse("the per-cause breakdown replaced the aggregate null field, got: " + out,
-                out.contains(" null="));
-    }
+    public void everyCounterIsNamedInTheRecordEvenAtZero() throws Exception {
+        JSONObject llm = llmCounters(telemetry());
 
-    @Test
-    public void llmTapCounterAccessorDefaultsToZero() {
-        assertEquals(0, telemetry().getLlmTapCount());
+        // A run that abandoned nothing still names all seventeen counters, each at zero: an offline
+        // reader joins on the field being present, so an absent field and a zero one are different
+        // facts — which is why this block is exempt from the record's default-omission rule.
+        for (String field : new String[]{"calls", "tok_in", "tok_out", "ms", "matched", "llm_tap",
+                "no_match", "dead_pair", "repaired", "timeout", "http_error", "conn_error",
+                "parse_error", "image_error", "internal_error", "screenshot_failed",
+                "breaker_trips"}) {
+            assertTrue("the counter block must name " + field + ", got: " + llm, llm.has(field));
+            assertEquals(field + " must be zero on a run that did nothing", 0, llm.getInt(field));
+        }
+        assertEquals("seventeen counters and nothing else", 17, llm.length());
+        // screenshot_failed is a peer cause, not a subset of an aggregate (INV-RTR-11), and the
+        // per-cause breakdown is what replaced a single null count — no such field survives.
+        assertFalse(llm.has("null"));
     }
 
     @Test
     public void llmTapJoinsDecisionsDenominator() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        // 1 widget match + 1 off-tree tap, nothing else. decisions = 1 + 1 + 0 + 0 = 2.
-        // The ratio numerator stays matchedCount (1), so 1/2 = 50.0%. If llm_tap were omitted from
-        // the denominator, the ratio would read 100.0% (1/1) — this pins the stability guarantee.
+        // 1 widget match + 1 off-tree tap, nothing else. decisions = 1 + 1 + 0 + 0 = 2. If llm_tap
+        // were omitted from the denominator it would read 1, and the match rate a consumer computes
+        // would read 100% instead of 50% — this pins the stability of that denominator.
         setCounter(telemetry, "matchedCount", 1);
         setCounter(telemetry, "llmTapCount", 1);
-        String out = captureSummary(telemetry);
-        assertTrue("summary must report llm_tap=1, got: " + out, out.contains("llm_tap=1"));
-        // The Decision ratio is "matched/decisions". decisions counts llm_tap, so it is 1/2, not
-        // 1/1. (%d is locale-independent; the %.1f percentage is not, so we assert on the ratio
-        // fraction only.) This pins that an off-tree tap stays inside the denominator.
-        assertTrue("decisions denominator must include llm_tap (1/2), got: " + out, out.contains("(1/2)"));
-        assertFalse("llm_tap must NOT be excluded from the denominator (would read 1/1), got: " + out,
-                out.contains("(1/1)"));
+
+        assertEquals(1, llmCounters(telemetry).getInt("llm_tap"));
+        assertEquals("an off-tree tap stays inside the denominator", 2,
+                decisions(telemetry.counters()));
     }
 
     // -------------------------------------------------------------------------
@@ -185,22 +203,20 @@ public class LlmTelemetryTest {
             telemetry.parseFailed();
             telemetry.internalError("boom");
         });
-        String summary = captureSummary(telemetry);
+        JSONObject llm = llmCounters(telemetry);
 
-        assertEquals("seven abandoned attempts, one counter each", 7, telemetry.getFailureCount());
-        assertTrue(summary, summary.contains("screenshot_failed=1"));
-        assertTrue(summary, summary.contains("image_error=1"));
-        assertTrue(summary, summary.contains("timeout=1"));
-        assertTrue(summary, summary.contains("http_error=1"));
-        assertTrue(summary, summary.contains("conn_error=1"));
-        assertTrue(summary, summary.contains("parse_error=1"));
-        assertTrue(summary, summary.contains("internal_error=1"));
+        assertEquals("seven abandoned attempts, one counter each", 7,
+                telemetry.counters().failures());
+        for (String cause : new String[]{"screenshot_failed", "image_error", "timeout",
+                "http_error", "conn_error", "parse_error", "internal_error"}) {
+            assertEquals(cause + " must have fired exactly once, got: " + llm, 1,
+                    llm.getInt(cause));
+        }
         // No abandoned attempt is a decision: the seven are the denominator's failure half, and
         // none of them touched matched/llm_tap/no_match.
-        assertTrue(summary, summary.contains("matched=0"));
-        assertTrue(summary, summary.contains("no_match=0"));
-        assertTrue("the seven are the whole denominator here, got: " + summary,
-                summary.contains("(0/7)"));
+        assertEquals(0, llm.getInt("matched"));
+        assertEquals(0, llm.getInt("no_match"));
+        assertEquals("the seven are the whole denominator here", 7, decisions(telemetry.counters()));
 
         // Six sub-events, not seven: the capture failure is the one abandoned attempt that produces
         // none, keeping its peer counter and its free-text line instead.
@@ -225,8 +241,8 @@ public class LlmTelemetryTest {
         LlmTelemetry telemetry = telemetry();
         JSONObject record = stepAround(() -> telemetry.transportFailed(null));
 
-        assertEquals(1, telemetry.getFailureCount());
-        assertTrue(captureSummary(telemetry).contains("conn_error=1"));
+        assertEquals(1, telemetry.counters().failures());
+        assertEquals(1, llmCounters(telemetry).getInt("conn_error"));
         assertEquals("connection", subEvents(record).get(0).getString("cause"));
     }
 
@@ -239,7 +255,7 @@ public class LlmTelemetryTest {
             telemetry.transportFailed("http_404");
         });
 
-        assertTrue(captureSummary(telemetry).contains("http_error=2"));
+        assertEquals(2, llmCounters(telemetry).getInt("http_error"));
         assertEquals("http_500", subEvents(record).get(0).getString("cause"));
         assertEquals("http_404", subEvents(record).get(1).getString("cause"));
     }
@@ -257,7 +273,7 @@ public class LlmTelemetryTest {
             telemetry.parseFailed();
         });
 
-        assertTrue(captureSummary(telemetry).contains("parse_error=2"));
+        assertEquals(2, llmCounters(telemetry).getInt("parse_error"));
         assertEquals("null response from SGLang", subEvents(record).get(0).getString("detail"));
         assertEquals("no tool call extracted", subEvents(record).get(1).getString("detail"));
     }
@@ -273,7 +289,7 @@ public class LlmTelemetryTest {
         LlmTelemetry telemetry = telemetry();
         String out = trace(() -> telemetry.screenshotFailed("com.example.Secure", "uiautomation"));
 
-        assertEquals(1, telemetry.getScreenshotFailedCount());
+        assertEquals(1, telemetry.counters().screenshotFailed);
         assertTrue(out, out.contains("LLM screenshot capture failed, skipping LLM step"
                 + " activity=com.example.Secure detail=uiautomation"));
     }
@@ -361,7 +377,7 @@ public class LlmTelemetryTest {
         assertFalse("so is the activity", event.has("activity"));
         assertFalse("and the prompt variant is run-constant, stated once by RUN_START",
                 event.has("variant"));
-        assertEquals(1, telemetry.getMatchedCount());
+        assertEquals(1, telemetry.counters().matched);
     }
 
     /** Typed text rides the sub-event, escaped by the serializer rather than quoted by hand. */
@@ -386,16 +402,15 @@ public class LlmTelemetryTest {
         JSONObject record = stepAround(() -> telemetry.decision("new-state",
                 parsed("click", null, "none"), 540, 958, "no_match", "dead_pair", "none", nearest(),
                 response("m"), 10L));
-        String summary = captureSummary(telemetry);
+        JSONObject llm = llmCounters(telemetry);
 
         JSONObject event = subEvents(record).get(0);
         assertEquals("no_match", event.getString("result"));
         assertEquals("dead_pair", event.getString("reason"));
-        assertEquals(1, telemetry.getNoMatchCount());
-        assertTrue("the overlay is counted, got: " + summary, summary.contains("no_match=1"));
-        assertTrue(summary, summary.contains("dead_pair=1"));
+        assertEquals(1, llm.getInt("no_match"));
+        assertEquals("the overlay is counted beside the outcome", 1, llm.getInt("dead_pair"));
         // The overlay does not enter the denominator a second time: one decision, one slot.
-        assertTrue("a banned decision is one decision, got: " + summary, summary.contains("(0/1)"));
+        assertEquals("a banned decision is one decision", 1, decisions(telemetry.counters()));
     }
 
     /** The other two no_match mechanisms keep their own reasons. */
@@ -411,8 +426,8 @@ public class LlmTelemetryTest {
 
         assertEquals("degenerate", subEvents(record).get(0).getString("reason"));
         assertEquals("boundary", subEvents(record).get(1).getString("reason"));
-        assertTrue("neither is a ban", captureSummary(telemetry).contains("dead_pair=0"));
-        assertEquals(2, telemetry.getNoMatchCount());
+        assertEquals("neither is a ban", 0, llmCounters(telemetry).getInt("dead_pair"));
+        assertEquals(2, telemetry.counters().noMatch);
     }
 
     /**
@@ -429,14 +444,14 @@ public class LlmTelemetryTest {
             telemetry.decision("random", parsed("click", null, "array_xy"), 540, 958,
                     "matched", null, "Button", nearest(), response("m"), 10L);
         });
-        String summary = captureSummary(telemetry);
+        JSONObject llm = llmCounters(telemetry);
 
         assertFalse("a clean parse carries no repair", subEvents(record).get(0).has("repair"));
         assertEquals("array_xy", subEvents(record).get(1).getString("repair"));
-        assertTrue(summary, summary.contains("repaired=1"));
+        assertEquals(1, llm.getInt("repaired"));
         // Both decisions matched; the overlay changed no outcome count.
-        assertTrue(summary, summary.contains("matched=2"));
-        assertTrue("two decisions, not three, got: " + summary, summary.contains("(2/2)"));
+        assertEquals(2, llm.getInt("matched"));
+        assertEquals("two decisions, not three", 2, decisions(telemetry.counters()));
     }
 
     /** An off-tree tap is its own outcome, counted apart from matched and no_match. */
@@ -448,9 +463,9 @@ public class LlmTelemetryTest {
                 response("m"), 10L));
 
         assertEquals("llm_tap", subEvents(record).get(0).getString("result"));
-        assertEquals(1, telemetry.getLlmTapCount());
-        assertEquals(0, telemetry.getMatchedCount());
-        assertEquals(0, telemetry.getNoMatchCount());
+        assertEquals(1, telemetry.counters().llmTap);
+        assertEquals(0, telemetry.counters().matched);
+        assertEquals(0, telemetry.counters().noMatch);
     }
 
     /** Tokens and latency accumulate across decisions; attempts count separately. */
@@ -465,13 +480,12 @@ public class LlmTelemetryTest {
             telemetry.decision("random", parsed("click", null, "none"), 540, 958,
                     "matched", null, "Button", nearest(), response("m"), 250L);
         });
-        String summary = captureSummary(telemetry);
+        JSONObject llm = llmCounters(telemetry);
 
-        assertEquals(2, telemetry.getCallCount());
-        assertTrue(summary, summary.contains("calls=2"));
-        assertTrue(summary, summary.contains("tokens_in=240"));
-        assertTrue(summary, summary.contains("tokens_out=60"));
-        assertTrue(summary, summary.contains("time_ms=350"));
+        assertEquals(2, llm.getInt("calls"));
+        assertEquals(240, llm.getInt("tok_in"));
+        assertEquals(60, llm.getInt("tok_out"));
+        assertEquals(350L, llm.getLong("ms"));
     }
 
     /**
@@ -505,16 +519,15 @@ public class LlmTelemetryTest {
     // -------------------------------------------------------------------------
 
     /**
-     * The summary reports the run's trip count by asking for it, not by mirroring it. The
-     * mirrored form would refresh a field at each failure site; since only a failure raises
-     * the count, the value is the same, and asking removes a second place for it to live.
+     * The counters report the run's trip count by asking for it, not by mirroring it. The mirrored
+     * form would refresh a field at each failure site; since only a failure raises the count, the
+     * value is the same, and asking removes a second place for it to live.
      */
     @Test
-    public void theSummaryReportsTheBreakersOwnTripCount() {
+    public void theCountersReportTheBreakersOwnTripCount() throws Exception {
         LlmTelemetry telemetry = new LlmTelemetry(() -> 7, sink, true);
-        String out = captureSummary(telemetry);
 
-        assertTrue(out, out.contains("breaker_trips=7"));
+        assertEquals(7, llmCounters(telemetry).getInt("breaker_trips"));
     }
 
     // -------------------------------------------------------------------------
