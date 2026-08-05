@@ -99,8 +99,7 @@ final class PipelineFixture {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode,
-                int timestamp) {
+                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             return answer;
         }

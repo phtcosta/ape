@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 
 /**
  * Typed model of the static-analysis JSON produced by rv-android, plus the
@@ -174,11 +175,13 @@ public class MopData {
      * @param path                  device-local path, or null
      * @param expectedPackage       package to compare against (T1.7), or null to skip
      * @param expectedMainActivity  main activity to compare against (T1.7), or null to skip
+     * @param sink                  where the load census, or the reason there is none, is recorded
      * @return populated MopData, or null on: null path / missing file / malformed JSON /
      *         sentinel absent or false / strict-mode package mismatch
      */
-    public static MopData load(String path, String expectedPackage, String expectedMainActivity) {
-        return load(path, expectedPackage, expectedMainActivity, PARSE_BUDGET_BYTES);
+    public static MopData load(String path, String expectedPackage, String expectedMainActivity,
+            EventSink sink) {
+        return load(path, expectedPackage, expectedMainActivity, PARSE_BUDGET_BYTES, sink);
     }
 
     /**
@@ -186,7 +189,7 @@ public class MopData {
      * drive the too-large guard deterministically. The public entry passes {@link #PARSE_BUDGET_BYTES}.
      */
     static MopData load(String path, String expectedPackage, String expectedMainActivity,
-            long budgetBytes) {
+            long budgetBytes, EventSink sink) {
         if (path == null) {
             return null;
         }
@@ -204,7 +207,7 @@ public class MopData {
             if (fileSize > budgetBytes / PARSE_FOOTPRINT_FACTOR) {
                 Logger.iformat("MopData: %s is %d bytes, over the %d-byte parse budget",
                         path, fileSize, budgetBytes);
-                reject("too-large");
+                reject(sink, "too-large");
                 return null;
             }
             JSONObject root;
@@ -213,11 +216,11 @@ public class MopData {
                 root = new JSONObject(new JSONTokener(readFile(path)));
             } catch (IOException e) {
                 Logger.wprintln("MopData: failed to read " + path + ": " + e.getMessage());
-                reject("file-missing");
+                reject(sink, "file-missing");
                 return null;
             } catch (JSONException e) {
                 Logger.wprintln("MopData: malformed JSON at " + path + ": " + e.getMessage());
-                reject("parse-error");
+                reject(sink, "parse-error");
                 return null;
             }
 
@@ -225,7 +228,7 @@ public class MopData {
             if (!root.optBoolean("complete", false)) {
                 Logger.wprintln("MopData: '\"complete\": true' sentinel absent or false at " + path
                         + " — treating as no MOP data (truncated analysis)");
-                reject("incomplete");
+                reject(sink, "incomplete");
                 return null;
             }
 
@@ -308,7 +311,7 @@ public class MopData {
             }
             if (mismatch && RunContext.current().spec().mop().strictPackageMatch()) {
                 Logger.wprintln("MopData: strict package match enabled — rejecting " + path);
-                reject("package-mismatch");
+                reject(sink, "package-mismatch");
                 return null;
             }
 
@@ -318,7 +321,7 @@ public class MopData {
             // passes actually gate on. The flat `transitions` list is deliberately not carried:
             // 14 of the decisive campaign's 40 applications report 9-29 transitions with the whole
             // frontier family disabled, so reporting it invites exactly that misreading again.
-            RunContext.current().sink().mopData("loaded", null,
+            sink.mopData("loaded", null,
                     packageName, windows.size(), countWidgets(widgetData), countFlagged(widgetData),
                     data.droppedFlaggedNoId, countWtgEdges(wtgTransitions),
                     joinDiag[0], joinDiag[1], joinDiag[2],
@@ -326,14 +329,14 @@ public class MopData {
             return data;
             } catch (JSONException e) {
                 Logger.wprintln("MopData: malformed JSON structure at " + path + ": " + e.getMessage());
-                reject("parse-error");
+                reject(sink, "parse-error");
                 return null;
             }
         } catch (OutOfMemoryError oom) {
             // The try-scoped locals (root, the parsed maps/lists, data) are already unreachable
             // here, so returning null lets the GC reclaim them. Emit the reject status line so the
             // run is excludable/annotatable by the analysis pipeline (INV-MOP-21/26).
-            reject("oom");
+            reject(sink, "oom");
             return null;
         }
     }
@@ -1122,8 +1125,8 @@ public class MopData {
      * excludes and annotates runs by it (INV-MOP-21/26), and a run whose MOP arm never armed must
      * say so in the same stream that says everything else.
      */
-    private static void reject(String reason) {
-        RunContext.current().sink().mopData("rejected", reason, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    private static void reject(EventSink sink, String reason) {
+        sink.mopData("rejected", reason, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     private static int countFlagged(Map<String, Map<String, Widget>> widgetData) {

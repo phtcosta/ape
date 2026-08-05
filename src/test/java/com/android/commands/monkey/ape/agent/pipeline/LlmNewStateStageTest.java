@@ -45,7 +45,6 @@ public class LlmNewStateStageTest {
         int selectCalls;
         String modeSeen;
         GUITree treeSeen;
-        int timestampSeen;
 
         StubEngine(ModelAction answer) {
             // Every step of the real pipeline is replaced below, so none of the units it composes
@@ -56,12 +55,10 @@ public class LlmNewStateStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode,
-                int timestamp) {
+                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             modeSeen = mode;
             treeSeen = tree;
-            timestampSeen = timestamp;
             return answer;
         }
     }
@@ -122,7 +119,6 @@ public class LlmNewStateStageTest {
         assertEquals("a matched widget action is already resolved and must not be re-resolved",
                 0, resolved.size());
         assertEquals("new-state", engine.modeSeen);
-        assertEquals(7, engine.timestampSeen);
     }
 
     @Test

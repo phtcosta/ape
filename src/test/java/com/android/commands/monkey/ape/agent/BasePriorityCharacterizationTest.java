@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
@@ -96,7 +97,7 @@ public class BasePriorityCharacterizationTest {
         // this line needed a run context it never established, and passed only when another test
         // class happened to leave one behind.
         setField(agent, "scoringPipeline", ScoringPipeline.fromParams(
-                ScoringParams.fromSpec(TestRunSpecs.spec()), ctx));
+                ScoringParams.fromSpec(TestRunSpecs.spec()), ctx, new NoopSink()));
         return agent;
     }
 

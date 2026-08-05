@@ -1,5 +1,8 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.telemetry.NdjsonSink;
+import org.json.JSONObject;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import static org.junit.Assert.*;
 
 import java.io.ByteArrayOutputStream;
@@ -70,7 +73,7 @@ public class MopDataLoadTest {
         String path = writeTempJson(json);
         assertTrue("fixture should exceed the old 8KB char buffer", new File(path).length() > 8192);
 
-        MopData d = MopData.load(path, null, null, Long.MAX_VALUE);
+        MopData d = MopData.load(path, null, null, Long.MAX_VALUE, new NoopSink());
         assertNotNull(d);
         assertEquals("com.example.oom", d.getPackageName());
         assertEquals(main, d.getMainActivity());
@@ -87,14 +90,19 @@ public class MopDataLoadTest {
 
         String[] out = new String[1];
         MopData[] result = new MopData[1];
-        out[0] = capture(() -> result[0] = MopData.load(path, null, null, tinyBudget));
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        NdjsonSink sink = new NdjsonSink(new PrintStream(buffer, true, "UTF-8"));
+        out[0] = capture(() -> result[0] = MopData.load(path, null, null, tinyBudget, sink));
 
         assertNull("oversized file must not load", result[0]);
-        assertEquals("exactly one too-large line", 1,
-                countOccurrences(out[0], "status=rejected reason=too-large"));
-        assertTrue("size reported", out[0].contains("size=" + size));
-        assertTrue("budget reported", out[0].contains("budget=" + tinyBudget));
-        assertFalse("file must not be parsed", out[0].contains("status=loaded"));
+        JSONObject record = new JSONObject(
+                new String(buffer.toByteArray(), StandardCharsets.UTF_8).trim());
+        assertEquals("rejected", record.getString("status"));
+        assertEquals("too-large", record.getString("reason"));
+        // The size and the budget belong on the free-text line: they diagnose this guard, and the
+        // record's census is about what a load produced, which here is nothing.
+        assertTrue("size reported", out[0].contains(String.valueOf(size)));
+        assertTrue("budget reported", out[0].contains(String.valueOf(tinyBudget)));
     }
 
     /**
@@ -116,11 +124,14 @@ public class MopDataLoadTest {
 
         String[] out = new String[1];
         MopData[] result = new MopData[1];
-        out[0] = capture(() -> result[0] = MopData.load(path, null, null, boundaryBudget));
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        NdjsonSink sink = new NdjsonSink(new PrintStream(buffer, true, "UTF-8"));
+        out[0] = capture(() -> result[0] = MopData.load(path, null, null, boundaryBudget, sink));
 
         assertNotNull("file at the byte-budget boundary must load, not be rejected", result[0]);
-        assertFalse("must not be rejected too-large", out[0].contains("reason=too-large"));
-        assertTrue("must parse to loaded", out[0].contains("status=loaded"));
+        assertEquals("loaded", new JSONObject(
+                new String(buffer.toByteArray(), StandardCharsets.UTF_8).trim())
+                .getString("status"));
     }
 
     /** 2.3: a normal file with a generous budget loads exactly as before (regression). */
@@ -129,20 +140,22 @@ public class MopDataLoadTest {
         String json = "{\"complete\":true,\"package\":\"com.example.normal\"}";
         String path = writeTempJson(json);
 
-        String[] out = new String[1];
-        MopData[] result = new MopData[1];
-        out[0] = capture(() -> result[0] = MopData.load(path, null, null, Long.MAX_VALUE));
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        MopData result = MopData.load(path, null, null, Long.MAX_VALUE,
+                new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
 
-        assertNotNull(result[0]);
-        assertEquals("com.example.normal", result[0].getPackageName());
-        assertTrue(out[0].contains("status=loaded"));
+        assertNotNull(result);
+        assertEquals("com.example.normal", result.getPackageName());
+        assertEquals("loaded", new JSONObject(
+                new String(buffer.toByteArray(), StandardCharsets.UTF_8).trim())
+                .getString("status"));
     }
 
     /** The public 3-arg entry keeps working (computes the budget from the runtime heap). */
     @Test
     public void publicEntryStillLoadsNormalFile() throws Exception {
         String json = "{\"complete\":true,\"package\":\"com.example.pub\"}";
-        MopData d = MopData.load(writeTempJson(json), null, null);
+        MopData d = MopData.load(writeTempJson(json), null, null, new NoopSink());
         assertNotNull(d);
         assertEquals("com.example.pub", d.getPackageName());
     }

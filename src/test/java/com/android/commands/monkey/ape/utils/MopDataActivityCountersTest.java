@@ -1,7 +1,10 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.telemetry.NdjsonSink;
+import org.json.JSONObject;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -15,7 +18,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.Test;
 
 /**
- * mop-activity-consumers 3.1: the {@code [APE-MOP-DATA] status=loaded} line reports the
+ * mop-activity-consumers 3.1: the {@code MOP_DATA} record reports the
  * activity-level MOP substrate — {@code mopActivities=<n>} (final set size) and
  * {@code mopActsAugmented=<m>} (entries added by {@code augmentActivitiesFromSources} beyond
  * the widget-derived set; 0 with the flag off). Pure counters (INV-MOP-32).
@@ -34,20 +37,6 @@ public class MopDataActivityCountersTest {
         }
         return f.getAbsolutePath();
     }
-
-    private static String capture(Runnable r) {
-        PrintStream orig = System.out;
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(buf, true, StandardCharsets.UTF_8));
-        try {
-            r.run();
-        } finally {
-            System.out.flush();
-            System.setOut(orig);
-        }
-        return new String(buf.toByteArray(), StandardCharsets.UTF_8);
-    }
-
     /** Flip the {@code static final} A′ flag past the compile-time wall (not a constant — it is
      * initialised via a method call, so the read is a runtime field access). Forces Config's
      * static initializer to run first: getting a {@code Field} does not initialize the class, so
@@ -94,10 +83,9 @@ public class MopDataActivityCountersTest {
     /** 3.1: flag off → m==0, n == widget-derived set size (1). */
     @Test
     public void flagOff_reportsZeroAugmentation() throws Exception {
-        final String path = writeTempJson(fixture());
-        String out = capture(() -> MopData.load(path, null, null));
-        assertTrue("load line carries activity counters (flag off): " + out,
-                out.contains("mopActivities=1 mopActsAugmented=0"));
+        JSONObject record = loadRecord(writeTempJson(fixture()), null, null);
+        assertEquals(1, record.getInt("mopActivities"));
+        assertEquals(0, record.getInt("mopActsAugmented"));
     }
 
     /** 3.1: flag on → the two reachability-only activities are counted (m==2, n==3). */
@@ -106,13 +94,19 @@ public class MopDataActivityCountersTest {
         final String path = writeTempJson(fixture());
         setActivitySourceFlag(true);
         try {
-            String out = capture(() -> MopData.load(path, null, null));
-            assertTrue("load line reports A′ contribution (flag on): " + out,
-                    out.contains("mopActivities=3 mopActsAugmented=2"));
-            MopData d = MopData.load(path, null, null);
-            assertNotNull(d);
+            JSONObject record = loadRecord(path, null, null);
+            assertEquals(3, record.getInt("mopActivities"));
+            assertEquals(2, record.getInt("mopActsAugmented"));
+            assertNotNull(MopData.load(path, null, null, new NoopSink()));
         } finally {
             setActivitySourceFlag(false);
         }
+    }
+
+    /** The {@code MOP_DATA} record a load writes — the whole product, since nothing reads it back. */
+    private static JSONObject loadRecord(String path, String pkg, String main) throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        MopData.load(path, pkg, main, new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
+        return new JSONObject(new String(buffer.toByteArray(), StandardCharsets.UTF_8).trim());
     }
 }

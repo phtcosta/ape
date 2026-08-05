@@ -1,38 +1,53 @@
 package com.android.commands.monkey.ape.llm;
 
-import com.android.commands.monkey.ape.runtime.RunSpec;
-import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import com.android.commands.monkey.ape.telemetry.EventSink;
+import com.android.commands.monkey.ape.telemetry.NdjsonSink;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
- * What the run counts and what it says it counted.
+ * What the run counts and what it records having counted.
  *
- * <p>The per-decision {@code [APE-LLM-TEL]} line is reachable from a JVM test because emission is
- * separate from orchestration: the line is a pure function of the verdict handed in, and nothing
- * on the way to it loads {@code AndroidDevice}. That is what lets the tests below pin the fields an
- * offline join reads, rather than leaving them to the device smoke.
+ * <p>The per-attempt sub-event is reachable from a JVM test because recording is separate from
+ * orchestration: the sub-event is a pure function of the verdict handed in, and nothing on the way
+ * to it loads {@code AndroidDevice}. That is what lets the tests below pin the fields an offline
+ * reader consumes, rather than leaving them to the device smoke.
+ *
+ * <p>They are written against a real {@link NdjsonSink} over a buffer rather than a recording
+ * double, because the property under test is not "the sink was called" but "the trace carries the
+ * field" — and the two differ exactly where the record's omission rules live. Every sub-event
+ * assertion therefore also asserts the thing the retired encoding needed a {@code step=} key for:
+ * that the attempt landed on the step whose selection was running.
  */
 public class LlmTelemetryTest {
 
-    private static final String URL = "http://localhost:9999/v1";
+    private ByteArrayOutputStream captured;
+    private NdjsonSink sink;
 
-    private static RunSpec.LlmParams llmParams() {
-        return TestRunSpecs.spec("ape.llmUrl", URL).llm();
+    @Before
+    public void setUp() throws Exception {
+        captured = new ByteArrayOutputStream();
+        sink = new NdjsonSink(new PrintStream(captured, true, "UTF-8"));
     }
 
     /** A telemetry whose breaker has never tripped, which is what a healthy run reports. */
-    private static LlmTelemetry telemetry() {
-        return new LlmTelemetry(llmParams(), () -> 0);
+    private LlmTelemetry telemetry() {
+        return new LlmTelemetry(() -> 0, sink, true);
     }
 
     private static void setCounter(LlmTelemetry telemetry, String field, int value) throws Exception {
@@ -41,17 +56,41 @@ public class LlmTelemetryTest {
         f.setInt(telemetry, value);
     }
 
+    /** Runs {@code body} inside an open step and returns the step's record. */
+    private JSONObject stepAround(Runnable body) throws Exception {
+        sink.beginStep(42, 8123L, "com.example.MainActivity", true, "S1");
+        body.run();
+        sink.flushPendingStep();
+        for (String line : new String(captured.toByteArray(), StandardCharsets.UTF_8).split("\n")) {
+            JSONObject record = new JSONObject(line);
+            if (!record.has("type")) {
+                return record;
+            }
+        }
+        throw new AssertionError("no step record was written");
+    }
+
+    /** The step's LLM sub-events, in occurrence order. */
+    private List<JSONObject> subEvents(JSONObject record) throws Exception {
+        List<JSONObject> events = new ArrayList<>();
+        JSONArray llm = record.optJSONArray("llm");
+        for (int i = 0; llm != null && i < llm.length(); i++) {
+            events.add(llm.getJSONObject(i));
+        }
+        return events;
+    }
+
     /** Runs {@code body} with stdout captured, and returns what the trace received. */
     private static String trace(Runnable body) {
-        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
         PrintStream originalOut = System.out;
         try {
-            System.setOut(new PrintStream(captured, true));
+            System.setOut(new PrintStream(out, true));
             body.run();
         } finally {
             System.setOut(originalOut);
         }
-        return captured.toString();
+        return out.toString();
     }
 
     private static String captureSummary(LlmTelemetry telemetry) {
@@ -135,32 +174,45 @@ public class LlmTelemetryTest {
      * their sum is the failure total the decisions denominator uses.
      */
     @Test
-    public void theSevenCausesPartitionTheAbandonedAttempts() {
+    public void theSevenCausesPartitionTheAbandonedAttempts() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.screenshotFailed(1, "com.example.MainActivity", "surface_control");
-            telemetry.imageFailed(2);
-            telemetry.transportFailed(3, "timeout");
-            telemetry.transportFailed(4, "http_500");
-            telemetry.transportFailed(5, "connection");
-            telemetry.parseFailed(6);
-            telemetry.internalError(7, "boom");
-            telemetry.printSummary();
+        JSONObject record = stepAround(() -> {
+            telemetry.screenshotFailed("com.example.MainActivity", "surface_control");
+            telemetry.imageFailed();
+            telemetry.transportFailed("timeout");
+            telemetry.transportFailed("http_500");
+            telemetry.transportFailed("connection");
+            telemetry.parseFailed();
+            telemetry.internalError("boom");
         });
+        String summary = captureSummary(telemetry);
 
         assertEquals("seven abandoned attempts, one counter each", 7, telemetry.getFailureCount());
-        assertTrue(out, out.contains("screenshot_failed=1"));
-        assertTrue(out, out.contains("image_error=1"));
-        assertTrue(out, out.contains("timeout=1"));
-        assertTrue(out, out.contains("http_error=1"));
-        assertTrue(out, out.contains("conn_error=1"));
-        assertTrue(out, out.contains("parse_error=1"));
-        assertTrue(out, out.contains("internal_error=1"));
+        assertTrue(summary, summary.contains("screenshot_failed=1"));
+        assertTrue(summary, summary.contains("image_error=1"));
+        assertTrue(summary, summary.contains("timeout=1"));
+        assertTrue(summary, summary.contains("http_error=1"));
+        assertTrue(summary, summary.contains("conn_error=1"));
+        assertTrue(summary, summary.contains("parse_error=1"));
+        assertTrue(summary, summary.contains("internal_error=1"));
         // No abandoned attempt is a decision: the seven are the denominator's failure half, and
         // none of them touched matched/llm_tap/no_match.
-        assertTrue(out, out.contains("matched=0"));
-        assertTrue(out, out.contains("no_match=0"));
-        assertTrue("the seven are the whole denominator here, got: " + out, out.contains("(0/7)"));
+        assertTrue(summary, summary.contains("matched=0"));
+        assertTrue(summary, summary.contains("no_match=0"));
+        assertTrue("the seven are the whole denominator here, got: " + summary,
+                summary.contains("(0/7)"));
+
+        // Six sub-events, not seven: the capture failure is the one abandoned attempt that produces
+        // none, keeping its peer counter and its free-text line instead.
+        List<JSONObject> events = subEvents(record);
+        assertEquals(6, events.size());
+        List<String> causes = new ArrayList<>();
+        for (JSONObject event : events) {
+            assertEquals("error", event.getString("result"));
+            causes.add(event.getString("cause"));
+        }
+        assertEquals(java.util.Arrays.asList("image", "timeout", "http_500", "connection", "parse",
+                "internal"), causes);
     }
 
     /**
@@ -169,32 +221,27 @@ public class LlmTelemetryTest {
      * the partition would leave the denominator short of an attempt that was really made.
      */
     @Test
-    public void anUnattributedTransportFailureIsCountedAsAConnectionFailure() {
+    public void anUnattributedTransportFailureIsCountedAsAConnectionFailure() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.transportFailed(1, null);
-            telemetry.printSummary();
-        });
+        JSONObject record = stepAround(() -> telemetry.transportFailed(null));
 
         assertEquals(1, telemetry.getFailureCount());
-        assertTrue(out, out.contains("conn_error=1"));
-        assertTrue("the error line names the cause it counted, got: " + out,
-                out.contains("[APE-LLM-ERROR] step=1 cause=connection"));
+        assertTrue(captureSummary(telemetry).contains("conn_error=1"));
+        assertEquals("connection", subEvents(record).get(0).getString("cause"));
     }
 
-    /** Every HTTP status shares one counter — the status itself stays on the line. */
+    /** Every HTTP status shares one counter — the status itself stays on the sub-event. */
     @Test
-    public void everyHttpStatusLandsOnTheHttpCounter() {
+    public void everyHttpStatusLandsOnTheHttpCounter() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.transportFailed(1, "http_500");
-            telemetry.transportFailed(2, "http_404");
-            telemetry.printSummary();
+        JSONObject record = stepAround(() -> {
+            telemetry.transportFailed("http_500");
+            telemetry.transportFailed("http_404");
         });
 
-        assertTrue(out, out.contains("http_error=2"));
-        assertTrue(out, out.contains("cause=http_500"));
-        assertTrue(out, out.contains("cause=http_404"));
+        assertTrue(captureSummary(telemetry).contains("http_error=2"));
+        assertEquals("http_500", subEvents(record).get(0).getString("cause"));
+        assertEquals("http_404", subEvents(record).get(1).getString("cause"));
     }
 
     /**
@@ -203,30 +250,31 @@ public class LlmTelemetryTest {
      * because both mean the model's answer could not be turned into an action.
      */
     @Test
-    public void theTwoParseFailuresShareOneCounterAndKeepTheirOwnDiagnostics() {
+    public void theTwoParseFailuresShareOneCounterAndKeepTheirOwnDiagnostics() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.transportFailed(1, "parse");
-            telemetry.parseFailed(2);
-            telemetry.printSummary();
+        JSONObject record = stepAround(() -> {
+            telemetry.transportFailed("parse");
+            telemetry.parseFailed();
         });
 
-        assertTrue(out, out.contains("parse_error=2"));
-        assertTrue(out, out.contains("detail=null response from SGLang"));
-        assertTrue(out, out.contains("detail=no tool call extracted"));
+        assertTrue(captureSummary(telemetry).contains("parse_error=2"));
+        assertEquals("null response from SGLang", subEvents(record).get(0).getString("detail"));
+        assertEquals("no tool call extracted", subEvents(record).get(1).getString("detail"));
     }
 
     /**
      * A capture failure names the activity, which is what makes per-app {@code FLAG_SECURE}
-     * degradation countable offline — the whole reason the branch stopped being silent.
+     * degradation countable offline — the whole reason the branch stopped being silent. It is the
+     * one abandoned attempt that stays on the free-text side of the stream: it produces no
+     * {@code error} sub-event, so the line is where its activity and stage have to be readable.
      */
     @Test
     public void aCaptureFailureNamesTheActivityAndTheFailingStage() {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> telemetry.screenshotFailed(9, "com.example.Secure", "uiautomation"));
+        String out = trace(() -> telemetry.screenshotFailed("com.example.Secure", "uiautomation"));
 
         assertEquals(1, telemetry.getScreenshotFailedCount());
-        assertTrue(out, out.contains("[APE-LLM-ERROR] step=9 cause=screenshot"
+        assertTrue(out, out.contains("LLM screenshot capture failed, skipping LLM step"
                 + " activity=com.example.Secure detail=uiautomation"));
     }
 
@@ -234,9 +282,19 @@ public class LlmTelemetryTest {
     @Test
     public void aCaptureFailureWithoutAStageStillReportsOne() {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> telemetry.screenshotFailed(9, "com.example.Main", null));
+        String out = trace(() -> telemetry.screenshotFailed("com.example.Main", null));
 
         assertTrue(out, out.contains("detail=unknown"));
+    }
+
+    @Test
+    public void aCaptureFailureProducesNoErrorSubEvent() throws Exception {
+        LlmTelemetry telemetry = telemetry();
+        JSONObject record = stepAround(
+                () -> trace(() -> telemetry.screenshotFailed("com.example.Secure", "uiautomation")));
+
+        assertTrue("the capture failure keeps its counter and its line, and nothing else",
+                subEvents(record).isEmpty());
     }
 
     // -------------------------------------------------------------------------
@@ -244,152 +302,152 @@ public class LlmTelemetryTest {
     // -------------------------------------------------------------------------
 
     /**
-     * The manifest records the model the plan asked for; the ACK records what answered. It is worth
-     * exactly one line per run — a per-response ACK would say the same thing hundreds of times and
+     * The plan echo records the model the run asked for; the ACK records what answered. It is worth
+     * exactly one record per run — a per-response ACK would say the same thing hundreds of times and
      * an absent one would leave a server/plan mismatch undetectable.
      */
     @Test
-    public void theServerModelIsAcknowledgedOncePerRun() {
+    public void theServerModelIsAcknowledgedOncePerRun() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.acknowledge(response("Qwen/Qwen3-VL-4B-Instruct"));
-            telemetry.acknowledge(response("Qwen/Qwen3-VL-4B-Instruct"));
-            telemetry.acknowledge(response("something-else-entirely"));
-        });
+        telemetry.acknowledge(response("Qwen/Qwen3-VL-4B-Instruct"));
+        telemetry.acknowledge(response("Qwen/Qwen3-VL-4B-Instruct"));
+        telemetry.acknowledge(response("something-else-entirely"));
 
+        String out = new String(captured.toByteArray(), StandardCharsets.UTF_8);
         assertEquals("three successful responses acknowledge once", 1,
-                countOccurrences(out, "[APE-LLM-CONFIG-ACK]"));
-        assertTrue(out, out.contains("server_model=Qwen/Qwen3-VL-4B-Instruct"));
+                countOccurrences(out, "\"LLM_ACK\""));
+        assertTrue(out, out.contains("\"server_model\":\"Qwen/Qwen3-VL-4B-Instruct\""));
     }
 
     /** A response whose envelope names no model still acknowledges, saying so. */
     @Test
-    public void aResponseWithoutAServerModelAcknowledgesItAsUnknown() {
-        LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> telemetry.acknowledge(response(null)));
+    public void aResponseWithoutAServerModelAcknowledgesItAsUnknown() throws Exception {
+        telemetry().acknowledge(response(null));
 
-        assertTrue(out, out.contains("[APE-LLM-CONFIG-ACK] server_model=unknown"));
+        assertTrue(new String(captured.toByteArray(), StandardCharsets.UTF_8)
+                .contains("\"server_model\":\"unknown\""));
     }
 
     // -------------------------------------------------------------------------
-    // The per-decision line
+    // The per-attempt sub-event
     // -------------------------------------------------------------------------
 
     @Test
-    public void aMatchedDecisionCarriesTheFieldsTheOfflineJoinReads() {
+    public void aMatchedDecisionCarriesTheFieldsTheOfflineReaderConsumes() throws Exception {
         LlmTelemetry telemetry = telemetry();
         telemetry.countAttempt();
-        String out = trace(() -> telemetry.decision(42, "new-state", parsed("click", null, "none"),
-                540, 958, "matched", null, "Button", nearest(), "com.example.MainActivity",
+        JSONObject record = stepAround(() -> telemetry.decision("new-state",
+                parsed("click", null, "none"), 540, 958, "matched", null, "Button", nearest(),
                 response("m"), 1234L));
 
-        assertTrue(out, out.contains("[APE-LLM-TEL] step=42"));
-        assertTrue("the variant stamps every decision, got: " + out,
-                out.contains(" variant=ape_current"));
-        assertTrue("call= is the attempt ordinal, got: " + out, out.contains(" call=1"));
-        assertTrue(out, out.contains(" mode=new-state"));
-        assertTrue(out, out.contains(" action=click"));
-        assertTrue("the model's own coordinate is kept beside the pixel one, got: " + out,
-                out.contains(" qwen=(500,499) pixel=(540,958)"));
-        assertTrue(out, out.contains(" result=matched"));
-        assertTrue(out, out.contains(" matched_class=Button"));
-        assertTrue(out, out.contains(" nearest_class=Button"));
-        assertTrue(out, out.contains(" widgets=7"));
-        assertTrue(out, out.contains(" activity=com.example.MainActivity"));
-        assertTrue(out, out.contains(" tokens_in=120 tokens_out=30 time_ms=1234"));
-        assertFalse("a selecting outcome carries no reason, got: " + out, out.contains(" reason="));
-        assertFalse("nor a repair, got: " + out, out.contains(" repair="));
+        assertEquals("the attempt is attributed by being inside its step's record, not by a key",
+                42, record.getInt("s"));
+        JSONObject event = subEvents(record).get(0);
+        assertEquals("call is the attempt ordinal", 1, event.getInt("call"));
+        assertEquals("new-state", event.getString("mode"));
+        assertEquals("click", event.getString("tool"));
+        assertEquals("the model's own coordinate is kept beside the pixel one",
+                "[500,499]", event.getJSONArray("qwen").toString());
+        assertEquals("[540,958]", event.getJSONArray("px").toString());
+        assertEquals("matched", event.getString("result"));
+        assertEquals("Button", event.getString("mcls"));
+        assertEquals("Button", event.getString("ncls"));
+        assertEquals(7, event.getInt("widgets"));
+        assertEquals("[120,30]", event.getJSONArray("tok").toString());
+        assertEquals(1234L, event.getLong("ms"));
+        assertFalse("a selecting outcome carries no reason", event.has("reason"));
+        assertFalse("nor a repair", event.has("repair"));
+        assertFalse("the step is the envelope's, never the sub-event's", event.has("step"));
+        assertFalse("so is the activity", event.has("activity"));
+        assertFalse("and the prompt variant is run-constant, stated once by RUN_START",
+                event.has("variant"));
         assertEquals(1, telemetry.getMatchedCount());
     }
 
-    /** Typed text rides the line quoted, so an offline reader can tell it from an empty field. */
+    /** Typed text rides the sub-event, escaped by the serializer rather than quoted by hand. */
     @Test
-    public void typedTextIsQuotedOnTheLine() {
+    public void typedTextRidesTheSubEvent() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> telemetry.decision(1, "random",
-                parsed("type_text", "hello world", "none"), 540, 958, "matched", null, "EditText",
-                nearest(), "com.example.MainActivity", response("m"), 10L));
+        JSONObject record = stepAround(() -> telemetry.decision("random",
+                parsed("type_text", "hello \"world\"\nsecond line", "none"), 540, 958, "matched",
+                null, "EditText", nearest(), response("m"), 10L));
 
-        assertTrue(out, out.contains(" text=\"hello world\""));
+        assertEquals("hello \"world\"\nsecond line", subEvents(record).get(0).getString("text"));
     }
 
     /**
      * A banned answer is counted twice on purpose: under {@code no_match}, because that is the path
      * it left through, and under {@code dead_pair}, because bucket D is the ban's falsification gate
-     * and must be readable from the summary line without joining the per-decision stream.
+     * and must be readable from the counters without joining the per-attempt stream.
      */
     @Test
-    public void aBannedDecisionIsCountedUnderBothNoMatchAndDeadPair() {
+    public void aBannedDecisionIsCountedUnderBothNoMatchAndDeadPair() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.decision(1, "new-state", parsed("click", null, "none"), 540, 958,
-                    "no_match", "dead_pair", "none", nearest(), "com.example.MainActivity",
-                    response("m"), 10L);
-            telemetry.printSummary();
-        });
+        JSONObject record = stepAround(() -> telemetry.decision("new-state",
+                parsed("click", null, "none"), 540, 958, "no_match", "dead_pair", "none", nearest(),
+                response("m"), 10L));
+        String summary = captureSummary(telemetry);
 
-        assertTrue(out, out.contains(" result=no_match reason=dead_pair"));
+        JSONObject event = subEvents(record).get(0);
+        assertEquals("no_match", event.getString("result"));
+        assertEquals("dead_pair", event.getString("reason"));
         assertEquals(1, telemetry.getNoMatchCount());
-        assertTrue("the overlay is counted, got: " + out, out.contains("no_match=1"));
-        assertTrue(out, out.contains("dead_pair=1"));
+        assertTrue("the overlay is counted, got: " + summary, summary.contains("no_match=1"));
+        assertTrue(summary, summary.contains("dead_pair=1"));
         // The overlay does not enter the denominator a second time: one decision, one slot.
-        assertTrue("a banned decision is one decision, got: " + out, out.contains("(0/1)"));
+        assertTrue("a banned decision is one decision, got: " + summary, summary.contains("(0/1)"));
     }
 
     /** The other two no_match mechanisms keep their own reasons. */
     @Test
-    public void anUnmatchedAnswerNamesWhichMechanismRefusedIt() {
+    public void anUnmatchedAnswerNamesWhichMechanismRefusedIt() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.decision(1, "random", parsed("click", null, "none"), 0, 0,
-                    "no_match", "degenerate", "none", nearest(), "a", response("m"), 10L);
-            telemetry.decision(2, "random", parsed("click", null, "none"), 540, 20,
-                    "no_match", "boundary", "none", nearest(), "a", response("m"), 10L);
-            telemetry.printSummary();
+        JSONObject record = stepAround(() -> {
+            telemetry.decision("random", parsed("click", null, "none"), 0, 0,
+                    "no_match", "degenerate", "none", nearest(), response("m"), 10L);
+            telemetry.decision("random", parsed("click", null, "none"), 540, 20,
+                    "no_match", "boundary", "none", nearest(), response("m"), 10L);
         });
 
-        assertTrue(out, out.contains(" reason=degenerate"));
-        assertTrue(out, out.contains(" reason=boundary"));
-        assertTrue("neither is a ban, got: " + out, out.contains("dead_pair=0"));
+        assertEquals("degenerate", subEvents(record).get(0).getString("reason"));
+        assertEquals("boundary", subEvents(record).get(1).getString("reason"));
+        assertTrue("neither is a ban", captureSummary(telemetry).contains("dead_pair=0"));
         assertEquals(2, telemetry.getNoMatchCount());
     }
 
     /**
-     * The repair overlay is a property of the line: it is counted only when the line carries
-     * {@code repair=}, and it never joins the decisions denominator (INV-RTR-13), so the base×v2
-     * tool-call fidelity contrast stays readable from the summary alone.
+     * The repair overlay is a property of the sub-event: it is counted only when the sub-event
+     * carries {@code repair}, and it never joins the decisions denominator (INV-RTR-13), so the
+     * base×v2 tool-call fidelity contrast stays readable from the counters alone.
      */
     @Test
-    public void theRepairOverlayIsCountedOnlyWhenTheLineCarriesIt() {
+    public void theRepairOverlayIsCountedOnlyWhenTheSubEventCarriesIt() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.decision(1, "random", parsed("click", null, "none"), 540, 958,
-                    "matched", null, "Button", nearest(), "a", response("m"), 10L);
-            telemetry.decision(2, "random", parsed("click", null, "array_xy"), 540, 958,
-                    "matched", null, "Button", nearest(), "a", response("m"), 10L);
-            telemetry.printSummary();
+        JSONObject record = stepAround(() -> {
+            telemetry.decision("random", parsed("click", null, "none"), 540, 958,
+                    "matched", null, "Button", nearest(), response("m"), 10L);
+            telemetry.decision("random", parsed("click", null, "array_xy"), 540, 958,
+                    "matched", null, "Button", nearest(), response("m"), 10L);
         });
+        String summary = captureSummary(telemetry);
 
-        assertEquals("one of the two lines carries a repair", 1,
-                countOccurrences(out, " repair="));
-        assertTrue(out, out.contains(" repair=array_xy"));
-        assertTrue(out, out.contains("repaired=1"));
+        assertFalse("a clean parse carries no repair", subEvents(record).get(0).has("repair"));
+        assertEquals("array_xy", subEvents(record).get(1).getString("repair"));
+        assertTrue(summary, summary.contains("repaired=1"));
         // Both decisions matched; the overlay changed no outcome count.
-        assertTrue(out, out.contains("matched=2"));
-        assertTrue("two decisions, not three, got: " + out, out.contains("(2/2)"));
+        assertTrue(summary, summary.contains("matched=2"));
+        assertTrue("two decisions, not three, got: " + summary, summary.contains("(2/2)"));
     }
 
     /** An off-tree tap is its own outcome, counted apart from matched and no_match. */
     @Test
-    public void anOffTreeTapIsItsOwnOutcome() {
+    public void anOffTreeTapIsItsOwnOutcome() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> {
-            telemetry.decision(1, "stagnation", parsed("click", null, "none"), 540, 958,
-                    "llm_tap", null, "none", nearest(), "a", response("m"), 10L);
-            telemetry.printSummary();
-        });
+        JSONObject record = stepAround(() -> telemetry.decision("stagnation",
+                parsed("click", null, "none"), 540, 958, "llm_tap", null, "none", nearest(),
+                response("m"), 10L));
 
-        assertTrue(out, out.contains(" result=llm_tap"));
+        assertEquals("llm_tap", subEvents(record).get(0).getString("result"));
         assertEquals(1, telemetry.getLlmTapCount());
         assertEquals(0, telemetry.getMatchedCount());
         assertEquals(0, telemetry.getNoMatchCount());
@@ -397,23 +455,49 @@ public class LlmTelemetryTest {
 
     /** Tokens and latency accumulate across decisions; attempts count separately. */
     @Test
-    public void tokensAndLatencyAccumulateAcrossDecisions() {
+    public void tokensAndLatencyAccumulateAcrossDecisions() throws Exception {
         LlmTelemetry telemetry = telemetry();
         telemetry.countAttempt();
         telemetry.countAttempt();
-        String out = trace(() -> {
-            telemetry.decision(1, "random", parsed("click", null, "none"), 540, 958,
-                    "matched", null, "Button", nearest(), "a", response("m"), 100L);
-            telemetry.decision(2, "random", parsed("click", null, "none"), 540, 958,
-                    "matched", null, "Button", nearest(), "a", response("m"), 250L);
-            telemetry.printSummary();
+        stepAround(() -> {
+            telemetry.decision("random", parsed("click", null, "none"), 540, 958,
+                    "matched", null, "Button", nearest(), response("m"), 100L);
+            telemetry.decision("random", parsed("click", null, "none"), 540, 958,
+                    "matched", null, "Button", nearest(), response("m"), 250L);
         });
+        String summary = captureSummary(telemetry);
 
         assertEquals(2, telemetry.getCallCount());
-        assertTrue(out, out.contains("calls=2"));
-        assertTrue(out, out.contains("tokens_in=240"));
-        assertTrue(out, out.contains("tokens_out=60"));
-        assertTrue(out, out.contains("time_ms=350"));
+        assertTrue(summary, summary.contains("calls=2"));
+        assertTrue(summary, summary.contains("tokens_in=240"));
+        assertTrue(summary, summary.contains("tokens_out=60"));
+        assertTrue(summary, summary.contains("time_ms=350"));
+    }
+
+    /**
+     * A selection retry appends to the step it retried, rather than opening a second record: one
+     * step is one record whatever selection did internally (INV-SNK-03).
+     */
+    @Test
+    public void aSelectionRetryAppendsToTheSameStep() throws Exception {
+        LlmTelemetry telemetry = telemetry();
+        sink.beginStep(42, 8123L, "com.example.MainActivity", true, "S1");
+        telemetry.transportFailed("timeout");
+        // The BadStateException retry re-runs selection without advancing the agent timestamp.
+        sink.beginStep(42, 8140L, "com.example.MainActivity", true, "S1");
+        telemetry.decision("new-state", parsed("click", null, "none"), 540, 958, "matched", null,
+                "Button", nearest(), response("m"), 10L);
+        sink.flushPendingStep();
+
+        List<JSONObject> steps = new ArrayList<>();
+        for (String line : new String(captured.toByteArray(), StandardCharsets.UTF_8).split("\n")) {
+            JSONObject record = new JSONObject(line);
+            if (!record.has("type")) {
+                steps.add(record);
+            }
+        }
+        assertEquals("one step, one record", 1, steps.size());
+        assertEquals("both attempts are in it", 2, subEvents(steps.get(0)).size());
     }
 
     // -------------------------------------------------------------------------
@@ -427,23 +511,74 @@ public class LlmTelemetryTest {
      */
     @Test
     public void theSummaryReportsTheBreakersOwnTripCount() {
-        LlmTelemetry telemetry = new LlmTelemetry(llmParams(), () -> 7);
+        LlmTelemetry telemetry = new LlmTelemetry(() -> 7, sink, true);
         String out = captureSummary(telemetry);
 
         assertTrue(out, out.contains("breaker_trips=7"));
     }
 
+    // -------------------------------------------------------------------------
+    // The prompt and response dumps
+    // -------------------------------------------------------------------------
+
     /** The prompt is recorded without the image, which is reconstructible and would dwarf the trace. */
     @Test
-    public void thePromptIsRecordedWithoutTheImage() {
+    public void thePromptRidesTheSubEventWithoutTheImage() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        String out = trace(() -> telemetry.logPrompt(new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                .build(null, null, null, null, "AAAABBBBCCCC", null)));
+        JSONObject record = stepAround(() -> {
+            telemetry.logPrompt(new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
+                    .build(null, null, null, null, "AAAABBBBCCCC", null));
+            telemetry.logResponse(response("m"));
+            telemetry.decision("new-state", parsed("click", null, "none"), 540, 958, "matched",
+                    null, "Button", nearest(), response("m"), 10L);
+        });
 
-        assertTrue("the system message is recorded, got: " + out,
-                out.contains("[APE-LLM-PROMPT] system="));
-        assertTrue("and so is the user text, got: " + out,
-                out.contains("[APE-LLM-PROMPT] user_text="));
-        assertFalse("the base64 image is not, got: " + out, out.contains("AAAABBBBCCCC"));
+        JSONObject event = subEvents(record).get(0);
+        assertTrue("the system message is recorded", event.getString("sys").length() > 0);
+        assertTrue("and so is the user text", event.getString("user").length() > 0);
+        assertEquals("some content", event.getString("resp"));
+        assertEquals("0", event.getString("tool_calls"));
+        assertFalse("the base64 image is not",
+                new String(captured.toByteArray(), StandardCharsets.UTF_8).contains("AAAABBBBCCCC"));
+    }
+
+    /**
+     * An attempt abandoned before it maps keeps the prompt that produced it — which is what staging
+     * the dumps rather than passing them to the decision call buys.
+     */
+    @Test
+    public void anAbandonedAttemptKeepsItsPrompt() throws Exception {
+        LlmTelemetry telemetry = telemetry();
+        JSONObject record = stepAround(() -> {
+            telemetry.logPrompt(new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
+                    .build(null, null, null, null, "AAAABBBBCCCC", null));
+            telemetry.transportFailed("timeout");
+        });
+
+        JSONObject event = subEvents(record).get(0);
+        assertEquals("error", event.getString("result"));
+        assertTrue("the prompt survives the attempt that died on it",
+                event.getString("sys").length() > 0);
+        assertFalse("no response exists to record", event.has("resp"));
+    }
+
+    /** With the flag off the four fields are absent, and nothing else about the run changes. */
+    @Test
+    public void theDumpsAreAbsentWhenTheFlagIsOff() throws Exception {
+        LlmTelemetry telemetry = new LlmTelemetry(() -> 0, sink, false);
+        JSONObject record = stepAround(() -> {
+            telemetry.logPrompt(new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
+                    .build(null, null, null, null, "AAAABBBBCCCC", null));
+            telemetry.logResponse(response("m"));
+            telemetry.decision("new-state", parsed("click", null, "none"), 540, 958, "matched",
+                    null, "Button", nearest(), response("m"), 10L);
+        });
+
+        JSONObject event = subEvents(record).get(0);
+        for (String field : new String[]{"sys", "user", "resp", "tool_calls"}) {
+            assertFalse(field + " must be absent, not empty", event.has(field));
+        }
+        assertEquals("everything else is identical", "matched", event.getString("result"));
+        assertEquals(EventSink.ABSENT, EventSink.ABSENT);
     }
 }

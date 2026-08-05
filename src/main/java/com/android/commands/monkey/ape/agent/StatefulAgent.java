@@ -178,7 +178,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // "this run declares no MOP arm" exactly as it read an unset Config field.
         String mopDataPath = spec.has(Feature.MOP) ? spec.mop().dataPath() : null;
         this._mopData = requireMopArm(
-                MopData.load(mopDataPath, mainApp.getPackageName(), mainApp.getClassName()),
+                MopData.load(mopDataPath, mainApp.getPackageName(), mainApp.getClassName(),
+                        RunContext.current().sink()),
                 mopDataPath);
         this._coverageTracker = new UICoverageTracker();
         // rv-scoring-pipeline (activityBudgetEnabled): the activity budget is a fork addition; upstream
@@ -200,7 +201,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             @Override public boolean menuPickEligible(String activity) { return StatefulAgent.this.menuPickEligible(activity); }
         };
         this.scoringPipeline = ScoringPipeline.fromParams(
-                ScoringParams.fromSpec(spec), this.scoringContext);
+                ScoringParams.fromSpec(spec), this.scoringContext, RunContext.current().sink());
         // Assembly provenance, recorded here because this is the one place both rosters are known:
         // the decision stages the plan assembles (a pure function of the plan — INV-DP-03 leaves
         // nothing to enumerate at runtime) and the scoring passes with the census of every

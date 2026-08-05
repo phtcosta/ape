@@ -17,6 +17,8 @@ import org.junit.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.util.ArrayList;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
+
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -28,11 +30,13 @@ import static org.junit.Assert.assertTrue;
 /**
  * The transport-and-breaker unit: what it sends, what it announces, and the one consultation.
  *
- * <p>Three separable contracts live here because one unit owns all three. The wire schema is per
- * request and decided by the same predicate the prompt used (INV-LLM-11). The manifest reports the
- * values the request bodies will carry, read from the plan. And the breaker is consulted once per
- * decision, with its open episode logged once — the contract that has no other observer, since a
- * stage returns Continue whether the breaker, a disabled mode or a coin refused it.
+ * <p>Two separable contracts live here because one unit owns both. The wire schema is per request
+ * and decided by the same predicate the prompt used (INV-LLM-11). And the breaker is consulted once
+ * per decision, with its open episode recorded once — the contract that has no other observer,
+ * since a stage returns Continue whether the breaker, a disabled mode or a coin refused it.
+ *
+ * <p>What the run was asked to send is no longer this unit's to announce: the {@code RUN_START}
+ * plan echo states it once, from the same plan these fields are built from.
  */
 public class LlmClientTest {
 
@@ -48,7 +52,7 @@ public class LlmClientTest {
     }
 
     private static LlmClient client(String... keyValues) {
-        return new LlmClient(llmParams(keyValues), 100);
+        return new LlmClient(llmParams(keyValues), new NoopSink());
     }
 
     private static SglangClient sglang() {
@@ -259,69 +263,5 @@ public class LlmClientTest {
         breaker.recordFailure();
         breaker.recordFailure();
         assertEquals("OPEN", breaker.getStateName());
-    }
-
-    // -------------------------------------------------------------------------
-    // The manifest reports the plan, and reports what it will send
-    // -------------------------------------------------------------------------
-
-    @Test
-    public void manifestReportsTheValuesTheRequestsWillCarry() {
-        String trace = trace(new Runnable() {
-            @Override public void run() {
-                new LlmClient(llmParams(
-                        "ape.llmModel", "Qwen/Qwen3-VL-4B-Instruct",
-                        "ape.llmTemperature", "0.3",
-                        "ape.llmTopP", "0.6",
-                        "ape.llmTopK", "50",
-                        "ape.llmMaxTokens", "1024",
-                        "ape.llmTimeoutMs", "15000"), 100);
-            }
-        });
-
-        assertEquals("exactly one manifest line per client",
-                1, countOccurrences(trace, "[APE-LLM-CONFIG]"));
-        assertTrue(trace, trace.contains("model=Qwen/Qwen3-VL-4B-Instruct"));
-        assertTrue(trace, trace.contains("temperature=0.3"));
-        assertTrue(trace, trace.contains("top_p=0.6"));
-        assertTrue(trace, trace.contains("top_k=50"));
-        assertTrue(trace, trace.contains("max_tokens=1024"));
-        assertTrue(trace, trace.contains("timeout_ms=15000"));
-        assertTrue(trace, trace.contains("prompt_variant=ape_current"));
-        assertTrue(trace, trace.contains("stagnation_threshold=100"));
-        assertTrue(trace, trace.contains("url=" + URL));
-    }
-
-    @Test
-    public void manifestReportsTheDefaultTriggersOfAPlanThatStatesNone() {
-        // A plan that names only the URL still carries the three trigger keys, because their
-        // features are on by default. The manifest is what a reader consults to know that.
-        String trace = trace(new Runnable() {
-            @Override public void run() {
-                client();
-            }
-        });
-
-        assertTrue(trace, trace.contains("on_new_state=true"));
-        assertTrue(trace, trace.contains("on_stagnation=true"));
-        assertTrue(trace, trace.contains("llm_percentage=0.02"));
-    }
-
-    @Test
-    public void manifestReportsADisabledTriggerAsDisabled() {
-        // A disabled trigger is an absent feature, so its key is absent from the plan entirely.
-        // The manifest must still state the run's behaviour rather than omit the field, because
-        // an offline reader joins on the field being there.
-        String trace = trace(new Runnable() {
-            @Override public void run() {
-                client("ape.llmOnNewState", "false",
-                        "ape.llmOnStagnation", "false",
-                        "ape.llmPercentage", "0.0");
-            }
-        });
-
-        assertTrue(trace, trace.contains("on_new_state=false"));
-        assertTrue(trace, trace.contains("on_stagnation=false"));
-        assertTrue(trace, trace.contains("llm_percentage=0.0"));
     }
 }

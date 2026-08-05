@@ -65,7 +65,7 @@ public class ScriptedLlmTest {
         if (!llm.gateFor(hook).getAsBoolean()) {
             return null;
         }
-        return llm.engine().selectAction(null, null, offeredActions(script), null, null, hook, 1);
+        return llm.engine().selectAction(null, null, offeredActions(script), null, null, hook);
     }
 
     // ---- verdicts --------------------------------------------------------------------------
@@ -81,7 +81,7 @@ public class ScriptedLlmTest {
         llm.beginStep(0);
         assertTrue(llm.gateFor(ScriptedLlm.NEW_STATE).getAsBoolean());
         ModelAction first =
-                llm.engine().selectAction(null, null, actions, null, null, "new-state", 1);
+                llm.engine().selectAction(null, null, actions, null, null, "new-state");
 
         assertNotNull(first);
         assertEquals(W0, first.getTarget().toXPath());
@@ -89,7 +89,7 @@ public class ScriptedLlmTest {
         // Same offered list, same answer — the selector is a function of the list, not of a draw.
         llm.beginStep(0);
         llm.gateFor(ScriptedLlm.NEW_STATE).getAsBoolean();
-        assertSame(first, llm.engine().selectAction(null, null, actions, null, null, "new-state", 1));
+        assertSame(first, llm.engine().selectAction(null, null, actions, null, null, "new-state"));
     }
 
     @Test
@@ -243,7 +243,7 @@ public class ScriptedLlmTest {
         ScriptedLlm llm = new ScriptedLlm(script);
         llm.beginStep(0);
         try {
-            llm.engine().selectAction(null, null, offeredActions(script), null, null, "new-state", 1);
+            llm.engine().selectAction(null, null, offeredActions(script), null, null, "new-state");
             fail("an unscripted step the agent routed must fail");
         } catch (IllegalStateException expected) {
             assertTrue(expected.getMessage().contains("declares no LLM entry"));

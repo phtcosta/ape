@@ -57,8 +57,7 @@ public class LlmRandomStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode,
-                int timestamp) {
+                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             modeSeen = mode;
             return answer;

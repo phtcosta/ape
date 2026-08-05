@@ -1,9 +1,12 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.telemetry.NdjsonSink;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 
+import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -24,7 +27,7 @@ import static org.junit.Assert.*;
 /**
  * Unit tests for MopData. The WTG data-layer tests use the package-private
  * {@code MopData.forTest()} factory; the parser tests (gh13 §15) load real and synthetic
- * JSON through {@code MopData.load(, null, null)}, which is JVM-runnable because the parser uses
+ * JSON through {@code MopData.load(, null, null, new NoopSink())}, which is JVM-runnable because the parser uses
  * {@code org.json} rather than {@code android.util.JsonReader} (design D21).
  */
 public class MopDataTest {
@@ -250,7 +253,7 @@ public class MopDataTest {
     }
 
     // =========================================================================
-    // gh13 §15 — parser tests over real + synthetic JSON via MopData.load(, null, null)
+    // gh13 §15 — parser tests over real + synthetic JSON via MopData.load(, null, null, new NoopSink())
     // =========================================================================
 
     private static final String FRESH = "cryptoapp.apk.gh60-fresh.json";
@@ -275,7 +278,7 @@ public class MopDataTest {
     // 15.1
     @Test
     public void testFullFixtureLoadsAllFields() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         assertNotNull(d);
         assertEquals(PKG, d.getPackageName());
         assertEquals(MAIN, d.getMainActivity());
@@ -339,7 +342,7 @@ public class MopDataTest {
     // 15.2 — BUG-FIX GATE: transitiveMop derived from gh60 reachesTarget keys (D20)
     @Test
     public void testWidgetTransitiveMopDerivedFromGh60Targets() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         assertNotNull(d);
         MopData.Widget w = d.getWidget(MDA, "buttonGenerateHash");
         assertNotNull("buttonGenerateHash must be indexed under MessageDigestActivity", w);
@@ -370,7 +373,7 @@ public class MopDataTest {
     // 15.3
     @Test
     public void testEditTextWidgetMetadataCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         MopData.Widget e = d.getWidget(MDA, "editTextMessageDigest");
         assertNotNull(e);
         assertEquals("android.widget.EditText", e.type);
@@ -390,13 +393,13 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"id\":2,\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void h()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null, new NoopSink());
         assertNotNull(d);
         assertTrue(d.getWidget("C", "b").transitiveMop);
         // legacy reachesMop key is ignored (P3, forward-compat fall-through)
         String legacyReach = "{\"className\":\"C\",\"methods\":[" +
                 "{\"signature\":\"<C: void h()>\",\"reachesMop\":true}]}";
-        MopData d2 = MopData.load(writeTempJson(synthetic(legacyReach, win, "", "")), null, null);
+        MopData d2 = MopData.load(writeTempJson(synthetic(legacyReach, win, "", "")), null, null, new NoopSink());
         assertNotNull(d2);
         assertFalse("legacy reachesMop must NOT register", d2.getWidget("C", "b").transitiveMop);
     }
@@ -405,16 +408,16 @@ public class MopDataTest {
     @Test
     public void testCompleteSentinel() throws Exception {
         String body = "\"reachability\":[],\"windows\":[],\"transitions\":[],\"components\":{}";
-        assertNull(MopData.load(writeTempJson("{" + body + "}"), null, null));               // absent
-        assertNull(MopData.load(writeTempJson("{\"complete\":false," + body + "}"), null, null)); // false
-        assertNotNull(MopData.load(writeTempJson("{\"complete\":true," + body + "}"), null, null)); // true
+        assertNull(MopData.load(writeTempJson("{" + body + "}"), null, null, new NoopSink()));               // absent
+        assertNull(MopData.load(writeTempJson("{\"complete\":false," + body + "}"), null, null, new NoopSink())); // false
+        assertNotNull(MopData.load(writeTempJson("{\"complete\":true," + body + "}"), null, null, new NoopSink())); // true
     }
 
     // 15.6
     @Test
     public void testTopLevelPackageAndMainActivity() throws Exception {
         MopData d = MopData.load(writeTempJson(
-                "{\"package\":\"a.b.c\",\"mainActivity\":\"a.b.c.Main\",\"complete\":true}"), null, null);
+                "{\"package\":\"a.b.c\",\"mainActivity\":\"a.b.c.Main\",\"complete\":true}"), null, null, new NoopSink());
         assertEquals("a.b.c", d.getPackageName());
         assertEquals("a.b.c.Main", d.getMainActivity());
     }
@@ -422,7 +425,7 @@ public class MopDataTest {
     // 15.7
     @Test
     public void testPackageMismatchWarnsByDefault() {
-        MopData d = MopData.load(fixturePath(FRESH), "x.y.z.OTHER", null);
+        MopData d = MopData.load(fixturePath(FRESH), "x.y.z.OTHER", null, new NoopSink());
         assertNotNull("default warn-only returns parsed data", d);
     }
 
@@ -430,7 +433,7 @@ public class MopDataTest {
     @Test
     public void testPackageMismatchRejectsWhenStrict() {
         TestRunSpecs.installMop("ape.mopStrictPackageMatch", "true");
-        assertNull(MopData.load(fixturePath(FRESH), "x.y.z.OTHER", null));
+        assertNull(MopData.load(fixturePath(FRESH), "x.y.z.OTHER", null, new NoopSink()));
     }
 
     // -------------------------------------------------------------------------
@@ -443,76 +446,118 @@ public class MopDataTest {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try {
             System.setOut(new PrintStream(buffer));
-            MopData.load(path, pkg, main);
+            MopData.load(path, pkg, main, new NoopSink());
         } finally {
             System.setOut(original);
         }
         return buffer.toString();
     }
 
-    private static int countOccurrences(String haystack, String needle) {
-        int count = 0, from = 0;
-        for (int i; (i = haystack.indexOf(needle, from)) >= 0; from = i + needle.length()) {
-            count++;
+    /**
+     * The {@code MOP_DATA} records a load writes, in order.
+     *
+     * <p>The census is asserted on the record rather than on a captured line because the record is
+     * the whole product: nothing in the jar reads it back, so a field that exists in the sink's
+     * arguments and not on the stream is not recorded at all.
+     */
+    private static List<JSONObject> loadRecords(String path, String pkg, String main)
+            throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        MopData.load(path, pkg, main, new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
+        List<JSONObject> records = new ArrayList<>();
+        String text = new String(buffer.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        if (!text.isEmpty()) {
+            for (String line : text.split("\\n")) {
+                records.add(new JSONObject(line));
+            }
         }
-        return count;
+        return records;
     }
 
-    // 5.4 — success line carries the counters, exactly one status line
+    private static JSONObject onlyLoadRecord(String path, String pkg, String main)
+            throws Exception {
+        List<JSONObject> records = loadRecords(path, pkg, main);
+        assertEquals("exactly one MOP_DATA record per load", 1, records.size());
+        assertEquals("MOP_DATA", records.get(0).getString("type"));
+        return records.get(0);
+    }
+    // 5.4 — the loaded record carries the full census, exactly one record
     @Test
-    public void testStatusLineLoadedEmitsCounters() {
-        String out = captureLoad(fixturePath(FRESH), null, null);
-        assertTrue(out, out.contains("[APE-MOP-DATA] status=loaded"));
-        assertTrue(out, out.contains("package=" + PKG));
-        assertTrue(out, out.contains("windows=5"));
-        assertTrue(out, out.contains("widgets="));
+    public void testLoadRecordCarriesTheFullCensus() throws Exception {
+        JSONObject record = onlyLoadRecord(fixturePath(FRESH), null, null);
+        assertEquals("loaded", record.getString("status"));
+        assertEquals(PKG, record.getString("package"));
+        assertEquals(5, record.getInt("windows"));
+        assertTrue(record.has("widgets"));
         // FIX 2: flagged=3 (was 2) — the Execute button's desugared-lambda handler is now recovered.
-        assertTrue(out, out.contains("flagged=3"));
-        assertTrue(out, out.contains("droppedNoId="));
-        assertTrue(out, out.contains("transitions=35"));
-        // FIX 3 (INV-MOP-31): join diagnostics on the load line; 1 synthetic lambda recovered.
-        assertTrue(out, out.contains("handlersUnmatched=5 syntheticLambda=1 recovered=1"));
-        assertEquals("exactly one status line", 1, countOccurrences(out, "[APE-MOP-DATA] status="));
+        assertEquals(3, record.getInt("flagged"));
+        assertTrue(record.has("droppedNoId"));
+        // FIX 3 (INV-MOP-31): join diagnostics on the record; 1 synthetic lambda recovered.
+        assertEquals(5, record.getInt("handlersUnmatched"));
+        assertEquals(1, record.getInt("syntheticLambda"));
+        assertEquals(1, record.getInt("recovered"));
+    }
+
+    /**
+     * The record carries the click-only WTG view's edge count, not the flat transitions list.
+     *
+     * <p>They are different numbers over the same file — 35 transitions here against the click-only
+     * edges below — and the frontier passes gate on the second. Reporting the first is what let 14
+     * of the campaign's 40 applications look like they had WTG data while the whole frontier family
+     * was disabled, so the field is not a rename: it is the correction.
+     */
+    @Test
+    public void testLoadRecordCarriesWtgEdgesRatherThanTheFlatTransitionList() throws Exception {
+        JSONObject record = onlyLoadRecord(fixturePath(FRESH), null, null);
+        MopData data = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
+        int clickOnlyEdges = 0;
+        for (MopData.Window w : data.getWindows()) {
+            clickOnlyEdges += data.getWtgTransitions(w.name).size();
+        }
+        assertEquals(clickOnlyEdges, record.getInt("wtgEdges"));
+        assertFalse("the flat list is deliberately not carried forward",
+                record.has("transitions"));
+        assertFalse("has_wtg_data is wtgEdges > 0 by construction",
+                record.has("has_wtg_data"));
     }
 
     // 5.4 — rejection reasons
     @Test
-    public void testStatusLineIncompleteReason() throws Exception {
-        String out = captureLoad(writeTempJson("{\"package\":\"a.b\"}"), null, null);
-        assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=incomplete"));
-        assertEquals(1, countOccurrences(out, "[APE-MOP-DATA] status="));
+    public void testRejectionRecordsIncompleteReason() throws Exception {
+        JSONObject record = onlyLoadRecord(writeTempJson("{\"package\":\"a.b\"}"), null, null);
+        assertEquals("rejected", record.getString("status"));
+        assertEquals("incomplete", record.getString("reason"));
     }
 
     @Test
-    public void testStatusLineParseErrorReason() throws Exception {
-        String out = captureLoad(writeTempJson("{ this is not valid json "), null, null);
-        assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=parse-error"));
+    public void testRejectionRecordsParseErrorReason() throws Exception {
+        JSONObject record = onlyLoadRecord(writeTempJson("{ this is not valid json "), null, null);
+        assertEquals("parse-error", record.getString("reason"));
     }
 
     @Test
-    public void testStatusLineFileMissingReason() {
-        String out = captureLoad("/nonexistent/path/does-not-exist.json", null, null);
-        assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=file-missing"));
+    public void testRejectionRecordsFileMissingReason() throws Exception {
+        JSONObject record = onlyLoadRecord("/nonexistent/path/does-not-exist.json", null, null);
+        assertEquals("file-missing", record.getString("reason"));
     }
 
     @Test
-    public void testStatusLinePackageMismatchReason() {
+    public void testRejectionRecordsPackageMismatchReason() throws Exception {
         TestRunSpecs.installMop("ape.mopStrictPackageMatch", "true");
-        String out = captureLoad(fixturePath(FRESH), "x.y.z.OTHER", null);
-        assertTrue(out, out.contains("[APE-MOP-DATA] status=rejected reason=package-mismatch"));
+        JSONObject record = onlyLoadRecord(fixturePath(FRESH), "x.y.z.OTHER", null);
+        assertEquals("package-mismatch", record.getString("reason"));
     }
 
-    // 5.3 — unset path stays silent (spec: no status line required when MOP disabled)
+    // 5.3 — unset path stays silent (spec: no record required when MOP disabled)
     @Test
-    public void testStatusLineNullPathEmitsNoLine() {
-        String out = captureLoad(null, null, null);
-        assertFalse(out, out.contains("[APE-MOP-DATA]"));
+    public void testNullPathRecordsNothing() throws Exception {
+        assertTrue(loadRecords(null, null, null).isEmpty());
     }
 
     // 15.9
     @Test
     public void testReachabilityClassFieldsCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         boolean sawMain = false, sawReachable = false;
         for (MopData.ReachabilityClass rc : d.getReachability()) {
             assertNotNull(rc.className);
@@ -529,7 +574,7 @@ public class MopDataTest {
     // 15.10
     @Test
     public void testWidgetCoreFieldsCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         MopData.Widget e = d.getWidget(MDA, "editTextMessageDigest");
         assertNotNull(e);
         assertEquals("editTextMessageDigest", e.idName);
@@ -544,7 +589,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"sp\",\"type\":\"android.widget.Spinner\",\"prompt\":\"Pick\",\"spinnerMode\":\"dropdown\"}," +
                 "{\"idName\":\"bt\",\"type\":\"android.widget.Button\",\"contentDescription\":\"Encrypt\",\"tooltipText\":\"Tap\"}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null, new NoopSink());
         MopData.Widget sp = d.getWidget("C", "sp");
         assertEquals("Pick", sp.prompt);
         assertEquals("dropdown", sp.spinnerMode);
@@ -559,7 +604,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"a\",\"type\":\"android.widget.Button\"}," +
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"prompt\":null,\"tooltipText\":null}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null, new NoopSink());
         assertNull(d.getWidget("C", "a").prompt);
         assertNull(d.getWidget("C", "b").prompt);
         assertNull(d.getWidget("C", "b").tooltipText);
@@ -568,7 +613,7 @@ public class MopDataTest {
     // 15.13
     @Test
     public void testSpinnerEntriesCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         MopData.Widget sp = d.getWidget(MDA, "spinnerMessageDigest");
         assertEquals(13, sp.entries.size());
         assertTrue(sp.entries.contains("MD5"));
@@ -577,7 +622,7 @@ public class MopDataTest {
     // 15.14
     @Test
     public void testListenerFieldsCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         MopData.Widget w = d.getWidget(MDA, "buttonGenerateHash");
         assertFalse(w.listeners.isEmpty());
         MopData.Listener l = w.listeners.get(0);
@@ -593,7 +638,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void unknown()>\",\"handlerReachesTarget\":true}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null, new NoopSink());
         assertTrue(d.getWidget("C", "b").transitiveMop);
     }
 
@@ -605,14 +650,14 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void h()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null, new NoopSink());
         assertTrue(d.getWidget("C", "b").transitiveMop);
     }
 
     // 15.17
     @Test
     public void testTransitionEventFieldsCaptured() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         boolean found = false;
         for (MopData.Transition t : d.getTransitions()) {
             for (MopData.TransitionEvent e : t.events) {
@@ -628,7 +673,7 @@ public class MopDataTest {
     // 15.18
     @Test
     public void testTransitionImplicitEventsPreservedInRawView() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         boolean implicitInRaw = false;
         for (MopData.Transition t : d.getTransitions()) {
             for (MopData.TransitionEvent e : t.events) {
@@ -661,12 +706,12 @@ public class MopDataTest {
         // transition: C#OptionsMenu --click mc--> C.Crypto (which hasMop via 'go')
         String trans = "{\"sourceId\":3,\"targetId\":4,\"events\":[" +
                 "{\"type\":\"click\",\"handler\":\"x\",\"widgetId\":9,\"widgetClass\":\"android.view.MenuItem\",\"widgetName\":\"mc\"}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, wins, trans, "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, wins, trans, "")), null, null, new NoopSink());
         assertTrue(d.activityHasMopOptionsMenu("A"));
         assertFalse(d.activityHasMopOptionsMenu("B"));
         assertTrue("gateway: menu navigates to MOP activity", d.activityHasMopOptionsMenu("C"));
         // real fixture gateway
-        MopData real = MopData.load(fixturePath(FRESH), null, null);
+        MopData real = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         assertTrue(real.activityHasMopOptionsMenu(MAIN));
     }
 
@@ -679,7 +724,7 @@ public class MopDataTest {
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}," +
                 "{\"eventType\":\"longClick\",\"handler\":\"<C: void other()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null, new NoopSink());
         MopData.Widget w = d.getWidget("C", "b");
         assertTrue(w.isDirectMop("click"));
         assertFalse(w.isDirectMop("longClick"));
@@ -691,7 +736,7 @@ public class MopDataTest {
     public void testEmptyArraysParseToEmptyCollections() throws Exception {
         String json = "{\"complete\":true,\"reachability\":[],\"windows\":[],\"transitions\":[]," +
                 "\"components\":{\"activities\":[],\"receivers\":[],\"services\":[],\"providers\":[]}}";
-        MopData d = MopData.load(writeTempJson(json), null, null);
+        MopData d = MopData.load(writeTempJson(json), null, null, new NoopSink());
         assertNotNull(d);
         assertTrue(d.isComplete());
         assertTrue(d.getReachability().isEmpty());
@@ -713,7 +758,7 @@ public class MopDataTest {
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}," +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null, new NoopSink());
         MopData.Widget w = d.getWidget("C", "b");
         assertEquals(Boolean.TRUE, w.directMopByEventType.get("click"));
         assertEquals(2, w.listeners.size());
@@ -738,7 +783,7 @@ public class MopDataTest {
     @Test
     public void testCompleteSentinelInMiddleStillRecognized() throws Exception {
         MopData d = MopData.load(writeTempJson(
-                "{\"package\":\"a.b\",\"complete\":true,\"windows\":[]}"), null, null);
+                "{\"package\":\"a.b\",\"complete\":true,\"windows\":[]}"), null, null, new NoopSink());
         assertNotNull(d);
         assertTrue(d.isComplete());
     }
@@ -746,13 +791,13 @@ public class MopDataTest {
     // 15.25
     @Test
     public void testLoadNullPathReturnsNullCleanly() {
-        assertNull(MopData.load(null, null, null));
+        assertNull(MopData.load(null, null, null, new NoopSink()));
     }
 
     // 15.26
     @Test
     public void testGetWindowUnknownIdReturnsNull() {
-        MopData d = MopData.load(fixturePath(FRESH), null, null);
+        MopData d = MopData.load(fixturePath(FRESH), null, null, new NoopSink());
         assertNull(d.getWindow(0));
         assertNull(d.getWindow(-1));
         assertNull(d.getWindow(Integer.MAX_VALUE));
@@ -775,7 +820,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
                 "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
                 "{\"eventType\":\"long_click\",\"handler\":\"<C: void h()>\"}]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(reaches, win, "", "")), null, null, new NoopSink());
         MopData.Widget w = d.getWidget("C", "b");
         assertTrue("snake_case JSON matches camelCase query", w.isDirectMop("longClick"));
         assertTrue("snake_case JSON matches snake_case query", w.isDirectMop("long_click"));
@@ -797,7 +842,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":["
                 + "{\"idName\":\"submit\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "},"
                 + "{\"idName\":\"submit\",\"type\":\"android.widget.Button\",\"listeners\":[]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null, new NoopSink());
         MopData.Widget w = d.getWidget("C", "submit");
         assertNotNull(w);
         assertTrue("flagged widget retained on collision", w.directMop);
@@ -809,7 +854,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":["
                 + "{\"idName\":\"submit\",\"type\":\"android.widget.Button\",\"listeners\":[]},"
                 + "{\"idName\":\"submit\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null, new NoopSink());
         MopData.Widget w = d.getWidget("C", "submit");
         assertNotNull(w);
         assertTrue("strongest flag wins regardless of order", w.directMop);
@@ -820,7 +865,7 @@ public class MopDataTest {
     public void testEmptyIdWidget_notBucketed_countedAndActivityFlagged() throws Exception {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":["
                 + "{\"idName\":\"\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null, new NoopSink());
         assertNull("empty-id widget not stored under the \"\" key", d.getWidget("C", ""));
         assertEquals("flagged-no-id drop counted", 1, d.getDroppedFlaggedNoId());
         assertTrue("activity still flagged via mopActivities", d.activityHasMop("C"));
@@ -832,7 +877,7 @@ public class MopDataTest {
         String win = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":["
                 + "{\"idName\":\"a\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "},"
                 + "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[]}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, win, "", "")), null, null, new NoopSink());
         assertNotNull(d.getWidget("C", "a"));
         assertNotNull(d.getWidget("C", "b"));
         assertTrue(d.getWidget("C", "a").directMop);
@@ -846,7 +891,7 @@ public class MopDataTest {
                 + "{\"id\":2,\"type\":\"ACTIVITY\",\"name\":\"Tgt\",\"widgets\":[]}";
         String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
                 + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"android.view.MenuItem\",\"widgetName\":\"item\"}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", wins, trans, "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic("", wins, trans, "")), null, null, new NoopSink());
         List<MopData.WtgTransition> base = d.getWtgTransitions("C");
         assertEquals("menu edge stored under base activity", 1, base.size());
         assertEquals("item", base.get(0).widgetName);
@@ -860,7 +905,7 @@ public class MopDataTest {
                 + "{\"id\":2,\"type\":\"ACTIVITY\",\"name\":\"Tgt#Dialog\",\"widgets\":[]}";
         String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
                 + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"x\",\"widgetName\":\"go\"}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", wins, trans, "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic("", wins, trans, "")), null, null, new NoopSink());
         List<MopData.WtgTransition> list = d.getWtgTransitions("Src");
         assertEquals(1, list.size());
         assertEquals("target reduced to base activity", "Tgt", list.get(0).targetActivity);
@@ -883,7 +928,7 @@ public class MopDataTest {
     @Test
     public void testDialogReKey_widgetResolvableViaHost_dialogClassRemoved() throws Exception {
         MopData d = MopData.load(
-                writeTempJson(synthetic(ENC_REACH, DIALOG_HOST_WINS, DIALOG_OPEN_TRANS, "")), null, null);
+                writeTempJson(synthetic(ENC_REACH, DIALOG_HOST_WINS, DIALOG_OPEN_TRANS, "")), null, null, new NoopSink());
         MopData.Widget w = d.getWidget("Host", "btn_confirm");
         assertNotNull("dialog widget re-keyed under host activity", w);
         assertTrue("flag preserved through merge", w.directMop);
@@ -899,7 +944,7 @@ public class MopDataTest {
                 + "{\"id\":2,\"type\":\"DIALOG\",\"name\":\"android.app.AlertDialog\",\"widgets\":["
                 + "{\"idName\":\"shared\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
         MopData d = MopData.load(
-                writeTempJson(synthetic(ENC_REACH, wins, DIALOG_OPEN_TRANS, "")), null, null);
+                writeTempJson(synthetic(ENC_REACH, wins, DIALOG_OPEN_TRANS, "")), null, null, new NoopSink());
         assertTrue("dialog's flagged widget wins over unflagged host resident",
                 d.getWidget("Host", "shared").directMop);
     }
@@ -908,7 +953,7 @@ public class MopDataTest {
     @Test
     public void testDialogReKey_dialogOnlyHostPromoted() throws Exception {
         MopData d = MopData.load(
-                writeTempJson(synthetic(ENC_REACH, DIALOG_HOST_WINS, DIALOG_OPEN_TRANS, "")), null, null);
+                writeTempJson(synthetic(ENC_REACH, DIALOG_HOST_WINS, DIALOG_OPEN_TRANS, "")), null, null, new NoopSink());
         assertTrue("host with no flags of its own promoted via reachable dialog",
                 d.activityHasMop("Host"));
     }
@@ -919,20 +964,16 @@ public class MopDataTest {
     @Test
     public void testDialogReKey_orphanCountedAndNotReKeyed() throws Exception {
         String json = synthetic(ENC_REACH, DIALOG_HOST_WINS, "", "");   // no transitions → orphan
-        MopData d = MopData.load(writeTempJson(json), null, null);
+        MopData d = MopData.load(writeTempJson(json), null, null, new NoopSink());
         assertNull("orphan dialog not resolvable via host", d.getWidget("Host", "btn_confirm"));
         assertNotNull("orphan dialog widget stays under dialog-class key",
                 d.getWidget("android.app.AlertDialog", "btn_confirm"));
 
         String out = captureLoad(writeTempJson(json), null, null);
         assertTrue(out, out.contains("[APE-RV] MopData: 1 orphan DIALOG windows (no incoming transition)"));
-        String statusLine = null;
-        for (String line : out.split("\\R")) {
-            if (line.contains("[APE-MOP-DATA]")) statusLine = line;
-        }
-        assertNotNull("status line present", statusLine);
-        assertFalse("orphan diagnostic must not leak onto the [APE-MOP-DATA] line (F2)",
-                statusLine.contains("orphan"));
+        JSONObject record = onlyLoadRecord(writeTempJson(json), null, null);
+        assertFalse("the orphan diagnostic stays on the free-text side of the stream (F2)",
+                record.toString().contains("orphan"));
     }
 
     // 4.4(f): triple-collision (direct/transitive/unflagged, same idName) across host+dialog,
@@ -951,7 +992,7 @@ public class MopDataTest {
                 + "{\"id\":2,\"type\":\"DIALOG\",\"name\":\"android.app.AlertDialog\",\"widgets\":["
                 + "{\"idName\":\"x\",\"type\":\"android.widget.Button\"," + direct + "}]}";
         MopData d = MopData.load(
-                writeTempJson(synthetic(reach, wins, DIALOG_OPEN_TRANS, "")), null, null);
+                writeTempJson(synthetic(reach, wins, DIALOG_OPEN_TRANS, "")), null, null, new NoopSink());
         assertTrue("direct dialog widget wins the triple collision", d.getWidget("Host", "x").directMop);
 
         // Swap strengths: host direct, dialog transitive → merge must NOT downgrade the host.
@@ -960,7 +1001,7 @@ public class MopDataTest {
                 + "{\"id\":2,\"type\":\"DIALOG\",\"name\":\"android.app.AlertDialog\",\"widgets\":["
                 + "{\"idName\":\"x\",\"type\":\"android.widget.Button\"," + transitive + "}]}";
         MopData d2 = MopData.load(
-                writeTempJson(synthetic(reach, wins2, DIALOG_OPEN_TRANS, "")), null, null);
+                writeTempJson(synthetic(reach, wins2, DIALOG_OPEN_TRANS, "")), null, null, new NoopSink());
         assertTrue("merge never downgrades a stronger resident", d2.getWidget("Host", "x").directMop);
     }
 
@@ -975,7 +1016,7 @@ public class MopDataTest {
                 + "{\"idName\":\"btn\",\"type\":\"android.widget.Button\"," + ENC_LISTENER + "}]}";
         String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
                 + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"android.view.MenuItem\",\"widgetName\":\"item\"}]}";
-        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, wins, trans, "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic(ENC_REACH, wins, trans, "")), null, null, new NoopSink());
         assertTrue("gateway fires via retained dialog-class mopActivities entry (A6)",
                 d.activityHasMopOptionsMenu("Src"));
     }
@@ -989,7 +1030,7 @@ public class MopDataTest {
     public void widgetlessSubstrateFalseWhenAWidgetPresent() throws Exception {
         String win = "{\"id\":1,\"name\":\"Scr\",\"widgets\":["
                 + "{\"idName\":\"btn\",\"type\":\"android.widget.Button\"}]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null, new NoopSink());
         assertFalse(d.isWidgetlessSubstrate());
     }
 
@@ -997,14 +1038,14 @@ public class MopDataTest {
     @Test
     public void widgetlessSubstrateTrueWhenWindowHasNoWidgets() throws Exception {
         String win = "{\"id\":1,\"name\":\"Scr\",\"widgets\":[]}";
-        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic("", win, "", "")), null, null, new NoopSink());
         assertTrue(d.isWidgetlessSubstrate());
     }
 
     /** 3.1: no windows at all → widgetless substrate (empty windows[]). */
     @Test
     public void widgetlessSubstrateTrueWhenNoWindows() throws Exception {
-        MopData d = MopData.load(writeTempJson(synthetic("", "", "", "")), null, null);
+        MopData d = MopData.load(writeTempJson(synthetic("", "", "", "")), null, null, new NoopSink());
         assertTrue(d.isWidgetlessSubstrate());
     }
 

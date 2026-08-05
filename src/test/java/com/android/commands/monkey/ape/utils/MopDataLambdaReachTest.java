@@ -1,6 +1,10 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.telemetry.NdjsonSink;
+import org.json.JSONObject;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -40,20 +44,6 @@ public class MopDataLambdaReachTest {
         }
         return f.getAbsolutePath();
     }
-
-    private static String capture(Runnable r) {
-        PrintStream orig = System.out;
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(buf, true, StandardCharsets.UTF_8));
-        try {
-            r.run();
-        } finally {
-            System.out.flush();
-            System.setOut(orig);
-        }
-        return new String(buf.toByteArray(), StandardCharsets.UTF_8);
-    }
-
     // ---- FIX 1 (A′): 3-source union via the augmentActivitiesFromSources seam ----
 
     private static MopData.ReachabilityClass activityClass(String name, boolean hasReachingMethod) {
@@ -128,7 +118,7 @@ public class MopDataLambdaReachTest {
     public void fix2_desugaredLambdaHandlerRecovered() throws Exception {
         String act = "com.x.Crypto";
         String handler = "<" + act + "$$ExternalSyntheticLambda0: void onClick(android.view.View)>";
-        MopData d = MopData.load(writeTempJson(fixture(act, reachingLambda(act), handler)), null, null);
+        MopData d = MopData.load(writeTempJson(fixture(act, reachingLambda(act), handler)), null, null, new NoopSink());
         assertNotNull(d);
         assertTrue("Execute-button lambda handler recovered via enclosing-class lambda method",
                 d.activityHasMop(act));
@@ -141,7 +131,7 @@ public class MopDataLambdaReachTest {
         String nonReaching = "{\"name\":\"lambda$setup$0\",\"signature\":\"<" + act
                 + ": void lambda$setup$0(android.view.View)>\",\"reachable\":true,\"reachesTarget\":false}";
         String handler = "<" + act + "$$ExternalSyntheticLambda0: void onClick(android.view.View)>";
-        MopData d = MopData.load(writeTempJson(fixture(act, nonReaching, handler)), null, null);
+        MopData d = MopData.load(writeTempJson(fixture(act, nonReaching, handler)), null, null, new NoopSink());
         assertNotNull(d);
         assertFalse(d.activityHasMop(act));
     }
@@ -152,20 +142,28 @@ public class MopDataLambdaReachTest {
         String handler = "<" + act + ": void generateHash(android.view.View)>";
         String reachMethod = "{\"name\":\"generateHash\",\"signature\":\"" + handler
                 + "\",\"reachable\":true,\"reachesTarget\":true,\"directlyReachesTarget\":true}";
-        MopData d = MopData.load(writeTempJson(fixture(act, reachMethod, handler)), null, null);
+        MopData d = MopData.load(writeTempJson(fixture(act, reachMethod, handler)), null, null, new NoopSink());
         assertNotNull(d);
         assertTrue("exact-match join path unchanged", d.activityHasMop(act));
     }
 
-    // ---- FIX 3: join diagnostics on the load line ----
+    // ---- FIX 3: join diagnostics on the load record ----
 
     @Test
-    public void fix3_diagnosticsOnLoadLine() throws Exception {
+    public void fix3_diagnosticsOnTheLoadRecord() throws Exception {
         String act = "com.x.Crypto";
         String handler = "<" + act + "$$ExternalSyntheticLambda0: void onClick(android.view.View)>";
-        final String path = writeTempJson(fixture(act, reachingLambda(act), handler));
-        String out = capture(() -> MopData.load(path, null, null));
-        assertTrue("load line carries join diagnostics: " + out,
-                out.contains("handlersUnmatched=1 syntheticLambda=1 recovered=1"));
+        JSONObject record = loadRecord(
+                writeTempJson(fixture(act, reachingLambda(act), handler)), null, null);
+        assertEquals(1, record.getInt("handlersUnmatched"));
+        assertEquals(1, record.getInt("syntheticLambda"));
+        assertEquals(1, record.getInt("recovered"));
+    }
+
+    /** The {@code MOP_DATA} record a load writes — the whole product, since nothing reads it back. */
+    private static JSONObject loadRecord(String path, String pkg, String main) throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        MopData.load(path, pkg, main, new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
+        return new JSONObject(new String(buffer.toByteArray(), StandardCharsets.UTF_8).trim());
     }
 }

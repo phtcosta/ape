@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionStage;
@@ -460,7 +461,7 @@ public final class OracleScaffold {
             throw new IllegalStateException("MOP fixture not on the test classpath: " + MOP_FIXTURE);
         }
         MopData data = MopData.load(new File(url.getFile()).getAbsolutePath(),
-                MOP_FIXTURE_PACKAGE, MOP_FIXTURE_MAIN_ACTIVITY);
+                MOP_FIXTURE_PACKAGE, MOP_FIXTURE_MAIN_ACTIVITY, new NoopSink());
         if (data == null) {
             throw new IllegalStateException("MopData.load returned null for " + MOP_FIXTURE);
         }
@@ -561,7 +562,7 @@ public final class OracleScaffold {
         // adjustActionsByGUITree(), above this harness's entry point, so no golden record has ever
         // depended on a scoring weight.
         setField(agent, "scoringPipeline",
-                ScoringPipeline.fromParams(ScoringParams.fromSpec(spec), scoringContext));
+                ScoringPipeline.fromParams(ScoringParams.fromSpec(spec), scoringContext, new NoopSink()));
 
         // --- fields with inline initializers, which Unsafe.allocateInstance also skipped
         setField(agent, "actionBuffer", new LinkedList<>());
@@ -584,8 +585,6 @@ public final class OracleScaffold {
         setField(agent, "exploration", spec.exploration());
         setField(agent, "mopTargetPickCap",
                 spec.has(Feature.MOP) ? spec.mop().targetPickCap() : 0);
-        setField(agent, "stepTelemetryEnabled", spec.has(Feature.STEP_TELEMETRY)
-                && spec.telemetry().bool("ape.stepTelemetryEnabled"));
         // The decision policy the constructor would have assembled (SataAgent.java), built from the
         // same plan installed above and against this agent's own action producers. Last, because
         // nothing it binds may be read before every field it reaches through is set — this is the

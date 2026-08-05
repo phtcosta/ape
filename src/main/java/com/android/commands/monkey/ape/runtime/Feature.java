@@ -155,6 +155,11 @@ public enum Feature {
 
         COVERAGE_BOOST.own("ape.coverageMaxStates", "2000");
 
+        // The prompt and response dumps are a volume lever on the trace, not a mechanism: turning
+        // them off changes four fields of an LLM sub-event and nothing a run does. Its neutral value
+        // is therefore its default — a plan may state it either way whether or not telemetry is on.
+        STEP_TELEMETRY.own("ape.llmPromptDump", "true");
+
         FUZZING.own("ape.fuzzingRate", "0.02");
         FUZZING.own("ape.fuzzingActivityVisitThreshold", "10");
 

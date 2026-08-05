@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.utils.MopData;
 
 import org.junit.Test;
@@ -69,8 +70,8 @@ public class ScoringPassGateTest {
 
     @Test
     public void mopWidgetPassEnabledIffMopDataPresent() {
-        assertFalse(new MopWidgetPass(ctxWithMop(null), allOn()).isEnabled());
-        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOn()).isEnabled());
+        assertFalse(new MopWidgetPass(ctxWithMop(null), allOn(), new NoopSink()).isEnabled());
+        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOn(), new NoopSink()).isEnabled());
     }
 
     @Test
@@ -145,7 +146,7 @@ public class ScoringPassGateTest {
      */
     @Test
     public void theMopDataGatedPassesIgnoreTheWeights() {
-        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOff()).isEnabled());
+        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOff(), new NoopSink()).isEnabled());
         assertTrue(new MenuGatewayPass(ctxWithMop(mopNoWtg()), allOff()).isEnabled());
     }
 
@@ -155,7 +156,7 @@ public class ScoringPassGateTest {
     public void passReadsMopDataFromContextNotItsOwnState() {
         // Same pass type, two contexts -> two different enabled states, proving the pass holds no
         // MopData of its own and reads it from the ScoringContext at construction.
-        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOn()).isEnabled());
-        assertFalse(new MopWidgetPass(ctxWithMop(null), allOn()).isEnabled());
+        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOn(), new NoopSink()).isEnabled());
+        assertFalse(new MopWidgetPass(ctxWithMop(null), allOn(), new NoopSink()).isEnabled());
     }
 }

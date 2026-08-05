@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
@@ -125,7 +126,7 @@ public class PipelineParityTest {
         setField(agent, "_coverageTracker", tracker);
         ScoringContext ctx = ctxFor(mopData, tracker);
         setField(agent, "scoringContext", ctx);
-        setField(agent, "scoringPipeline", ScoringPipeline.fromParams(defaultMopArm(), ctx));
+        setField(agent, "scoringPipeline", ScoringPipeline.fromParams(defaultMopArm(), ctx, new NoopSink()));
         return agent;
     }
 
@@ -161,7 +162,7 @@ public class PipelineParityTest {
         ScoringContext ctx = ctxFor(MopData.forTest(null, null, null), new UICoverageTracker());
         assertEquals(Arrays.asList(
                         "MopWidgetPass", "MenuGatewayPass", "CoveragePass", "FormCompletionPass"),
-                ScoringPipeline.fromParams(defaultMopArm(), ctx).passNames());
+                ScoringPipeline.fromParams(defaultMopArm(), ctx, new NoopSink()).passNames());
     }
 
     @Test

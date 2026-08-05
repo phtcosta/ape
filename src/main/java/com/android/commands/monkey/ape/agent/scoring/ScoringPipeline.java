@@ -8,6 +8,7 @@ import java.util.Map;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 
 /**
  * rv-scoring-pipeline (INV-ARCH-03/04/05). The single assembly point and runner for the RV scoring
@@ -64,10 +65,14 @@ public final class ScoringPipeline {
      * run-fixed {@link ScoringContext#getMopData()}. This is the only place a scoring parameter is
      * read: below it, a pass is a function of the numbers it was constructed with, which is what
      * lets a test state a weight instead of arranging for a global to hold it (INV-ARCH-11).
+     *
+     * @param sink handed to the one pass that records something of its own — the MOP exposure pair,
+     *        which is computed here and nowhere else
      */
-    public static ScoringPipeline fromParams(ScoringParams params, ScoringContext ctx) {
+    public static ScoringPipeline fromParams(ScoringParams params, ScoringContext ctx,
+            EventSink sink) {
         List<ScoringPass> candidates = new ArrayList<>();
-        candidates.add(new MopWidgetPass(ctx, params));
+        candidates.add(new MopWidgetPass(ctx, params, sink));
         candidates.add(new MenuGatewayPass(ctx, params));
         candidates.add(new WtgPass(ctx, params));
         candidates.add(new FrontierPass(ctx, params));

@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -130,7 +131,7 @@ public class ScoringPipelineTest {
     public void fullMopArmAssemblesSixInOrderWhenTheMopFrontierWeightIsZero() {
         StubScoringContext ctx = new StubScoringContext();
         ctx.mopData = mopWithWtg();
-        ScoringPipeline p = ScoringPipeline.fromParams(withoutMopFrontier(), ctx);
+        ScoringPipeline p = ScoringPipeline.fromParams(withoutMopFrontier(), ctx, new NoopSink());
         assertEquals(Arrays.asList(
                 "MopWidgetPass", "MenuGatewayPass", "WtgPass",
                 "FrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
@@ -143,7 +144,7 @@ public class ScoringPipelineTest {
         // the frontier family stays contiguous (INV-ARCH-03 relative order preserved).
         StubScoringContext ctx = new StubScoringContext();
         ctx.mopData = mopWithWtg();
-        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx);
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx, new NoopSink());
         assertEquals(Arrays.asList(
                 "MopWidgetPass", "MenuGatewayPass", "WtgPass", "FrontierPass",
                 "MopFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
@@ -160,8 +161,8 @@ public class ScoringPipelineTest {
         StubScoringContext ctx = new StubScoringContext();
         ctx.mopData = mopWithWtg();
 
-        ScoringPipeline without = ScoringPipeline.fromParams(withoutMopFrontier(), ctx);
-        ScoringPipeline with = ScoringPipeline.fromParams(allOn(), ctx);
+        ScoringPipeline without = ScoringPipeline.fromParams(withoutMopFrontier(), ctx, new NoopSink());
+        ScoringPipeline with = ScoringPipeline.fromParams(allOn(), ctx, new NoopSink());
 
         assertFalse("weight 0 keeps MopFrontierPass out",
                 without.passNames().contains("MopFrontierPass"));
@@ -184,7 +185,7 @@ public class ScoringPipelineTest {
     public void aPlanWithNoScoringFeatureAssemblesNothing() {
         StubScoringContext ctx = new StubScoringContext(); // no substrate
         ScoringPipeline p = ScoringPipeline.fromParams(
-                new ScoringParams(0, 0, 0, 0, 0, 0, 0, false), ctx);
+                new ScoringParams(0, 0, 0, 0, 0, 0, 0, false), ctx, new NoopSink());
 
         assertEquals(Collections.<String>emptyList(), p.passNames());
         assertEquals(0, p.size());
@@ -199,7 +200,7 @@ public class ScoringPipelineTest {
         ctx.mopData = mopWithWtg();
 
         ScoringPipeline p = ScoringPipeline.fromParams(
-                new ScoringParams(0, 0, 0, 0, 0, 0, 0, false), ctx);
+                new ScoringParams(0, 0, 0, 0, 0, 0, 0, false), ctx, new NoopSink());
 
         assertEquals(Arrays.asList("MopWidgetPass", "MenuGatewayPass"), p.passNames());
     }
@@ -212,7 +213,7 @@ public class ScoringPipelineTest {
         // is exactly the fact the [APE-ARCH] line cannot express — it shows their absence only as
         // names that are not there.
         StubScoringContext ctx = new StubScoringContext();
-        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx);
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx, new NoopSink());
 
         Map<String, Boolean> census = p.candidates();
 
@@ -231,7 +232,7 @@ public class ScoringPipelineTest {
         // INV-ARCH-04: a consumer reading passes still sees exactly the constructed ones, so the
         // census cannot leak a disabled pass into the roster or the [APE-ARCH] line.
         StubScoringContext ctx = new StubScoringContext();
-        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx);
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx, new NoopSink());
 
         assertEquals(Arrays.asList("CoveragePass", "FormCompletionPass"), p.passNames());
         assertEquals(2, p.size());
@@ -240,7 +241,7 @@ public class ScoringPipelineTest {
 
     @Test
     public void theCensusIsUnmodifiable() {
-        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), new StubScoringContext());
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), new StubScoringContext(), new NoopSink());
         try {
             p.candidates().put("Injected", Boolean.TRUE);
             fail("the census is the run's record, not a place to write to");
@@ -252,7 +253,7 @@ public class ScoringPipelineTest {
     @Test
     public void coverageOnlyArmWhenNoMopData() {
         StubScoringContext ctx = new StubScoringContext(); // mopData == null
-        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx);
+        ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx, new NoopSink());
         assertEquals(Arrays.asList("CoveragePass", "FormCompletionPass"), p.passNames());
     }
 }

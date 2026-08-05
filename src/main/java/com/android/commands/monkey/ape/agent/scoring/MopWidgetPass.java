@@ -4,7 +4,7 @@ import java.util.List;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -22,10 +22,18 @@ public final class MopWidgetPass implements ScoringPass {
     private final int weightDirect;
     private final int weightTransitive;
 
-    public MopWidgetPass(ScoringContext ctx, ScoringParams params) {
+    /**
+     * Where the exposure pair goes. Handed in like every other collaborator rather than reached for
+     * through the ambient run context, which INV-DP-12 forbids of an injected unit — and which would
+     * also make this pass untestable without a whole run behind it.
+     */
+    private final EventSink sink;
+
+    public MopWidgetPass(ScoringContext ctx, ScoringParams params, EventSink sink) {
         this.enabled = ctx.getMopData() != null;
         this.weightDirect = params.mopWeightDirect();
         this.weightTransitive = params.mopWeightTransitive();
+        this.sink = sink;
     }
 
     @Override
@@ -72,7 +80,7 @@ public final class MopWidgetPass implements ScoringPass {
         // than being threaded back out to the decision site: it is the denominator that turns "the
         // MOP scorer fired on 0.4 % of decisions" into a statement about opportunity rather than
         // about luck, and it is per-step — a state can realise more than one pair within a run.
-        RunContext.current().sink().mopExposure(boostedCount, totalTarget);
+        sink.mopExposure(boostedCount, totalTarget);
     }
 
     /**

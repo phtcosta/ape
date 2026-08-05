@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -265,7 +266,7 @@ public class MopScorerTest {
                 "{\"idName\":\"mi\",\"type\":\"android.view.MenuItem\",\"listeners\":[" +
                 "{\"eventType\":\"click\",\"handler\":\"<C: void m()>\"}]}]}]," +
                 "\"transitions\":[],\"components\":{}}";
-        return MopData.load(writeTempJson(json), null, null);
+        return MopData.load(writeTempJson(json), null, null, new NoopSink());
     }
 
     /** Widget b with click→MOP-direct and longClick→not (per-event-type maps). */
@@ -278,7 +279,7 @@ public class MopScorerTest {
                 "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}," +
                 "{\"eventType\":\"longClick\",\"handler\":\"<C: void none()>\"}]}]}]," +
                 "\"transitions\":[],\"components\":{}}";
-        return MopData.load(writeTempJson(json), null, null);
+        return MopData.load(writeTempJson(json), null, null, new NoopSink());
     }
 
     @Test // 17.1
@@ -573,7 +574,7 @@ public class MopScorerTest {
                 + "{\"eventType\":\"click\",\"handler\":\"<Tgt: void enc()>\"}]}]}";
         String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
                 + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"x\",\"widgetName\":\"toCrypto\"}]}";
-        MopData d = MopData.load(writeTempJson(jsonDoc(reaches, wins, trans)), null, null);
+        MopData d = MopData.load(writeTempJson(jsonDoc(reaches, wins, trans)), null, null, new NoopSink());
         assertEquals(W_WTG, MopScorer.scoreWtg("Src", "toCrypto", d, W_WTG));
     }
 

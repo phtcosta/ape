@@ -7,6 +7,7 @@ import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 
 import org.junit.Test;
 
@@ -276,7 +277,7 @@ public class CoordinateMapperDeadPairTest {
         // both — where a ban storm must leave the client's breaker exactly as it found it.
         CoordinateMapper mapper = newMapper();
         LlmClient client = new LlmClient(
-                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm(), 100);
+                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm(), new NoopSink());
         ModelAction help = matched("//Button[@text='Help']", ActionType.MODEL_CLICK,
                 "android.widget.Button");
         LlmCircuitBreaker breaker = client.getBreaker();
