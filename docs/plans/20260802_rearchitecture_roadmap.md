@@ -98,9 +98,34 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   (owner decision 2026-08-03). It mirrors the ape worktree's shape — one isolated line, one merge —
   and keeps `modules` free of intermediate re-architecture state while the E3 analysis and the
   `master` jar deploy continue to run from it. The five counterparts `gh93`…`gh97` land there.
-  The cost this choice accepts is explicit: **the line must be merged into `modules` before the
-  first `mvn install` of a post-stage-2 jar** (23 of 29 arms push `ape.apePureMode`, which that jar
-  aborts on).
+  The cost this choice accepts is explicit: **the line must be merged into the `modules` branch
+  before the first `mvn install` of a post-stage-2 jar**, which aborts on `ape.apePureMode` — a key
+  the `tool.py` on the branches this work has not reached still pushes.
+
+  **Count corrected 2026-08-05 (`rearch-05` task 3.1a). The ordering is unchanged and is not
+  weakened.** This sentence used to argue from *"23 of 29 arms push `ape.apePureMode`"*. There are
+  no longer 29 arms and none pushes that key: `gh95` reduced the matrix to eight names and deleted
+  the mapping entry outright. The hazard never depended on the count. One arm pushing one retired
+  key aborts that run before its first step, so the constraint holds identically at 23 arms, at one,
+  and at any future roster — the arithmetic was decoration on a claim that does not need it, and
+  quoting it is the habit the drift bullet below exists to stop.
+
+  **Read `modules` here as the branch, not the directory.** It is both, and the sentence is only
+  true under the branch reading. Verified per branch on 2026-08-05, for the one file
+  `rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py`:
+
+  | branch | `tool.py` | `apePureMode` / `ape_pure` |
+  |---|---|---|
+  | `rearch-counterparts` (the work) | 1294 lines | **absent** — post-`gh95` |
+  | `modules` (the merge target) | 1584 lines | present — pre-`gh95` |
+  | `origin/master` | 931 lines | present — pre-`gh95` |
+
+  So the file sitting under the `modules/aperv-tool/` *directory* of the working branch is already
+  post-`gh95` and safe, while the `modules` *branch* still carries the pre-`gh95` file. A reader who
+  takes the directory reading concludes the hazard has cleared and retires the constraint. It has
+  not cleared: it lives on the branches this line has not merged into yet, and it is discharged by
+  the merge, not by the passage of time. The mistake is easy enough that it was made once while
+  auditing this very entry.
 
   **Amended 2026-08-04.** This entry originally carved `gh93` out for an early, separate merge ahead
   of the rest of the line. The owner withdrew that carve-out: `rearch-counterparts` merges into
@@ -113,6 +138,36 @@ Per change: `[artifacts]` design/specs/tasks drafted and approved by the owner �
   (design D-13) — **no stage-2 task installs the jar at all**, so the condition holds vacuously
   across the whole stage and the binding event sits outside it, at the coordinated end-to-end run.
   See `rearch-02-runspec` design D-4 and D-13.
+- **A change that plans another repository's work from this one will drift, and nothing detects
+  it.** This is a constraint and not a status entry because it is a rule about how to write a
+  change, not a fact about one. The mechanism: the artifact does not sit next to the code it
+  describes, so no test, no build and no review — in *either* repository — fails when the two
+  diverge. Both sides stay green while one of them is describing a tree that no longer exists. The
+  drift is found by a human re-reading the counterpart's source, which is to say it is found late or
+  by luck.
+
+  **The remedy is the ownership split, stated in the change rather than left implicit**: name the
+  counterpart change as the owner of its side and point at it. Never copy its roster, its numbers or
+  its invariant IDs into an artifact here — a copy is precisely what drifts, and correcting a copy
+  only resets its clock. A specification that names no arm cannot go stale when an arm is retired.
+
+  **The worked example is `rearch-05` against `gh95`**, and it is worth reading before writing a
+  cross-repo change. Its predecessor asserted, as the frozen constraint of every task group, that 27
+  arms survive and 2 are retired; `gh95` had already shipped 8 names and 21 retirements. Nineteen
+  arms it instructed an implementer to *re-express* had been deleted, and constants it carried
+  deletion tasks for were already gone. It had also minted `INV-APV-40`…`INV-APV-44` in rv-android's
+  invariant namespace, where `gh95` was minting the same five IDs with conflicting content — its
+  `INV-APV-42` reading *"the eight surviving variant names are frozen"* against this side's *"the 27
+  surviving variant names are frozen"*. Two definitions of one invariant ID in two trees is worse
+  than either being wrong: a reader resolving the ID gets a different requirement depending on which
+  repository they are standing in, and nothing marks the ambiguity. The change was rewritten from 52
+  tasks to 25, and the fix was structural — delegate the matrix — not arithmetic.
+
+  **Where it can happen next: `rearch-07` against `gh96`**, and the ratio is the signal, not the
+  figures. As of 2026-08-05 the ape side is roughly two-thirds done against an rv-android side that
+  is nearly closed — the same asymmetry `rearch-05` had, at an earlier point. Read both task counts
+  live before relying on either; quoting a frozen pair here is the very habit this bullet warns
+  about, which is why none is quoted.
 
 ## Related state
 
@@ -1696,3 +1751,30 @@ Open coordination items — status 2026-08-03:
   **Still inherited and still left alone**: the stale anchor `StatefulAgent.java:1475-1478` in
   `openspec/specs/parity-oracle/spec.md:201`, in `rearch-06/design.md:237` and in this file at
   `:173`.
+
+- 2026-08-05 — **Stage 5 lands as a test-tree deletion. `rearch-05-thin-python-arms` groups 2 and 3
+  closed; the jar is untouched.** The stage's Python side — the arm matrix, the properties writer,
+  the mapping, the guard retirement and the regeneration migration check — was delivered by the
+  rv-android counterpart `gh95-thin-python-arms`, and no task in this change edits that repository.
+  What is genuinely ape-side is one thing: stage 2's transitional Python-contract scaffolding, which
+  pinned the jar against the *pre-change* `_push_properties` output so stage 2 could deploy without
+  touching `tool.py`. `gh95` rewrote that output, so the pins froze a deployment that no longer
+  exists — two of the five fixtures pinned arms (`ape_pure`, `sata_mop_widget`) that have been
+  retired outright. `RunSpecCompatTest`, `CompatFixtures` and the whole `src/test/resources/compat/`
+  tree are deleted; `PresetsTest` keeps its vectors and gains the contract they cannot show (an
+  explicit key beside a preset overrides its base vector; preset-plus-overrides resolves to the same
+  digest as the same plan stated key by key, compared against `Presets.resolve` rather than against
+  a captured file). The retired-key coverage moved into `RunSpecAbortTest` before the deletion
+  landed, and turned out to be duplicated there already — what the fixtures alone carried was a
+  retired key hidden inside a complete arm, which is now two tests. Suite 1131 → 1123: the deletion
+  cost exactly the 13 tests `rearch-07` predicted, and the five replacement tests are the difference
+  from its 1118 figure, which modelled a bare deletion.
+
+  **The numbers that moved, recorded once so nothing copies them again**: surviving arms 27 → **8
+  names / 7 configurations**; retirements 2 → **21**; `APERV_PROPERTY_MAPPING` 52 → **50** pairs
+  (51 at the committed `HEAD` of `rearch-counterparts` on 2026-08-05, mid-edit by a live `gh94`
+  session — in motion, and recorded as in motion rather than refreshed). The predecessor's figures
+  were not a disagreement between two open plans; they described code that had already been
+  rewritten underneath them. The failure mode that allowed it is now a standing constraint above,
+  and the ape-side `aperv-tool` capability stops enumerating the roster entirely: it states the
+  preset-plus-overrides *contract* and points at rv-android for which arms exist.
