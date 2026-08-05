@@ -663,12 +663,65 @@ Verified read-only 2026-08-05 at rv-android `a683591e`.
 
 - [ ] 7.1 Land the ape commit (Groups 3+5) and the rv-android commit (Groups 2+6) together; `mvn install -Drvsec_home=…` refreshes the module-local `ape-rv.jar`
 - [ ] 7.2 **Delegated to `gh97-rearch-ab-gate` tasks 6.2–6.5** (owner decision 2026-08-05: the APE-RV side executes once, there). That change builds the jar from this worktree, pushes the rv-android commits *before* the image build (its 6.3 — the image's stage-4 layer clones `PAMunb/rvsec` at build time, so unpushed work is silently absent), builds `phtcosta/rvandroid:0.9.3-rearch` as a **new tag** rather than rebuilding `0.9.3` in place, and records both image IDs. Nothing is owed here beyond confirming, when this change closes, that `gh97` 6.1's precondition ("stages `rearch-03`…`rearch-07` complete") is truthfully satisfiable — that gate is not advisory and this is the change it gates on
-- [ ] 7.3 Skew drill — **split by what can actually observe each half**, since the bench run does not happen. (a) *Old full JSON meets the new jar* is a JVM fact and is asserted at JVM level: `status=rejected reason=version-mismatch` from `MopData.load` (task 3.5's rejection scenario) plus `StatefulAgent` aborting with `StopTestingException` on a null return (INV-MOP-22). (b) *MOP arm with the full JSON absent* is a host fact and is asserted in pytest: `RVToolExecutionError` raised before any device interaction (task 6.3's absent-JSON case). What neither can attest is that the **deployed** pair behaves this way, and that is the half `gh97`'s pre-flight now carries (`gh97` task 7.2a) — a `build.sha`/`MOP_DATA` mismatch there is the gh71 failure mode caught before the campaign spends 24 hours. Record here that the drill was discharged in three places rather than one bench session, because "both loud, no silent SATA run" is the property, and it is now proven by three different observers rather than one
+- [x] 7.3 Skew drill — **split by what can actually observe each half**, since the bench run does not happen. (a) *Old full JSON meets the new jar* is a JVM fact and is asserted at JVM level: `status=rejected reason=version-mismatch` from `MopData.load` (task 3.5's rejection scenario) plus `StatefulAgent` aborting with `StopTestingException` on a null return (INV-MOP-22). (b) *MOP arm with the full JSON absent* is a host fact and is asserted in pytest: `RVToolExecutionError` raised before any device interaction (task 6.3's absent-JSON case). What neither can attest is that the **deployed** pair behaves this way, and that is the half `gh97`'s pre-flight now carries (`gh97` task 7.2a) — a `build.sha`/`MOP_DATA` mismatch there is the gh71 failure mode caught before the campaign spends 24 hours. Record here that the drill was discharged in three places rather than one bench session, because "both loud, no silent SATA run" is the property, and it is now proven by three different observers rather than one
+  - **Discharged in three places, each read for what it asserts rather than counted by its name.**
+    (a) The JVM half is a *join*, not two facts: `MopDataTest.testLegacyFullJsonIsRejectedAsVersion`
+    `Mismatch:623` pins the loader end (null, `status=rejected`, `reason=version-mismatch`, and no
+    `sourceDigest` on the record — a load that never reached an artifact has no digest), and
+    `StatefulAgentTriggerTest.testLegacyJsonRejectionAbortsTheMopArm:201` feeds the legacy full JSON
+    to `MopData.load` and hands **that** null to `requireMopArm`, expecting `StopTestingException`.
+    The second is the one that matters: separately asserted, the two ends leave the drill's actual
+    question — does the null a rejected artifact produces reach the code that aborts on it? — open.
+    (b) The host half is `test_mop_arm_without_json_raises:1805` in rv-android, which asserts the
+    raise *and* that neither the artifact nor the properties file was ever pushed, which is what
+    "before any device interaction" means operationally.
+    (c) The deployed half is `gh97` task 7.2a, and it was read rather than trusted: it asserts
+    `MOP_DATA` present with `status=loaded`, `formatVersion=1` and a non-empty `sourceDigest` on each
+    MOP arm, and — the clause that makes it a skew drill rather than a liveness check — **no**
+    `status=loaded` record and no boost on the control arm `mop_off_llm_off`, which is where a MOP
+    artifact reaching a non-MOP arm would surface. That task is open (`gh97` is mid-flight); this box
+    records that the drill is discharged in the two places that can be discharged without a device,
+    and names the third with what it will assert.
+  - The property is "both loud, no silent SATA run", and the three observers do not overlap: one
+    reads the jar's join, one reads the host's refusal to arm, one reads a deployed pair's trace.
+    None of them could substitute for another, which is why splitting the drill was not a downgrade.
 
 ## 8. Verification
 
 - [ ] 8.1 **Delegated to `gh97-rearch-ab-gate` tasks 7.1–7.4**, whose smoke is the only device execution this stage gets (owner decision 2026-08-05). The delegation is only honest if that smoke *checks what this task was going to check*, so it is not a pointer but a dependency: `gh97` 7.2a — added by this decision — asserts `MOP_DATA status=loaded` with `formatVersion=1` and a non-empty `sourceDigest` on every MOP arm, and a MOP boost actually firing. Note what changes and what does not: the application is no longer cryptoapp but the smoke subset of `subset40`, which is **better** evidence (real applications, three arms) and **worse** in one specific way — the named-widget assertions (`btn_cipher_encrypt`, `buttonGenerateHash`, the MainActivity menu gateway) have no subject there. Those keep their subject on the fixture instead, in task 3.5, where they are assertions about the loader rather than about a run
-- [ ] 8.2 Artifact-size and load-time deltas — **rescoped to what is measurable without a paired device run**. The size half is already a measured host fact and needs no device: the cryptoapp artifact is 4,126 bytes against a 69,977-byte source (5.9 %, task 3.1), and `gh96`'s 345-app derivation is the population version of the same claim (task 7.5 there). The load-time half had a pre-change device trace as its comparator and that comparator does not exist: the E3 leg-A logcats carry **no** `[APE-MOP-DATA]` line at all (measured by `gh97` task 3.5), so there is no pre-change load record to difference against, and inventing one from a post-hoc bench run would compare two different jars on two different days. Report the size reduction as the measured claim, and record the load-time delta as **not measured**, with this reason — do not leave the box implying a measurement that no available artifact can support
+- [x] 8.2 Artifact-size and load-time deltas — **rescoped to what is measurable without a paired device run**. The size half is already a measured host fact and needs no device: the cryptoapp artifact is 4,126 bytes against a 69,977-byte source (5.9 %, task 3.1). ~~and `gh96`'s 345-app derivation is the population version of the same claim (task 7.5 there)~~ — **false, corrected 2026-08-05**: `gh96` 7.5 *withdrew* the corpus size measurement when 7.4 was rescoped, and records the same single-application number instead. The load-time half is **not measurable from any artifact in either repository**, and the reason this task gave for that was also wrong (see the note). Report the size reduction as the measured claim, and record the load-time delta as **not measured**, with the corrected reason — do not leave the box implying a measurement that no available artifact can support
+  - **Size half — re-measured here rather than copied.** `stat` over the checked-in pair:
+    `cryptoapp.apk.gh60-fresh.json` 69,977 bytes → `cryptoapp.apk.mop.json` **4,126 bytes = 5.90 %**.
+    The `test-apks/` pair derives from a byte-identical source to **4,115 bytes (5.88 %)**; the 11-byte
+    difference is `source.file` carrying a different name, which is the determinism property working
+    rather than a discrepancy. This is a **single-application measurement** and is recorded as one.
+  - **The population claim this task leaned on does not exist, in either repository.** `gh96` 7.5 is
+    still open and its own text withdraws the corpus byte measurement with 7.4's rescope, offering
+    this same cryptoapp number as the replacement. A search of every `gh96` artifact for a recorded
+    byte total returns nothing but qualitative statements ("kilobytes each, next to a file of
+    megabytes"). What the 345-app run *did* record is per-rule exercise counts and the flagged-widget
+    totals (3,733 → 4,965) — evidence about variety and semantics, not about size. So the design's
+    order-of-magnitude claim about where the bytes sit (57.7 % call graph) stays an order-of-magnitude
+    claim, exactly as design D9's first standing caveat already insists.
+  - **The load-time reason in the task text was false, and the true one is stronger.** The claim was
+    that leg A has no `[APE-MOP-DATA]` line to difference against. Measured first-hand over the
+    frozen E3 leg-A corpus (`experimento-e3-decisiva/results/`, 2.47 GB scanned): the **logcats**
+    carry zero — but they carry zero `[APE...]` lines of *any* kind, because APE's output goes to the
+    `.trace`, not to logcat. In the traces the record is present in **360 of 360** files, e.g.
+    `status=loaded package=… windows=9 widgets=0 flagged=0 … mopActivities=6 mopActsAugmented=6`.
+    A pre-change load record therefore exists in abundance; the previous statement measured the wrong
+    artifact class and drew a conclusion the right one contradicts.
+  - **Why the delta is still not measurable, for the real reason**: *neither format has ever carried
+    a duration*. The legacy line's fields are the counters shown above, and the new record's field
+    set is fixed by `EventSink.mopData` (`:210-213`) — status, reason, formatVersion, sourceDigest,
+    package, and eleven counts. No elapsed time on either side of the cut. So this is not a missing
+    comparator that a device run would supply: no run, past or future, times the load until someone
+    adds a field to the record first. Recorded as **not measured**, with that as the reason.
+  - Consequence worth carrying rather than burying: the load-time claim of the proposal ("a per-run
+    parse cost on the emulator") remains **argued, not measured** — it rests on what was removed
+    (a whole-file DOM parse of a 1.5–48 MB call-graph document) and on the size ratio above, not on
+    two timings. `gh97`'s campaign will not close it either, since its traces carry the same
+    duration-free record.
 - [ ] 8.3 Run `/rv-qa-lint-fix aperv-tool` (rv-android) and `/sdd-qa-lint-fix ape` (this repo)
 - [ ] 8.4 Run `/sdd-verify ape`
 - [ ] 8.5 Invoke `/sdd-code-reviewer` via Skill tool
