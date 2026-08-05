@@ -198,10 +198,19 @@ public interface EventSink {
      * applications report 9–29 transitions with the whole frontier family disabled, so restoring
      * the old field would restore the misreading. No {@code has_wtg_data} boolean is emitted; it is
      * {@code wtgEdges > 0} by construction.
+     *
+     * <p>{@code formatVersion} and {@code sourceDigest} are the provenance pair: they name which
+     * wire contract was read and which static-analysis document it was derived from, so a trace
+     * identifies its own input instead of leaving the reader to infer it from the run's date. Only
+     * a derived artifact has them, so the full-JSON loader passes {@code 0} and {@code null} — a
+     * neutral absence, not a claim. {@code components} is different and is never neutral: both
+     * loaders hold the typed component lists at the emission site, so a zero there would be a
+     * falsehood about something the caller knows.
      */
-    void mopData(String status, String reason, String pkg, int windows, int widgets, int flagged,
-            int droppedNoId, int wtgEdges, int handlersUnmatched, int syntheticLambda,
-            int recovered, int mopActivities, int mopActsAugmented);
+    void mopData(String status, String reason, int formatVersion, String sourceDigest, String pkg,
+            int windows, int widgets, int flagged, int droppedNoId, int wtgEdges,
+            int handlersUnmatched, int syntheticLambda, int recovered, int mopActivities,
+            int mopActsAugmented, int components);
 
     /**
      * Records pipeline assembly provenance: the stages, the passes that were constructed, and every

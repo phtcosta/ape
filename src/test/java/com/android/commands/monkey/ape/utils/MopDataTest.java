@@ -257,6 +257,7 @@ public class MopDataTest {
     // =========================================================================
 
     private static final String FRESH = "cryptoapp.apk.gh60-fresh.json";
+    private static final String COMPACT = "cryptoapp.apk.mop.json";
     private static final String PKG = "br.unb.cic.cryptoapp";
     private static final String MAIN = "br.unb.cic.cryptoapp.MainActivity";
     private static final String MDA = "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity";
@@ -464,6 +465,11 @@ public class MopDataTest {
             throws Exception {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         MopData.load(path, pkg, main, new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
+        return recordsIn(buffer);
+    }
+
+    /** Parse whatever NDJSON the sink wrote, in order. */
+    private static List<JSONObject> recordsIn(ByteArrayOutputStream buffer) throws Exception {
         List<JSONObject> records = new ArrayList<>();
         String text = new String(buffer.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
         if (!text.isEmpty()) {
@@ -472,6 +478,17 @@ public class MopDataTest {
             }
         }
         return records;
+    }
+
+    private static JSONObject onlyCompactLoadRecord(String path, boolean activitySourceComponents)
+            throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        MopData.loadCompact(path, null, null, activitySourceComponents,
+                new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
+        List<JSONObject> records = recordsIn(buffer);
+        assertEquals("exactly one MOP_DATA record per load", 1, records.size());
+        assertEquals("MOP_DATA", records.get(0).getString("type"));
+        return records.get(0);
     }
 
     private static JSONObject onlyLoadRecord(String path, String pkg, String main)
@@ -496,6 +513,12 @@ public class MopDataTest {
         assertEquals(5, record.getInt("handlersUnmatched"));
         assertEquals(1, record.getInt("syntheticLambda"));
         assertEquals(1, record.getInt("recovered"));
+        // Neutral where the fact is absent, true where it is present: a producer document carries
+        // neither a wire version nor a digest of itself, but this path holds the typed component
+        // lists at the emission site, so reporting 0 for them would be a falsehood, not a blank.
+        assertEquals(0, record.getInt("formatVersion"));
+        assertFalse(record.has("sourceDigest"));
+        assertEquals(5, record.getInt("components"));
     }
 
     /**
@@ -519,6 +542,55 @@ public class MopDataTest {
                 record.has("transitions"));
         assertFalse("has_wtg_data is wtgEdges > 0 by construction",
                 record.has("has_wtg_data"));
+    }
+
+    /**
+     * The compact record answers the two questions the full-JSON one structurally could not: which
+     * wire contract was read, and which static-analysis document the artifact was derived from.
+     *
+     * <p>The digest is asserted against a SHA-256 computed here over the source fixture rather than
+     * against the string the artifact happens to carry, so this pins the whole provenance chain —
+     * source bytes → generator → wire → record. A test that read the digest back out of the same
+     * file it came from would pass over an artifact derived from any document at all.
+     */
+    @Test
+    public void testCompactLoadRecordCarriesProvenanceAndTheComponentCount() throws Exception {
+        JSONObject record = onlyCompactLoadRecord(fixturePath(COMPACT), false);
+        assertEquals("loaded", record.getString("status"));
+        assertEquals(1, record.getInt("formatVersion"));
+        assertEquals("sha256:" + sha256Hex(fixturePath(FRESH)), record.getString("sourceDigest"));
+        // 4 activities + 1 provider, and no receivers or services: the count is over every list,
+        // which is the granularity `hasComponents()` gates on.
+        assertEquals(5, record.getInt("components"));
+
+        // The stage-4 census survives underneath, whole: this record gains three fields across the
+        // window and loses none. `windows` is here for that reason and no other — the jar parses no
+        // windows now, so the number is the generator's, echoed.
+        assertEquals(5, record.getInt("windows"));
+        assertEquals(30, record.getInt("widgets"));
+        assertEquals(3, record.getInt("flagged"));
+        assertEquals(0, record.getInt("droppedNoId"));
+        assertEquals(16, record.getInt("wtgEdges"));
+        assertEquals(5, record.getInt("handlersUnmatched"));
+        assertEquals(1, record.getInt("syntheticLambda"));
+        assertEquals(1, record.getInt("recovered"));
+        assertEquals(3, record.getInt("mopActivities"));
+        // Vacuously 0 on this fixture: cryptoapp's augmented set equals its widget-derived one, so
+        // nothing here can distinguish the wire-set reading from the retired applied-augmentation
+        // one. The synthetic that does is task 3.5's.
+        assertEquals(0, record.getInt("mopActsAugmented"));
+        assertFalse("the flat transition list is not reinstated at stage 7 either",
+                record.has("transitions"));
+    }
+
+    private static String sha256Hex(String path) throws Exception {
+        byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)));
+        StringBuilder hex = new StringBuilder();
+        for (byte b : digest) {
+            hex.append(String.format("%02x", b));
+        }
+        return hex.toString();
     }
 
     // 5.4 — rejection reasons

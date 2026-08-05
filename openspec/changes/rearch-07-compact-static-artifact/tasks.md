@@ -204,7 +204,33 @@ that group 1 found (task 2.9).
     neutral 0: the full-JSON path has the typed component lists in hand at the emission site
     (`MopData.java:274-276`), so a 0 there would be a falsehood about something the path knows.
     Neutral where the fact is absent, true where it is present.
-- [ ] 3.4a Surface the launch result on the dispatch path (INV-CT-14). **The mechanism already landed — verify, do not rebuild.** `AndroidDevice.startActivity` returns a `LaunchResult` carrying the platform's `START_*` code (`:515-571`) and `MonkeySourceApe:980` hands it to the sink as `componentLaunch(launch.code, launch.error)`; the delta's "SHALL surface" reads as future work only because it was written before `rearch-04`. What is genuinely owed is the second sentence: recording only — no retry, no re-dispatch, no cursor or budget effect (INV-CT-12's "returned actions" accounting unchanged) — and **the test asserting the launcher behaves identically with the recording present and absent, which does not exist**. `LaunchResult` is referenced by exactly one test file (`NdjsonSinkTest`), and nothing tests INV-CT-14's no-effect clause
+- [x] 3.4a Surface the launch result on the dispatch path (INV-CT-14). **The mechanism already landed — verify, do not rebuild.** `AndroidDevice.startActivity` returns a `LaunchResult` carrying the platform's `START_*` code (`:515-571`) and `MonkeySourceApe:980` hands it to the sink as `componentLaunch(launch.code, launch.error)`; the delta's "SHALL surface" reads as future work only because it was written before `rearch-04`. What is genuinely owed is the second sentence: recording only — no retry, no re-dispatch, no cursor or budget effect (INV-CT-12's "returned actions" accounting unchanged) — and **the test asserting the launcher behaves identically with the recording present and absent, which does not exist**. `LaunchResult` is referenced by exactly one test file (`NdjsonSinkTest`), and nothing tests INV-CT-14's no-effect clause
+  - Verified, not rebuilt: `startActivity` returns the platform's `START_*` code (`AndroidDevice:545-573`)
+    and `generateActivityTriggerEvent` hands it straight to `componentLaunch` (`MonkeySourceApe:980`).
+    Not one line of production code changed for this task.
+  - The owed test is `ActivityLaunchRecordingIsInertTest`, and it asserts the invariant over the
+    **source tree** because it cannot be asserted from behaviour here: `MonkeySourceApe` will not
+    class-load off-device (`UiAutomation` pulls in `android.app.IUiAutomationConnection`) and the
+    dispatch reaches the platform by reflection on `IActivityManager`, so "run it with and without
+    the recording and diff" is a device experiment, and the one device execution this stage gets
+    measures coverage. The tree idiom is not improvised — `DeviceInputChannelAbsenceTest` asserts
+    two absences the same way, with comment-stripping and a minimum-yield floor, both of which this
+    test carries.
+  - Two scans, failing for different reasons. **Containment**: `LaunchResult` occurs in the producer
+    and at the one dispatch site and in no third file, so no stage, pass or agent can consult it —
+    that is what makes "no candidate re-selection, no cursor or budget adjustment" structural rather
+    than intended, since INV-CT-12's accounting lives in `MopLauncherStage`, which cannot see the
+    type. **Inertness**: the local is read exactly four times, and all four are named verbatim
+    (declaration, the pre-existing `dispatched()` warning, the two fields handed to the sink), so
+    the count closes the set instead of merely bounding it; plus one dispatch, no loop, no `return`.
+  - Mutation-checked, since an absence assertion is decoration until it can fail: adding a retry on
+    `launch.code` fails the inertness scan, and making a stage name the type fails containment. The
+    first draft of the test was itself wrong in two ways the mutations exposed — it asserted a
+    single `if` in a method that legitimately has two (the deep-link intent selection has nothing to
+    do with the launch), and it expected the wrong sort order. Both fixed by narrowing the claim to
+    what the invariant actually says.
+  - The invariant's harness half ("in the jar or in the harness") is not in this repository and this
+    task does not claim it.
 - [ ] 3.5 JVM unit tests on the compact fixture: every scenario of the mop-guidance delta (fixture load, legacy-JSON rejection, per-event fallback decoding, flag-selected sets, absent metadata, unknown-key tolerance, strict-match reasons)
 - [ ] 3.6 Run `/sdd-test-run MopDataTest`
 

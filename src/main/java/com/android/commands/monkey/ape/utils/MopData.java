@@ -322,11 +322,16 @@ public class MopData {
             // passes actually gate on. The flat `transitions` list is deliberately not carried:
             // 14 of the decisive campaign's 40 applications report 9-29 transitions with the whole
             // frontier family disabled, so reporting it invites exactly that misreading again.
-            sink.mopData("loaded", null,
+            // formatVersion 0 and a null sourceDigest are the neutral values, not a claim: this
+            // path reads the producer's own document, which carries neither a wire version nor a
+            // digest of itself. `components` gets no such treatment — the four typed lists are
+            // right here, so reporting 0 would be a falsehood about something this path knows.
+            sink.mopData("loaded", null, 0, null,
                     packageName, windows.size(), countWidgets(widgetData), countFlagged(widgetData),
                     data.droppedFlaggedNoId, countWtgEdges(wtgTransitions),
                     joinDiag[0], joinDiag[1], joinDiag[2],
-                    mopActivities.size(), augmentedActivities);
+                    mopActivities.size(), augmentedActivities,
+                    receivers.size() + services.size() + activities.size() + providers.size());
             return data;
             } catch (JSONException e) {
                 Logger.wprintln("MopData: malformed JSON structure at " + path + ": " + e.getMessage());
@@ -472,13 +477,21 @@ public class MopData {
                 stats = new JSONObject();
             }
             data.droppedFlaggedNoId = stats.optInt("droppedFlaggedNoId", 0);
-            sink.mopData("loaded", null, packageName,
+            // The provenance pair the full-JSON era could not report: which wire contract was read,
+            // and the digest of the static-analysis document this artifact was derived from. The
+            // digest is what lets a trace name its exact input — the generator chains it from the
+            // source bytes, so a run and the analysis it was steered by are joinable after the fact
+            // instead of being matched by filename and date.
+            JSONObject source = root.optJSONObject("source");
+            String sourceDigest = source == null ? null : optStringOrNull(source, "digest");
+            sink.mopData("loaded", null, formatVersion, sourceDigest, packageName,
                     stats.optInt("windows", 0), stats.optInt("widgetsTotal", 0),
                     stats.optInt("flagged", 0), data.droppedFlaggedNoId,
                     stats.optInt("wtgEdges", 0), stats.optInt("handlersUnmatched", 0),
                     stats.optInt("syntheticLambda", 0), stats.optInt("recovered", 0),
                     data.mopActivities.size(),
-                    countOnlyIn(augmentedActivities, widgetDerivedActivities));
+                    countOnlyIn(augmentedActivities, widgetDerivedActivities),
+                    receivers.size() + services.size() + activities.size() + providers.size());
             return data;
         } catch (JSONException e) {
             Logger.wprintln("MopData: malformed artifact structure at " + path + ": "
@@ -758,9 +771,16 @@ public class MopData {
 
     /**
      * How many members of {@code superset} are absent from {@code base} — the number the load
-     * record reports as {@code mopActsAugmented}. The wire ships both sets whole, so the count
-     * the pre-change record carried (activities the augmentation <em>added</em>) is recovered as
-     * a set difference rather than by observing a mutation.
+     * record reports as {@code mopActsAugmented}.
+     *
+     * <p>This is <em>not</em> the number the pre-change record carried, and the difference is the
+     * point. That one counted the entries the augmentation applied, which is 0 on every run with
+     * {@code mopActivitySourceComponents} off; this one is the difference between the two wire
+     * sets, so it reports what the augmented source <em>would</em> contribute and does not vary
+     * with the flag. Availability has no other carrier, while the applied augmentation stays
+     * recoverable as flag × availability — {@code RUN_START} publishes the flag in its feature
+     * list and its params echo. A flag-off run therefore reports N here where it used to report 0,
+     * and that is the field working.
      */
     private static int countOnlyIn(Set<String> superset, Set<String> base) {
         int count = 0;
@@ -1557,7 +1577,10 @@ public class MopData {
      * say so in the same stream that says everything else.
      */
     private static void reject(EventSink sink, String reason) {
-        sink.mopData("rejected", reason, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        // A rejected load has no census to report: every counter is zero and the provenance pair is
+        // absent, including on version-mismatch, where a formatVersion was read but is by
+        // definition not one this jar can vouch for. The reason is the record's whole content.
+        sink.mopData("rejected", reason, 0, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     private static int countFlagged(Map<String, Map<String, Widget>> widgetData) {

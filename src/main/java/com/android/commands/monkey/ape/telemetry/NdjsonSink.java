@@ -366,9 +366,10 @@ public final class NdjsonSink implements EventSink {
     }
 
     @Override
-    public void mopData(String status, String reason, String pkg, int windows, int widgets,
-            int flagged, int droppedNoId, int wtgEdges, int handlersUnmatched, int syntheticLambda,
-            int recovered, int mopActivities, int mopActsAugmented) {
+    public void mopData(String status, String reason, int formatVersion, String sourceDigest,
+            String pkg, int windows, int widgets, int flagged, int droppedNoId, int wtgEdges,
+            int handlersUnmatched, int syntheticLambda, int recovered, int mopActivities,
+            int mopActsAugmented, int components) {
         if (disabled) {
             return;
         }
@@ -378,6 +379,13 @@ public final class NdjsonSink implements EventSink {
             sideBuf.name("status").value(status);
             if (reason != null) {
                 sideBuf.name("reason").value(reason);
+            }
+            sideBuf.name("formatVersion").value(formatVersion);
+            // Omitted rather than emitted null, the same treatment reason and package get: a
+            // digest is a fact about a derived artifact, and a load that never reached one has
+            // no digest to report rather than a null one.
+            if (sourceDigest != null) {
+                sideBuf.name("sourceDigest").value(sourceDigest);
             }
             if (pkg != null) {
                 sideBuf.name("package").value(pkg);
@@ -392,6 +400,7 @@ public final class NdjsonSink implements EventSink {
             sideBuf.name("recovered").value(recovered);
             sideBuf.name("mopActivities").value(mopActivities);
             sideBuf.name("mopActsAugmented").value(mopActsAugmented);
+            sideBuf.name("components").value(components);
             write(sideBuf.endObject().toLine());
         } catch (Throwable failure) {
             latch("mopData", failure);
