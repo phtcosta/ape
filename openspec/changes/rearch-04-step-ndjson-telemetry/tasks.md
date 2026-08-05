@@ -70,7 +70,7 @@ What is already there: the value grammar (strings, numbers, booleans, null, `Map
 
 ## 6. Neutrality (R7 — the INV-ARCH-01 substitute)
 
-- [ ] 6.1 Wire sink selection into the plan (`NdjsonSink` always in presets; `NoopSink` reachable only by the test configuration)
+- [ ] 6.1 Make the sink selectable **without a plan key**: `RunContext` always constructs `NdjsonSink` on the production path, and `NoopSink` is reachable only through `RunContext.installForTest(spec, sink)`, which no production code calls. **Amended 2026-08-04 (owner-decided) from "wire sink selection into the plan"**: a registered key is an arm-level flag, which the capability's Telemetry Neutrality requirement forbids in as many words — presets not stating a key does not stop a run from stating it, and that is precisely how `ape.stepTelemetryEnabled` became `ape_pure`'s blindness switch. With no key, plan validation rejects `ape.telemetrySink` as unknown, so a campaign cannot ask for a blind arm even by mistake. Design D-4 carries the same correction
 - [ ] 6.2 Implement the permanent neutrality test on the rearch-01 parity harness: same seed, `NdjsonSink` vs `NoopSink` ⇒ identical action sequence (Sec. 9.8, INV-SNK-07)
 - [ ] 6.3 Run `/sdd-verify ape` (checkpoint: `mvn test` green before the deletion group)
 
