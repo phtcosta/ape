@@ -374,18 +374,19 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             }
             actionBuffer = newBuffer;
         }
-        // The history itself needs no remapping: its records are snapshots of primitives and
-        // strings, so nothing in them can go stale (INV-MODEL-18). What does need it is the depth-1
-        // recovery point, the one rich pair left — remapped here through the same
+        // The action history needs no remapping: its records are snapshots of primitives and
+        // strings, so nothing in them can go stale (INV-MODEL-18). The depth-1 recovery point does,
+        // being the one rich pair the model keeps — remapped through the same
         // model.update(action, guiAction) discipline as the agent's own field pairs above.
         //
-        // The requireTarget() guard is the one the deleted per-record loop applied, carried forward
-        // deliberately. recoverCurrentState accepts any model action, so at HEAD a targetless one
-        // (MODEL_BACK, MODEL_MENU) held as the recovery point kept pointing at the pre-rebuild
-        // object. Remapping it unconditionally would very likely be better — less stale recovery —
-        // but it is a behavior change, and this stage is a memory repair sold as decision-neutral
-        // (INV-MODEL-20), with no evidence able to measure the difference. It is left to a change
-        // that can.
+        // The requireTarget() guard makes this asymmetric on purpose: recoverCurrentState accepts
+        // any model action, but only a targeted one is remapped here, so a targetless recovery
+        // point (MODEL_BACK, MODEL_MENU) survives a rebuild still pointing at an object of the old
+        // model and recovers a stale one. Remapping unconditionally would very likely be better —
+        // less stale recovery, fewer spurious restart cycles — but it changes which object a
+        // recovery restores, and that is a decision input this repair may not touch
+        // (INV-MODEL-20). It belongs to a change that can measure exploration; RecoveryPointRemapTest
+        // pins both branches so removing the guard is a visible edit.
         RecoveryPoint point = newModel.getRecoveryPoint();
         if (point != null && point.modelAction.requireTarget()) {
             if (point.guiAction == null) {
@@ -1051,9 +1052,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         if (currentState != null) {
             return;
         }
-        // The model maintains this point on every append under the same predicate the backward scan
-        // over the rich history computed: the most recent model action, unless a start action came
-        // after it (which is the blocked case, the scan's early return).
+        // The model maintains the recovery point on every append: the most recent model action,
+        // unless an action that can start the app came after it — which is the blocked case, and
+        // the reason the flag is read separately rather than folded into a null point.
         if (model.isRecoveryBlocked()) {
             // do nothing if is start
             return;

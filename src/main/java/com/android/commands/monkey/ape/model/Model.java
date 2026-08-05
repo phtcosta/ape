@@ -58,11 +58,11 @@ public class Model implements Serializable {
      * A snapshot of one executed action, kept for post-hoc diagnostics.
      *
      * <p>The record holds primitives and strings only — never an {@link Action}, a
-     * {@link GUITreeAction}, a {@link GUITree} or a {@link GUITreeNode} (INV-MODEL-18). It used to
-     * hold the action and its {@code GUITreeAction}, and through the latter a whole GUI tree: one
-     * full tree pinned per executed step for the rest of the run, which is the retainer the history
-     * field's own TODO blamed for the {@code OutOfMemoryError} (V11). Every field below is captured
-     * in {@link Model#appendToActionHistory}, where the action's resolved objects are still valid
+     * {@link GUITreeAction}, a {@link GUITree} or a {@link GUITreeNode} (INV-MODEL-18). Holding
+     * either of the first two would reach a whole GUI tree through them and pin one per executed
+     * step for the rest of the run, on a list nothing trims: that is the {@code OutOfMemoryError}
+     * this shape exists to avoid (V11). Every field below is captured in
+     * {@link Model#appendToActionHistory}, where the action's resolved objects are still valid
      * because the append happens in the step that resolved them.
      *
      * <p>Conventions for the absent cases, chosen so a reader can tell them apart from real data:
@@ -95,11 +95,11 @@ public class Model implements Serializable {
     }
 
     /**
-     * The rich {@code (ModelAction, GUITreeAction)} pair {@link Model#actionHistory} keeps at
-     * depth 1 so that {@code StatefulAgent.recoverCurrentState} can restore a lost current state.
+     * The rich {@code (ModelAction, GUITreeAction)} pair the {@link Model} keeps at depth 1 so that
+     * {@code StatefulAgent.recoverCurrentState} can restore a lost current state.
      *
-     * <p>This is the only rich retention left in the history subsystem, and it retains at most one
-     * GUI tree — one the owning state's {@code treeHistory} retains anyway.
+     * <p>This is the only rich retention in the history subsystem, and it holds at most one GUI
+     * tree — one the owning state's {@code treeHistory} holds anyway.
      */
     public static class RecoveryPoint implements Serializable {
 
@@ -125,17 +125,16 @@ public class Model implements Serializable {
     // the state machine
     protected Graph graph;
     // A snapshot per executed action, for post-hoc diagnostics; nothing reads it at runtime. It is
-    // O(steps) records of primitives and strings — hundreds of KB over a 600 s run — and retains no
-    // model object, so it is no longer the OOM retainer its predecessor was (V11, INV-MODEL-18).
+    // unbounded but cheap — O(steps) records of primitives and strings, hundreds of KB over a 600 s
+    // run — and it retains no model object, so it pins no GUI tree (V11, INV-MODEL-18).
     protected List<ActionRecord> actionHistory = new ArrayList<ActionRecord>();
 
-    // The depth-1 rich recovery point that replaces the backward scan over the history.
-    // recoverCurrentState used to walk the rich records from the end for the most recent
-    // model-action record, stopping at a more recent record that canStartApp(). The snapshots above
-    // cannot serve that, so the same predicate is maintained incrementally here on every append:
-    // a start action blocks recovery, a model action becomes the point and unblocks it, and
-    // anything else leaves both alone. The precedence matches the scan's — canStartApp is tested
-    // before isModelAction — because an action that is both would have stopped the scan.
+    // The rich pair recoverCurrentState restores a lost current state from, kept at depth 1 because
+    // that is all it ever needs. The snapshots above cannot serve it, so the predicate it wants —
+    // "the most recent model action, unless an action that canStartApp() came after it" — is
+    // maintained incrementally here on every append: a start action blocks recovery, a model action
+    // becomes the point and unblocks it, and anything else leaves both alone. canStartApp is tested
+    // first, so an action that were both would block rather than become the point.
     protected RecoveryPoint recoveryPoint;
     protected boolean recoveryBlocked;
 
@@ -214,12 +213,13 @@ public class Model implements Serializable {
     }
 
     /**
-     * The three rules that keep the recovery point equivalent to the backward scan it replaced.
+     * The three rules that maintain the recovery point's predicate: the most recent model action,
+     * unless an action that {@code canStartApp()} came after it.
      *
-     * <p>The scan's outcome is "the most recent model-action record, unless a {@code canStartApp()}
-     * record is more recent" — so a start action blocks (rule 1), a model action becomes the point
-     * and clears the block (rule 2), and everything else — fuzz events, crash records, lifecycle
-     * events — is invisible to it (rule 3), exactly as the scan skipped them.
+     * <p>A start action blocks (rule 1), a model action becomes the point and clears the block
+     * (rule 2), and everything else — fuzz events, crash records, lifecycle events — is invisible
+     * to recovery (rule 3). Rule 3 is why a crash appended with a null GUI action cannot displace a
+     * usable recovery point.
      */
     private void updateRecoveryPoint(Action action, GUITreeAction guiAction) {
         if (action.canStartApp()) {
