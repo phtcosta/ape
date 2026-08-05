@@ -7,6 +7,9 @@ import com.android.commands.monkey.ape.model.Model;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.naming.Name;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.telemetry.EventSink;
+import com.android.commands.monkey.ape.utils.MopData;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -90,6 +93,49 @@ import java.util.Map;
  * a step, which yields the same sequence 1, 2, 3, … with the visit marks of step <i>i</i> stamped at
  * <i>i+1</i>, as production stamps them.
  *
+ * <h2>The sink load, and why the driver is the one that applies it (task 6.2)</h2>
+ * {@link #runUnderSinkLoad} adds one thing to the loop above: it makes the run's {@code EventSink}
+ * work while the ladder decides. Nothing else changes — same injections, same seeds, same order —
+ * and the plain {@link #run} overloads do not drive the sink at all, so no golden can move.
+ *
+ * <p>It exists because the neutrality gate could not otherwise reach the property it claims. Every
+ * production sink call sits <i>above</i> {@code agent.ladder()}: {@code beginStep} and
+ * {@code decision} are in {@code resolveNewAction}, {@code outcome} is in {@code updateGraph}, and
+ * {@code resolveNewAction} cannot be the entry point — its second statement is
+ * {@code adjustActionsByGUITree()}, which needs a {@code GUITree} the JVM cannot build (finding
+ * 2.1-a). So a replay left the real sink holding nothing, and comparing two such replays proved
+ * only that <i>installing</i> a different implementation is harmless. What R7 asks is that a sink
+ * <i>doing its work</i> is.
+ *
+ * <p><b>The calls are placed by the harness, and that is a real difference worth naming.</b> They
+ * are made around the ladder rather than inside it, at the points of the step where production
+ * makes them — the outcome of step <i>i-1</i> and then the envelope of step <i>i</i> before
+ * selection, the decision after it, the teardown flush at the end. That reaches every channel
+ * through which a sink could actually perturb a decision, because those channels are global rather
+ * than positional: the shared {@code RandomHelper} statics, the agent's pinned stream, and the
+ * {@code Model}/{@code Graph}/{@code State} objects whose strings the sink is handed. A sink that
+ * drew from a seeded stream, or mutated what it was given, moves the next {@code ladder()} call's
+ * decision whether it was called two statements earlier or two frames deeper.
+ *
+ * <p><b>What the load is not.</b> The records a replay writes are not a production trace and no
+ * test asserts their content — the point is the work, not the bytes. Three specifics, so nobody
+ * reads more into them than is there:
+ * <ul>
+ *   <li>{@code outcome} is driven whenever the previous step selected a {@code ModelAction},
+ *       standing in for production's guard (a recorded transition, reference-equal to the buffered
+ *       decision). This graph has no edges by design, so the production guard has no analogue here;
+ *       the substitute is the script's own transition table, which is what already moves the agent
+ *       from screen to screen.</li>
+ *   <li>the two tri-states are handed {@code ABSENT}. For {@code patched} that is what production
+ *       would compute — the harness's actions have no resolved {@code GUITreeNode} — and for
+ *       {@code cf} it is one member's difference on the four MOP-sensitive channels, whose
+ *       counterfactual pick is written above the entry point and is therefore null here.</li>
+ *   <li>{@code mopExposure} and the {@code llm[]} sub-events stay undriven: the first is emitted
+ *       inside {@code adjustActionsByGUITree()} and the second by the units the scaffold replaces
+ *       with {@link ScriptedLlm}. {@code SinkNeutralityTest} keeps a test on the undriven path that
+ *       says so.</li>
+ * </ul>
+ *
  * <h2>Failures propagate unchanged</h2>
  * Nothing here catches anything. A {@code BadStateException} (the ladder found no available action),
  * a {@code NoClassDefFoundError} (a scenario drove selection into a device-only branch), and the
@@ -121,6 +167,21 @@ public final class OracleDriver {
     }
 
     /**
+     * The same replay, with the run's sink driven around each selection (task 6.2).
+     *
+     * <p>The only caller is the neutrality gate, which replays one preset under one seed with
+     * {@code NdjsonSink} and then with {@code NoopSink} and asserts the decisions did not move. The
+     * sink is taken from {@code RunContext} rather than passed in, because that is the route
+     * production takes to it — the scaffold installs the implementation under test, and this method
+     * exercises whatever it installed. What the load consists of, and what it deliberately leaves
+     * out, is the class javadoc's sink section.
+     */
+    static List<DecisionRecord> runUnderSinkLoad(OracleSataAgent agent, ScenarioScript script,
+            ScriptedLlm llm) throws Exception {
+        return run(agent, script, llm, true);
+    }
+
+    /**
      * Replays {@code script}, driving {@code llm}'s per-step bookkeeping around each selection.
      *
      * <p>The scripted LLM arrives as an argument rather than being read off the agent, because there
@@ -132,7 +193,14 @@ public final class OracleDriver {
      */
     static List<DecisionRecord> run(OracleSataAgent agent, ScenarioScript script, ScriptedLlm llm)
             throws Exception {
+        return run(agent, script, llm, false);
+    }
+
+    private static List<DecisionRecord> run(OracleSataAgent agent, ScenarioScript script,
+            ScriptedLlm llm, boolean driveSink) throws Exception {
         Graph graph = ((Model) OracleScaffold.getField(agent, "model")).getGraph();
+        MopData mopData = (MopData) OracleScaffold.getField(agent, "_mopData");
+        EventSink sink = driveSink ? RunContext.current().sink() : null;
 
         Map<String, State> statesByScreen = new HashMap<>();
         String screen = script.getEntryScreen().getName();
@@ -142,6 +210,8 @@ public final class OracleDriver {
 
         List<ScenarioScript.Step> steps = script.getSteps();
         List<DecisionRecord> records = new ArrayList<>(steps.size());
+        Action decided = null;
+        String decidedOn = null;
         for (int index = 0; index < steps.size(); index++) {
             ScenarioScript.Step step = steps.get(index);
             State state = stateOf(graph, script, statesByScreen, screen);
@@ -150,6 +220,18 @@ public final class OracleDriver {
             OracleScaffold.setField(agent, "_isNewState", step.isNewState());
             OracleScaffold.setField(agent, "graphStableCounter", step.getGraphStableCounter());
             graph.markVisited(state, agent.getTimestamp()); // before the ladder — finding 5.1-a
+            if (sink != null) {
+                // The order production runs them in: updateGraph resolves the previous step's
+                // outcome, and only then does resolveNewAction open this step's record.
+                if (decided instanceof ModelAction) {
+                    sink.outcome(step.isNewState(), state.getStateKey().toString(),
+                            state.getActivity(), hasMop(mopData, state.getActivity()),
+                            !state.getActivity().equals(decidedOn));
+                }
+                sink.beginStep(agent.getTimestamp(), RunContext.current().elapsedMs(),
+                        state.getActivity(), hasMop(mopData, state.getActivity()),
+                        state.getStateKey().toString());
+            }
             if (llm != null) {
                 llm.beginStep(index);
             }
@@ -159,14 +241,51 @@ public final class OracleDriver {
             if (llm != null) {
                 llm.finishStep();
             }
+            if (sink != null) {
+                decision(sink, selected);
+            }
             records.add(record(index, selected, llm));
             if (selected instanceof ModelAction) {
                 graph.markVisited((ModelAction) selected, agent.getTimestamp());
             }
+            decided = selected;
+            decidedOn = state.getActivity();
             OracleScaffold.setField(agent, "timestamp", agent.getTimestamp() + 1);
             screen = script.nextScreen(screen, targetXPath(selected));
         }
+        if (sink != null) {
+            // What teardown does with the record the run ended inside of, which is the last one here
+            // by construction: no step follows to close it.
+            sink.flushPendingStep();
+        }
         return records;
+    }
+
+    /**
+     * Fills the open record's {@code dec} section, mirroring {@code resolveNewAction}'s two branches.
+     *
+     * <p>A {@code ModelAction} carries its own provenance and boosts, so those are read off the
+     * action rather than restated here. A non-model action carries neither — the two labels
+     * production derives from the action type are its rule, not the harness's, so the harness passes
+     * the type it can see and no channel at all. Nothing asserts either string; what they are for is
+     * to make the sink escape and write something of the right shape and size.
+     */
+    private static void decision(EventSink sink, Action selected) {
+        if (selected instanceof ModelAction) {
+            ModelAction picked = (ModelAction) selected;
+            sink.decision(picked.toString(), picked.getDecisionSource().name(),
+                    picked.getPickChannel().getLabel(), picked.getPriority(),
+                    picked.getMopBoost(), picked.getMopFrontierBoost(), picked.getWtgBoost(),
+                    picked.getCoverageBoost(), picked.getMenuBoost(), picked.getFormBoost(),
+                    picked.getWtgSource(), EventSink.ABSENT, EventSink.ABSENT, null);
+            return;
+        }
+        sink.decisionNonModel(selected.toString(), selected.getType().name(), null);
+    }
+
+    /** {@code activityHasMop}, which is private to the agent: no MOP data means no MOP activity. */
+    private static boolean hasMop(MopData mopData, String activity) {
+        return mopData != null && activity != null && mopData.activityHasMop(activity);
     }
 
     /** The screen's state, built and registered on its first visit and reused on every later one. */

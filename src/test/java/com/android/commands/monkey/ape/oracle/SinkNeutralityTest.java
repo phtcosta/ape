@@ -33,19 +33,24 @@ import static org.junit.Assert.assertTrue;
  * two are complementary, and this one would still fail if both sinks moved the same decision the
  * same way.
  *
- * <p><b>What this replay cannot yet reach, stated because a gate that overclaims is worse than a
- * missing one.</b> The harness's entry point is {@code agent.ladder()}, and every sink call the
- * step path makes sits above it: {@code beginStep}/{@code decision}/{@code outcome} are in
- * {@code resolveNewAction} and {@code updateGraph}, {@code mopExposure} is in the scoring pass that
- * runs inside {@code adjustActionsByGUITree()}, and the LLM sub-events are emitted by units the
- * scaffold substitutes with {@link ScriptedLlm}. So the real sink receives <em>nothing</em> during
- * a replay — {@link #theHarnessEntersBelowEverySinkCallSite()} pins exactly that — and what these
- * four tests establish is that installing a different sink implementation does not perturb the
- * ladder, not that a sink under load leaves it alone. The load-bearing half of R7 for now is the
- * interface's shape ({@code NdjsonSinkTest.noSinkMethodCanHandAnythingBackToADecisionPath}) plus
- * the fact that no sink method returns a value a decision could read. Closing the gap needs the
- * harness to drive a step's sink calls around each {@code ladder()} call — that is a change to
- * {@code OracleDriver}, and it is why task 6.2 stays open.
+ * <p><b>The sink is under load while the decisions are compared, and that is the whole of the
+ * gate.</b> Every production sink call sits above the harness's entry point — {@code beginStep} and
+ * {@code decision} in {@code resolveNewAction}, {@code outcome} in {@code updateGraph} — so a plain
+ * replay leaves the real sink holding nothing and can only say that <em>installing</em> a different
+ * implementation is harmless. {@link OracleDriver#runUnderSinkLoad} is what closes that: it drives
+ * the step's calls around each {@code ladder()} call, so the "on" replay interns dictionary
+ * entries, escapes and writes a record per step, and beats a heartbeat, while the "off" replay does
+ * none of it — and the decisions still have to match. That reaches every channel a sink could
+ * perturb a decision through, because all of them are global rather than positional: the shared
+ * {@code RandomHelper} statics, the agent's pinned stream, and the model objects whose strings the
+ * sink is handed.
+ *
+ * <p><b>What the load still does not include</b>, stated because a gate that overclaims is worse
+ * than a missing one: {@code mopExposure} is emitted inside {@code adjustActionsByGUITree()} and
+ * the {@code llm[]} sub-events by the units the scaffold replaces with {@link ScriptedLlm}, so
+ * neither reaches the sink here. {@link #theHarnessEntersBelowEverySinkCallSite()} keeps that bound
+ * visible from the undriven path: it is the reason the driver has to place the calls at all, and
+ * the day the harness grows reach over a production sink call it fails and says so.
  */
 public class SinkNeutralityTest {
 
@@ -107,29 +112,51 @@ public class SinkNeutralityTest {
                 .build();
     }
 
-    /** One replay of the preset under {@code sink}, returning what the ladder decided. */
-    private static List<DecisionRecord> replay(OracleScaffold.Preset preset, EventSink sink)
-            throws Exception {
+    /**
+     * One replay of the preset under {@code sink}, returning what the ladder decided.
+     *
+     * @param underLoad whether the driver drives the step's sink calls around each selection. The
+     *        four neutrality tests say true, which is what puts the sink to work; the bound test
+     *        below says false, which is what shows the ladder itself reaches none of them.
+     */
+    private static List<DecisionRecord> replay(OracleScaffold.Preset preset, EventSink sink,
+            boolean underLoad) throws Exception {
         ScenarioScript script = script(preset.hasLlm());
         ScriptedLlm llm = preset.hasLlm() ? new ScriptedLlm(script) : null;
         OracleSataAgent agent = OracleScaffold.newAgent(preset, script, llm, sink);
+        if (underLoad) {
+            return OracleDriver.runUnderSinkLoad(agent, script, llm);
+        }
         return preset.hasLlm()
                 ? OracleDriver.run(agent, script, llm)
                 : OracleDriver.run(agent, script);
     }
 
     /**
-     * Replays a preset with each sink and asserts the decisions did not move.
+     * Replays a preset with each sink under load and asserts the decisions did not move.
      *
      * <p>The real sink writes to a buffer rather than to {@code System.out}, so the assertion is
      * about the decisions and not about which stream a test happened to hold.
+     *
+     * <p>It asserts the load happened before it asserts the decisions match, and that order is the
+     * point: identical sequences prove nothing if the "on" replay quietly wrote nothing, which is
+     * exactly the state this test was in before task 6.2. One record per step and one heartbeat per
+     * step is what says the sink did the work the run would have made it do.
      */
     private void assertNeutralOn(OracleScaffold.Preset preset) throws Exception {
         ByteArrayOutputStream trace = new ByteArrayOutputStream();
         Log.reset();
         List<DecisionRecord> withSink = replay(preset,
-                new NdjsonSink(new PrintStream(trace, true, "UTF-8")));
-        List<DecisionRecord> withoutSink = replay(preset, new NoopSink());
+                new NdjsonSink(new PrintStream(trace, true, "UTF-8")), true);
+        int heartbeats = Log.entries().size();
+        List<DecisionRecord> withoutSink = replay(preset, new NoopSink(), true);
+
+        assertEquals(preset + ": the sink must have written a record per step",
+                withSink.size(), stepRecords(trace.toString("UTF-8")));
+        assertEquals(preset + ": the heartbeat must have beaten once per step",
+                withSink.size(), heartbeats);
+        assertEquals(preset + ": the no-op replay must not have written anything",
+                heartbeats, Log.entries().size());
 
         assertEquals(preset + ": the two replays must decide the same number of steps",
                 withSink.size(), withoutSink.size());
@@ -137,6 +164,17 @@ public class SinkNeutralityTest {
             assertEquals(preset + ": step " + i + " moved when the sink was switched",
                     render(withSink.get(i)), render(withoutSink.get(i)));
         }
+    }
+
+    /** Step records in a trace: the lines carrying an {@code s} member, dictionaries excluded. */
+    private static int stepRecords(String trace) {
+        int count = 0;
+        for (String line : trace.split("\n")) {
+            if (line.startsWith("{\"s\":")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /** A record as one comparable string — every field the harness observes, in a fixed order. */
@@ -168,19 +206,20 @@ public class SinkNeutralityTest {
     }
 
     /**
-     * The finding that bounds the four tests above, pinned so it cannot rot silently.
+     * The finding that makes the driver's load necessary, pinned so it cannot rot silently.
      *
-     * <p>A replay drives the ladder directly, and every sink call site is above that entry point.
-     * If this ever fails, the harness has grown reach over a sink call — and the neutrality gate
-     * can then be strengthened from "a different implementation does not perturb the ladder" to
-     * "a sink under load does not", which is what task 6.2 asks for.
+     * <p>A replay drives the ladder directly, and every production sink call site is above that
+     * entry point — which is why the four tests above have the driver place the calls instead. If
+     * this ever fails, the harness has grown reach over a production sink call, and that much of
+     * the load can stop being synthetic.
      */
     @Test
     public void theHarnessEntersBelowEverySinkCallSite() throws Exception {
         ByteArrayOutputStream trace = new ByteArrayOutputStream();
-        replay(OracleScaffold.Preset.LLM_MOP, new NdjsonSink(new PrintStream(trace, true, "UTF-8")));
+        replay(OracleScaffold.Preset.LLM_MOP,
+                new NdjsonSink(new PrintStream(trace, true, "UTF-8")), false);
 
-        assertEquals("the replay reaches no sink call, so the gate above is bounded by that",
+        assertEquals("the ladder itself reaches no sink call, so the load has to be driven",
                 0, trace.size());
     }
 
