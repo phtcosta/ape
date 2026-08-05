@@ -566,13 +566,98 @@ what task 2.7 already designated as the permanent protection) and `gh97`'s campa
     the baseline a later session should expect is 1118, and a session that finds 1131 after
     `rearch-05` lands has a merge problem rather than a lucky suite.
 
-## 6. Python push switch (BREAKING — lands only with Group 5)
+## 6. Python push switch (BREAKING — lands only with Group 5) — DELIVERED BY `gh96`
 
-- [ ] 6.1 `tool.py`: add `_derive_mop_artifact(task)` (digest-checked cache at `<apk_name>.mop.json`, atomic write, `DerivationError` → `RVToolExecutionError`); delete `_compact_static_analysis_json` and its enrichment helper and their fallback-to-source push
-- [ ] 6.2 `tool.py` step 1c: replace the warn-and-continue branch with the raise (INV-APERV-05); push to `/data/local/tmp/mop-artifact.json`; update the `ape.mopDataPath` value in `_push_properties`
-- [ ] 6.3 Update `test_aperv_tool.py`: absent-JSON raises, derivation-failure raises, cache hit/stale behavior, device path and properties line, non-MOP arms untouched, no-full-JSON-push assertion (INV-APERV-06)
-- [ ] 6.4 Run `/rv-test-run aperv-tool` (pytest for the module — rv-android's skills are `rv-*`, not `sdd-*`)
-- [ ] 6.5 **Cross-repo OpenSpec instrument**: rv-android's `openspec/specs/aperv/spec.md` MUST NOT be edited by hand (that repo's CLAUDE.md forbids it). Counterpart opened 2026-08-03: **`rvsec#96`**, change `gh96-mop-artifact-derivation`, carrying this stage's delta — the push path switches from the full JSON to the derived artifact, `_compact_static_analysis_json` and its INV-APV-20..25/31/32 requirements retire, and absent-input becomes a raised error — and let that repo's archive/sync apply it
+Like group 2, this group was written as if the switch were unbuilt, and like group 2 it is built.
+`gh96-mop-artifact-derivation` (rv-android, branch `rearch-counterparts`) delivered it in its group 5,
+and the boxes below are ticked against a **rule-by-rule reading of `tool.py` and its tests**, with the
+delivering `gh96` task named in each note — never against `gh96`'s own checkboxes. Not one line of
+rv-android was edited for this group; the §0 authorization to do so was not needed and was not used.
+
+Verified read-only 2026-08-05 at rv-android `a683591e`.
+
+- [x] 6.1 `tool.py`: add `_derive_mop_artifact(task)` (digest-checked cache at `<apk_name>.mop.json`, atomic write, `DerivationError` → `RVToolExecutionError`); delete `_compact_static_analysis_json` and its enrichment helper and their fallback-to-source push
+  - `gh96` 5.1/5.2. `_derive_mop_artifact():675` reads the source **as bytes** and digests those bytes
+    (`digest_of` = `sha256:` + hex, `derive_mop_artifact.py:160`) rather than the re-encoded parse,
+    which would not round-trip; the cache hit is `_cached_artifact_digest(...) == digest` and nothing
+    else — no mtime, no size. `_cached_artifact_digest():761` treats a missing, unreadable or corrupt
+    artifact as a **miss returning None**, so a scratch file cannot fail a run.
+  - The atomic write is `tempfile.mkstemp(dir=task.results_dir)` + `os.replace`, i.e. a rename within
+    the same directory, which is the only form that is actually atomic. The `finally` unlinks the temp
+    on every path where `os.replace` did not run, and sets `tmp_path = None` immediately after the
+    rename so the successful path does not unlink the artifact it just created.
+  - `MemoryError` is in the caught tuple alongside `DerivationError`/`OSError`/`json.JSONDecodeError`.
+    That is not over-catching: the document is `json.loads`-ed whole before deriving, and a bare
+    `MemoryError` would reach the supervisor without the path or tool context the caller acts on.
+  - **The deletion is verified as an absence, not assumed from the task text** (learning: grep cannot
+    be trusted for negative results — this was a `python3` walk of `modules/`, all `.py` and `.md`).
+    `_compact_static_analysis_json`, `_index_reaches_target` and `_enrich_listener_reach`: **zero
+    occurrences each**. `handlerReachesTarget`/`handlerDirectlyReachesTarget` occur three times each
+    and every one is legitimate — `derive_mop_artifact.py:501-502` **reads** them as the producer's
+    supplied values (the producer-precedence branch INV-DRV-01 requires), plus one test and one
+    CLAUDE.md paragraph. Nothing writes them any more, which is what retiring INV-APV-32 means.
+- [x] 6.2 `tool.py` step 1c: replace the warn-and-continue branch with the raise (INV-APERV-05); push to `/data/local/tmp/mop-artifact.json`; update the `ape.mopDataPath` value in `_push_properties`
+  - `gh96` 5.3/5.4. Step 1c (`:1171-1200`) raises `RVToolExecutionError("MOP arm cannot arm: no static
+    analysis JSON at <path>")` when `_find_static_analysis_file` returns falsy, and the expected path
+    is **reconstructed for the message** from `results_dir`/`apk_name` with placeholders — so the
+    error names a path even for the standalone task shape that has neither, which is the shape the
+    finder returns None for without ever building one.
+  - INV-APERV-05's real content is the *absence of a third branch*, and the code has none: the `if`
+    either raises or falls through to `_derive_mop_artifact` + push + `mop_json_pushed = True`. There
+    is no `except`, no `continue`, no default. `mop_json_pushed` is initialized `False` immediately
+    above the block and is the only thing that gates the property line, so "pushed" and "declared"
+    cannot disagree.
+  - `_push_properties():807` writes `f"ape.mopDataPath={DEVICE_ARTIFACT_PATH}"` — **the same constant
+    the push destination uses** (`derive_mop_artifact.py:70` = `/data/local/tmp/mop-artifact.json`),
+    not a second literal. That is the difference between a path that cannot drift and one that is
+    merely correct today.
+- [x] 6.3 Update `test_aperv_tool.py`: absent-JSON raises, derivation-failure raises, cache hit/stale behavior, device path and properties line, non-MOP arms untouched, no-full-JSON-push assertion (INV-APERV-06)
+  - `gh96` 5.5/5.6/6.1. Every item on this list has a test, and each was read for **what it asserts**
+    rather than counted by its name (learning: when a gate is delegated, check what the receiving gate
+    actually asserts). `TestDeriveMopArtifact` (`:1353`) covers the unit half — derive/write, cache
+    hit *enforced by monkeypatching `derive` into an `AssertionError`* so a silent re-derivation
+    fails, stale regeneration checked against a recomputed digest, corrupt-cache-is-a-miss, and
+    `test_failed_derivation_leaves_no_file` asserting `os.listdir` is byte-for-byte unchanged, which
+    catches an orphaned temp and not merely the absent artifact. `TestExecuteMopArtifactFlow`
+    (`:1658`) covers the flow half, with `_push_file_to_device` stubbed to snapshot content at push
+    time because the temp is unlinked immediately after.
+  - **The two things §3 of the handoff said to check rather than assume both exist, and both hold.**
+    *The INV-APERV-06 assertion* is `test_full_json_never_pushed:1777`, and it is stronger than its
+    name: one push to the artifact path, its local path is the `.mop.json`, its content parses to
+    `formatVersion == 1`, **no push anywhere carries the source path**, and **no push targets the old
+    `/data/local/tmp/static_analysis.json`** — so it closes both the "wrong file" and the "right file,
+    old destination" directions instead of only the first. *The derivation-failure test* is
+    `test_mop_arm_derivation_error_raises:1816`, driving a `complete: False` document through the
+    whole flow and asserting zero artifact pushes; `test_mop_arm_without_json_raises:1805` adds that
+    the **properties file is never pushed either**, which is what "before launching the jar" means
+    operationally. Nothing here needed writing, so the §0 authorization stays unused.
+  - Numbering, since the two repositories name the same clauses differently and a future reader will
+    hit this: `INV-APERV-05/06/07` of this delta are `INV-APV-45/46/47` in `gh96`'s. Same text, and
+    the test comments cite the rv-android numbers.
+  - Beyond the task's list, `TestMopArtifactAudit:1858` (`gh96` 6.1) enforces INV-ANA-53 — no module
+    outside `aperv-tool` may read a `*.mop.json` — which is the executable form of design D9's grep
+    audit that task 1.3 performed by hand. Its suffix constant is assembled from two pieces so the
+    audit does not match its own source line.
+- [x] 6.4 Run `/rv-test-run aperv-tool` (pytest for the module — rv-android's skills are `rv-*`, not `sdd-*`)
+  - Skill run directly (the `rv-*` skills are in this session's registry but the CI contract is the
+    thing that matters): `.venv/bin/pytest modules/aperv-tool/tests/ --import-mode=importlib
+    -o "addopts="` → **299 passed, 32 skipped**, 18.3 s. Split: `test_aperv_tool.py` 130 passed,
+    `test_derive_mop_artifact.py` 67 passed, the rest from the trace/coverage/migration files.
+  - **The handoff's 282 passed / 30 skipped is stale, and not because of this group** — nothing here
+    added a test. `git log` over `tests/` shows the movement belongs to the owner's concurrent `gh94`
+    (`a683591e`, +301 lines in `test_clock_logcat_join.py`) and to `gh95`'s arm retirement. Recording
+    the source of the drift so the next session does not read it as a group-6 side effect.
+- [x] 6.5 **Cross-repo OpenSpec instrument**: rv-android's `openspec/specs/aperv/spec.md` MUST NOT be edited by hand (that repo's CLAUDE.md forbids it). Counterpart opened 2026-08-03: **`rvsec#96`**, change `gh96-mop-artifact-derivation`, carrying this stage's delta — the push path switches from the full JSON to the derived artifact, `_compact_static_analysis_json` and its INV-APV-20..25/31/32 requirements retire, and absent-input becomes a raised error — and let that repo's archive/sync apply it
+  - The instrument is in place and was checked at both ends rather than taken on the change's word.
+    `gh96`'s delta (`openspec/changes/gh96-mop-artifact-derivation/specs/aperv/spec.md`) carries
+    `## ADDED` (INV-APV-45/46/47 + the derivation-and-caching requirement), `## MODIFIED` (the execute
+    flow, step 4 = this delta's step 5) and `## REMOVED` (INV-APV-20..25/31 retired with the mechanism
+    they constrain; **INV-APV-32 retired explicitly as a behaviour change**, not as dead weight —
+    which is the D10 honesty that `gh96` task 6.4 came back to this side to enforce).
+  - The prohibition holds: `openspec/specs/aperv/spec.md` carries **zero** occurrences of
+    INV-APV-45/46/47 and still carries all 16 occurrences of the retiring ones. The main spec has not
+    been hand-edited; the delta travels through that repo's archive/sync, which is the whole point of
+    routing it this way.
 
 ## 7. Coordinated deploy (design D8)
 
