@@ -34,6 +34,35 @@
 
 ## MODIFIED Requirements
 
+### Requirement: SglangClient — Per-Request Tool Schema
+
+**Why this requirement is restated here at all.** Its behavior is untouched by this change — the
+per-request schema, the removal of the constructor-time single-schema path, and the null-`tools`
+programming-error clause all stand exactly as written. What moves is one cross-reference: the
+sentence explaining *why* the caller decides per request cites the `llm-routing` capability's
+`"LlmRouter Lifecycle"` requirement by name, and this change REMOVES that requirement when it
+dismantles the 996-LOC class. Synced unchanged, the main spec would point at a requirement that no
+longer exists. The clause it is really pointing at survives — this change's own REMOVED entry says
+so, listing per-request tool schema selection among the behaviors that "survive verbatim in the
+replacement requirements" — so the reference is re-anchored onto `"LLM Unit Lifecycle and
+Ownership"`, the requirement that replaced it. Nothing else in the body is edited.
+
+`SglangClient` SHALL accept the OpenAI function-calling tools schema **per invocation**: `chat(messages, tools)` includes the supplied `tools` array in that request's body. The constructor-time single-schema path (`setTools(JSONArray)` installing one run-wide array included in every request) is removed — no dual path remains (P3). The `tools` parameter stays required in every request for Qwen3-VL to generate structured tool calls on multimodal input; what changes is that the caller now decides per request which tools exist, so the wire schema can track the screen (the router omits `type_text` on screens without input fields, matching the system message — `llm-routing` capability, "LLM Unit Lifecycle and Ownership"). Previously the schema was built once at router construction and always advertised `type_text`, contradicting the conditional system message.
+
+A null or empty `tools` argument is a programming error at the call site, not a supported mode: the router always supplies one of its two prebuilt schemas.
+
+#### Scenario: request body carries the supplied schema
+
+- **WHEN** `chat(messages, toolsWithoutTypeText)` is invoked
+- **THEN** the request body's `tools` array SHALL be exactly the supplied schema (no `type_text` entry)
+- **AND** a subsequent `chat(messages, toolsWithTypeText)` SHALL carry `type_text` — the schema is per-request state, not client state
+
+#### Scenario: no run-wide schema survives
+
+- **WHEN** two consecutive `chat()` invocations supply different schemas
+- **THEN** neither request SHALL be influenced by the other's schema (nothing is cached on the client between invocations)
+
+
 The failure-stage seam is unchanged in mechanism. Only its honesty-boundary note is re-anchored: it attributed the joinable stage+activity pair to "the router's `[APE-LLM-ERROR] cause=screenshot` line", and this change dismantles `LlmRouter` — that line is emitted by `LlmTelemetry`, and the seam is read by `ScreenshotStep` inside `LlmEngine`'s pipeline. No field, no cause value, and no null-return contract moves.
 
 ### Requirement: ScreenshotCapture — Failure-Stage Cause Seam
