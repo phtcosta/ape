@@ -73,9 +73,82 @@ that group 1 found (task 2.9).
     is defined over the widget map after the dialog merge, and the jar's own record agrees at 30. And
     `wtgEdges` is **16** against the jar's **17**, the difference being one exact-duplicate edge the
     derivation removes; see 4.2 for what that obliges the gate to do.
-- [ ] 3.2 Implement the compact-format parser as new code paths in `MopData`. The full-JSON parser stays in the working tree only because it is the **oracle** of the group-4 equivalence gate (tasks 4.2/4.3 — never adjust the oracle); group 5 deletes it, and groups 3+5 land in one commit (task 7.1), so no shipped state ever contains both. This is oracle scaffolding, not a fallback window (design D8): version gate (`reason=version-mismatch`, INV-MOP-34), widget/flag decoding with explicit-`none` entries, wire sets, WTG view, components, stats echo
-- [ ] 3.2a `ComponentInfo` gains `deepLinkUri`, decoded from the wire for activities; the launcher call site (`MopLauncherStage:117`) passes `candidate.deepLinkUri` and `MonkeySourceApe`'s dispatch is untouched. Verify against the `component-triggering` delta that the restored dispatch paragraph matches what the code does — that paragraph also carries the explicit-intent rule and the pool exclusion, which the `rearch-03` rewrite of the same requirement had dropped
-- [ ] 3.3 Implement the on-device OPTIONSMENU-gateway recompute from `optionsMenus` + WTG + the flag-selected activity set (INV-MOP-13) and the `mopActivitySourceComponents` set selection (INV-MOP-27)
+- [x] 3.2 Implement the compact-format parser as new code paths in `MopData`. The full-JSON parser stays in the working tree only because it is the **oracle** of the group-4 equivalence gate (tasks 4.2/4.3 — never adjust the oracle); group 5 deletes it, and groups 3+5 land in one commit (task 7.1), so no shipped state ever contains both. This is oracle scaffolding, not a fallback window (design D8): version gate (`reason=version-mismatch`, INV-MOP-34), widget/flag decoding with explicit-`none` entries, wire sets, WTG view, components, stats echo
+  - Landed as `MopData.loadCompact` plus five private decoders, all additive — the full-JSON `load`
+    and every helper it calls were not touched, so the oracle is still the code group 4 will compare
+    against. The old parser derives; this one only transcribes (INV-MOP-35), which is why it carries
+    no budget guard and no OOM catch even before group 5 deletes them from the old path.
+  - Three decisions the wire forced, each recorded where it lives in the code: the `mop` map is
+    **normalized on ingest** rather than trusted pre-normalized, because the query side normalizes
+    and an unnormalized wire key would be present in the map yet unreachable through every accessor;
+    `hasTargetMethods` is rebuilt as a list of the right *emptiness* (`StatefulAgent:1313` is the
+    only reader and it calls `.isEmpty()`); and `mopActsAugmented` is recovered as the set difference
+    `augmented \ widget-derived`, since the wire ships both sets whole and the pre-change record's
+    number was the count the augmentation *added*.
+  - Verified by running, not by reading (learning 30): a temporary probe loaded the fixture and
+    printed the record and every consumed query. The record is field-for-field the handoff's measured
+    oracle — `windows=5 widgets=30 flagged=3 droppedNoId=0 handlersUnmatched=5 syntheticLambda=1
+    recovered=1 mopActivities=3 mopActsAugmented=0` — with `wtgEdges=16` against the jar's 17, the
+    one exact-duplicate edge the derivation removes (§4.2). Queries agree with the corrected ground
+    truth: 3 flagged widgets all `transitive`/not `direct`, `activityHasMop` true for the three MOP
+    activities and false for `MainActivity`, 4 activities, 1 provider with its authorities, the
+    spinner's 13 `entries`, and per-event fallback working (`isTransitiveMop("long_click")==true`
+    from the aggregate where the wire has only `click`). A legacy full JSON returns null with
+    `status=rejected reason=version-mismatch`. The probe was deleted; 3.5 writes the real assertions.
+- [x] 3.2a `ComponentInfo` gains `deepLinkUri`, decoded from the wire for activities; the launcher call site (`MopLauncherStage:117`) passes `candidate.deepLinkUri` and `MonkeySourceApe`'s dispatch is untouched. Verify against the `component-triggering` delta that the restored dispatch paragraph matches what the code does — that paragraph also carries the explicit-intent rule and the pool exclusion, which the `rearch-03` rewrite of the same requirement had dropped
+  - `deepLinkUri` went on the **base** `ComponentInfo`, not on `ActivityInfo`: `selectTriggerCandidate`
+    returns a `ComponentInfo`, so a subclass-only field would have forced a cast at the one call site
+    that reads it. It is null on every non-activity, which is what the wire says. `ActivityInfo` gained
+    an 8-argument constructor; the existing 7-argument one delegates with null, so no other caller moved.
+    `MopLauncherStage:117` now passes `candidate.deepLinkUri`. `buildDeepLinkUri` stays until 5.3 — it
+    is the old side of 4.2's deep-link comparison, and `ActivityFrontierTest`'s six Lever B assertions
+    call it directly rather than through `decide()`, so the call-site switch left them untouched.
+  - The paragraph's three claims, checked against the code one by one. **Explicit-intent rule holds**:
+    `setComponent(ComponentName(action.getPackageName(), className))`, the package coming from
+    `MopData.getPackageName()` via the stage (INV-CT-04), with `FLAG_ACTIVITY_NEW_TASK` added inside
+    `AndroidDevice.startActivity`. **Pool exclusion holds, structurally**: `buildTriggerTuples` draws
+    only from `getReceivers()`+`getServices()` and `buildProviderTuples` only from `getProviders()`;
+    `MopData.getActivities()` has exactly one production reader in the tree, `MopLauncherStage:106`.
+  - **The deep-link clause did not hold, and the fix was to the spec.** It read "still targeted at the
+    component", but `MonkeySourceApe.generateActivityTriggerEvent` sets action, data and **`setPackage`**
+    on that branch and never a component. The wording is not this change's error: it traces to
+    `2026-07-08-activity-frontier` design item 6 and is verbatim in the current main spec (`:171`), so
+    no code has ever matched it. Corrected here, in this delta's paragraph and scenario and in the
+    `mop-guidance` "Deep-link dispatch" scenario, to say `setPackage` and to name the consequence.
+    Two live occurrences were left alone because they belong to stages this session may not touch:
+    `rearch-03-decision-pipeline/specs/component-triggering/spec.md:39` and
+    `rearch-04-step-ndjson-telemetry/…:41`. Both are earlier stages, so they archive before this one
+    and this delta's MODIFIED block is what reaches the main spec last — but if either were archived
+    *after* stage 7, the false clause would return.
+  - Owner decision 2026-08-05: correct the artifact, not the code. Stage 7 relocates where the URI is
+    computed; the group-4 gate compares derived data and could not attest a dispatch change, and the
+    launcher path carries the study's strongest mechanism result. The behavioural half is **issue #17**,
+    opened with the measurement that sizes it: over the pinned 345, 123 apps have a deep-linked activity
+    and 173 activities carry one, but the two dispatch forms are distinguishable in only **7 apps**,
+    where two activities assemble an identical URI (`content://` ×3, `file://` ×2, `geo://`, `mailto://`)
+    — every one a filter whose discrimination lives in the `mimeTypes`/`pathPrefixes`/`pathPatterns`
+    that `scheme + "://" + host + path` throws away. The collision is a symptom of a lossy assembly
+    rule, which is INV-DRV-07's, so it travels host-side with the rule instead of being cured by it.
+- [x] 3.3 Implement the on-device OPTIONSMENU-gateway recompute from `optionsMenus` + WTG + the flag-selected activity set (INV-MOP-13) and the `mopActivitySourceComponents` set selection (INV-MOP-27)
+  - The selection happens once, at load, before the gateway recompute reads it, so no consumer
+    downstream knows the flag exists — the launcher census, the substrate floor, the frontier target
+    tests and gateway condition 2 all read one `mopActivities` field. The flag arrives through a
+    package-private `loadCompact(path, pkg, main, activitySourceComponents, sink)` seam, the same
+    idiom the full-JSON path uses to get past the `static final` wall on `Config`.
+  - `recomputeMopOptionsMenus` is pure over its three arguments and 16 lines: condition 1 is the
+    record's own `hasFlaggedWidget`, condition 2 is any click edge out of that base activity landing
+    in the selected set. Same two conditions and same click-only view as the deleted precompute.
+  - Verified on the fixture and on a synthetic artifact that discriminates the two sets, which
+    cryptoapp cannot (its augmented set equals its widget-derived one). On the fixture,
+    `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")` is now **true**, and via
+    condition 2 specifically — the wire record for that activity carries `hasFlaggedWidget: false`,
+    so it qualifies only through its WTG edges into the three MOP sub-activities, which is the
+    scenario's stated route. On the synthetic (`mopActivities=[A]`, `mopActivitiesAugmented=[A,B]`,
+    a gateway `G` whose one edge targets `B`, and a `H` with a flagged menu widget): flag off gives
+    `{A}`, `activityHasMop("B")==false`, `gatewayG==false`; flag on gives `{A,B}`,
+    `activityHasMop("B")==true`, `gatewayG==true`. `gatewayH` is true under both. The flip of
+    `gatewayG` is the point — it is what proves condition 2 reads the *selected* set, which is the
+    entire reason D3 refuses to ship the gateway set precomputed.
 - [ ] 3.4 Update the load status record: new success fields (`formatVersion`, `sourceDigest`, echoed stats), reject reasons reduced to `file-missing|parse-error|version-mismatch|package-mismatch` (INV-MOP-21 unchanged; INV-MOP-22 abort unchanged). **Keep `windows`** — it is on the stage-4 record and survives as `stats.windows`, so dropping it here would make the field appear at stage 4 and vanish at stage 7. Verify field-by-field against the stage-4 census that this record is a superset of it, minus `transitions` only (superseded by `wtgEdges` and deliberately never reinstated)
 - [ ] 3.4a Surface the launch result on the dispatch path (INV-CT-14). **The mechanism already landed — verify, do not rebuild.** `AndroidDevice.startActivity` returns a `LaunchResult` carrying the platform's `START_*` code (`:515-571`) and `MonkeySourceApe:980` hands it to the sink as `componentLaunch(launch.code, launch.error)`; the delta's "SHALL surface" reads as future work only because it was written before `rearch-04`. What is genuinely owed is the second sentence: recording only — no retry, no re-dispatch, no cursor or budget effect (INV-CT-12's "returned actions" accounting unchanged) — and **the test asserting the launcher behaves identically with the recording present and absent, which does not exist**. `LaunchResult` is referenced by exactly one test file (`NdjsonSinkTest`), and nothing tests INV-CT-14's no-effect clause
 - [ ] 3.5 JVM unit tests on the compact fixture: every scenario of the mop-guidance delta (fixture load, legacy-JSON rejection, per-event fallback decoding, flag-selected sets, absent metadata, unknown-key tolerance, strict-match reasons)

@@ -33,10 +33,20 @@ public class ComponentInfo {
      * fails with SecurityException, so consumers should treat it as a gate.
      */
     public final String permission;
+    /**
+     * The activity's deep link — {@code scheme://host + path} of its first {@code ACTION_VIEW}
+     * intent filter with a non-empty scheme list — or null when it declares none, which the
+     * dispatch path reads as "launch the explicit component instead" (INV-CT-13). The string is
+     * assembled host-side by the artifact generator (INV-DRV-07), so the rule lives in the one
+     * component that still sees the intent-filter structure. Null on every non-activity: only
+     * activities are launched by URI.
+     */
+    public final String deepLinkUri;
 
     protected ComponentInfo(String className, String componentType, boolean isMain,
                             boolean exported, List<IntentFilter> intentFilters,
-                            boolean reachesTarget, List<String> targetMethods, String permission) {
+                            boolean reachesTarget, List<String> targetMethods, String permission,
+                            String deepLinkUri) {
         this.className = className;
         this.componentType = componentType;
         this.isMain = isMain;
@@ -47,6 +57,7 @@ public class ComponentInfo {
         this.targetMethods = targetMethods != null
                 ? Collections.unmodifiableList(targetMethods) : Collections.<String>emptyList();
         this.permission = permission;
+        this.deepLinkUri = deepLinkUri;
     }
 
     /** Flat union of every action across all intent filters (order preserved, no dedup). */
@@ -141,7 +152,7 @@ public class ComponentInfo {
                             List<IntentFilter> intentFilters, boolean reachesTarget,
                             List<String> targetMethods, String permission) {
             super(className, "receiver", isMain, exported, intentFilters, reachesTarget,
-                    targetMethods, permission);
+                    targetMethods, permission, null);
         }
     }
 
@@ -157,7 +168,7 @@ public class ComponentInfo {
                            List<IntentFilter> intentFilters, boolean reachesTarget,
                            List<String> targetMethods, String permission) {
             super(className, "service", isMain, exported, intentFilters, reachesTarget,
-                    targetMethods, permission);
+                    targetMethods, permission, null);
         }
     }
 
@@ -172,8 +183,15 @@ public class ComponentInfo {
         public ActivityInfo(String className, boolean isMain, boolean exported,
                             List<IntentFilter> intentFilters, boolean reachesTarget,
                             List<String> targetMethods, String permission) {
+            this(className, isMain, exported, intentFilters, reachesTarget, targetMethods,
+                    permission, null);
+        }
+
+        public ActivityInfo(String className, boolean isMain, boolean exported,
+                            List<IntentFilter> intentFilters, boolean reachesTarget,
+                            List<String> targetMethods, String permission, String deepLinkUri) {
             super(className, "activity", isMain, exported, intentFilters, reachesTarget,
-                    targetMethods, permission);
+                    targetMethods, permission, deepLinkUri);
         }
     }
 
@@ -197,7 +215,7 @@ public class ComponentInfo {
                             List<String> targetMethods, String authorities,
                             String permission, String readPermission, String writePermission) {
             super(className, "provider", isMain, exported, intentFilters, reachesTarget,
-                    targetMethods, permission);
+                    targetMethods, permission, null);
             this.authorities = authorities != null ? authorities : "";
             this.readPermission = readPermission;
             this.writePermission = writePermission;

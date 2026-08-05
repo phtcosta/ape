@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -339,6 +340,436 @@ public class MopData {
             reject(sink, "oom");
             return null;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Compact MOP artifact (formatVersion 1)
+    // -------------------------------------------------------------------------
+
+    /** The only compact-artifact wire version this jar reads (INV-MOP-34). */
+    private static final int SUPPORTED_FORMAT_VERSION = 1;
+
+    /**
+     * Load MOP data from the derived compact MOP artifact that {@code aperv-tool} generates
+     * host-side from the full static-analysis JSON.
+     *
+     * <p>Every parse-time semantic the full-JSON path performs — the listener-handler ×
+     * reachability cross-reference, the D8 synthetic-lambda recovery, the {@code mopRank}
+     * collision policy, the empty-id drop, the DIALOG re-keying, the base-activity WTG keying
+     * and the A′ union — has already run in the generator. This reader decodes precomputed
+     * values and derives nothing (INV-MOP-35), which is why it needs neither the call graph nor
+     * a parse budget: the artifact is bounded by construction.
+     *
+     * @param path                  device-local path, or null
+     * @param expectedPackage       package to compare against (T1.7), or null to skip
+     * @param expectedMainActivity  main activity to compare against (T1.7), or null to skip
+     * @param sink                  where the load census, or the reason there is none, is recorded
+     * @return populated MopData, or null on: null path / missing file / malformed JSON /
+     *         unsupported formatVersion / strict-mode package mismatch
+     */
+    public static MopData loadCompact(String path, String expectedPackage,
+            String expectedMainActivity, EventSink sink) {
+        return loadCompact(path, expectedPackage, expectedMainActivity,
+                Config.mopActivitySourceComponents, sink);
+    }
+
+    /**
+     * Package-visible test seam: {@code loadCompact} with the A′ source choice passed in, so the
+     * JVM suite can drive both branches of INV-MOP-27 past the {@code static final} wall that
+     * {@link Config#mopActivitySourceComponents} sits behind. The public entry reads the flag.
+     */
+    static MopData loadCompact(String path, String expectedPackage, String expectedMainActivity,
+            boolean activitySourceComponents, EventSink sink) {
+        if (path == null) {
+            return null;
+        }
+        JSONObject root;
+        try {
+            root = new JSONObject(new JSONTokener(readFile(path)));
+        } catch (IOException e) {
+            Logger.wprintln("MopData: failed to read " + path + ": " + e.getMessage());
+            reject(sink, "file-missing");
+            return null;
+        } catch (JSONException e) {
+            Logger.wprintln("MopData: malformed JSON at " + path + ": " + e.getMessage());
+            reject(sink, "parse-error");
+            return null;
+        }
+
+        // Version gate (INV-MOP-34). This is also the branch a legacy full static-analysis JSON
+        // takes: it carries no formatVersion, so the mismatch names it. The version replaces the
+        // full-JSON era's "complete": true sentinel — the generator derives only from complete
+        // analyses, so a versioned artifact is complete by construction.
+        int formatVersion = root.optInt("formatVersion", -1);
+        if (formatVersion != SUPPORTED_FORMAT_VERSION) {
+            Logger.wprintln("MopData: unsupported formatVersion " + formatVersion + " at " + path
+                    + " — this jar reads " + SUPPORTED_FORMAT_VERSION);
+            reject(sink, "version-mismatch");
+            return null;
+        }
+
+        try {
+            String packageName = optStringOrNull(root, "package");
+            String mainActivity = optStringOrNull(root, "mainActivity");
+
+            Map<String, Map<String, Widget>> widgetData =
+                    parseCompactWidgets(root.optJSONObject("widgets"));
+            Set<String> widgetDerivedActivities = stringSet(root.optJSONArray("mopActivities"));
+            Set<String> augmentedActivities =
+                    stringSet(root.optJSONArray("mopActivitiesAugmented"));
+            Map<String, List<WtgTransition>> wtgTransitions =
+                    parseCompactWtg(root.optJSONObject("wtg"));
+
+            // INV-MOP-27: the wire ships both sources and the run flag picks one, so the choice
+            // stays a run parameter instead of becoming a generation parameter (two artifacts per
+            // app). Selecting once, here, is what makes every downstream consumer — launcher
+            // census, substrate floor, frontier target tests, gateway condition 2 — read the same
+            // set without any of them knowing the flag exists.
+            Set<String> selectedActivities =
+                    activitySourceComponents ? augmentedActivities : widgetDerivedActivities;
+
+            List<ComponentInfo.ReceiverInfo> receivers = new ArrayList<>();
+            List<ComponentInfo.ServiceInfo> services = new ArrayList<>();
+            List<ComponentInfo.ActivityInfo> activities = new ArrayList<>();
+            List<ComponentInfo.ProviderInfo> providers = new ArrayList<>();
+            parseCompactComponents(root.optJSONObject("components"),
+                    receivers, services, activities, providers);
+
+            MopData data = new MopData(packageName, mainActivity, true,
+                    new ArrayList<ReachabilityClass>(),
+                    new ArrayList<Window>(), new HashMap<Integer, Window>(),
+                    widgetData, selectedActivities, wtgTransitions,
+                    new ArrayList<Transition>(),
+                    receivers, services, activities, providers,
+                    recomputeMopOptionsMenus(
+                            parseCompactOptionsMenus(root.optJSONArray("optionsMenus")),
+                            wtgTransitions, selectedActivities));
+
+            // Sanity check (T1.7) — the generator copies both scalars verbatim from the full JSON,
+            // so a mismatch means the wrong artifact was derived or pushed for this APK.
+            boolean mismatch = false;
+            if (expectedPackage != null && !expectedPackage.equals(packageName)) {
+                Logger.wprintln("MopData: package mismatch — expected '" + expectedPackage
+                        + "' but artifact has '" + packageName + "'");
+                mismatch = true;
+            }
+            if (expectedMainActivity != null && !expectedMainActivity.equals(mainActivity)) {
+                Logger.wprintln("MopData: mainActivity mismatch — expected '" + expectedMainActivity
+                        + "' but artifact has '" + mainActivity + "'");
+                mismatch = true;
+            }
+            if (mismatch && RunContext.current().spec().mop().strictPackageMatch()) {
+                Logger.wprintln("MopData: strict package match enabled — rejecting " + path);
+                reject(sink, "package-mismatch");
+                return null;
+            }
+
+            // The stats block is echoed, never recomputed: droppedFlaggedNoId, the handler-join
+            // counters and the orphan-dialog count are facts about a derivation this jar no longer
+            // performs, so the only honest source for them is the generator that did.
+            JSONObject stats = root.optJSONObject("stats");
+            if (stats == null) {
+                stats = new JSONObject();
+            }
+            data.droppedFlaggedNoId = stats.optInt("droppedFlaggedNoId", 0);
+            sink.mopData("loaded", null, packageName,
+                    stats.optInt("windows", 0), stats.optInt("widgetsTotal", 0),
+                    stats.optInt("flagged", 0), data.droppedFlaggedNoId,
+                    stats.optInt("wtgEdges", 0), stats.optInt("handlersUnmatched", 0),
+                    stats.optInt("syntheticLambda", 0), stats.optInt("recovered", 0),
+                    data.mopActivities.size(),
+                    countOnlyIn(augmentedActivities, widgetDerivedActivities));
+            return data;
+        } catch (JSONException e) {
+            Logger.wprintln("MopData: malformed artifact structure at " + path + ": "
+                    + e.getMessage());
+            reject(sink, "parse-error");
+            return null;
+        }
+    }
+
+    /**
+     * Decode the wire {@code widgets} map ({@code baseActivity → shortId → widget}) into the
+     * exact lookup structure {@link #getWidget} serves. The wire key <em>is</em> the short
+     * resource id: base-activity scoping, the collision policy and the empty-id drop all ran
+     * host-side, so a key present here is a widget the query side can reach.
+     */
+    private static Map<String, Map<String, Widget>> parseCompactWidgets(JSONObject widgetsObj)
+            throws JSONException {
+        Map<String, Map<String, Widget>> widgetData = new HashMap<>();
+        if (widgetsObj == null) {
+            return widgetData;
+        }
+        for (Iterator<String> ai = widgetsObj.keys(); ai.hasNext(); ) {
+            String activity = ai.next();
+            JSONObject byId = widgetsObj.optJSONObject(activity);
+            if (byId == null) {
+                continue;
+            }
+            Map<String, Widget> widgets = new LinkedHashMap<>();
+            for (Iterator<String> wi = byId.keys(); wi.hasNext(); ) {
+                String shortId = wi.next();
+                JSONObject wo = byId.optJSONObject(shortId);
+                if (wo != null) {
+                    widgets.put(shortId, parseCompactWidget(shortId, wo));
+                }
+            }
+            widgetData.put(activity, widgets);
+        }
+        return widgetData;
+    }
+
+    /**
+     * Decode one wire widget: the consumed metadata fields (absent ⇒ null/empty) and the
+     * {@code mop} map of normalized eventType → {@code none|direct|transitive|both}.
+     *
+     * <p>The four tokens decode positionally into the two bits the query side reads
+     * ({@code none}=00, {@code direct}=10, {@code transitive}=01, {@code both}=11), so the map
+     * is lossless with respect to the two per-eventType maps the full-JSON derivation built. An
+     * entry is created for <em>every</em> wire key, {@code none} included: key presence is what
+     * makes {@code isDirectMop}/{@code isTransitiveMop} answer per-event instead of falling back
+     * to the aggregate (INV-MOP-14), so omitting a {@code none} would change the answer. The
+     * aggregates are the OR across the map, which is INV-MOP-17 by construction.
+     */
+    private static Widget parseCompactWidget(String shortId, JSONObject wo) throws JSONException {
+        Widget w = new Widget();
+        w.idName = shortId;
+        w.hint = optStringOrNull(wo, "hint");
+        w.inputType = optStringOrNull(wo, "inputType");
+        w.prompt = optStringOrNull(wo, "prompt");
+        w.spinnerMode = optStringOrNull(wo, "spinnerMode");
+        w.contentDescription = optStringOrNull(wo, "contentDescription");
+        w.tooltipText = optStringOrNull(wo, "tooltipText");
+        JSONArray entries = wo.optJSONArray("entries");
+        if (entries != null) {
+            for (int i = 0; i < entries.length(); i++) {
+                w.entries.add(entries.optString(i, ""));
+            }
+        }
+        JSONObject mop = wo.optJSONObject("mop");
+        if (mop == null) {
+            return w;
+        }
+        for (Iterator<String> it = mop.keys(); it.hasNext(); ) {
+            String eventType = it.next();
+            String encoded = mop.optString(eventType, "none");
+            boolean direct = "direct".equals(encoded) || "both".equals(encoded);
+            boolean transitive = "transitive".equals(encoded) || "both".equals(encoded);
+            // Normalize on ingest rather than trust the generator to have done it: the query side
+            // normalizes (INV-MOP-08), so a key that arrived unnormalized would be present in the
+            // map and unreachable through every accessor. orInto also merges two wire keys that
+            // collapse onto the same normalized event.
+            String key = normalizeEventType(eventType);
+            orInto(w.directMopByEventType, key, direct);
+            orInto(w.transitiveMopByEventType, key, transitive);
+            w.directMop |= direct;
+            w.transitiveMop |= transitive;
+        }
+        return w;
+    }
+
+    /**
+     * Decode the wire {@code wtg} map ({@code sourceBaseActivity → [{widget, target}]}). Both
+     * ends are already base activities and exact duplicates are already removed (INV-WTG-04,
+     * INV-DRV-03), so this is a transcription — no keying, no dedup, no window lookup.
+     */
+    private static Map<String, List<WtgTransition>> parseCompactWtg(JSONObject wtg)
+            throws JSONException {
+        Map<String, List<WtgTransition>> view = new HashMap<>();
+        if (wtg == null) {
+            return view;
+        }
+        for (Iterator<String> it = wtg.keys(); it.hasNext(); ) {
+            String sourceActivity = it.next();
+            JSONArray edges = wtg.optJSONArray(sourceActivity);
+            if (edges == null) {
+                continue;
+            }
+            List<WtgTransition> list = new ArrayList<>();
+            for (int i = 0; i < edges.length(); i++) {
+                JSONObject e = edges.optJSONObject(i);
+                if (e != null) {
+                    list.add(new WtgTransition(e.optString("widget", ""), "",
+                            e.optString("target", "")));
+                }
+            }
+            view.put(sourceActivity, list);
+        }
+        return view;
+    }
+
+    /**
+     * Decode the wire {@code optionsMenus} records into {@code activity → hasFlaggedWidget}. This
+     * is all that survives of the {@code OPTIONSMENU} windows: the gateway set itself cannot be
+     * shipped precomputed because it depends on which MOP-activity set the run selects (D3).
+     */
+    private static Map<String, Boolean> parseCompactOptionsMenus(JSONArray arr)
+            throws JSONException {
+        Map<String, Boolean> records = new LinkedHashMap<>();
+        if (arr == null) {
+            return records;
+        }
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o == null) {
+                continue;
+            }
+            String activity = optStringOrNull(o, "activity");
+            if (activity != null) {
+                records.put(activity, o.optBoolean("hasFlaggedWidget", false));
+            }
+        }
+        return records;
+    }
+
+    /**
+     * The OPTIONSMENU gateway set (INV-MOP-13), recomputed on-device because condition 2 reads the
+     * <em>selected</em> MOP-activity set and the selection is a run flag. An activity qualifies
+     * when its own menu holds a flagged widget, or when any click edge out of that base activity
+     * lands on a member of {@code mopActivities} — the same two conditions the full-JSON precompute
+     * applied, over the same click-only WTG view. Pure: reads its three arguments and nothing else.
+     */
+    static Set<String> recomputeMopOptionsMenus(Map<String, Boolean> optionsMenus,
+            Map<String, List<WtgTransition>> wtgTransitions, Set<String> mopActivities) {
+        Set<String> gateways = new HashSet<>();
+        for (Map.Entry<String, Boolean> record : optionsMenus.entrySet()) {
+            String activity = record.getKey();
+            if (Boolean.TRUE.equals(record.getValue())) {
+                gateways.add(activity);
+                continue;
+            }
+            for (WtgTransition t : getOrEmpty(wtgTransitions, activity)) {
+                if (mopActivities.contains(t.targetActivity)) {
+                    gateways.add(activity);
+                    break;
+                }
+            }
+        }
+        return gateways;
+    }
+
+    private static List<WtgTransition> getOrEmpty(Map<String, List<WtgTransition>> wtg, String key) {
+        List<WtgTransition> list = wtg.get(key);
+        return list != null ? list : Collections.<WtgTransition>emptyList();
+    }
+
+    /**
+     * Decode the wire {@code components} block. Each entry carries only the trigger surface the
+     * inventory records a production reader for; the component type comes from the parent array
+     * key, as it does in the full JSON (D19).
+     */
+    private static void parseCompactComponents(JSONObject components,
+                                               List<ComponentInfo.ReceiverInfo> receivers,
+                                               List<ComponentInfo.ServiceInfo> services,
+                                               List<ComponentInfo.ActivityInfo> activities,
+                                               List<ComponentInfo.ProviderInfo> providers)
+            throws JSONException {
+        if (components == null) {
+            return;
+        }
+        JSONArray recvArr = components.optJSONArray("receivers");
+        if (recvArr != null) {
+            for (int i = 0; i < recvArr.length(); i++) {
+                JSONObject co = recvArr.getJSONObject(i);
+                receivers.add(new ComponentInfo.ReceiverInfo(
+                        optStringOrNull(co, "className"), co.optBoolean("isMain", false),
+                        false, parseCompactIntentFilters(co),
+                        co.optBoolean("reachesMop", false), targetMethodsOfWireArity(co),
+                        optStringOrNull(co, "permission")));
+            }
+        }
+        JSONArray svcArr = components.optJSONArray("services");
+        if (svcArr != null) {
+            for (int i = 0; i < svcArr.length(); i++) {
+                JSONObject co = svcArr.getJSONObject(i);
+                services.add(new ComponentInfo.ServiceInfo(
+                        optStringOrNull(co, "className"), co.optBoolean("isMain", false),
+                        false, parseCompactIntentFilters(co),
+                        co.optBoolean("reachesMop", false), targetMethodsOfWireArity(co),
+                        optStringOrNull(co, "permission")));
+            }
+        }
+        JSONArray actArr = components.optJSONArray("activities");
+        if (actArr != null) {
+            for (int i = 0; i < actArr.length(); i++) {
+                JSONObject co = actArr.getJSONObject(i);
+                activities.add(new ComponentInfo.ActivityInfo(
+                        optStringOrNull(co, "className"), co.optBoolean("isMain", false),
+                        false, Collections.<ComponentInfo.IntentFilter>emptyList(),
+                        co.optBoolean("reachesMop", false), Collections.<String>emptyList(),
+                        optStringOrNull(co, "permission"),
+                        optStringOrNull(co, "deepLinkUri")));
+            }
+        }
+        JSONArray provArr = components.optJSONArray("providers");
+        if (provArr != null) {
+            for (int i = 0; i < provArr.length(); i++) {
+                JSONObject co = provArr.getJSONObject(i);
+                providers.add(new ComponentInfo.ProviderInfo(
+                        optStringOrNull(co, "className"), co.optBoolean("isMain", false),
+                        false, Collections.<ComponentInfo.IntentFilter>emptyList(),
+                        co.optBoolean("reachesMop", false), Collections.<String>emptyList(),
+                        optStringOrNull(co, "authorities"),
+                        optStringOrNull(co, "permission"), null, null));
+            }
+        }
+    }
+
+    /** Wire intent filters: actions and categories only — the {@code data} block has no reader. */
+    private static List<ComponentInfo.IntentFilter> parseCompactIntentFilters(JSONObject co)
+            throws JSONException {
+        List<ComponentInfo.IntentFilter> filters = new ArrayList<>();
+        JSONArray arr = co.optJSONArray("intentFilters");
+        if (arr == null) {
+            return filters;
+        }
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject fo = arr.getJSONObject(i);
+            filters.add(new ComponentInfo.IntentFilter(
+                    stringList(fo.optJSONArray("actions")),
+                    stringList(fo.optJSONArray("categories"))));
+        }
+        return filters;
+    }
+
+    /**
+     * The wire carries {@code hasTargetMethods} rather than the signature list because the one
+     * surviving consumer is an emptiness test — {@code StatefulAgent.buildTriggerTuples}' "no
+     * intent filters but reachable target methods" tuple fallback. Rebuild a list of the right
+     * emptiness; the signatures themselves have no reader on this side.
+     */
+    private static List<String> targetMethodsOfWireArity(JSONObject co) {
+        return co.optBoolean("hasTargetMethods", false)
+                ? Collections.singletonList("") : Collections.<String>emptyList();
+    }
+
+    private static Set<String> stringSet(JSONArray arr) {
+        Set<String> set = new HashSet<>();
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                String s = arr.optString(i, null);
+                if (s != null) {
+                    set.add(s);
+                }
+            }
+        }
+        return set;
+    }
+
+    /**
+     * How many members of {@code superset} are absent from {@code base} — the number the load
+     * record reports as {@code mopActsAugmented}. The wire ships both sets whole, so the count
+     * the pre-change record carried (activities the augmentation <em>added</em>) is recovered as
+     * a set difference rather than by observing a mutation.
+     */
+    private static int countOnlyIn(Set<String> superset, Set<String> base) {
+        int count = 0;
+        for (String s : superset) {
+            if (!base.contains(s)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     // -------------------------------------------------------------------------
