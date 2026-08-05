@@ -34,11 +34,32 @@ The `out` section SHALL carry:
 
 - **INV-ARCH-09**: A `StepRecord`'s `out` section SHALL describe the transition of the action recorded in that same record's `dec` section (enforced by the reference-equality buffer guard), and at most one `out` SHALL ever be attached per record. A record MAY be closed without an `out` member — when the selected action produced no recorded transition (restart, refinement discard, non-model action, run end) — which is a legitimate, informative absence, not an error; it is distinct from the teardown flush encoding `out:{"resolved":false}`.
 
-#### Scenario: LLM decision attributed to a new-state discovery
+**Where the outcome line's two dropped fields went.** Two scenarios below keep their pre-change
+header over a body this change contradicts:
 
-- **WHEN** an action with `decision_source=LLM` selected at step 42 executes and the resulting transition reaches a state visited for the first time
+| Scenario header | What it asserted | Where the claim is now |
+|---|---|---|
+| `outcome on a non-MOP screen` | `activity_has_mop=0\|1` on the outcome line, the landing half of the evidential link | `out.target` → that `STATE` entry's `act` → that `ACT` entry's `mop`. The bit is recorded once per activity, never per step, on either the selection or the landing side (`action-selection`, `event-sink :: Dictionary Events and Run-Local IDs`). The link is unchanged; it is one dereference away instead of inline |
+| `Outcome line suppressed under pure mode` | zero outcome lines when the arm sets the telemetry gate | **nothing, deliberately** — the gate is deleted with its key, so no arm can suppress attribution. What protects the control arm's integrity is now a property that can be checked instead of a switch that must be trusted: sink neutrality (`event-sink` INV-SNK-07), asserted by a permanent test |
+
+#### Scenario: LLM decision attributed to a new-state discovery on a MOP screen
+
+- **WHEN** an action with `decision_source=LLM` selected at step 42 executes, the resulting transition reaches a state visited for the first time, and the target activity is in the MOP-activity set
 - **THEN** the `s:42` record SHALL be closed with `out` carrying `new_state:true` and the target state's dictionary ID
+- **AND** the landing activity's MOP status SHALL be recoverable as `out.target` → `STATE.act` → `ACT.mop:1`
 - **AND** the LLM call's sub-event, the decision, and the outcome SHALL all be members of that single record — no join key exists or is needed
+
+#### Scenario: outcome on a non-MOP screen
+
+- **WHEN** the recorded transition's target activity is not in the MOP-activity set (or `MopData` is null)
+- **THEN** the dereference `out.target` → `STATE.act` → `ACT.mop` SHALL yield `0`
+- **AND** the record SHALL carry no MOP-screen field of its own — the outcome half of the evidential link is preserved as a lookup, not as a per-step copy of a per-activity constant
+
+#### Scenario: Outcome line suppressed under pure mode
+
+- **WHEN** an arm sets `ape.stepTelemetryEnabled=false`
+- **THEN** plan resolution SHALL abort with an unknown-key diagnostic and no run SHALL start — there is no suppressed mode, in the `ape_pure` arm or any other
+- **AND** the control arm's integrity SHALL rest on the neutrality gate (INV-SNK-07) rather than on the absence of records
 
 #### Scenario: Attribution identical in every arm
 
@@ -52,7 +73,7 @@ The `out` section SHALL carry:
 - **THEN** the `s:50` record SHALL be closed without an `out` member
 - **AND** this absence SHALL NOT be treated as an error by offline analysis ("selected, no clean transition")
 
-#### Scenario: BadStateException retry attaches a single outcome
+#### Scenario: BadStateException retry emits a single outcome
 
 - **WHEN** the transition for the action selected at step 60 is recorded, and action selection then throws `BadStateException`, causing the update to re-run `Model.addTransition` within the same step
 - **THEN** the `s:60` record SHALL be closed exactly once with exactly one `out` (the buffer was consumed by the first closure)
@@ -85,6 +106,18 @@ The former `stepTelemetryEnabled` flag is deleted by this change: step recording
 - **THEN** the five behavior gates SHALL be `true`
 - **AND** the pipeline, menu action, tiebreak, tree perception, and activity budget SHALL all be active as before this change
 
+#### Scenario: a single gate overridden without the kill-switch
+
+- **WHEN** `ape.properties` sets only `ape.modelMenuEnabled=false`
+- **THEN** `Config.modelMenuEnabled` SHALL be `false` and the fork `menuAction` SHALL be absent from `State.getActions()`
+- **AND** all other gates SHALL retain their `true` defaults
+- **AND** the example key changed because the one the pre-change scenario used, `ape.stepTelemetryEnabled`, no longer exists to override — the property being asserted is that a single override disturbs nothing else, and that is unchanged
+
+#### Scenario: retired kill-switch key aborts
+
+- **WHEN** `ape.properties` sets `ape.apePureMode=true`
+- **THEN** resolution SHALL abort with a retired-key diagnostic before step 1
+
 #### Scenario: telemetry has no gate
 
 - **WHEN** `ape.properties` sets `ape.stepTelemetryEnabled=false` (a removed key)
@@ -114,7 +147,7 @@ No `reason` field SHALL be added to the entries, and no `disabledReason()` metho
 - **WHEN** `fromParams` runs with MopData present, `mopWeightWtg=200`, `frontierBoostWeight=200`, `mopFrontierWeight=200`, `coverageBoostWeight=100`, `formCompletionEnabled=true`
 - **THEN** the pipeline order SHALL be `MopWidgetPass, MenuGatewayPass, WtgPass, FrontierPass, MopFrontierPass, CoveragePass, FormCompletionPass`
 
-#### Scenario: empty pipeline under an empty scoring plan
+#### Scenario: empty pipeline under the pure arm
 - **WHEN** `fromParams` runs with a plan carrying no scoring feature (all gates off/zero)
 - **THEN** the pipeline SHALL contain zero passes
 - **AND** the emitted record SHALL carry `passes:[]`

@@ -56,7 +56,7 @@ The consequence is measured: **338 of the 800 `aperv` calibration runs (42.3%) c
 
 The dump remains read-only with respect to tracker state (INV-COV-07). Because the teardown dump has exactly one call site, no idempotence flag is required. This says nothing about the optional per-state emission at LRU eviction that "UICoverageTracker — Coverage Dump" permits (`MAY additionally emit one line for a state at the moment that state is evicted`): that emission is a distinct, mid-run, per-state path, it is not part of the teardown dump this requirement orders, and it is not currently implemented.
 
-#### Scenario: dump precedes the first teardown step that produces output
+#### Scenario: dump precedes model serialization
 
 - **WHEN** a run reaches teardown
 - **THEN** the `[APE-RV] UICOV` and `[APE-RV] UICOV-ACT` lines SHALL appear in the trace before any output produced by a later step of the teardown chain — both writers this scenario has ordered against in turn (the model serialization, then the action-history save) are deleted, so the boundary is now the first *surviving* producer of output, the `actionCounters` dump
