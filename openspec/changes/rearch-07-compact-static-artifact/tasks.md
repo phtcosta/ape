@@ -151,7 +151,38 @@ that group 1 found (task 2.9).
     `activityHasMop("B")==true`, `gatewayG==true`. `gatewayH` is true under both. The flip of
     `gatewayG` is the point — it is what proves condition 2 reads the *selected* set, which is the
     entire reason D3 refuses to ship the gateway set precomputed.
-- [ ] 3.4 Update the load status record: new success fields (`formatVersion`, `sourceDigest`, echoed stats), reject reasons reduced to `file-missing|parse-error|version-mismatch|package-mismatch` (INV-MOP-21 unchanged; INV-MOP-22 abort unchanged). **Keep `windows`** — it is on the stage-4 record and survives as `stats.windows`, so dropping it here would make the field appear at stage 4 and vanish at stage 7. Verify field-by-field against the stage-4 census that this record is a superset of it, minus `transitions` only (superseded by `wtgEdges` and deliberately never reinstated)
+- [x] 3.4 Update the load status record: new success fields (`formatVersion`, `sourceDigest`, echoed stats), reject reasons reduced to `file-missing|parse-error|version-mismatch|package-mismatch` (INV-MOP-21 unchanged; INV-MOP-22 abort unchanged). **Keep `windows`** — it is on the stage-4 record and survives as `stats.windows`, so dropping it here would make the field appear at stage 4 and vanish at stage 7. Verify field-by-field against the stage-4 census that this record is a superset of it, minus `transitions` only (superseded by `wtgEdges` and deliberately never reinstated)
+  - `EventSink.mopData` gained `formatVersion`, `sourceDigest` and `components`, dragging both sink
+    implementations and all three emission sites. **The superset check was done against the stage-4
+    census as written** (`rearch-04` `mop-guidance` spec `:41`): its eleven fields — `package`,
+    `windows`, `widgets`, `flagged`, `droppedNoId`, `wtgEdges`, `handlersUnmatched`,
+    `syntheticLambda`, `recovered`, `mopActivities`, `mopActsAugmented` — are all present and none
+    changed name. `transitions` is not lost *here*: stage 4 had already replaced it with `wtgEdges`,
+    so this window ends with the field having been gone for two stages, which is the claim the task
+    wanted checked and not quite the one it stated.
+  - **The reject vocabulary is only half-reduced, and honestly so.** The compact path emits exactly
+    the four reasons; `too-large`, `oom` and `incomplete` still exist on the full-JSON path, which
+    is the group-4 oracle. They die with it in 5.1/5.2 — reducing them now would mean editing the
+    oracle, which task 4.3 forbids for a much better reason than tidiness.
+  - `sourceDigest` is omitted rather than emitted null on every reject, the same treatment `reason`
+    and `package` already get: a load that never reached an artifact has no digest, not a null one.
+    Mutation-checked — dropping the null guard fails the rejected-record test.
+  - Verified by running. `testCompactLoadRecordCarriesProvenanceAndTheComponentCount` asserts the
+    digest against a SHA-256 **computed in the test over the source fixture**, not against the
+    string the artifact carries, so it pins the whole chain (source bytes → generator → wire →
+    record) instead of reading a file back into itself; mutating the loader to echo `source.file`
+    instead fails it. `components=5` (4 activities + 1 provider) mutation-checked at 0. The old
+    path's decided values are pinned on the existing census test, which dies with the oracle.
+  - `mopActsAugmented` is 0 on this fixture and always will be — cryptoapp's two sets are equal, so
+    nothing here distinguishes the wire-set reading from the retired one. The synthetic that does is
+    3.5's, and the test says so rather than implying the assertion has teeth it does not have.
+  - `countOnlyIn`'s javadoc claimed the new number *recovers* the pre-change count "as a set
+    difference rather than by observing a mutation". Under the owner decision that is exactly false,
+    and it was the last place in the code still asserting the equivalence the REMOVED note was
+    corrected to deny. Rewritten to state the difference and the flag-off 0→N consequence.
+  - The `mop-guidance` REMOVED-note correction this task also owed landed in session 11's plan
+    commit (`0675f67a`, delta `:254`); re-read and it says what the decision says. Suite 1179/0/19
+    (1176 + the three new tests).
   - **`mopActsAugmented` keeps the wire semantics — owner decision 2026-08-05.** The number is
     `|augmented \ widget-derived|`, computed from the two wire sets and therefore **independent of
     `Config.mopActivitySourceComponents`**, not the old parser's "entries the augmentation added",
