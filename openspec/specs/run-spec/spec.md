@@ -3,7 +3,7 @@
 ## Purpose
 The run-spec capability makes the behavioral plan of a run a first-class, validated, echoed value. Before this capability, "what this run is" was scattered across a silent global (`Config`, 113 public static fields loaded from two device files with empty catch blocks and no unknown-key detection), a Python dict in another repository (the `tool.py` arm definitions), three string registries the compiler could not check, and a CLI argument that fell back silently to `SataAgent` on any unrecognized value. Nothing validated the whole; nothing recorded what was actually in effect; a stray `/sdcard/ape.properties` could change the agent type of a scientific run without a trace.
 
-After this capability, every run begins by resolving a single immutable `RunSpec` from `ape.properties` plus the CLI, exactly once, before the first exploration step. The `RunSpec` carries the preset name (informative), the seed, the run identity, the always-present exploration parameters, the set of active `Feature`s, per-feature parameter objects that are null exactly when the feature is absent, and two digests (effective plan; raw properties input). Resolution is total and fail-fast: an unknown key, a retired key, a type-invalid value, a missing feature dependency, or an invalid combination aborts the process with a diagnostic line before step 1. Presets (`aperv`, `mop`, `llm`, `llm_mop`) reside in the jar and are selected by an optional `ape.preset` key; when no preset is named — the case for the entire current Python deployment, which this capability changes by exactly one key — the plan is derived from the explicit keys exactly as the jar interprets them today, then validated.
+After this capability, every run begins by resolving a single immutable `RunSpec` from `ape.properties` plus the CLI, exactly once, before the first exploration step. The `RunSpec` carries the preset name (informative), the seed, the run identity, the always-present exploration parameters, the set of active `Feature`s, per-feature parameter objects that are null exactly when the feature is absent, and two digests (effective plan; raw properties input). Resolution is total and fail-fast: an unknown key, a retired key, a type-invalid value, a missing feature dependency, or an invalid combination aborts the process with a diagnostic line before step 1. Presets (`aperv`, `mop`, `llm`, `llm_mop`) reside in the jar and are selected by an optional `ape.preset` key; when no preset is named the base key vector is empty and the plan is derived from the explicit keys exactly as the jar interprets them — same defaults, same clamps — then validated by the same rules a preset-resolved plan passes. There is one resolution path, not two: the no-preset case is what a run with no properties file at all resolves to, which is what makes a bare standalone invocation of the jar a valid run.
 
 The plan is echoed as the run's provenance: `RUN_START`, a single JSON object line emitted before any exploration output, carrying the effective plan, both digests, the seed, the run id, and the jar's build stamp. The echo is **level 0 by owner decision D1 (final)**: write-only provenance, no automatic validation anywhere, no Python reader — drift auditing is post-hoc analysis over the traces. The line's completeness bar is that it alone reconstructs the arm without consulting `tool.py` (report Sec. 9.6).
 
@@ -50,7 +50,6 @@ Two of those guards were written after the rest, when a coverage audit found the
 
 - **INV-RUN-07** — `noCodePathReadsBackAnArtifactOfAPreviousRun` scans `src/main/java` for `ObjectInputStream`, `readObject` and `readGraph`, and requires none. The retired persistence keys already aborted via `RunSpecAbortTest.everyRetiredKeyAbortsWithItsOwnReason`, and the deletion of `Graph.readGraph` and the `--ape-model` branch is compile-enforced — but neither fact guards against a *new* read-back path, which is what a future "resume" feature would introduce and what this invariant forbids.
 - **INV-RUN-08** — three mechanisms, three assertions. `ThreadLocalRandom` and `Math.random` must not appear at all. A bare `new Random()` must appear **exactly once**, in `RandomHelper`: that field initializer is genuinely unseeded, but nothing draws from the instance in a real run, because `RunContext.initialize` calls `RandomHelper.seed` before any exploration component exists. Pinning the site is what makes a *second* bare `Random` a failure rather than a silent second stream — an empty-set assertion would be false, and a "no more than N" weakening would stop naming which site is new. Behavioural coverage sits alongside it in `RunContextTest` (establishing the context seeds the run's stream) and `StringCacheSeededTest` (same seed ⇒ same string sequence).
-
 ## Requirements
 ### Requirement: Single Plan Resolution at Bootstrap
 
@@ -120,20 +119,30 @@ When `ape.preset` is present, explicit keys SHALL override the preset vector, an
 
 ### Requirement: Explicit-Key Resolution When No Preset Is Named
 
-When `ape.preset` is absent — the case for the entire current Python deployment — the plan SHALL be derived from the explicit keys exactly as the jar interprets them today (same defaults, same clamps), then validated. The properties files pushed by the **stage-2 `tool.py`** (today's arm definitions with `ape_pure_mode` removed, the single Python edit of this stage) for the four campaign arms (`sata`, `sata_mop_widget`, `sata_llm`, `sata_mop_llm`) SHALL resolve successfully and produce behavior identical to HEAD under the rearch-01 parity goldens. The `ape_pure` arm SHALL also resolve: its purity comes from the 17 arm-defining flags it already sets to their off values explicitly, not from a kill-switch key. `preset + overrides` becomes the Python-side contract only at stage 5.
+When `ape.preset` is absent, the plan SHALL be derived from the explicit `ape.*` keys exactly as the jar interprets them — same defaults, same clamps — and then validated against the same rules a preset-resolved plan passes. There is one resolution path: the preset, when named, contributes a base key vector; its absence means the base vector is empty, not that a different resolver runs.
+
+This case is not a compatibility affordance and does not depend on any particular caller. It is what a run with no properties file resolves to, and it is the reason a bare standalone invocation of the jar is a valid run: the plan is the jar's declared defaults, validated like any other.
 
 #### Scenario: current campaign arm resolves unchanged
 
-- **WHEN** the properties file is byte-identical to the `_push_properties` output of the `sata_mop_widget` arm (MOP path + weights + the 17 baseline flags that survive the `ape_pure_mode` removal + throttle)
-- **THEN** resolution SHALL succeed with `preset="explicit"`, `features` including `MOP`, `WTG`, `MENU_GATEWAY`, and the baseline features
-- **AND** the run's action-selection behavior SHALL match the rearch-01 golden for the `mop` preset
+- **WHEN** a properties file sets `ape.mopDataPath` and `ape.mopWeightDirect=500` and names no `ape.preset`
+- **THEN** resolution SHALL succeed with `preset="explicit"`, the `MOP` feature active, and every unset key at its jar default
+- **AND** the resulting plan SHALL pass exactly the validation a preset-resolved plan passes
 
 #### Scenario: the Python edit precedes the jar
 
-- **WHEN** the `ape_pure_mode` removal has landed in `tool.py` and the stage-2 jar is deployed after it
-- **THEN** the four campaign arms and `ape_pure` SHALL run end-to-end, with `_push_properties` and every other arm-dict entry untouched
-- **AND WHEN** the stage-2 jar is instead deployed against a `tool.py` that still pushes `ape.apePureMode`
-- **THEN** every arm that pushes the key SHALL abort with `reason=retired_key key=ape.apePureMode` before step 1 — the ordering is a deployment precondition, not a preference
+- **WHEN** a properties file carrying `ape.apePureMode` reaches a jar that has retired the key —
+  the state a deployment is in whenever a post-stage-2 jar is installed against a `tool.py` that
+  still writes it
+- **THEN** resolution SHALL abort with `reason=retired_key key=ape.apePureMode` before step 1,
+  rather than resolving and running as some other plan
+- **AND** the ordering SHALL therefore be a deployment precondition and not a preference
+
+#### Scenario: bare standalone run
+
+- **WHEN** the jar is launched with no properties file at all
+- **THEN** resolution SHALL succeed from the jar defaults alone
+- **AND** the effective plan SHALL be echoed in `RUN_START` like any other run
 
 ### Requirement: Total Fail-Fast Validation
 

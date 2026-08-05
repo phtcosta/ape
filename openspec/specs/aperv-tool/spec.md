@@ -5,9 +5,7 @@
 `aperv-tool` integrates `ape-rv.jar` into the rv-android tool registry as the `aperv` plugin. It follows the same integration pattern as `rvsmart-tool` (external module, lazy-import registration) and mirrors the execution model of the builtin `ape` tool (ADB `app_process` invocation, `com.android.commands.monkey.Monkey` main class). The plugin ID `aperv` is distinct from the existing `ape` builtin, allowing both tools to coexist and be compared within the same experiment.
 
 ---
-
 ## Requirements
-
 ### Requirement: ApeRVTool Class Structure
 
 `ApeRVTool` SHALL extend `AbstractTool` from `rv_android_core.tools.abstract_tool`. It SHALL declare a class-level `TOOL_SPEC` of type `ToolSpec` with:
@@ -29,45 +27,73 @@
 
 ### Requirement: Tool Variants
 
-`ApeRVTool.get_variants()` SHALL return a dict with the following variant names and their configuration:
+`ApeRVTool.get_variants()` SHALL return a mapping of frozen variant names to variant definitions, each of which SHALL consist of:
 
-| Variant | `strategy` | Notes |
-|---------|-----------|-------|
-| `default` | `sata` | Default variant; equivalent to `sata` |
-| `sata` | `sata` | SATA heuristic — primary strategy |
-| `random` | `random` | Priority-weighted random baseline |
-| `bfs` | `bfs` | Breadth-first traversal |
-| `sata_mop` | `sata` | SATA + MOP guidance — pushes static analysis JSON and sets `ape.mopDataPath` |
+- `preset: str` — the name of a **jar-resident** preset (`rearch-02-runspec`: `aperv`, `mop`, `llm`, `llm_mop`), written to `ape.properties` as the `ape.preset` line. The jar, not Python, defines what a preset means; Python SHALL NOT mirror preset contents.
+- `overrides: Dict[str, Any]` — only the deltas that distinguish this variant from its preset. A variant identical to its preset SHALL carry an empty dict. Ablations SHALL be expressed as named override sets, never as new presets.
+- Python-only orchestration keys at top level — `strategy` (the `--ape` CLI flag), `mop_data`, `seed`, and the B3 pairing keys `expected_jar_git_sha`/`expected_jar_sha256` — which SHALL NOT be written to `ape.properties`.
 
-All variants SHALL include a `throttle_ms` key (default `200`) matching `ape.defaultGUIThrottle`.
+No variant SHALL carry a full property expansion.
 
-The `sata_mop` variant SHALL declare `"mop_data": "static_analysis"`. When `mop_data == "static_analysis"`, `execute_tool_specific_logic()` SHALL push the static analysis JSON to the device before launching APE.
+**The roster is not held in this repository.** Which variants exist, their frozen names, their preset assignments and their override deltas are owned by rv-android's `aperv` capability (`rv-android/openspec/specs/aperv/spec.md`) and maintained through that repository's own OpenSpec workflow. This requirement SHALL NOT enumerate variant names, and a reader needing the current roster SHALL consult that spec rather than this one.
+
+This is a deliberate constraint on where the roster may be written, not an oversight. A variant name is the resume-identity key and the consolidation column key of the frozen corpus; it is retired and consolidated by campaign decisions that happen in rv-android. An enumeration maintained here can only be a copy, and a copy that drifts silently is worse than a pointer that is occasionally inconvenient — this requirement previously held such a copy, and it was wrong in two different eras before anyone noticed.
+
+#### Scenario: Variant is preset plus deltas
+
+- **WHEN** any variant returned by `get_variants()` is read
+- **THEN** it SHALL carry a `preset` key naming a jar-resident preset and an `overrides` dict
+- **AND** it SHALL NOT carry a full expansion of `ape.*` property keys
+
+#### Scenario: Variant identical to its preset
+
+- **WHEN** a variant whose configuration matches its preset exactly is read
+- **THEN** its `overrides` dict SHALL be empty rather than restating the preset's keys
+
+#### Scenario: Orchestration keys stay out of the properties file
+
+- **WHEN** `ape.properties` is generated for any variant
+- **THEN** `strategy`, `mop_data`, `seed`, `expected_jar_git_sha` and `expected_jar_sha256` SHALL NOT appear in it
 
 #### Scenario: Default variant resolved
-- **WHEN** `ApeRVTool.get_variants()["default"]` is accessed
-- **THEN** the `strategy` value SHALL be `"sata"`
+
+- **WHEN** this requirement is read for the list of available variants — including which name is the
+  default and what it resolves to
+- **THEN** it SHALL NOT contain one, and SHALL direct the reader to rv-android's `aperv` capability
 
 #### Scenario: sata_mop variant is wired (replaces Phase 4 placeholder)
-- **WHEN** `ApeRVTool.get_variants()["sata_mop"]` is accessed
-- **THEN** the `strategy` value SHALL be `"sata"`
-- **AND** the `mop_data` key SHALL be `"static_analysis"` (not `None`)
+
+- **WHEN** a variant that needs the compacted static-analysis artifact is read
+- **THEN** it SHALL carry `mop_data` as a top-level Python-only orchestration key, alongside its
+  `preset` and `overrides`
+- **AND** `mop_data` SHALL NOT appear in the generated `ape.properties`, which names the artifact
+  through `ape.mopDataPath` instead
+- **AND** which variants set it SHALL NOT be asserted here (see the preceding scenario)
 
 ---
 
 ### Requirement: configure() Method
 
-`ApeRVTool.configure(config)` SHALL store the resolved variant configuration in `self._tool_config`. It SHALL validate that `config["strategy"]` is one of `["sata", "random", "bfs", "dfs"]`. If absent or invalid, it SHALL raise `ConfigurationError`.
+`ApeRVTool.configure(config)` SHALL store the resolved variant configuration in `self._tool_config`. It SHALL validate that `config["strategy"]` is one of `["sata", "random"]`, that `config["preset"]` is present and non-empty, and that `config.get("overrides", {})` is a dict. If any check fails, it SHALL raise `ConfigurationError` before any device interaction.
+
+The whitelist SHALL shrink from `["sata", "random", "bfs", "dfs"]` — the deletion `rearch-02-runspec` delegates to this stage. `bfs` and `dfs` were never agent types: `ApeAgent.createAgent` (`src/main/java/com/android/commands/monkey/ape/agent/ApeAgent.java:68-96`) recognizes exactly `sata`, `random` and `replay`, with every other value previously falling through silently to `new SataAgent` (verified V9). Accepting them Python-side would let a run pass local validation and abort on the device, reintroducing the silent-degradation class stage 2 exists to remove. `replay` is legal in the jar but is NOT accepted here: it requires `--ape-replay <log>`, which this tool never passes.
 
 #### Scenario: Valid strategy configured
-- **WHEN** `configure({"strategy": "sata", "throttle_ms": 200})` is called
-- **THEN** `self._tool_config["strategy"]` SHALL equal `"sata"`
+
+- **WHEN** `configure({"strategy": "sata", "preset": "mop", "overrides": {}})` is called
+- **THEN** `self._tool_config["preset"]` SHALL equal `"mop"`
 - **AND** no exception SHALL be raised
 
-#### Scenario: Invalid strategy raises ConfigurationError
-- **WHEN** `configure({"strategy": "unknown"})` is called
-- **THEN** `ConfigurationError` SHALL be raised with a message listing valid strategies
+#### Scenario: Missing preset raises ConfigurationError
 
----
+- **WHEN** `configure({"strategy": "sata"})` is called
+- **THEN** `ConfigurationError` SHALL be raised naming the missing `preset` key
+
+#### Scenario: Invalid strategy raises ConfigurationError
+
+- **WHEN** `configure({"strategy": "bfs", "preset": "aperv"})` or `configure({"strategy": "dfs", "preset": "aperv"})` is called
+- **THEN** `ConfigurationError` SHALL be raised before any device interaction
+- **AND** the run SHALL NOT reach the jar, where it would abort as an unknown `--ape` value
 
 ### Requirement: JAR Resolution
 
