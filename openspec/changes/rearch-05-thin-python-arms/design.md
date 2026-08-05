@@ -6,13 +6,15 @@ Stage 5 of 7 of the re-architecture selected in `docs/analise_fable-selecao.md` 
 
 **This design was rewritten on 2026-08-04.** Its predecessor planned the whole stage — both repositories — from the ape side, and its factual base had gone stale: it described 29 arms reducing to 27, a 52-pair mapping, and `_APE_PURE_ARM_FLAGS`/`ARM_DEFINING_KEYS`/`LLM_ARM_KEYS` awaiting deletion. The rv-android counterpart `gh95-thin-python-arms` had already shipped a different and larger reduction, and the constants were already gone.
 
-State verified directly in `rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py` on 2026-08-04 — read from the module source, not from `gh95`'s prose:
+State verified directly in `rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py` on 2026-08-04 — read from the module source, not from `gh95`'s prose — and **re-read on 2026-08-05** (task 1.1), which is the discipline this design exists to impose on itself:
 
-- **8 variant names / 7 distinct configurations**: `default` (bound to `sata`), `sata`, `sata_mop`, `sata_llm`, `sata_mop_llm`, `mop_on_llm_off`, `mop_off_llm_off`, `mop_on_llm_70`.
-- **`APERV_PROPERTY_MAPPING` = 50 pairs.**
-- `ARM_DEFINING_KEYS`, `LLM_ARM_KEYS`, `_CAL_LLM_COMMON`, `mop_weight_activity`, `ape_pure_mode`, `sata_mop_widget`, `ape_pure`, `sata_mop_activity`, `cal_a1`…`cal_a9`: **absent**.
+- **8 variant names / 7 distinct configurations**: `default` (bound to `sata`), `sata`, `sata_mop`, `sata_llm`, `sata_mop_llm`, `mop_on_llm_off`, `mop_off_llm_off`, `mop_on_llm_70`. Unchanged.
+- **`APERV_PROPERTY_MAPPING` = 50 pairs** in the module's working tree. Unchanged — but the file is being edited by an active `gh94` session, and the committed `HEAD` of `rearch-counterparts` carries **51**, an in-flight edit removing one pair. The count is in motion on that side; re-read it at implementation time rather than trusting either figure here. Nothing in this change's task list depends on it.
+- `ARM_DEFINING_KEYS`, `LLM_ARM_KEYS`, `_CAL_LLM_COMMON`, `mop_weight_activity`, `ape_pure_mode`, `sata_mop_widget`, `ape_pure`, `sata_mop_activity`, `cal_a1`…`cal_a9`: **absent**. Unchanged, and `_APE_PURE_ARM_FLAGS` with them.
 - `bfs` and `sata_mop_act_frontier` survive only as comments recording their retirement — `bfs` at the strategy whitelist (*"absent deliberately: they were never agent types"*), `sata_mop_act_frontier` at `mop_on_llm_off` (*"Arm 1 absorbs the retired sata_mop_act_frontier"*).
-- `gh95` at 37/44; only its group 7 (final diff, lint, verify, review, docs-sync, owner sign-off, counterpart-task closure) is pending.
+- `gh95` at **56/57**; its group 7 is closed but for the owner sign-off (7.6). **Task 7.1 is green** — the regeneration diff this change's group 2 is gated on (D3) — and **7.7 is ticked**, so the counterpart obligation is closed from the rv-android side.
+
+**The Context block is a snapshot with a date on it, not a contract**, and the 2026-08-05 re-read is what makes that claim checkable rather than decorative: every item above was confirmed against the module source again, and the one number that moved is flagged as moving rather than silently refreshed.
 
 Owner decisions that constrain this design (report Sec. 12 — final, do not reopen):
 
