@@ -126,6 +126,15 @@ public final class RunContext {
     private String terminationDetail;
 
     private RunContext(RunSpec spec, long seed) {
+        this(spec, seed, null);
+    }
+
+    /**
+     * @param substituteSink the sink a test wants in place of the one a run builds, or null for a
+     *        real run's sink. It is a constructor parameter and not a plan value on purpose — see
+     *        {@link #installForTest(RunSpec, EventSink)}
+     */
+    private RunContext(RunSpec spec, long seed, EventSink substituteSink) {
         this.spec = spec;
         // Seeding belongs to constructing the context, not to the caller, so a context cannot
         // exist over an unseeded stream (INV-RUN-08, INV-EXPL-14). The value is the same seed
@@ -139,7 +148,11 @@ public final class RunContext {
         // The telemetry scope is absent exactly when the plan does not carry STEP_TELEMETRY, and a
         // plan without it still gets the heartbeat: the key's neutral value is its default, and
         // telemetry is an instrument every arm carries alike.
-        this.sink = new NdjsonSink(System.out,
+        //
+        // There is no plan key deciding which sink this is. A run always gets NdjsonSink; the only
+        // other implementation is reachable from a test and nowhere else (INV-SNK-07's Telemetry
+        // Neutrality clause: no arm-level flag disables or alters telemetry).
+        this.sink = substituteSink != null ? substituteSink : new NdjsonSink(System.out,
                 spec.telemetry() == null || spec.telemetry().bool("ape.telemetryHeartbeat"));
 
         if (spec.has(Feature.LLM)) {
@@ -206,6 +219,26 @@ public final class RunContext {
      */
     public static void installForTest(RunSpec spec) {
         current = new RunContext(spec, spec.seed());
+    }
+
+    /**
+     * Installs a context whose sink is the given one — the only way a {@code NoopSink} ever reaches
+     * a run, and the reason it is here rather than in the plan.
+     *
+     * <p>Telemetry is always-on and identical for every arm; that is what dissolving INV-ARCH-01
+     * bought, and a plan key would sell it back. A key that presets decline to state is still a key
+     * a run can state, and this study has the worked example — {@code ape.stepTelemetryEnabled} is
+     * how the baseline arm came to be blind. With the choice living here, plan validation rejects
+     * any sink key as unknown and no campaign can ask for a blind arm even by mistake.
+     *
+     * <p>What it is for: the neutrality gate (R7, INV-SNK-07) replays a preset under one seed with
+     * each implementation and asserts the action sequences are identical.
+     *
+     * @param spec the plan the test wants in effect
+     * @param sink the sink to observe the run with
+     */
+    public static void installForTest(RunSpec spec, EventSink sink) {
+        current = new RunContext(spec, spec.seed(), sink);
     }
 
     /**

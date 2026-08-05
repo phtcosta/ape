@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
@@ -18,6 +19,7 @@ import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
 import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
@@ -478,6 +480,20 @@ public final class OracleScaffold {
      */
     static OracleSataAgent newAgent(Preset preset, ScenarioScript script, ScriptedLlm llm)
             throws Exception {
+        return newAgent(preset, script, llm, null);
+    }
+
+    /**
+     * The same agent, observed by a sink of the caller's choosing.
+     *
+     * <p>The neutrality gate (R7, INV-SNK-07) is the only caller that passes one: it replays a
+     * preset under one seed with {@code NdjsonSink} and then with {@code NoopSink} and asserts the
+     * decisions did not move. A null means what a run gets — the context builds its own.
+     *
+     * @param sink the sink the run's context should hold, or null for the one it would build
+     */
+    static OracleSataAgent newAgent(Preset preset, ScenarioScript script, ScriptedLlm llm,
+            EventSink sink) throws Exception {
         if (preset.hasLlm() != (llm != null)) {
             throw new IllegalArgumentException("preset " + preset + " requires a scripted LLM "
                     + (preset.hasLlm() ? "but none was supplied" : "but one was supplied"));
@@ -523,8 +539,13 @@ public final class OracleScaffold {
                         "ape.llmPercentage", "1.0"}
                 : new String[0];
         RunSpec spec = preset.hasMopData()
-                ? TestRunSpecs.installMop(llmKeys)
-                : TestRunSpecs.install(llmKeys);
+                ? TestRunSpecs.mopSpec(llmKeys)
+                : TestRunSpecs.spec(llmKeys);
+        if (sink != null) {
+            RunContext.installForTest(spec, sink);
+        } else {
+            RunContext.installForTest(spec);
+        }
 
         OracleSataAgent agent = allocate(OracleSataAgent.class);
         Graph graph = new Graph();

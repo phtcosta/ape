@@ -48,10 +48,19 @@ public final class TestRunSpecs {
      * MOP-family keys depend on. Stating one of them without it is a resolution abort, not a plan.
      */
     public static RunSpec installMop(String... keyValues) {
+        return install(withMopPath(keyValues));
+    }
+
+    /** The same MOP arm as {@link #installMop}, resolved but not installed. */
+    public static RunSpec mopSpec(String... keyValues) {
+        return spec(withMopPath(keyValues));
+    }
+
+    private static String[] withMopPath(String... keyValues) {
         String[] withPath = new String[keyValues.length + 2];
         withPath[0] = "ape.mopDataPath";
         withPath[1] = MOP_PATH;
         System.arraycopy(keyValues, 0, withPath, 2, keyValues.length);
-        return install(withPath);
+        return withPath;
     }
 }
