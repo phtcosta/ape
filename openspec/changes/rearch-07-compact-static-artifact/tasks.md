@@ -850,10 +850,27 @@ Verified read-only 2026-08-05 at rv-android `a683591e`.
     predicate read the parsed `windows[]` the artifact does not carry — but retiring a live plan key
     means a `KeyOwnership` retirement, a `Presets` vector, a `Feature` ownership edit and a run-spec
     delta. That is its own change, exactly as the `Presets Resident in the Jar` debt is.
-  - **Disposition of the five verified findings is the owner's** and is recorded in the session
-    report rather than acted on unilaterally: WR-01/07/08 are doc-only corrections inside this
-    change's radius, WR-05 deletes public surface and its test pins, and **WR-03 changes behaviour
-    and would need the `mop-guidance` delta to say so** — it is not a tidy-up
+  - **Disposition, owner decision 2026-08-05: fix WR-01/07/08 here, defer WR-03 and WR-05.** The
+    three fixed are doc-only, inside this change's own radius, and P4 is a stated project principle;
+    the two deferred change public surface or behaviour and are not tidy-ups.
+  - **The three corrections, and what each now says.** `EventSink.mopData`'s provenance paragraph
+    re-attributes the neutral values to `MopData.reject` and generalises the point — a rejected load
+    counted nothing, so every zero below states that rather than asserting an empty app, which is
+    the claim that survives having one loader. `ActivityFrontierTest`'s class javadoc drops the
+    broken `{@link MopLauncherStage#buildDeepLinkUri}` and says URI building is no longer a seam
+    here, pointing at the block comment that records where the assertions went.
+    `MopLauncherStageTest`'s javadoc stops promising those tests are in `ActivityFrontierTest` and
+    names their real home — rv-android's `test_derive_mop_artifact.py`, the `test_deep_link_*`
+    family — which is the failure this warning was about: a reader sent looking found nothing.
+  - **Verified after the edit**: `buildDeepLinkUri` now occurs **once** in the tree, at
+    `ActivityFrontierTest:399`, which is the historical comment the reviewer itself called the
+    correct and sufficient record; `EventSink` carries zero occurrences of "both loaders" or
+    "full-JSON loader". Suite re-run at **1123 / 0 / 19** — unchanged, which is what a comment-only
+    change owes.
+  - **WR-03 and WR-05 remain open and are the owner's to schedule.** WR-03 is the one to carry: it
+    is a live fail-fast gap, not documentation, and closing it means choosing between
+    `reject(sink, "missing-augmented-census")` and a `WARN` — either of which the `mop-guidance`
+    delta must declare, since one adds a reject reason and the other a logging obligation
 - [x] 8.6 Run `/sdd-docs-sync ape` (CLAUDE.md + spec cross-references current)
   - **Clean, with one `info`-level pointer.** Scoped as the task names it — `CLAUDE.md` and the spec
     cross-references — rather than swept over every `.md` in the tree, which would have buried the

@@ -27,10 +27,11 @@ import static org.junit.Assert.*;
  *
  * Lever A: {@link StatefulAgent#frontierBoost} (WTG-frontier decision) and the
  * {@code ActionType} predicates for the {@code EVENT_TRIGGER_ACTIVITY} constant.
- * Lever B: {@link MopLauncherStage#shouldFire} (cadence gate),
- * {@link MopLauncherStage#selectTriggerCandidate} (census-only candidate walk + round-robin) and
- * {@link MopLauncherStage#buildDeepLinkUri} (URI building),
+ * Lever B: {@link MopLauncherStage#shouldFire} (cadence gate) and
+ * {@link MopLauncherStage#selectTriggerCandidate} (census-only candidate walk + round-robin),
  * plus {@link StatefulAgent#nonModelDecisionSource} (the INV-CT-07 attribution).
+ * URI building is no longer a seam here — the string arrives on the wire; see the comment at the
+ * former Lever B deep-link block for where its assertions went.
  *
  * The dedicated launcher step counter, the counter reset, the dispatch intent, and the WTG pass
  * wiring require the Android runtime / an agent instance and are covered by the deferred device

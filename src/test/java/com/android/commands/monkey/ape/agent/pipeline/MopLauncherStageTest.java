@@ -24,9 +24,12 @@ import static org.junit.Assert.assertTrue;
  * them. A stage that reset all three together, or none, would still fire at plausible-looking
  * intervals — which is why each has its own assertion here rather than one end-to-end one.
  *
- * <p>The pure seams the stage walks ({@code shouldFire}, {@code selectTriggerCandidate},
- * {@code buildDeepLinkUri}) keep their own tests in {@code ActivityFrontierTest}; what is under test
- * here is the state around them.
+ * <p>The pure seams the stage walks ({@code shouldFire}, {@code selectTriggerCandidate}) keep their
+ * own tests in {@code ActivityFrontierTest}; what is under test here is the state around them.
+ * The stage no longer builds the deep-link URI — it reads {@code ComponentInfo.deepLinkUri} from
+ * the wire, and the assembly rule's tests live in the generator repository (rv-android
+ * {@code test_derive_mop_artifact.py}, the {@code test_deep_link_*} family), not in
+ * {@code ActivityFrontierTest}.
  */
 public class MopLauncherStageTest {
 

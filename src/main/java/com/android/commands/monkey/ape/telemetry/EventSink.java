@@ -202,10 +202,10 @@ public interface EventSink {
      * <p>{@code formatVersion} and {@code sourceDigest} are the provenance pair: they name which
      * wire contract was read and which static-analysis document it was derived from, so a trace
      * identifies its own input instead of leaving the reader to infer it from the run's date. Only
-     * a derived artifact has them, so the full-JSON loader passes {@code 0} and {@code null} — a
-     * neutral absence, not a claim. {@code components} is different and is never neutral: both
-     * loaders hold the typed component lists at the emission site, so a zero there would be a
-     * falsehood about something the caller knows.
+     * a load that reached an artifact has them, so {@code MopData.reject} passes {@code 0} and
+     * {@code null} — a neutral absence, not a claim. Every counter below it is neutral on that path
+     * for the same reason: a rejected load counted nothing, so a zero states that rather than
+     * asserting an empty app.
      */
     void mopData(String status, String reason, int formatVersion, String sourceDigest, String pkg,
             int windows, int widgets, int flagged, int droppedNoId, int wtgEdges,
