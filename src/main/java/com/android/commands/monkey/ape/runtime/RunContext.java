@@ -145,24 +145,21 @@ public final class RunContext {
         // Built before the LLM units because they record through it, and handed to them rather
         // than looked up: this constructor has not yet returned, so `current` is still null and a
         // unit that reached for it here would find nothing.
-        // The telemetry scope is absent exactly when the plan does not carry STEP_TELEMETRY, and a
-        // plan without it still gets the heartbeat: the key's neutral value is its default, and
-        // telemetry is an instrument every arm carries alike.
-        //
-        // There is no plan key deciding which sink this is. A run always gets NdjsonSink; the only
-        // other implementation is reachable from a test and nowhere else (INV-SNK-07's Telemetry
-        // Neutrality clause: no arm-level flag disables or alters telemetry).
-        this.sink = substituteSink != null ? substituteSink : new NdjsonSink(System.out,
-                spec.telemetry() == null || spec.telemetry().bool("ape.telemetryHeartbeat"));
+        // There is no plan key deciding which sink this is, and none deciding whether there is
+        // one. A run always gets NdjsonSink; the only other implementation is reachable from a test
+        // and nowhere else (INV-SNK-07's Telemetry Neutrality clause: no arm-level flag disables or
+        // alters telemetry). The telemetry scope is unconditional for the same reason, so the
+        // heartbeat flag is read directly rather than through an absent-scope fallback.
+        this.sink = substituteSink != null ? substituteSink
+                : new NdjsonSink(System.out, spec.telemetry().bool("ape.telemetryHeartbeat"));
 
         if (spec.has(Feature.LLM)) {
             RunSpec.LlmParams llm = spec.llm();
             this.llmClient = new LlmClient(llm, sink);
             // The trip count is asked for rather than mirrored: it belongs to the client, and only
-            // a recorded failure can raise it. The dump flag reads on when the plan carries no
-            // telemetry scope, which is what its default says anyway.
+            // a recorded failure can raise it.
             this.llmTelemetry = new LlmTelemetry(llmClient::getTripCount, sink,
-                    spec.telemetry() == null || spec.telemetry().bool("ape.llmPromptDump"));
+                    spec.telemetry().bool("ape.llmPromptDump"));
             this.coordinateMapper = new CoordinateMapper(llm);
             this.llmEngine = new LlmEngine(new ScreenshotStep(), new ApePromptBuilder(llm.promptVariant()), llmClient,
                     new ToolCallParser(), coordinateMapper, llmTelemetry);

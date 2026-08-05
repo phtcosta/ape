@@ -199,8 +199,10 @@ public final class RunSpec {
                 ? new MopParams(scope(planValues, features, ParamScope.MOP)) : null;
         LlmParams llm = features.contains(Feature.LLM)
                 ? new LlmParams(scope(planValues, features, ParamScope.LLM)) : null;
-        TelemetryParams telemetry = features.contains(Feature.STEP_TELEMETRY)
-                ? new TelemetryParams(scope(planValues, features, ParamScope.TELEMETRY)) : null;
+        // Unconditional: no feature gates telemetry, so the scope is always constructible and
+        // `telemetry()` never returns null (event-sink INV-SNK-07).
+        TelemetryParams telemetry = new TelemetryParams(
+                scope(planValues, features, ParamScope.TELEMETRY));
 
         String digest = computeDigest(agentType, features, planValues);
 
@@ -354,14 +356,25 @@ public final class RunSpec {
 
     private enum ParamScope { EXPLORATION, MOP, LLM, TELEMETRY }
 
+    /**
+     * The base keys that belong to the telemetry scope rather than to exploration.
+     *
+     * <p>Named here rather than derived from a feature because telemetry no longer is one: the two
+     * keys are levers over an instrument every arm carries (event-sink INV-SNK-07), so their owner
+     * is {@code BASE} and the scope has to be stated. Two entries is small enough that a set beats
+     * inventing a second ownership axis to carry one bit.
+     */
+    private static final Set<String> TELEMETRY_KEYS = Collections.unmodifiableSet(
+            new LinkedHashSet<>(Arrays.asList("ape.llmPromptDump", "ape.telemetryHeartbeat")));
+
     private static ParamScope scopeOf(KeyOwnership.KeySpec spec) {
+        if (TELEMETRY_KEYS.contains(spec.key())) {
+            return ParamScope.TELEMETRY;
+        }
         if (spec.ownerKind() != KeyOwnership.OwnerKind.FEATURE) {
             return ParamScope.EXPLORATION;
         }
         Feature owner = spec.feature();
-        if (owner == Feature.STEP_TELEMETRY) {
-            return ParamScope.TELEMETRY;
-        }
         if (owner == Feature.MOP || owner.dependencies().contains(Feature.MOP)) {
             return ParamScope.MOP;
         }
@@ -515,7 +528,7 @@ public final class RunSpec {
         return llm;
     }
 
-    /** Null exactly when {@link Feature#STEP_TELEMETRY} is absent from the plan. */
+    /** Never null: telemetry is always on and owned by no feature (event-sink INV-SNK-07). */
     public TelemetryParams telemetry() {
         return telemetry;
     }
@@ -971,7 +984,7 @@ public final class RunSpec {
         }
     }
 
-    /** Present exactly when the plan carries {@link Feature#STEP_TELEMETRY}. Stage 4 grows it. */
+    /** Always present. Carries the trace's two volume/join levers, never a mechanism gate. */
     public static final class TelemetryParams extends Params {
         private TelemetryParams(Map<String, String> values) {
             super(values);

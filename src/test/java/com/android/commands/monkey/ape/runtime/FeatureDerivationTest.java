@@ -27,7 +27,7 @@ public class FeatureDerivationTest {
 
     /** The features a run gets from the jar defaults alone, with no properties file at all. */
     private static final Set<Feature> BARE_RUN = EnumSet.of(
-            Feature.MODEL_MENU, Feature.FORM_COMPLETION, Feature.STEP_TELEMETRY,
+            Feature.MODEL_MENU, Feature.FORM_COMPLETION,
             Feature.LEAST_VISITED_TIEBREAK, Feature.TREE_ENHANCEMENTS, Feature.ACTIVITY_BUDGET,
             Feature.DYNAMIC_EPSILON, Feature.HEURISTIC_INPUT, Feature.TYPED_FUZZ,
             Feature.FOREIGN_ACTIVITY_GUARD, Feature.TREE_PACKAGE_GUARD, Feature.COVERAGE_BOOST,
@@ -35,6 +35,15 @@ public class FeatureDerivationTest {
 
     private static RunSpec resolve(Map<String, String> entries) {
         return RunSpec.resolve(entries, RunSpec.CliValues.of("sata", 42L, null));
+    }
+
+    private static RunSpecException abort(Map<String, String> entries) {
+        try {
+            resolve(entries);
+        } catch (RunSpecException e) {
+            return e;
+        }
+        throw new AssertionError("expected resolution to abort");
     }
 
     private static Map<String, String> entries(String... keyValues) {
@@ -182,9 +191,25 @@ public class FeatureDerivationTest {
         assertNotNull(spec.mop());
         assertNotNull(spec.llm());
 
-        RunSpec noTelemetry = resolve(entries("ape.stepTelemetryEnabled", "false"));
-        assertFalse(noTelemetry.has(Feature.STEP_TELEMETRY));
-        assertNull(noTelemetry.telemetry());
+        // Telemetry is the exception this test is named against, and deliberately so: it is not
+        // a feature, so its scope is never null and no plan can make it so.
+        assertNotNull(spec.telemetry());
+        assertNotNull(resolve(entries()).telemetry());
+    }
+
+    @Test
+    public void telemetryCannotBeTurnedOffByAnyPlan() {
+        // The gate this change removed. `ape.stepTelemetryEnabled=false` was how the baseline arm
+        // was made blind under the old INV-ARCH-01; the key is gone, so stating it is a typo now
+        // and aborts before step 1 rather than silently producing an untelemetered arm
+        // (event-sink INV-SNK-07's Telemetry Neutrality clause).
+        RunSpecException failure = abort(entries("ape.stepTelemetryEnabled", "false"));
+        assertEquals(RunSpecException.Reason.UNKNOWN_KEY, failure.getReason());
+        assertEquals("ape.stepTelemetryEnabled", failure.getKey());
+
+        // Stating it ON is refused for the same reason: there is no key, in either direction.
+        assertEquals(RunSpecException.Reason.UNKNOWN_KEY,
+                abort(entries("ape.stepTelemetryEnabled", "true")).getReason());
     }
 
     @Test

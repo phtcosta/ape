@@ -44,7 +44,6 @@ public class PresetsTest {
             "ape.heuristicInput", "true",
             "ape.fuzzInputTyped", "true",
             "ape.formCompletionEnabled", "true",
-            "ape.stepTelemetryEnabled", "true",
             "ape.modelMenuEnabled", "true",
             "ape.leastVisitedPriorityTiebreak", "true",
             "ape.treeEnhancementsEnabled", "true",
@@ -112,19 +111,21 @@ public class PresetsTest {
     }
 
     @Test
-    public void theSeventeenSurvivingArmDefiningFlagsAreAllPresent() {
-        // The harness's ARM_DEFINING_KEYS has eighteen members; ape_pure_mode leaves with the
-        // stage-2 edit, and the other seventeen must all be stated by the baseline preset or the
-        // arm stops being fully explicit — the property the harness's own guard tests enforce.
+    public void theSixteenSurvivingArmDefiningFlagsAreAllPresent() {
+        // The harness's ARM_DEFINING_KEYS had eighteen members; ape_pure_mode left with the
+        // stage-2 edit and ape.stepTelemetryEnabled leaves here, because telemetry stopped being a
+        // mechanism an arm may define (event-sink INV-SNK-07). The other sixteen must all be stated
+        // by the baseline preset or the arm stops being fully explicit — the property the harness's
+        // own guard tests enforce.
         Set<String> armDefining = new LinkedHashSet<>(Arrays.asList(
                 "ape.frontierBoostWeight", "ape.activityTriggerEnabled", "ape.backMenuPickCap",
                 "ape.foreignActivityGuard", "ape.treePackageGuard", "ape.dynamicEpsilon",
                 "ape.heuristicInput", "ape.fuzzInputTyped", "ape.formCompletionEnabled",
-                "ape.stepTelemetryEnabled", "ape.modelMenuEnabled",
+                "ape.modelMenuEnabled",
                 "ape.leastVisitedPriorityTiebreak", "ape.treeEnhancementsEnabled",
                 "ape.activityBudgetEnabled", "ape.mopActivitySourceComponents",
                 "ape.mopFrontierWeight", "ape.llmPercentageNoSubstrate"));
-        assertEquals(17, armDefining.size());
+        assertEquals(16, armDefining.size());
         assertTrue(Presets.resolve(Presets.APERV).keySet().containsAll(armDefining));
     }
 

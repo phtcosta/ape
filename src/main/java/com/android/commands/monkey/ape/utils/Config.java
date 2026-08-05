@@ -237,7 +237,6 @@ public class Config {
     // gate: FormCompletionPass + the deterministic-fill branch in ApeAgent.checkInput()
     public static final boolean formCompletionEnabled = Config.getBoolean("ape.formCompletionEnabled", true);
     // gate: the [APE-STEP] per-step telemetry line + per-action timing
-    public static final boolean stepTelemetryEnabled = Config.getBoolean("ape.stepTelemetryEnabled", true);
     // gate: inclusion of the fork menuAction in State.getActions() (field stays constructed/non-null)
     public static final boolean modelMenuEnabled = Config.getBoolean("ape.modelMenuEnabled", true);
     // gate: the priority tiebreak in State.greedyPickLeastVisited() (false = upstream array-order ties)

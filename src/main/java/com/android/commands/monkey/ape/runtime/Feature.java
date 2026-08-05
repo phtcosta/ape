@@ -47,6 +47,16 @@ import java.util.Set;
  * <p><b>Purity is structural.</b> There is no kill-switch. A feature absent from the plan has no
  * constructed mechanism, so a sub-parameter of it parameterizes nothing and needs no exemption
  * list to say so.
+ *
+ * <p><b>Telemetry is deliberately not here.</b> It was, as {@code STEP_TELEMETRY}, and
+ * {@code rearch-04-step-ndjson-telemetry} removed it: this enum is the set of mechanisms an arm may
+ * turn on or off, and the event sink is an instrument every arm carries alike (event-sink
+ * INV-SNK-07's Telemetry Neutrality clause — "no arm-level flag disables or alters it"). Membership
+ * here is exactly what would have made such a flag expressible, which is how
+ * {@code ape.stepTelemetryEnabled} became the baseline arm's blindness switch under the old
+ * INV-ARCH-01. Its two surviving sub-parameters — the prompt dump and the logcat heartbeat — are
+ * base keys now: they are volume and join levers over an instrument that is always present, not
+ * activations of a mechanism that may be absent.
  */
 public enum Feature {
 
@@ -61,8 +71,6 @@ public enum Feature {
     MODEL_MENU("ape.modelMenuEnabled", Rule.TRUE, "false"),
     /** The form-completion scoring pass and the deterministic-fill branch. */
     FORM_COMPLETION("ape.formCompletionEnabled", Rule.TRUE, "false"),
-    /** The per-step {@code [APE-STEP]} telemetry line and its timing. */
-    STEP_TELEMETRY("ape.stepTelemetryEnabled", Rule.TRUE, "false"),
     /** The priority tiebreak in {@code State.greedyPickLeastVisited()}. */
     LEAST_VISITED_TIEBREAK("ape.leastVisitedPriorityTiebreak", Rule.TRUE, "false"),
     /** The three GUITreeBuilder perception enhancements. */
@@ -154,16 +162,6 @@ public enum Feature {
         DYNAMIC_EPSILON.own("ape.minEpsilon", "0.02");
 
         COVERAGE_BOOST.own("ape.coverageMaxStates", "2000");
-
-        // The prompt and response dumps are a volume lever on the trace, not a mechanism: turning
-        // them off changes four fields of an LLM sub-event and nothing a run does. Its neutral value
-        // is therefore its default — a plan may state it either way whether or not telemetry is on.
-        STEP_TELEMETRY.own("ape.llmPromptDump", "true");
-
-        // The heartbeat is one logcat line per step, read by nothing in this process. Its neutral
-        // value is its default for the same reason as the dumps: switching it off changes what an
-        // analysis can join on afterwards and nothing a run decides.
-        STEP_TELEMETRY.own("ape.telemetryHeartbeat", "true");
 
         FUZZING.own("ape.fuzzingRate", "0.02");
         FUZZING.own("ape.fuzzingActivityVisitThreshold", "10");

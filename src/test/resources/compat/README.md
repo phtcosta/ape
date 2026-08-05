@@ -21,6 +21,32 @@ That commit is the `gh93` counterpart (`rvsec#93`), which retired `ape_pure_mode
 surface. **These fixtures are only valid against a `tool.py` at or after it** — every one of them
 would otherwise carry `ape.apePureMode`, which this stage's jar aborts on as a retired key.
 
+## Two things these fixtures are NOT, as of 2026-08-05
+
+**They no longer match the `tool.py` they are pinned to.** `sha256sum` the source file above: it
+now reads `30d24ae5…`, not the pinned `aba920ea…`. The drift is `gh95`'s and it is structural, not
+cosmetic — `cc9eebcf` made the pushed properties **preset-first**, so what the deployment sends
+today is `ape.preset=<name>` plus one line per override delta, where these files carry the fully
+expanded flag vector. Two of them (`ape_pure.properties`, `sata_mop_widget.properties`) name arms
+that `4ed6ab1c` retired and that `get_variants()` no longer returns at all. Regenerating them is
+`gh95`'s deliverable, in the change that decided the new format; nothing in `rearch-04` can
+capture a format that change is still landing.
+
+**One line was removed from them by hand, and it is the only one.**
+`rearch-04-step-ndjson-telemetry` deletes `ape.stepTelemetryEnabled` from the jar (telemetry is
+always on and owned by no feature — event-sink INV-SNK-07), so a fixture stating it would abort as
+an unknown key and take `RunSpecCompatTest` red with it. The line was removed rather than the whole
+file recaptured, because recapturing would mean adopting the preset-first format above and doing
+`gh95`'s migration inside this change. This is a deliberate, bounded exception to "captured, not
+transcribed": nothing was added or reworded, and the removed key is one the deployment had already
+stopped pushing — `4ed6ab1c` dropped `step_telemetry_enabled` from the arm variants before this
+change touched the jar, which is the same order `gh93` established for `ape_pure_mode`.
+
+**What that means when one of these tests goes red.** The first question is still
+`sha256sum tool.py`, and the answer is already known to be "different". Until `gh95` regenerates
+them, these files prove something weaker than their name suggests: that the jar accepts the *shape*
+of arm the deployment used to send, not the one it sends now. Read a failure accordingly.
+
 **Why the pin matters.** Without it, a future `RunSpecCompatTest` failure is undiagnosable: the
 reader cannot tell whether the jar regressed or whether the Python side moved on and the fixtures
 went stale. With it, the first step is always `sha256sum tool.py` — if it differs from the value

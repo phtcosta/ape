@@ -118,7 +118,6 @@ public final class Presets {
         vector.put("ape.heuristicInput", "true");
         vector.put("ape.fuzzInputTyped", "true");
         vector.put("ape.formCompletionEnabled", "true");
-        vector.put("ape.stepTelemetryEnabled", "true");
         vector.put("ape.modelMenuEnabled", "true");
         vector.put("ape.leastVisitedPriorityTiebreak", "true");
         vector.put("ape.treeEnhancementsEnabled", "true");

@@ -50,14 +50,19 @@ public class RunSpecCompatTest {
             Feature.FUZZING);
 
     /**
-     * The eleven RV exploration features the campaign arms turn on by stating them, plus the two
-     * inherited defaults. {@code _BASELINE_ARM_FLAGS} states all eleven explicitly, and no arm
-     * below turns any of them off — the MOP and LLM arms are this set plus their own substrate.
+     * The ten RV exploration features the campaign arms turn on by stating them, plus the two
+     * inherited defaults. No arm below turns any of them off — the MOP and LLM arms are this set
+     * plus their own substrate.
+     *
+     * <p>It was eleven until {@code rearch-04-step-ndjson-telemetry} removed {@code STEP_TELEMETRY}
+     * from {@link Feature} altogether: telemetry is no longer a mechanism an arm can state, so it
+     * cannot be a member of a set describing what the arms turn on. The fixtures lost their
+     * {@code ape.stepTelemetryEnabled} line with it — see this directory's README for why that edit
+     * does not make them transcriptions, and for the larger regeneration they are already owed.
      */
     private static final Set<Feature> BASELINE = EnumSet.of(
             Feature.MODEL_MENU,
             Feature.FORM_COMPLETION,
-            Feature.STEP_TELEMETRY,
             Feature.LEAST_VISITED_TIEBREAK,
             Feature.TREE_ENHANCEMENTS,
             Feature.ACTIVITY_BUDGET,
@@ -200,20 +205,22 @@ public class RunSpecCompatTest {
     public void apePureTurnsOffEveryFeatureTheBaselineArmTurnsOn() {
         // The contrast that makes ape_pure a control: same file shape, opposite values. Every
         // feature `sata` gains by stating a flag is absent here, and the difference between the two
-        // plans is exactly the eleven RV exploration features.
+        // plans is exactly the ten RV exploration features that remain one — telemetry was the
+        // eleventh until this stage made it universal, which is the whole of what INV-ARCH-01's
+        // dissolution means for this arm: the control is no longer blind.
         Set<Feature> sata = resolveFixture("sata.properties").features();
         Set<Feature> pure = resolveFixture("ape_pure.properties").features();
 
         Set<Feature> difference = EnumSet.copyOf(sata);
         difference.removeAll(pure);
-        assertEquals(11, difference.size());
+        assertEquals(10, difference.size());
         assertTrue("ape_pure must not carry any feature sata lacks", pure.containsAll(
                 EnumSet.copyOf(ARM_NEUTRAL_DEFAULTS)) && sata.containsAll(pure));
     }
 
     @Test
     public void apePureAndSataStateTheSameKeysAndDifferOnlyInValues() {
-        // Both arms state the same eighteen keys; what separates them is which values those keys
+        // Both arms state the same seventeen keys; what separates them is which values those keys
         // carry. That is what makes ape_pure a control rather than a differently-shaped arm, and
         // it is the property that would break if the harness ever let a flag fall back to a jar
         // default instead of stating it.
@@ -222,7 +229,7 @@ public class RunSpecCompatTest {
         // that map is base keys plus the keys of active features, so the two arms differ there by
         // construction — precisely because ape_pure turns those features off.
         assertEquals(statedKeys("sata.properties"), statedKeys("ape_pure.properties"));
-        assertEquals(18, statedKeys("sata.properties").size());
+        assertEquals(17, statedKeys("sata.properties").size());
     }
 
     // --- The retired key is gone from every fixture. --------------------------------------------

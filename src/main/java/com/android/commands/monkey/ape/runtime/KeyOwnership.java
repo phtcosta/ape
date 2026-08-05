@@ -116,6 +116,11 @@ public final class KeyOwnership {
 
     static {
         // --- Base exploration parameters: always present, no feature gates them. --------------
+        // Telemetry is always on and owned by no feature (event-sink INV-SNK-07), so its two
+        // levers are base keys: they alter what the trace carries, never what the run decides.
+        base("ape.llmPromptDump", ValueType.BOOLEAN, "true");
+        base("ape.telemetryHeartbeat", ValueType.BOOLEAN, "true");
+
         base("ape.actionRefinementFirst", ValueType.BOOLEAN, "true");
         base("ape.actionRefinmentThreshold", ValueType.INT, "3");
         base("ape.activityManagerType", ValueType.STRING, "state");
@@ -218,9 +223,6 @@ public final class KeyOwnership {
 
         feature(Feature.MODEL_MENU, "ape.modelMenuEnabled", ValueType.BOOLEAN, "true");
         feature(Feature.FORM_COMPLETION, "ape.formCompletionEnabled", ValueType.BOOLEAN, "true");
-        feature(Feature.STEP_TELEMETRY, "ape.stepTelemetryEnabled", ValueType.BOOLEAN, "true");
-        feature(Feature.STEP_TELEMETRY, "ape.llmPromptDump", ValueType.BOOLEAN, "true");
-        feature(Feature.STEP_TELEMETRY, "ape.telemetryHeartbeat", ValueType.BOOLEAN, "true");
         feature(Feature.LEAST_VISITED_TIEBREAK, "ape.leastVisitedPriorityTiebreak", ValueType.BOOLEAN, "true");
         feature(Feature.TREE_ENHANCEMENTS, "ape.treeEnhancementsEnabled", ValueType.BOOLEAN, "true");
 
