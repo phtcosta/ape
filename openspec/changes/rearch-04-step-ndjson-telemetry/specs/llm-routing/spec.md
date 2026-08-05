@@ -73,41 +73,86 @@ No sub-event carries a step, activity, or variant field: the step and activity a
 
 **Counters**: the per-cause failure counters (partitioning the retired `null`), `matched`/`llm_tap`/`no_match`/`dead_pair`/`repaired`, token and latency totals, and `breaker_trips` SHALL be maintained exactly as before and exposed via an accessor consumed by the `RUN_END` emitter. The decisions denominator (`matched + llm_tap + no_match + Σ failure causes`) is derived by consumers; no ratio is stored.
 
-#### Scenario: Matched call recorded on its step
+**Where the retired renderings' assertions went.** Four scenarios below keep the header the pre-change
+requirement gave them and carry a body this change contradicts, because the thing they asserted is
+the thing this change removes. They are recorded here rather than dropped, since the reader's
+question is not whether the old line is gone but where its claim lives now:
 
-- **WHEN** the new-state hook routes to the LLM at step 42 and the call maps to a widget
+| Scenario header | What it asserted | Where the claim is now |
+|---|---|---|
+| `LLM call telemetry joins step and outcome on one key` | `[APE-LLM-TEL] step=N` ↔ `[APE-STEP] step=N` ↔ `[APE-OUTCOME] step=N` | **nowhere, deliberately** — the call, the decision and the outcome are members of one `StepRecord`, so there is no key to join on. The property the join existed to guarantee (a call is attributable to the step whose selection it interrupted) is now structural |
+| `Screenshot failure emits an attributable error line` | `[APE-LLM-ERROR] cause=screenshot activity=… detail=<stage>` | the surviving free-text line, which keeps the activity and the capture stage verbatim (`LlmTelemetry.screenshotFailed`, INV-RTR-20), plus `screenshot_failed` in `RUN_END`. It is the one abandoned attempt with no `llm[]` sub-event |
+| `Stagnation mode triggered` | `[APE-RV] LLM mode=stagnation, state=…` | the sub-event's `mode` field. The line the scenario names was never emitted by any shipped router — `mode` has always been a *field* of the per-attempt telemetry — and the trigger condition it describes is asserted by `Stagnation LLM Mode`, which this change does not modify |
+| `widget text with a newline does not break the prompt log` | the prompt builder flattens `\n`/`\r` before the dump is emitted | two places, and it is stronger in both: the builder still flattens (`llm-prompt :: multi-line widget text flattened`, unmodified by this change), and the serializer now escapes by construction (`event-sink` INV-SNK-02), so no widget text can put a raw newline in a record |
+
+#### Scenario: Matched widget logged
+
+- **WHEN** the new-state hook routes to the LLM at step 42 and the call maps to a widget `ModelAction` of type `MODEL_CLICK`
 - **THEN** the `s:42` record's `llm` array SHALL contain the entry with `result:"matched"`, its coordinates, `tok`, and `ms`
 - **AND** no `[APE-LLM-TEL]` line SHALL be emitted
 
-#### Scenario: Repaired tool call recorded and counted
+#### Scenario: LLM call telemetry joins step and outcome on one key
+
+- **WHEN** the new-state hook routes to the LLM at step 42, the call succeeds and the mapped action executes producing a recorded transition
+- **THEN** the call's sub-event, the decision (`dec`) and the outcome (`out`) SHALL all be members of the single `s:42` record
+- **AND** no join key SHALL exist or be needed — the pre-change `step=` field is absent from the sub-event because the step is the parent record's envelope (`event-sink` INV-SNK-04)
+
+#### Scenario: dead-pair ban visible in TEL and summary
+
+- **WHEN** two decisions in a run are banned by the dead-pair ban and one is discarded for a boundary coordinate
+- **THEN** the two banned decisions' sub-events SHALL carry `result:"no_match"` with `reason:"dead_pair"`
+- **AND** `RUN_END` SHALL report `no_match:3` and `dead_pair:2` — the overlay counter that makes bucket D, the falsification gate of the ban, countable from the run's last record alone
+
+#### Scenario: Repaired tool call logged and counted
 
 - **WHEN** at step 61 the model returns `{"name": "click", "arguments": {"x": "500, 527}}`, `ToolCallParser` recovers it via the quoted-collapsed-XY fix, and the coordinate resolves to a widget
 - **THEN** the step-61 sub-event SHALL carry `result:"matched"` and `repair:"quoted_xy"`
 - **AND** the run counters SHALL count the decision under both `matched` and `repaired`
 - **AND** no `error` sub-event with `cause:"parse"` SHALL exist for step 61
 
-#### Scenario: no_match reasons separated
+#### Scenario: no_match reason separated
 
 - **WHEN** one decision is discarded for a `(0,0)` coordinate, another for a navigation-band coordinate, and a third by the dead-pair ban
 - **THEN** their sub-events SHALL carry `reason:"degenerate"`, `reason:"boundary"`, and `reason:"dead_pair"` respectively, each with `result:"no_match"`
 
-#### Scenario: Failure causes discriminated without a join
+#### Scenario: Timeout and HTTP failure discriminated
 
 - **WHEN** one attempt times out and a later attempt gets HTTP 500
-- **THEN** the first step's record SHALL carry `{"result":"error","cause":"timeout",...}` and the second's `{"result":"error","cause":"http_500",...}`
+- **THEN** the first step's record SHALL carry `{"result":"error","cause":"timeout",...}` and increment `timeoutCount`
+- **AND** the second's SHALL carry `{"result":"error","cause":"http_500",...}` and increment `httpErrorCount`
 - **AND** `RUN_END` counters SHALL report `timeout:1` and `http_error:1`
 
-#### Scenario: Breaker episode recorded once
+#### Scenario: Router-side parse failure attributed without the client seam
+
+- **WHEN** `chat()` returns a non-null response but `ToolCallParser.parse()` extracts no tool call even after the quoted-collapsed-XY fix and last-resort integer extraction
+- **THEN** a sub-event with `result:"error"` and `cause:"parse"` SHALL be appended and `parseErrorCount` incremented
+- **AND** `getLastErrorCause()` SHALL NOT be consulted (the HTTP call succeeded; its value is stale)
+
+#### Scenario: Circuit breaker event logged once per open episode
 
 - **WHEN** the breaker trips to OPEN with 2 trips and predicates decline 5 calls during the same open window
 - **THEN** exactly one sub-event `{"result":"breaker_open","trips":2}` SHALL be recorded, on the step of the first decline
 - **AND** no LLM HTTP call SHALL be made while the breaker is OPEN
 
-#### Scenario: Screenshot failure stays out of the error sub-events
+#### Scenario: Screenshot failure emits an attributable error line
 
-- **WHEN** a run ends after 5 attempts of which 3 were abandoned at screenshot capture and 1 failed at parse
-- **THEN** `RUN_END` counters SHALL report `parse_error:1 screenshot_failed:3`
-- **AND** the screenshot failures SHALL have produced no `error` sub-event (their free-text line stands)
+- **WHEN** `ScreenshotCapture.capture()` returns null on a FLAG_SECURE window while activity `org.fedorahosted.freeotp.MainActivity` is foreground, in a run that ends after 5 attempts of which 3 were abandoned at capture and 1 failed at parse
+- **THEN** the failure SHALL be attributable from the surviving free-text line, which carries `activity=org.fedorahosted.freeotp.MainActivity` and `detail=<stage>` read from the `ScreenshotCapture` seam
+- **AND** `screenshotFailedCount` SHALL be incremented and `breaker.recordFailure()` called (unchanged breaker semantics)
+- **AND** `RUN_END` counters SHALL report `parse_error:1 screenshot_failed:3`
+- **AND** the screenshot failures SHALL have produced no `error` sub-event — the one abandoned attempt that does not, deliberately (INV-RTR-20)
+
+#### Scenario: Stagnation mode triggered
+
+- **WHEN** `shouldRouteStagnation(150)` is called with `graphStableRestartThreshold = 200` and the episode flag armed, and the resulting attempt completes
+- **THEN** the attempt's sub-event SHALL carry `mode:"stagnation"`
+- **AND** no free-text mode line SHALL be emitted — the pre-change scenario named `[APE-RV] LLM mode=stagnation, state=…`, which no shipped router ever wrote; the trigger condition itself is asserted by `Stagnation LLM Mode`, unmodified by this change
+
+#### Scenario: widget text with a newline does not break the prompt log
+
+- **WHEN** an element's widget text contains `"line1\nline2"` and the prompt-dump flag is on
+- **THEN** the sub-event's `user` field SHALL contain `"line1 line2"` for that element (flattened by the prompt builder, `llm-prompt` capability, unchanged)
+- **AND** the record SHALL occupy exactly one physical line regardless of what the text contains, because the serializer escapes `\n`, `\r` and every control character by construction (`event-sink` INV-SNK-02) — the flattening is no longer what makes the dump parseable, only what keeps one element on one line within it
 
 #### Scenario: Prompt dump follows the flag
 
@@ -119,11 +164,17 @@ No sub-event carries a step, activity, or variant field: the step and activity a
 
 The router SHALL emit one `{"type":"LLM_ACK","server_model":"<model>"}` record (event-sink capability) after the first successful `chat()` response of the run, carrying the model identifier reported by the server in the response envelope (`unknown` when the response omits the field). The `RUN_START` plan echo records the model the run *requested*; `LLM_ACK` records what the server *actually served* — the pair proves an arm talked to the intended model without inspecting the server. At most one `LLM_ACK` per run; a run with zero successful responses emits none (its absence, with the failure-cause counters, is itself diagnostic).
 
-#### Scenario: ACK emitted once as a sink record
+#### Scenario: Server model acknowledged once
 
 - **WHEN** the first successful response reports `qwen3-vl-8b` and 200 further calls succeed
-- **THEN** exactly one `LLM_ACK` record SHALL appear in the trace
+- **THEN** exactly one `LLM_ACK` record SHALL appear in the trace, carrying `server_model:"qwen3-vl-8b"`, after the first successful response
 - **AND** no `[APE-LLM-CONFIG-ACK]` line SHALL be emitted
+
+#### Scenario: No acknowledgement without a successful response
+
+- **WHEN** every `chat()` call of a run fails (server down)
+- **THEN** zero `LLM_ACK` records SHALL appear in the trace
+- **AND** the absence SHALL be read together with the `RUN_END` failure-cause counters, which say why — the pre-change line's absence said only that it never happened
 
 ### Requirement: Deterministic Dead-Pair Ban
 
@@ -303,10 +354,22 @@ The dead-pair outcome feedback SHALL continue to flow from the join-buffer site 
 - **WHEN** the model returns a malformed native `tool_calls` arguments string that `ToolCallParser` recovers via the raw-arguments repair pipeline and the coordinate resolves to a widget
 - **THEN** the sub-event SHALL carry `repair:"<form>"` and the decision SHALL count under both `matched` and `repaired` (INV-LLM-10, INV-RTR-14 unchanged)
 
-#### Scenario: Banned answer leaves through the no_match path
+#### Scenario: banned result is refused at step 10, not failed
 - **WHEN** the mapped action's ban key has reached the strike threshold
 - **THEN** the engine SHALL return null with a `result:"no_match"`, `reason:"dead_pair"` sub-event
 - **AND** `LlmClient` SHALL still record success (a refused answer is not a pipeline failure)
+- **AND** the check SHALL run inside step 8 above — after the mapping, before the return — so a banned decision is a refused answer rather than a failed pipeline
+
+#### Scenario: Off-tree element becomes a coordinate tap
+- **WHEN** the pipeline succeeds with a `click` at in-bounds pixel `(600, 900)` on a 1080x1794 device
+- **AND** `CoordinateMapper` finds no widget containing the point and none within the snap tolerance
+- **THEN** `selectAction()` SHALL return an `LlmTapAction` of type `MODEL_LLM_TAP` carrying `(600, 900)`
+- **AND** the sub-event SHALL classify the outcome `llm_tap`, not `no_match` (the synthesis is a decision, and `Coordinate-to-ModelAction Mapping` owns the unit-level rule this end-to-end path exercises)
+
+#### Scenario: no_match reason is always one of three
+- **WHEN** any decision in a run ends as `result:"no_match"`
+- **THEN** its sub-event SHALL carry exactly one `reason` from `degenerate`, `boundary`, `dead_pair`
+- **AND** the closure SHALL hold across the decomposition: `CoordinateMapper` produces the first two and the ban check the third, and `LlmTelemetry` SHALL have no fourth reason to record
 
 #### Scenario: Engine never throws
 - **WHEN** any unexpected exception occurs inside the engine
