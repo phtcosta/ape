@@ -28,6 +28,8 @@ import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.llm.LlmTelemetry;
 import com.android.commands.monkey.ape.llm.ScreenshotStep;
 import com.android.commands.monkey.ape.llm.ToolCallParser;
+import com.android.commands.monkey.ape.telemetry.EventSink;
+import com.android.commands.monkey.ape.telemetry.NdjsonSink;
 import com.android.commands.monkey.ape.utils.RandomHelper;
 
 /**
@@ -66,6 +68,23 @@ public final class RunContext {
     private final String runId;
 
     /**
+     * Device epoch milliseconds at the moment this run began.
+     *
+     * <p>It is the run's single time origin: {@code RUN_START} publishes it as {@code t0} and every
+     * step record's {@code t} is measured from it, so the two agree by construction rather than by
+     * two reads of the clock landing close enough. A reader recovers an absolute stamp as
+     * {@code t0 + t} and needs nothing outside the trace to do it.
+     */
+    private final long t0;
+
+    /**
+     * Where this run's observations go. Always present and identical for every arm — telemetry is
+     * an instrument, not a mechanism — and unable to influence a decision by the shape of its own
+     * interface (INV-SNK-07).
+     */
+    private final EventSink sink;
+
+    /**
      * The run's LLM, or four nulls when the plan carries no LLM feature.
      *
      * <p>Absence is the whole mechanism, not a disabled mode: a plan without the feature builds no
@@ -84,17 +103,20 @@ public final class RunContext {
         // Monkey's own Random was built from, so both streams derive from one number.
         RandomHelper.seed(seed);
         this.runId = resolveRunId(spec, seed);
+        this.t0 = System.currentTimeMillis();
+        // Built before the LLM units because they record through it, and handed to them rather
+        // than looked up: this constructor has not yet returned, so `current` is still null and a
+        // unit that reached for it here would find nothing.
+        this.sink = new NdjsonSink(System.out);
 
         if (spec.has(Feature.LLM)) {
             RunSpec.LlmParams llm = spec.llm();
-            // The restart threshold is exploration-scope, not LLM-scope: it is the agent's
-            // stagnation budget and the LLM only reads its midpoint. It therefore arrives
-            // separately, here and at the stagnation stage alike.
-            this.llmClient = new LlmClient(
-                    llm, spec.exploration().integer("ape.graphStableRestartThreshold"));
+            this.llmClient = new LlmClient(llm, sink);
             // The trip count is asked for rather than mirrored: it belongs to the client, and only
-            // a recorded failure can raise it.
-            this.llmTelemetry = new LlmTelemetry(llm, llmClient::getTripCount);
+            // a recorded failure can raise it. The dump flag reads on when the plan carries no
+            // telemetry scope, which is what its default says anyway.
+            this.llmTelemetry = new LlmTelemetry(llmClient::getTripCount, sink,
+                    spec.telemetry() == null || spec.telemetry().bool("ape.llmPromptDump"));
             this.coordinateMapper = new CoordinateMapper(llm);
             this.llmEngine = new LlmEngine(new ScreenshotStep(), new ApePromptBuilder(llm.promptVariant()), llmClient,
                     new ToolCallParser(), coordinateMapper, llmTelemetry);
@@ -174,6 +196,24 @@ public final class RunContext {
      */
     public String runId() {
         return runId;
+    }
+
+    /**
+     * The run's time origin in device epoch milliseconds — the base {@code RUN_START} publishes and
+     * every step record's {@code t} is relative to.
+     */
+    public long t0() {
+        return t0;
+    }
+
+    /** Milliseconds elapsed since the run began, which is what a step record stamps as {@code t}. */
+    public long elapsedMs() {
+        return System.currentTimeMillis() - t0;
+    }
+
+    /** Where this run's observations go, for every arm alike. */
+    public EventSink sink() {
+        return sink;
     }
 
     /**

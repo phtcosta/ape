@@ -83,8 +83,7 @@ public final class LlmRandomStage implements DecisionStage {
             return StageResult.continueChain();
         }
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
-                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "random",
-                ctx.timestamp());
+                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "random");
         if (result == null) {
             return StageResult.continueChain();
         }

@@ -202,8 +202,9 @@ public class MopData {
             // guard passes and the existing IOException path handles it.
             long fileSize = new File(path).length();
             if (fileSize > budgetBytes / PARSE_FOOTPRINT_FACTOR) {
-                Logger.iformat("[APE-MOP-DATA] status=rejected reason=too-large size=%d budget=%d",
-                        fileSize, budgetBytes);
+                Logger.iformat("MopData: %s is %d bytes, over the %d-byte parse budget",
+                        path, fileSize, budgetBytes);
+                reject("too-large");
                 return null;
             }
             JSONObject root;
@@ -212,11 +213,11 @@ public class MopData {
                 root = new JSONObject(new JSONTokener(readFile(path)));
             } catch (IOException e) {
                 Logger.wprintln("MopData: failed to read " + path + ": " + e.getMessage());
-                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=file-missing");
+                reject("file-missing");
                 return null;
             } catch (JSONException e) {
                 Logger.wprintln("MopData: malformed JSON at " + path + ": " + e.getMessage());
-                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=parse-error");
+                reject("parse-error");
                 return null;
             }
 
@@ -224,7 +225,7 @@ public class MopData {
             if (!root.optBoolean("complete", false)) {
                 Logger.wprintln("MopData: '\"complete\": true' sentinel absent or false at " + path
                         + " — treating as no MOP data (truncated analysis)");
-                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=incomplete");
+                reject("incomplete");
                 return null;
             }
 
@@ -307,31 +308,32 @@ public class MopData {
             }
             if (mismatch && RunContext.current().spec().mop().strictPackageMatch()) {
                 Logger.wprintln("MopData: strict package match enabled — rejecting " + path);
-                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=package-mismatch");
+                reject("package-mismatch");
                 return null;
             }
 
             // FIX 3 (INV-MOP-31): diagnostics on the handler→MOP join, so a silent collapse is visible.
             int[] joinDiag = computeHandlerJoinDiagnostics(windows, bySignature, lambdaReachByClass);
-            Logger.iformat("[APE-MOP-DATA] status=loaded package=%s windows=%d widgets=%d"
-                    + " flagged=%d droppedNoId=%d transitions=%d"
-                    + " handlersUnmatched=%d syntheticLambda=%d recovered=%d"
-                    + " mopActivities=%d mopActsAugmented=%d",
+            // wtgEdges is the click-only view's summed size — the number the three frontier
+            // passes actually gate on. The flat `transitions` list is deliberately not carried:
+            // 14 of the decisive campaign's 40 applications report 9-29 transitions with the whole
+            // frontier family disabled, so reporting it invites exactly that misreading again.
+            RunContext.current().sink().mopData("loaded", null,
                     packageName, windows.size(), countWidgets(widgetData), countFlagged(widgetData),
-                    data.droppedFlaggedNoId, transitions.size(),
+                    data.droppedFlaggedNoId, countWtgEdges(wtgTransitions),
                     joinDiag[0], joinDiag[1], joinDiag[2],
                     mopActivities.size(), augmentedActivities);
             return data;
             } catch (JSONException e) {
                 Logger.wprintln("MopData: malformed JSON structure at " + path + ": " + e.getMessage());
-                Logger.iprintln("[APE-MOP-DATA] status=rejected reason=parse-error");
+                reject("parse-error");
                 return null;
             }
         } catch (OutOfMemoryError oom) {
             // The try-scoped locals (root, the parsed maps/lists, data) are already unreachable
             // here, so returning null lets the GC reclaim them. Emit the reject status line so the
             // run is excludable/annotatable by the analysis pipeline (INV-MOP-21/26).
-            Logger.iprintln("[APE-MOP-DATA] status=rejected reason=oom");
+            reject("oom");
             return null;
         }
     }
@@ -1098,6 +1100,30 @@ public class MopData {
             count += m.size();
         }
         return count;
+    }
+
+    /**
+     * The click-only WTG view's edge count — the quantity the three frontier passes gate on, and
+     * therefore the one the record carries.
+     */
+    private static int countWtgEdges(Map<String, List<WtgTransition>> wtgTransitions) {
+        int count = 0;
+        for (List<WtgTransition> edges : wtgTransitions.values()) {
+            count += edges.size();
+        }
+        return count;
+    }
+
+    /**
+     * Records a load that produced no data, with the reason it produced none.
+     *
+     * <p>A rejection has no census to report — nothing was parsed — so every count is zero and the
+     * reason is the whole content. It is a record rather than a line because the analysis side
+     * excludes and annotates runs by it (INV-MOP-21/26), and a run whose MOP arm never armed must
+     * say so in the same stream that says everything else.
+     */
+    private static void reject(String reason) {
+        RunContext.current().sink().mopData("rejected", reason, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     private static int countFlagged(Map<String, Map<String, Widget>> widgetData) {

@@ -72,8 +72,7 @@ public final class LlmNewStateStage implements DecisionStage {
             return StageResult.continueChain();
         }
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
-                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "new-state",
-                ctx.timestamp());
+                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "new-state");
         if (result == null) {
             return StageResult.continueChain();
         }

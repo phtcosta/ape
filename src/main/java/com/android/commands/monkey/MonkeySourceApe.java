@@ -56,6 +56,7 @@ import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StartAction;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
@@ -1001,11 +1002,15 @@ public class MonkeySourceApe implements MonkeyEventSource {
         } else {
             intent.setComponent(new ComponentName(action.getPackageName(), action.getClassName()));
         }
-        boolean ok = AndroidDevice.startActivity(intent);
-        if (!ok) {
+        AndroidDevice.LaunchResult launch = AndroidDevice.startActivity(intent);
+        if (!launch.dispatched()) {
             Logger.wformat("[APE-RV] Triggering activity failed: %s/%s",
                     action.getPackageName(), action.getClassName());
         }
+        // Onto the step's record, which is still open: it closes at N+1, comfortably after this
+        // dispatch. The retired per-action line was written before the dispatch and could not have
+        // carried the answer at all.
+        RunContext.current().sink().componentLaunch(launch.code, launch.error);
     }
 
     private void generateFuzzingEvents(FuzzAction action) {

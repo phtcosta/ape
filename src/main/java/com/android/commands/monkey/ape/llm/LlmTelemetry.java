@@ -1,6 +1,7 @@
 package com.android.commands.monkey.ape.llm;
 
 import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.utils.Logger;
 
 import java.util.List;
@@ -9,12 +10,18 @@ import java.util.function.IntSupplier;
 /**
  * Everything a run says about its LLM, and everything it counts.
  *
- * <p>Counting and saying are one unit here because they are the same act performed twice: every
- * counter this class holds has a line that reports it, and every line it emits moves a counter.
- * Splitting them would put the {@code [APE-LLM-ERROR] cause=parse} line in one place and the
+ * <p>Counting and recording are one unit here because they are the same act performed twice: every
+ * counter this class holds has a sub-event that reports it, and every sub-event it emits moves a
+ * counter. Splitting them would put the {@code cause:"parse"} sub-event in one place and the
  * increment of {@code parseErrorCount} in another, and the invariant that binds them — that the
  * seven cause counters partition the abandoned attempts (INV-RTR-11) — would then be a property of
  * two files agreeing rather than of one file's control flow.
+ *
+ * <p><b>Every attempt lands on the step that made it.</b> The sub-events go onto the record the
+ * agent opened at the start of selection, so the attribution that used to be a {@code step=} key
+ * shared by three line families is now structural. Nothing here states a step, an activity or the
+ * prompt variant: the first two are the parent record's envelope and the third is run-constant in
+ * the {@code RUN_START} plan echo.
  *
  * <p><b>The engine decides, this unit records.</b> The classification of an answer
  * ({@code matched}/{@code llm_tap}/{@code no_match} and its reason) is the engine's judgement,
@@ -33,14 +40,17 @@ import java.util.function.IntSupplier;
  */
 public final class LlmTelemetry {
 
+    /** Where the sub-events go — the record of the step whose selection is running. */
+    private final EventSink sink;
+
     /**
-     * The prompt variant the {@code [APE-LLM-TEL]} line stamps on every decision.
+     * Whether the prompt and response text ride the sub-event.
      *
-     * <p>Read once at construction rather than per decision: the value is fixed for the run, so a
-     * per-line read could only ever produce the same string, and hoisting it is what keeps this unit
-     * off static configuration entirely.
+     * <p>Default on, which is recordability parity with the unconditional dump lines it replaces.
+     * It is a volume lever and nothing else: with it off the sub-event omits four fields and every
+     * other field, counter and decision is identical.
      */
-    private final String promptVariant;
+    private final boolean promptDump;
 
     /**
      * The breaker's trip count, asked for when the summary is printed.
@@ -86,16 +96,20 @@ public final class LlmTelemetry {
     // line alone, without joining the per-decision [APE-LLM-TEL] stream.
     private int deadPairCount   = 0;
 
-    // [APE-LLM-CONFIG-ACK] latch (INV-RTR-12): emitted once, on the first successful chat() response.
-    private boolean ackEmitted  = false;
+    // The prompt of the attempt in flight, held only because the response arrives later and the
+    // sub-event carries the pair. Overwritten by the next attempt's prompt and never read after it.
+    private String pendingSystem;
+    private String pendingUser;
 
     /**
-     * @param llm the plan's LLM parameters, from which the prompt variant comes
      * @param breakerTrips how many times the run's breaker has opened, asked at summary time
+     * @param sink where the per-attempt sub-events go
+     * @param promptDump whether the prompt and response text ride each sub-event
      */
-    public LlmTelemetry(RunSpec.LlmParams llm, IntSupplier breakerTrips) {
-        this.promptVariant = llm.str("ape.llmPromptVariant");
+    public LlmTelemetry(IntSupplier breakerTrips, EventSink sink, boolean promptDump) {
         this.breakerTrips = breakerTrips;
+        this.sink = sink;
+        this.promptDump = promptDump;
     }
 
     // -------------------------------------------------------------------------
@@ -126,14 +140,16 @@ public final class LlmTelemetry {
      * the breaker silently disabled the LLM with nothing in the trace to attribute it to. The
      * activity name is what makes per-app degradation countable offline (INV-RTR-20).
      *
-     * @param step the agent step this attempt belongs to
+     * <p>This is the one abandoned attempt that produces no {@code error} sub-event: it is counted
+     * under its own peer counter and said on the free-text line, which is where its activity and
+     * capture stage stay readable.
+     *
      * @param activity the activity the failure happened on, or {@code unknown}
      * @param stage which capture path failed last, or {@code null} when the capture named none
      */
-    public void screenshotFailed(int step, String activity, String stage) {
-        Logger.println("[APE-RV] LLM screenshot capture failed, skipping LLM step");
+    public void screenshotFailed(String activity, String stage) {
         screenshotFailedCount++;
-        Logger.println("[APE-LLM-ERROR] step=" + step + " cause=screenshot"
+        Logger.println("[APE-RV] LLM screenshot capture failed, skipping LLM step"
                 + " activity=" + activity
                 + " detail=" + (stage != null ? stage : "unknown"));
     }
@@ -141,14 +157,11 @@ public final class LlmTelemetry {
     /**
      * The capture could not be resized or encoded — a peer cause of the capture failure itself, and
      * deliberately not folded into it: the two fail for unrelated reasons.
-     *
-     * @param step the agent step this attempt belongs to
      */
-    public void imageFailed(int step) {
+    public void imageFailed() {
         imageErrorCount++;
         Logger.println("[APE-RV] LLM image processing failed, skipping LLM step");
-        Logger.println("[APE-LLM-ERROR] step=" + step
-                + " cause=image detail=image processing returned null");
+        sink.llmError("image", "image processing returned null");
     }
 
     /**
@@ -158,19 +171,17 @@ public final class LlmTelemetry {
      * name is a connection failure, which is also what an absent cause means — a null here is the
      * client declining to discriminate, not an unknown fifth kind.
      *
-     * @param step the agent step this attempt belongs to
      * @param cause the label from the client's error seam, read once at the null return
      *        (INV-LLM-08); {@code null} is recorded as {@code connection}
      */
-    public void transportFailed(int step, String cause) {
+    public void transportFailed(String cause) {
         String label = cause != null ? cause : "connection";
         if (label.startsWith("http_"))      httpErrorCount++;
         else if ("timeout".equals(label))   timeoutCount++;
         else if ("parse".equals(label))     parseErrorCount++;
         else                                connErrorCount++;
         Logger.println("[APE-RV] LLM call failed: null response from SGLang");
-        Logger.println("[APE-LLM-ERROR] step=" + step + " cause=" + label
-                + " detail=null response from SGLang");
+        sink.llmError(label, "null response from SGLang");
     }
 
     /**
@@ -179,14 +190,11 @@ public final class LlmTelemetry {
      * <p>Counted under the same {@code parse} label as an unparseable envelope, and that conflation
      * is deliberate — both mean "the model's answer could not be turned into an action" — but the
      * client's error seam is stale by now and MUST NOT be consulted: the call itself succeeded.
-     *
-     * @param step the agent step this attempt belongs to
      */
-    public void parseFailed(int step) {
+    public void parseFailed() {
         parseErrorCount++;
         Logger.println("[APE-RV] LLM response parse failed, no action extracted");
-        Logger.println("[APE-LLM-ERROR] step=" + step
-                + " cause=parse detail=no tool call extracted");
+        sink.llmError("parse", "no tool call extracted");
     }
 
     /**
@@ -196,13 +204,12 @@ public final class LlmTelemetry {
      * an attempt that reaches it is still counted, still attributed, and still leaves through the
      * declared fallback rather than up the stack.
      *
-     * @param step the agent step this attempt belongs to
      * @param detail the exception's message
      */
-    public void internalError(int step, String detail) {
+    public void internalError(String detail) {
         internalErrorCount++;
         Logger.println("[APE-RV] LLM unexpected error in selectAction: " + detail);
-        Logger.println("[APE-LLM-ERROR] step=" + step + " cause=internal detail=" + detail);
+        sink.llmError("internal", detail);
     }
 
     // -------------------------------------------------------------------------
@@ -210,55 +217,63 @@ public final class LlmTelemetry {
     // -------------------------------------------------------------------------
 
     /**
-     * Record the prompt, minus the image.
+     * Stage the prompt, minus the image, for whatever sub-event this attempt produces.
      *
      * <p>The base64 screenshot is omitted because it is reconstructible from the capture and would
      * otherwise be the overwhelming majority of a trace's bytes.
+     *
+     * <p>Staging rather than emitting is what lets an attempt that dies at the transport still
+     * carry the prompt that produced it: the sink holds the text until the attempt's sub-event
+     * exists, whatever that sub-event turns out to be.
      *
      * @param messages the messages as the builder assembled them; a shape with fewer than two is
      *        not a prompt this can describe and is passed over
      */
     public void logPrompt(List<SglangClient.Message> messages) {
-        if (messages != null && messages.size() >= 2) {
-            Logger.println("[APE-LLM-PROMPT] system=" + messages.get(0).getTextContent());
-            SglangClient.Message userMsg = messages.get(1);
-            if (userMsg.getContentParts() != null) {
-                for (SglangClient.ContentPart part : userMsg.getContentParts()) {
-                    if ("text".equals(part.getType())) {
-                        Logger.println("[APE-LLM-PROMPT] user_text=" + part.getText());
-                    }
+        if (!promptDump || messages == null || messages.size() < 2) {
+            return;
+        }
+        pendingSystem = messages.get(0).getTextContent();
+        pendingUser = null;
+        SglangClient.Message userMsg = messages.get(1);
+        if (userMsg.getContentParts() != null) {
+            for (SglangClient.ContentPart part : userMsg.getContentParts()) {
+                if ("text".equals(part.getType())) {
+                    pendingUser = part.getText();
                 }
             }
         }
+        sink.llmDump(pendingSystem, pendingUser, null, null);
     }
 
     /**
      * Announce which model actually served the run, once (INV-RTR-12).
      *
-     * <p>The manifest records the model the plan asked for; this records what answered. They differ
+     * <p>The plan echo records the model the run asked for; this records what answered. They differ
      * whenever a server is loaded with something other than what the campaign believes, which is a
-     * failure mode no other line can reveal.
+     * failure mode no other record can reveal. The once-per-run cap lives in the sink, which is the
+     * only thing that can enforce it for the whole run.
      *
      * @param response the first successful response of the run
      */
     public void acknowledge(SglangClient.ChatResponse response) {
-        if (ackEmitted) {
-            return;
-        }
-        ackEmitted = true;
-        String serverModel = response.getModel() != null ? response.getModel() : "unknown";
-        Logger.println("[APE-LLM-CONFIG-ACK] server_model=" + serverModel);
+        sink.llmAck(response.getModel() != null ? response.getModel() : "unknown");
     }
 
     /**
-     * Record the raw response, before anything is made of it.
+     * Stage the raw response alongside the prompt it answered, before anything is made of it.
      *
      * @param response the response the client returned
      */
     public void logResponse(SglangClient.ChatResponse response) {
-        Logger.println("[APE-LLM-RESPONSE] content=" +
-                (response.getContent() != null ? response.getContent() : "null") +
-                " tool_calls=" + response.getToolCalls().size());
+        if (!promptDump) {
+            return;
+        }
+        // The prompt travels again because staging is a whole replacement, not an accumulation: the
+        // sub-event this attempt produces carries the pair or neither half of it.
+        sink.llmDump(pendingSystem, pendingUser,
+                response.getContent() != null ? response.getContent() : "null",
+                String.valueOf(response.getToolCalls().size()));
     }
 
     /**
@@ -266,11 +281,10 @@ public final class LlmTelemetry {
      *
      * <p>One call rather than a counter call and an emission call, because the two cannot disagree
      * if they are one statement: the outcome that increments {@code matchedCount} is the same
-     * string the line prints as {@code result=}. The repair overlay increments here, inside the
-     * emission, which is where it has always incremented — it is a property of the line, counted
-     * only when the line carries {@code repair=}.
+     * string the sub-event carries as {@code result}. The repair overlay increments here, inside the
+     * emission, which is where it has always incremented — it is a property of the sub-event,
+     * counted only when the sub-event carries {@code repair}.
      *
-     * @param step the agent step this decision belongs to
      * @param mode which hook asked — {@code new-state}, {@code stagnation} or {@code random}
      * @param parsed what the model answered, as the parser recovered it
      * @param pixelX the answer's x in device pixels
@@ -282,15 +296,14 @@ public final class LlmTelemetry {
      * @param matchedClass the simple class name of the widget the answer resolved to, or
      *        {@code none}
      * @param nearest what the screen offered around the coordinate
-     * @param activity the activity the decision was taken on
      * @param response the response, for its token counts
      * @param elapsedMs how long the whole attempt took
      */
-    public void decision(int step, String mode,
+    public void decision(String mode,
                          ToolCallParser.ParsedAction parsed,
                          int pixelX, int pixelY,
                          String result, String noMatchReason, String matchedClass,
-                         CoordinateMapper.Nearest nearest, String activity,
+                         CoordinateMapper.Nearest nearest,
                          SglangClient.ChatResponse response, long elapsedMs) {
         totalTimeMs   += elapsedMs;
         totalTokensIn += response.getPromptTokens();
@@ -307,37 +320,21 @@ public final class LlmTelemetry {
             }
         }
 
-        StringBuilder tel = new StringBuilder();
-        tel.append("[APE-LLM-TEL]")
-                .append(" step=").append(step)
-                .append(" variant=").append(promptVariant)
-                .append(" call=").append(totalCalls)
-                .append(" mode=").append(mode)
-                .append(" action=").append(parsed.getActionType())
-                .append(" qwen=(").append(parsed.getX()).append(",").append(parsed.getY()).append(")")
-                .append(" pixel=(").append(pixelX).append(",").append(pixelY).append(")")
-                .append(" result=").append(result);
-        if (noMatchReason != null) {
-            tel.append(" reason=").append(noMatchReason);
-        }
-        // Repair-form overlay (INV-RTR-13): additive, emitted once, only when the model's tool
-        // call needed a pre-parse repair. Never suppresses an error line, never touches cause=parse.
+        // Repair-form overlay (INV-RTR-13): additive, recorded once, only when the model's tool
+        // call needed a pre-parse repair. Never suppresses an error sub-event, never touches
+        // cause=parse. Orthogonal to result, so it is carried as its own field rather than folded
+        // into the outcome.
+        String repair = null;
         if (!"none".equals(parsed.getRepairForm())) {
-            tel.append(" repair=").append(parsed.getRepairForm());
+            repair = parsed.getRepairForm();
             repairedCount++;
         }
-        tel.append(" matched_class=").append(matchedClass)
-                .append(" nearest_class=").append(nearest.className)
-                .append(" nearest_dist=").append(String.format("%.1f", nearest.distance))
-                .append(" widgets=").append(nearest.widgetCount)
-                .append(" activity=").append(activity)
-                .append(" tokens_in=").append(response.getPromptTokens())
-                .append(" tokens_out=").append(response.getCompletionTokens())
-                .append(" time_ms=").append(elapsedMs);
-        if (parsed.getText() != null && !parsed.getText().isEmpty()) {
-            tel.append(" text=\"").append(parsed.getText()).append("\"");
-        }
-        Logger.println(tel.toString());
+        String text = parsed.getText() != null && !parsed.getText().isEmpty()
+                ? parsed.getText() : null;
+        sink.llmCall(totalCalls, mode, parsed.getActionType(), parsed.getX(), parsed.getY(),
+                pixelX, pixelY, result, noMatchReason, repair, matchedClass, nearest.className,
+                nearest.distance, nearest.widgetCount, response.getPromptTokens(),
+                response.getCompletionTokens(), elapsedMs, text);
     }
 
     // -------------------------------------------------------------------------

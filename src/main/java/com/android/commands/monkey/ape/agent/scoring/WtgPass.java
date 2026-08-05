@@ -59,6 +59,7 @@ public final class WtgPass implements ScoringPass {
             if (boost > 0) {
                 action.setPriority(action.getPriority() + boost);
                 action.setWtgBoost(boost);
+                action.markWtgSource(ModelAction.WTG_SOURCE_WTG);
                 wtgBoostedCount++;
                 if (boost > wtgMaxBoost) wtgMaxBoost = boost;
             }

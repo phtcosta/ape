@@ -8,7 +8,6 @@ import java.util.Map;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.utils.Logger;
 
 /**
  * rv-scoring-pipeline (INV-ARCH-03/04/05). The single assembly point and runner for the RV scoring
@@ -16,8 +15,9 @@ import com.android.commands.monkey.ape.utils.Logger;
  *
  * <pre>MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion</pre>
  *
- * keeps only the enabled ones, and logs the assembly once as {@code [APE-ARCH] passes=[...]};
- * nothing else builds a pipeline. Seven are constructed, and a default plan keeps six of them: the
+ * and keeps only the enabled ones; nothing else builds a pipeline. The assembly is recorded once by
+ * the caller, which is where the decision stages' roster is also in scope and the {@code PIPELINE}
+ * record wants both. Seven are constructed, and a default plan keeps six of them: the
  * MOP-frontier weight is zero unless a plan states otherwise, which is a gate being shut and not a
  * pass being missing — {@link #candidates} is what says so in the trace.
  *
@@ -30,9 +30,9 @@ public final class ScoringPipeline {
     private final Map<String, Boolean> candidates;
 
     /**
-     * Keeps the enabled passes, in the given order, records the census of every candidate, and logs
-     * the assembly once. Package-private: the only public entry is {@link #fromParams}
-     * (INV-ARCH-04). Tests in this package construct a pipeline directly from stub passes.
+     * Keeps the enabled passes, in the given order, and records the census of every candidate.
+     * Package-private: the only public entry is {@link #fromParams} (INV-ARCH-04). Tests in this
+     * package construct a pipeline directly from stub passes.
      *
      * <p>The census is taken here because here is the last moment the disabled passes exist: the
      * pipeline drops them and keeps no handle on them, and holding them in a field just to be able
@@ -50,7 +50,6 @@ public final class ScoringPipeline {
         }
         this.passes = enabled;
         this.candidates = Collections.unmodifiableMap(census);
-        Logger.iformat("[APE-ARCH] passes=[%s]", String.join(", ", passNames()));
     }
 
     /**
@@ -103,9 +102,9 @@ public final class ScoringPipeline {
      * {@code PIPELINE.candidates} member of the run's trace.
      *
      * <p>It is a <b>sibling</b> of {@link #passNames()}, never a widening of it (INV-ARCH-04): a
-     * consumer reading {@code passes} still sees exactly the constructed passes, and the
-     * {@code [APE-ARCH]} line is unchanged. What it adds is that the pass list becomes readable as
-     * a data-dependent outcome rather than a configuration echo. Across the decisive campaign's
+     * consumer reading {@code passes} still sees exactly the constructed passes. What it adds is
+     * that the pass list becomes readable as a data-dependent outcome rather than a configuration
+     * echo. Across the decisive campaign's
      * 360 runs that line took three values, split the same way in every arm, because the whole
      * frontier family is never constructed in 25 of the 40 applications — and the only evidence of
      * that in the trace was three names missing from a list every analyst read as configuration.
@@ -122,7 +121,7 @@ public final class ScoringPipeline {
         return candidates;
     }
 
-    /** The enabled passes' names, in pipeline order — the content of the {@code [APE-ARCH]} line. */
+    /** The enabled passes' names, in pipeline order — the {@code PIPELINE.passes} member. */
     public List<String> passNames() {
         List<String> names = new ArrayList<>(passes.size());
         for (ScoringPass p : passes) {

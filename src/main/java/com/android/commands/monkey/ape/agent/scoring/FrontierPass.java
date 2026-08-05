@@ -74,6 +74,7 @@ public final class FrontierPass implements ScoringPass {
             if (fBoost > 0) {
                 action.setPriority(action.getPriority() + fBoost);
                 action.setWtgBoost(action.getWtgBoost() + fBoost);
+                action.markWtgSource(ModelAction.WTG_SOURCE_FRONTIER);
                 frontierBoostedCount++;
                 if (fBoost > frontierMaxBoost) frontierMaxBoost = fBoost;
             }

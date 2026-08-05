@@ -4,6 +4,7 @@ import java.util.List;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -67,6 +68,11 @@ public final class MopWidgetPass implements ScoringPass {
                 "[APE-RV] MOP boost: state=%s#%s, boosted=%d/%d, maxBoost=%d, containment=%d",
                 activity, state.getStateKey(), boostedCount, totalTarget, maxBoost,
                 containmentBoostedCount);
+        // The exposure pair goes onto the step's record from here, where it is computed, rather
+        // than being threaded back out to the decision site: it is the denominator that turns "the
+        // MOP scorer fired on 0.4 % of decisions" into a statement about opportunity rather than
+        // about luck, and it is per-step — a state can realise more than one pair within a run.
+        RunContext.current().sink().mopExposure(boostedCount, totalTarget);
     }
 
     /**

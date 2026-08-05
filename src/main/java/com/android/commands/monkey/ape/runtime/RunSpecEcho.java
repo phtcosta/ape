@@ -72,9 +72,10 @@ public final class RunSpecEcho {
         record.put("type", RECORD_TYPE);
         record.put("v", FORMAT_VERSION);
         record.put("run_id", context.runId());
-        // Device epoch milliseconds at emission: the base that stage 4's relative step offsets
-        // resolve against, so a trace's timeline needs nothing outside the trace.
-        record.put("t0", System.currentTimeMillis());
+        // The run's time origin, taken from the context rather than read again here: the step
+        // records' `t` is relative to that same value, so publishing a second reading of the clock
+        // would put the trace's own timeline a few milliseconds off its declared base.
+        record.put("t0", context.t0());
         record.put("seed", spec.seed());
         record.put("agent", spec.agentType());
         record.put("preset", spec.presetName());

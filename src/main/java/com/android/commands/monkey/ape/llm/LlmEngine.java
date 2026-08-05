@@ -80,8 +80,7 @@ public class LlmEngine {
      * @param mopData MOP reachability data for the prompt; may be null
      * @param recentActions the action-history ring the prompt shows; may be null or empty
      * @param mode which hook asked — {@code new-state}, {@code stagnation} or {@code random} — as
-     *        the decision line reports it
-     * @param step the agent step this attempt belongs to, the join key of every line it emits
+     *        the decision sub-event reports it
      * @return the selected action, or null when nothing was selected
      */
     public ModelAction selectAction(GUITree tree,
@@ -89,8 +88,7 @@ public class LlmEngine {
                                     List<ModelAction> actions,
                                     MopData mopData,
                                     List<ApePromptBuilder.ActionHistoryEntry> recentActions,
-                                    String mode,
-                                    int step) {
+                                    String mode) {
         telemetry.countAttempt();
         long startMs = System.currentTimeMillis();
 
@@ -110,7 +108,7 @@ public class LlmEngine {
             pngBytes = screenshot.capture(deviceWidth, deviceHeight);
             if (pngBytes == null) {
                 client.recordFailure();
-                telemetry.screenshotFailed(step, activityOf(state), screenshot.getLastFailureStage());
+                telemetry.screenshotFailed(activityOf(state), screenshot.getLastFailureStage());
                 return null;
             }
 
@@ -118,7 +116,7 @@ public class LlmEngine {
             // server was never asked, so nothing about the model's health was learned.
             base64 = screenshot.encode(pngBytes);
             if (base64 == null) {
-                telemetry.imageFailed(step);
+                telemetry.imageFailed();
                 return null;
             }
 
@@ -135,7 +133,7 @@ public class LlmEngine {
                 client.recordFailure();
                 // The only site that may read the client's error seam: chat() reset it at entry, so
                 // its value belongs to exactly this call and any later read is stale (INV-LLM-08).
-                telemetry.transportFailed(step, client.getLastErrorCause());
+                telemetry.transportFailed(client.getLastErrorCause());
                 return null;
             }
 
@@ -148,7 +146,7 @@ public class LlmEngine {
             ToolCallParser.ParsedAction parsed = parser.parse(response);
             if (parsed == null) {
                 client.recordFailure();
-                telemetry.parseFailed(step);
+                telemetry.parseFailed();
                 return null;
             }
 
@@ -175,15 +173,15 @@ public class LlmEngine {
             if ("matched".equals(verdict.result)) {
                 applyTypedText(match, parsed);
             }
-            telemetry.decision(step, mode, parsed, pixels[0], pixels[1],
+            telemetry.decision(mode, parsed, pixels[0], pixels[1],
                     verdict.result, verdict.noMatchReason, verdict.matchedClass,
-                    nearest, activityOf(state), response, elapsedMs);
+                    nearest, response, elapsedMs);
 
             // Step 10
             return match;
 
         } catch (Exception e) {
-            telemetry.internalError(step, e.getMessage());
+            telemetry.internalError(e.getMessage());
             return null;
         } finally {
             // Memory cleanup — these objects can be large

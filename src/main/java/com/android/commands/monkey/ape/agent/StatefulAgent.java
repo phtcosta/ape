@@ -52,8 +52,10 @@ import com.android.commands.monkey.ape.naming.Naming;
 import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.pipeline.StepContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
@@ -93,13 +95,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     protected ModelAction currentAction;
     protected GUITreeAction currentGUITreeAction;
 
-    // Decision join buffer: the selection step and action of the last model-action selection. An
-    // action selected at step N produces its transition only during step N+1's updateGraph(), by
-    // which point getTimestamp() reads N+1 — so the selection step must be buffered to key the
-    // outcome to the [APE-STEP] it belongs to. Two consumers read it at that point: the
-    // [APE-OUTCOME] line and the dead-pair ban's outcome feedback. lastDecisionAction == null means
-    // "no decision buffered".
-    private int lastDecisionStep = -1;
+    // Decision buffer: the action of the last model-action selection. An action selected at step N
+    // produces its transition only during step N+1's updateGraph(), so the decision must be held
+    // across the boundary for its outcome to be attributable to it. Two consumers read it at that
+    // point: the step record's closure and the dead-pair ban's outcome feedback. The step itself is
+    // no longer buffered with it — the record carries its own step number and closes on the object
+    // identity below, so a second copy of the number would only be a chance to disagree.
+    // lastDecisionAction == null means "no decision buffered".
     private ModelAction lastDecisionAction = null;
 
     protected State newState;
@@ -145,14 +147,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      */
     protected final RunSpec.ExplorationParams exploration;
 
-    /**
-     * Whether the per-step telemetry lines are emitted. Resolved to a primitive here rather than
-     * read through {@link #exploration} because it belongs to {@code TelemetryParams}, which does
-     * not exist on a plan without the step-telemetry feature — and an absent feature means the
-     * lines are off, which is the same thing this false says.
-     */
-    private final boolean stepTelemetryEnabled;
-
     // LLM integration fields
     private final SystemBroadcastCatalog _broadcastCatalog;
     protected boolean _isNewState;
@@ -178,8 +172,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         ComponentName mainApp = ape.getMainApp();
         RunSpec spec = RunContext.current().spec();
         this.exploration = spec.exploration();
-        this.stepTelemetryEnabled = spec.has(Feature.STEP_TELEMETRY)
-                && spec.telemetry().bool("ape.stepTelemetryEnabled");
         // The MOP substrate's path. A plan carries MopParams exactly when it carries the MOP
         // feature, and that feature is derived from ape.mopDataPath being set — so a null path here
         // and an absent feature are the same statement, and requireMopArm below reads the null as
@@ -198,9 +190,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
         // and assemble the pipeline once, now that _mopData/_coverageTracker/graph/timestamp are set.
-        // fromParams emits the [APE-ARCH] passes=[...] startup line. Pass isEnabled() reads only
-        // its injected weight and getMopData() here (run-fixed) — never menuPickEligible — so no
-        // subclass field is touched before the subclass constructor runs.
+        // Pass isEnabled() reads only its injected weight and getMopData() here (run-fixed) — never
+        // menuPickEligible — so no subclass field is touched before the subclass constructor runs.
         this.scoringContext = new ScoringContext() {
             @Override public MopData getMopData() { return StatefulAgent.this.getMopData(); }
             @Override public UICoverageTracker getCoverageTracker() { return StatefulAgent.this.getCoverageTracker(); }
@@ -210,6 +201,22 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         };
         this.scoringPipeline = ScoringPipeline.fromParams(
                 ScoringParams.fromSpec(spec), this.scoringContext);
+        // Assembly provenance, recorded here because this is the one place both rosters are known:
+        // the decision stages the plan assembles (a pure function of the plan — INV-DP-03 leaves
+        // nothing to enumerate at runtime) and the scoring passes with the census of every
+        // candidate. Without the census, "the arm turned the frontier family off" and "this
+        // application's data could not support it" are the same three missing names.
+        RunContext.current().sink().pipeline(stageNames(spec), scoringPipeline.passNames(),
+                scoringPipeline.candidates());
+    }
+
+    /** The names of the decision stages this plan assembles, in the fixed candidate order. */
+    private static List<String> stageNames(RunSpec spec) {
+        List<String> names = new ArrayList<>();
+        for (DecisionPipeline.Candidate candidate : DecisionPipeline.assembledCandidates(spec)) {
+            names.add(candidate.stageName());
+        }
+        return names;
     }
 
     protected MopData getMopData() {
@@ -1082,29 +1089,26 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         }
         currentStateTransition = model.addTransition(currentState, currentAction, newState, currentGUITree,
                 currentGUITreeAction, newGUITree);
-        // [APE-OUTCOME] attribution (scoring-pipeline delta, INV-ARCH-08/09): emit here — after
+        // Outcome attribution (scoring-pipeline delta, INV-ARCH-08/09): resolve here — after
         // addTransition, never inside Model/Graph, so the refinement rebuild replay (which re-records
-        // via the Graph.addTransition(GUITreeTransition) overload) cannot emit. Guards: (1) non-null
+        // via the Graph.addTransition(GUITreeTransition) overload) cannot resolve. Guards: (1) non-null
         // transition — addTransition returns null on the run's first step, post-restart, and the
         // stale-ephemeral drop; (2) the buffered decision is reference-equal to currentAction — state
         // recovery / non-model interludes install a foreign action. The buffer is consumed (single-shot)
-        // so the BadStateException selection-retry and recovery re-record cannot duplicate the line.
+        // so the BadStateException selection-retry and recovery re-record cannot close a record twice.
         if (currentStateTransition != null
                 && lastDecisionAction != null && lastDecisionAction == currentAction) {
-            if (stepTelemetryEnabled) {
-                Logger.iformat(
-                        "[APE-OUTCOME] step=%d decision_source=%s new_state=%s target_state=%s"
-                        + " activity_changed=%s activity_has_mop=%d",
-                        lastDecisionStep, currentAction.getDecisionSource().name(), _isNewState,
-                        newState.getStateKey(), !currentStateTransition.isSameActivity(),
-                        activityHasMop(newState.getActivity()));
-            }
+            // Closing the record is what writes it. The target's activity travels with its state key
+            // because the target may be seen here for the first time — that is what a new state is —
+            // and the reader derives the outcome-side MOP flag through the dictionary entry this
+            // call creates (INV-SNK-08).
+            RunContext.current().sink().outcome(_isNewState, newState.getStateKey().toString(),
+                    newState.getActivity(), activityHasMop(newState.getActivity()) == 1,
+                    !currentStateTransition.isSameActivity());
             // B1 outcome feedback (llm-routing INV-RTR-15): the ban record cannot observe outcomes,
             // so the agent hands it the executed LLM decision and the new_state bit computed here.
             // Only LLM-originated decisions feed the record — SATA-selected actions are never
-            // banned. The feedback rides the same buffered-decision guards as the line above but not
-            // its telemetry gate: the ban is a selection mechanism, and it must behave identically
-            // in an arm that runs with [APE-STEP] emission turned off.
+            // banned. The feedback rides the same buffered-decision guards as the closure above.
             if (RunContext.current().hasLlm()
                     && currentAction.getDecisionSource() == ModelAction.DecisionSource.LLM) {
                 RunContext.current().coordinateMapper().recordLlmOutcome(currentAction, _isNewState);
@@ -1212,36 +1216,36 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * The {@code patched=0|1} field of an `[APE-STEP]` line, or "" for an action with no resolved
-     * target (INV-SEL-10). {@code MODEL_BACK}, {@code MODEL_MENU} and {@code MODEL_LLM_TAP} omit it,
-     * consistently with the line's other target-derived fields.
+     * The {@code dec.patched} bit, or {@link EventSink#ABSENT} for an action with no resolved target
+     * (INV-SEL-10). {@code MODEL_BACK}, {@code MODEL_MENU} and {@code MODEL_LLM_TAP} report absent,
+     * consistently with the record's other target-derived fields.
      *
      * <p>The bit says the node's clickability was written by {@code patchGUITree}. Two boundaries
      * come with it: it is the node's provenance and not the action's causality (a causal reading
      * holds for {@code MODEL_CLICK}, which is derived from {@code clickable || checkable}, and not
      * for a scroll or long-click on the same node), and where a {@code Name} resolves to several
-     * nodes it describes the one this line prints — exact for that node, a sample for its siblings.
+     * nodes it describes the one this record names — exact for that node, a sample for its siblings.
      */
-    static String patchedField(ModelAction action) {
-        if (!action.requireTarget()) return "";
+    static int patchedValue(ModelAction action) {
+        if (!action.requireTarget()) return EventSink.ABSENT;
         GUITreeNode node = action.getResolvedNode();
-        if (node == null) return "";
-        return " patched=" + (node.isPatchedClickable() ? 1 : 0);
+        if (node == null) return EventSink.ABSENT;
+        return node.isPatchedClickable() ? 1 : 0;
     }
 
     /**
-     * The {@code cf_action}/{@code cf_changed} fields of an `[APE-STEP]` line, or "" for a channel
-     * where MOP boosts do not participate in the pick (INV-SEL-08). Only the four MOP-sensitive
-     * channels carry them; the LLM, the launcher, the buffer and every other path carry none.
+     * The {@code dec.cf.changed} bit, or {@link EventSink#ABSENT} for a channel where MOP boosts do
+     * not participate in the pick (INV-SEL-08). Only the four MOP-sensitive channels carry it; the
+     * LLM, the launcher, the buffer and every other path carry none.
      *
-     * <p>A recomputation that failed reports {@code cf_changed=0} with the factual action: the
-     * factual pick was already made, so a failure costs the line its contrast and nothing else.
+     * <p>A recomputation that failed reports {@code 0}: the factual pick was already made, so a
+     * failure costs the record its contrast and nothing else.
      *
      * <p>Reading rule, part of the contract: this is the divergence point of one step, not a
-     * trajectory effect. Summing {@code cf_changed} over a run does not measure what the MOP
-     * guidance achieved — only an arm-level contrast does.
+     * trajectory effect. Summing it over a run does not measure what the MOP guidance achieved —
+     * only an arm-level contrast does.
      */
-    static String counterfactualFields(ModelAction action) {
+    static int counterfactualChanged(ModelAction action) {
         switch (action.getPickChannel()) {
         case SHORT_CIRCUIT_UNVISITED:
         case SHORT_CIRCUIT_0STEP:
@@ -1249,13 +1253,21 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         case ROULETTE_EARLY:
             break;
         default:
-            return "";
+            return EventSink.ABSENT;
         }
         ModelAction counterfactual = action.getCounterfactualPick();
-        if (counterfactual == null) {
-            return " cf_action=" + action + " cf_changed=0";
-        }
-        return " cf_action=" + counterfactual + " cf_changed=" + (counterfactual == action ? 0 : 1);
+        return counterfactual != null && counterfactual != action ? 1 : 0;
+    }
+
+    /**
+     * The counterfactual action, and only when it diverges from the factual pick.
+     *
+     * <p>Null everywhere else, which includes the unchanged case: the retired line repeated the
+     * factual action there, and the record already carries it as {@code dec.a} — a second copy on
+     * every MOP-sensitive step would be the largest string in the trace written twice for nothing.
+     */
+    static String counterfactualAction(ModelAction action) {
+        return counterfactualChanged(action) == 1 ? action.getCounterfactualPick().toString() : null;
     }
 
     /**
@@ -1548,6 +1560,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
 
     protected Action resolveNewAction() {
         Utils.assertNotNull(newState);
+        // The step's record opens before selection rather than after it, so the LLM attempts and the
+        // MOP exposure pair that happen on the way to a decision land inside the step that made
+        // them. The envelope is everything already known at this point: which step, how far into
+        // the run, and where the agent is standing (INV-SNK-03).
+        RunContext.current().sink().beginStep(getTimestamp(), RunContext.current().elapsedMs(),
+                newState.getActivity(), activityHasMop(newState.getActivity()) == 1,
+                newState.getStateKey().toString());
         adjustActionsByGUITree();
         Action action = selectNewActionNonnull();
         Utils.assertNotNull(action);
@@ -1555,51 +1574,33 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             newAction = (ModelAction) action;
             newGUITreeAction = newAction.getResolvedGUITreeAction();
             Utils.assertNotNull(newGUITreeAction);
-            // A-5: one decision-attribution line per finally-selected action (INV-SEL-04).
-            // clock is the device wall clock (epoch millis) at emission — enables offline
-            // temporal joins with externally collected artifacts without any APE<->logcat
-            // coupling; step is the exploration step counter, a separate quantity.
-            // rv-scoring-pipeline (stepTelemetryEnabled): the [APE-STEP] line is fork telemetry, not
-            // upstream. The decision_source provenance is still set during selection; only the emission
-            // is gated, so the pure arm produces zero [APE-STEP] lines (INV-ARCH-01).
-            if (stepTelemetryEnabled) {
-                Logger.iformat(
-                        "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
-                        + "priority=%d mop=%d mop_frontier=%d wtg=%d coverage=%d menu=%d form=%d"
-                        + " activity_has_mop=%d pick_channel=%s%s%s",
-                        getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
-                        newState.getStateKey(), newAction,
-                        newAction.getDecisionSource().name(), newAction.getPriority(),
-                        newAction.getMopBoost(), newAction.getMopFrontierBoost(),
-                        newAction.getWtgBoost(),
-                        newAction.getCoverageBoost(), newAction.getMenuBoost(),
-                        newAction.getFormBoost(),
-                        activityHasMop(newState.getActivity()),
-                        newAction.getPickChannel().getLabel(),
-                        patchedField(newAction),
-                        counterfactualFields(newAction));
-            }
-            // Buffer this model decision so its [APE-OUTCOME] can key back to this [APE-STEP], and
-            // so the dead-pair ban receives the decision's outcome. Buffering is not gated by
-            // stepTelemetryEnabled — it writes nothing to the trace, and the ban must work the same
-            // in an arm that emits no [APE-STEP] lines.
-            lastDecisionStep = getTimestamp();
+            // A-5: one decision per finally-selected action (INV-SEL-04), filling the `dec` section
+            // of the record this step opened. The boosts arrive as their raw values and the record
+            // decides what to omit; the two tri-states arrive as themselves, because for them an
+            // absent field is a different statement from a zero.
+            RunContext.current().sink().decision(newAction.toString(),
+                    newAction.getDecisionSource().name(),
+                    newAction.getPickChannel().getLabel(),
+                    newAction.getPriority(),
+                    newAction.getMopBoost(), newAction.getMopFrontierBoost(),
+                    newAction.getWtgBoost(), newAction.getCoverageBoost(),
+                    newAction.getMenuBoost(), newAction.getFormBoost(),
+                    newAction.getWtgSource(),
+                    patchedValue(newAction),
+                    counterfactualChanged(newAction), counterfactualAction(newAction));
+            // Buffer this model decision so the record closes on the outcome that belongs to it, and
+            // so the dead-pair ban receives the decision's outcome. The buffer is the closure guard
+            // as much as the join key: a step whose buffered action is replaced never resolves.
             lastDecisionAction = newAction;
             return newAction;
         } else {
             // Non-model actions (e.g. event-level) carry no per-mechanism boosts. The decision
             // source is derived from the action's type: the stagnation launcher
             // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
-            // action stays on the SATA chain that produced it (INV-SEL-04). clock as above.
-            if (stepTelemetryEnabled) {
-                Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s"
-                        + " decision_source=%s activity_has_mop=%d pick_channel=%s",
-                        getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
-                        newState.getStateKey(), action,
-                        nonModelDecisionSource(action.getType()).name(),
-                        activityHasMop(newState.getActivity()),
-                        nonModelPickChannel(action.getType()).getLabel());
-            }
+            // action stays on the SATA chain that produced it (INV-SEL-04).
+            RunContext.current().sink().decisionNonModel(action.toString(),
+                    nonModelDecisionSource(action.getType()).name(),
+                    nonModelPickChannel(action.getType()).getLabel());
             // Non-model actions produce no transition under their own identity; clear the buffer so
             // a stale model decision cannot be resurrected as currentAction by state recovery.
             lastDecisionAction = null;

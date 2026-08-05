@@ -26,6 +26,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.android.commands.monkey.ApeAPIAdapter;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.Utils;
 import com.android.internal.statusbar.IStatusBarService;
@@ -503,10 +504,45 @@ public class AndroidDevice {
     }
 
     /**
+     * What a launch attempt did: whether it reached the platform, and what the platform said.
+     *
+     * <p>The two are separate answers and the trace needs both. A dispatch that never reached the
+     * platform (no compatible signature, or the invocation threw) has no {@code START_*} code at
+     * all, while one that reached it and was refused has a code and no exception — and until this
+     * pair was recorded, a refused intent and an accepted one were the same trace evidence, which
+     * is what made the campaign's ~1,075 direct launches against 0 in the control unfalsifiable.
+     */
+    public static final class LaunchResult {
+
+        /** The reason the dispatch never reached the platform, as the record's {@code e} field. */
+        public static final String ERROR_NO_METHOD = "no_method";
+        public static final String ERROR_EXCEPTION = "exception";
+
+        /** The platform's {@code START_*} code, or {@link EventSink#ABSENT} when it never answered. */
+        public final int code;
+
+        /** The failure label, or null when the platform answered — whatever it answered. */
+        public final String error;
+
+        private LaunchResult(int code, String error) {
+            this.code = code;
+            this.error = error;
+        }
+
+        /** Whether the intent reached the platform, which is the caller's original boolean. */
+        public boolean dispatched() {
+            return error == null;
+        }
+    }
+
+    /**
      * Start an activity via IActivityManager (gh11: component triggering).
      * Uses reflection to handle different API signatures across Android versions.
+     *
+     * @return what the attempt did — the platform's own result code when it answered, and the
+     *         reason it did not when it did not
      */
-    public static boolean startActivity(Intent intent) {
+    public static LaunchResult startActivity(Intent intent) {
         try {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             java.lang.reflect.Method method = null;
@@ -518,15 +554,21 @@ public class AndroidDevice {
                     String.class, android.os.IBinder.class, String.class,
                     int.class, int.class, android.app.ProfilerInfo.class, android.os.Bundle.class);
             if (method != null) {
-                method.invoke(iActivityManager, null, null, intent, null, null, null, 0, 0, null, null);
-                return true;
+                // The platform returns a START_* code saying whether it accepted the intent. It was
+                // discarded here for as long as this path existed, which is why the launch's
+                // acceptance was never in the trace.
+                Object code = method.invoke(iActivityManager, null, null, intent, null, null, null,
+                        0, 0, null, null);
+                return new LaunchResult(
+                        code instanceof Integer ? ((Integer) code).intValue() : EventSink.ABSENT,
+                        null);
             }
 
             Logger.wformat("Start Activity: no compatible startActivity method found");
-            return false;
+            return new LaunchResult(EventSink.ABSENT, LaunchResult.ERROR_NO_METHOD);
         } catch (Exception e) {
             Logger.wformat("Start Activity error: %s", e.getMessage());
-            return false;
+            return new LaunchResult(EventSink.ABSENT, LaunchResult.ERROR_EXCEPTION);
         }
     }
 

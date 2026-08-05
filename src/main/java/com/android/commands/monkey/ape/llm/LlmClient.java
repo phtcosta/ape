@@ -1,6 +1,7 @@
 package com.android.commands.monkey.ape.llm;
 
 import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.utils.Logger;
 
 import org.json.JSONArray;
@@ -21,14 +22,14 @@ import java.util.List;
  *
  * <p><b>Every parameter arrives from the plan.</b> Sampling values, the timeout and the wire
  * schemas are fixed at construction from {@link RunSpec.LlmParams}; nothing here reads static
- * configuration during the run. The {@code [APE-LLM-CONFIG]} manifest is emitted from the same
- * values, in the constructor, so a trace describes the request bodies it is about to carry rather
- * than the file they were read from.
+ * configuration during the run. What the run was asked for is stated once by the {@code RUN_START}
+ * plan echo, which is where a reader finds the values these fields hold.
  */
 public final class LlmClient {
 
     private final SglangClient client;
     private final LlmCircuitBreaker breaker;
+    private final EventSink sink;
 
     // The two wire schemas, built once (INV-LLM-11). Which one a request carries is decided per
     // call by the same hasInputField predicate that decides whether the system message lists
@@ -36,57 +37,25 @@ public final class LlmClient {
     private final JSONArray toolsWithTypeText;
     private final JSONArray toolsWithoutTypeText;
 
-    // Breaker-OPEN latch: emit the breaker-OPEN line once per open episode; reset when the breaker
-    // next allows an attempt (leaves OPEN).
+    // Breaker-OPEN latch: record the open episode once; reset when the breaker next allows an
+    // attempt (leaves OPEN).
     private boolean breakerOpenLatched = false;
 
     /**
-     * Wire the transport from the plan and announce the effective configuration.
+     * Wire the transport from the plan.
      *
-     * @param llm the plan's LLM parameters; every transport value and the manifest come from here
-     * @param stagnationThreshold the exploration restart threshold the manifest reports. It is not
-     *        a transport parameter and does not reach the request body — it is carried on the
-     *        manifest so a trace states the stagnation midpoint its LLM hook fires at, and it lives
-     *        in the exploration scope rather than the LLM one, which is why it arrives separately
+     * @param llm the plan's LLM parameters; every transport value comes from here
+     * @param sink where the breaker's open episodes are recorded
      */
-    public LlmClient(RunSpec.LlmParams llm, int stagnationThreshold) {
-        // Hoisted so the manifest and the request body share one max_tokens value: the manifest's
-        // whole purpose is to report what is sent, which a second read could not guarantee.
-        int maxTokens = llm.integer("ape.llmMaxTokens");
-        double temperature = llm.dbl("ape.llmTemperature");
-        double topP = llm.dbl("ape.llmTopP");
-        int topK = llm.integer("ape.llmTopK");
-        int timeoutMs = llm.integer("ape.llmTimeoutMs");
-        String model = llm.model();
+    public LlmClient(RunSpec.LlmParams llm, EventSink sink) {
+        this.client = new SglangClient(llm.url(), llm.model(), llm.dbl("ape.llmTemperature"),
+                llm.dbl("ape.llmTopP"), llm.integer("ape.llmTopK"),
+                llm.integer("ape.llmMaxTokens"), llm.integer("ape.llmTimeoutMs"));
         String promptVariant = llm.str("ape.llmPromptVariant");
-
-        this.client = new SglangClient(llm.url(), model, temperature, topP, topK, maxTokens,
-                timeoutMs);
         this.toolsWithTypeText = buildToolsSchema(true, promptVariant);
         this.toolsWithoutTypeText = buildToolsSchema(false, promptVariant);
         this.breaker = new LlmCircuitBreaker();
-
-        // Effective-config manifest (INV-RTR-10): one line per run recording the values actually in
-        // use. Makes each .trace self-describing from its first seconds, independent of how the run
-        // ends (the plan echo runs at startup and the Config dump at tearDown, and neither states
-        // the request body). The three trigger keys belong to features a plan may omit; an omitted
-        // trigger is a disabled trigger, so the manifest reports the value the run behaves as.
-        Logger.println("[APE-LLM-CONFIG]"
-                + " model=" + model
-                + " temperature=" + temperature
-                + " top_p=" + topP
-                + " top_k=" + topK
-                + " max_tokens=" + maxTokens
-                + " timeout_ms=" + timeoutMs
-                + " prompt_variant=" + promptVariant
-                + " llm_percentage=" + (llm.has("ape.llmPercentage")
-                        ? llm.dbl("ape.llmPercentage") : 0.0)
-                + " on_new_state=" + (llm.has("ape.llmOnNewState")
-                        && llm.bool("ape.llmOnNewState"))
-                + " on_stagnation=" + (llm.has("ape.llmOnStagnation")
-                        && llm.bool("ape.llmOnStagnation"))
-                + " stagnation_threshold=" + stagnationThreshold
-                + " url=" + llm.url());
+        this.sink = sink;
     }
 
     // -------------------------------------------------------------------------
@@ -125,10 +94,11 @@ public final class LlmClient {
 
     /**
      * Consult the breaker exactly once — preserving {@code shouldAttempt()}'s OPEN&rarr;HALF_OPEN
-     * probe transition — and log the breaker-OPEN line at the FIRST breaker-caused decline of each
-     * open episode. The emission check uses the side-effect-free {@code isOpen()} (never a second
-     * {@code shouldAttempt()}), and the latch resets when the breaker next allows an attempt
-     * (leaves OPEN), so each open episode logs once regardless of how many decisions it declines.
+     * probe transition — and record the breaker-OPEN sub-event at the FIRST breaker-caused decline
+     * of each open episode. The emission check uses the side-effect-free {@code isOpen()} (never a
+     * second {@code shouldAttempt()}), and the latch resets when the breaker next allows an attempt
+     * (leaves OPEN), so each open episode is recorded once regardless of how many decisions it
+     * declines.
      * Because callers reach this only after their earlier trigger conjuncts pass (short-circuit
      * {@code &&}), a decline here is unambiguously breaker-caused, not a mode or coin condition
      * returning false.
@@ -143,6 +113,7 @@ public final class LlmClient {
             breakerOpenLatched = true;
             Logger.println("[APE-RV] LLM circuit breaker OPEN, skipping (trips="
                     + breaker.getTripCount() + ")");
+            sink.llmBreakerOpen(breaker.getTripCount());
         }
         return allow;
     }
