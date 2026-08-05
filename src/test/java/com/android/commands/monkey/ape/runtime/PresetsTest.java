@@ -1,6 +1,7 @@
 package com.android.commands.monkey.ape.runtime;
 
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -15,23 +16,22 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
- * The four jar-resident presets, pinned against the harness arm dictionaries they were translated
- * from.
+ * The four jar-resident presets: what each one declares, and what each one resolves to.
  *
- * <p>The vectors were read at rvsec commit {@code 6dc8a0af} from
- * {@code modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py} (sha256
- * {@code 660f151709b12dc311e6ddaa221d4af968b2630d235149cd22f94bada7736612}) — from the code rather
- * than from the design document, because a preset vector asserted from prose is a guess with a
- * citation.
+ * <p>The jar is the sole authority on what a preset means. A variant in the experimental matrix is
+ * a preset name plus a dict of override deltas, so everything asserted here is asserted against the
+ * preset definitions themselves — never against a captured copy of what the harness writes. A test
+ * that pinned this class to generated properties would be pinning the jar to one deployment of one
+ * repository, and would freeze that deployment's shape the moment it changed.
  *
- * <p>The other half of the pin is the group of tests at the bottom of this class: each preset,
- * plus the deployment-specific keys it deliberately omits, resolves to the same digest as the
- * harness's own generated properties file for the corresponding arm. The vector assertions above
- * check that the jar says what we think it says; those check that what it says still matches what
- * the harness sends. A vector can be internally consistent and still have drifted.
+ * <p>The class has two halves and they check different things. The vectors above state what each
+ * preset declares, key by key, so a silent edit to a preset fails loudly. The contract tests below
+ * state what a preset <em>does</em>: it resolves to a feature set, an explicit key beside it wins
+ * over its base vector, and the merged result passes exactly the validation an explicit plan
+ * passes. A vector can be internally consistent and still resolve to the wrong plan.
  *
- * <p>Until stage 5 makes {@code preset + overrides} the harness contract, these vectors are the
- * only thing keeping the jar's idea of an arm and the harness's idea of an arm in agreement.
+ * <p>Which variants exist, and which preset each one names, is not asserted here and is not this
+ * repository's to assert — that roster lives in rv-android's {@code aperv} capability.
  */
 public class PresetsTest {
 
@@ -170,11 +170,36 @@ public class PresetsTest {
                 Presets.names());
     }
 
-    // --- The other half of the pin: preset ≡ what the harness actually pushes (task 6.3). --------
+    // --- The contract: a preset resolves, overrides win, and the result validates like any plan. --
+
+    /** Path the harness pushes the compacted static-analysis JSON to; activates {@code MOP}. */
+    private static final String MOP_DATA_PATH = "/data/local/tmp/static_analysis.json";
+
+    /** The SGLang endpoint a deployment supplies; activates {@code LLM}. */
+    private static final String LLM_URL = "http://10.0.2.2:30000/v1";
 
     /**
-     * Resolves a plan stated as a preset name plus the deployment-specific keys the preset
-     * deliberately omits — the form stage 5 will make the harness contract.
+     * The exploration features the baseline preset turns on by stating them, plus the two it
+     * inherits from positive jar defaults ({@code ape.coverageBoostWeight} at 100 and
+     * {@code ape.doFuzzing} at true), which no preset states and none can turn off.
+     */
+    private static final Set<Feature> BASELINE = EnumSet.of(
+            Feature.MODEL_MENU,
+            Feature.FORM_COMPLETION,
+            Feature.LEAST_VISITED_TIEBREAK,
+            Feature.TREE_ENHANCEMENTS,
+            Feature.ACTIVITY_BUDGET,
+            Feature.DYNAMIC_EPSILON,
+            Feature.HEURISTIC_INPUT,
+            Feature.TYPED_FUZZ,
+            Feature.FOREIGN_ACTIVITY_GUARD,
+            Feature.TREE_PACKAGE_GUARD,
+            Feature.COVERAGE_BOOST,
+            Feature.FUZZING);
+
+    /**
+     * Resolves a plan stated the way the harness states one: a preset name plus the
+     * deployment-specific keys the preset deliberately omits, and nothing else.
      */
     private static RunSpec fromPreset(String preset, String... deploymentKeys) {
         Map<String, String> entries = new LinkedHashMap<>();
@@ -185,72 +210,143 @@ public class PresetsTest {
         return RunSpec.resolve(entries, RunSpec.CliValues.of("sata", 42L, null));
     }
 
-    /**
-     * The equivalence this class exists to protect: naming a preset and naming every key by hand
-     * must produce <em>the same plan</em>, not merely a similar one.
-     *
-     * <p>The digest is the assertion because it is the strongest available — it covers the resolved
-     * values and the feature set together, so a preset that drifted by one flag fails here even
-     * though both plans still resolve. The two forms are comparable at all only because the plan
-     * digest excludes {@code presetName} by design (INV-RUN-04's invariance clause): they are
-     * genuinely the same run stated two ways, and the digest says so.
-     *
-     * <p>The deployment keys are added back explicitly, and that is the point rather than a
-     * workaround — a path and a URL belong to the machine, so the preset cannot carry them while
-     * the harness's file necessarily does. When one of these fails, suspect a missing deployment
-     * key before suspecting the vector.
-     */
     @Test
-    public void apervResolvesToTheSataArmTheHarnessPushes() {
-        RunSpec preset = fromPreset(Presets.APERV);
-        RunSpec pushed = CompatFixtures.resolve("sata.properties");
+    public void apervResolvesToTheBaselineExplorationPlan() {
+        RunSpec spec = fromPreset(Presets.APERV);
 
-        assertEquals(pushed.features(), preset.features());
-        assertEquals(pushed.digest(), preset.digest());
+        assertEquals(BASELINE, spec.features());
+        assertEquals(200L, spec.exploration().lng("ape.defaultGUIThrottle"));
+        // Neither root feature is reachable: the preset carries no substrate, by design.
+        assertFalse(spec.has(Feature.MOP));
+        assertFalse(spec.has(Feature.LLM));
     }
 
     @Test
-    public void mopResolvesToTheSataMopWidgetArmTheHarnessPushes() {
-        RunSpec preset = fromPreset(Presets.MOP,
-                "ape.mopDataPath", CompatFixtures.MOP_DATA_PATH);
-        RunSpec pushed = CompatFixtures.resolve("sata_mop_widget.properties");
+    public void mopAddsTheWeightActivatedSubstrate() {
+        RunSpec spec = fromPreset(Presets.MOP, "ape.mopDataPath", MOP_DATA_PATH);
 
-        assertEquals(pushed.features(), preset.features());
-        assertEquals(pushed.digest(), preset.digest());
+        Set<Feature> expected = EnumSet.copyOf(BASELINE);
+        expected.add(Feature.MOP);
+        // The two weight-activated members of the MOP family this preset turns on; the frontier and
+        // activity-trigger members are stated at zero/false and so stay out.
+        expected.add(Feature.WTG);
+        expected.add(Feature.MENU_GATEWAY);
+        assertEquals(expected, spec.features());
+
+        assertEquals(MOP_DATA_PATH, spec.mop().dataPath());
+        assertEquals(250, spec.mop().weightOpenMenu());
+        assertFalse(spec.has(Feature.FRONTIER));
+        assertFalse(spec.has(Feature.MOP_FRONTIER));
+        assertFalse(spec.has(Feature.ACTIVITY_TRIGGER));
+        assertFalse(spec.has(Feature.MOP_ACTIVITY_SOURCE));
     }
 
     @Test
-    public void llmResolvesToTheSataLlmArmTheHarnessPushes() {
-        RunSpec preset = fromPreset(Presets.LLM, "ape.llmUrl", CompatFixtures.LLM_URL);
-        RunSpec pushed = CompatFixtures.resolve("sata_llm.properties");
+    public void llmAddsTheRoutingGates() {
+        RunSpec spec = fromPreset(Presets.LLM, "ape.llmUrl", LLM_URL);
 
-        assertEquals(pushed.features(), preset.features());
-        assertEquals(pushed.digest(), preset.digest());
+        Set<Feature> expected = EnumSet.copyOf(BASELINE);
+        expected.add(Feature.LLM);
+        expected.add(Feature.LLM_NEW_STATE);
+        expected.add(Feature.LLM_STAGNATION);
+        // Inherited, not stated — see randomRoutingIsInheritedRatherThanStated.
+        expected.add(Feature.LLM_RANDOM);
+        assertEquals(expected, spec.features());
+
+        assertEquals(LLM_URL, spec.llm().url());
+        assertEquals("default", spec.llm().model());
+        assertFalse(spec.has(Feature.MOP));
     }
 
     @Test
-    public void llmMopResolvesToTheSataMopLlmArmTheHarnessPushes() {
-        RunSpec preset = fromPreset(Presets.LLM_MOP,
-                "ape.mopDataPath", CompatFixtures.MOP_DATA_PATH,
-                "ape.llmUrl", CompatFixtures.LLM_URL);
-        RunSpec pushed = CompatFixtures.resolve("sata_mop_llm.properties");
+    public void llmMopIsTheUnionOfBothSubstrates() {
+        RunSpec spec = fromPreset(Presets.LLM_MOP,
+                "ape.mopDataPath", MOP_DATA_PATH,
+                "ape.llmUrl", LLM_URL);
 
-        assertEquals(pushed.features(), preset.features());
-        assertEquals(pushed.digest(), preset.digest());
+        Set<Feature> expected = EnumSet.copyOf(BASELINE);
+        expected.add(Feature.MOP);
+        expected.add(Feature.WTG);
+        expected.add(Feature.MENU_GATEWAY);
+        expected.add(Feature.LLM);
+        expected.add(Feature.LLM_NEW_STATE);
+        expected.add(Feature.LLM_STAGNATION);
+        expected.add(Feature.LLM_RANDOM);
+        assertEquals(expected, spec.features());
+
+        assertEquals(MOP_DATA_PATH, spec.mop().dataPath());
+        assertEquals(LLM_URL, spec.llm().url());
     }
 
     @Test
-    public void thePresetFormIsStillDistinguishableFromTheExplicitOne() {
+    public void randomRoutingIsInheritedRatherThanStated() {
+        // Worth pinning because it is invisible from the preset vector: no preset states
+        // ape.llmPercentage, so both LLM presets inherit the jar's default of 0.02 and route to the
+        // LLM at a 2% random rate nothing in the plan text mentions. Nothing here is wrong; the
+        // point is that the resolved plan says so out loud, where Config left it implicit.
+        for (String name : new String[] {Presets.LLM, Presets.LLM_MOP}) {
+            assertFalse(name + " is expected NOT to state the rate",
+                    Presets.resolve(name).containsKey("ape.llmPercentage"));
+        }
+        assertTrue(fromPreset(Presets.LLM, "ape.llmUrl", LLM_URL).has(Feature.LLM_RANDOM));
+        // And it is genuinely conditional on the LLM being present, not unconditional.
+        assertFalse(fromPreset(Presets.APERV).has(Feature.LLM_RANDOM));
+    }
+
+    @Test
+    public void theNoSubstrateSentinelIsInertOnThePresetsWithoutAnLlm() {
+        // ape.llmPercentageNoSubstrate=-1 rides on every preset, including the two with no LLM at
+        // all. It parameterizes LLM_RANDOM, which those plans do not carry, so it survives only
+        // because -1 is that key's declared neutral value — "you may state OFF for an absent
+        // mechanism, not ON". The presets write -1 while the neutral is declared -1.0, so this also
+        // pins that the comparison is by declared type and not by string.
+        RunSpec aperv = fromPreset(Presets.APERV);
+        RunSpec mop = fromPreset(Presets.MOP, "ape.mopDataPath", MOP_DATA_PATH);
+        for (RunSpec spec : new RunSpec[] {aperv, mop}) {
+            assertTrue("the sentinel must resolve as inert",
+                    spec.inertKeys().contains("ape.llmPercentageNoSubstrate"));
+            assertFalse(spec.has(Feature.LLM_RANDOM));
+        }
+    }
+
+    @Test
+    public void anExplicitKeyOverridesThePresetBaseVector() {
+        // The half of the contract the preset vectors alone cannot show: a variant is a preset name
+        // plus deltas, so a key stated beside the preset must win over the preset's own value. If
+        // this ever reversed, every override in the experimental matrix would silently do nothing.
+        RunSpec spec = fromPreset(Presets.MOP,
+                "ape.mopDataPath", MOP_DATA_PATH,
+                "ape.mopWeightDirect", "900");
+
+        assertEquals("500", Presets.resolve(Presets.MOP).get("ape.mopWeightDirect"));
+        assertEquals(900, spec.mop().weightDirect());
+    }
+
+    @Test
+    public void aPresetPlusOverridesResolvesLikeTheSamePlanStatedKeyByKey() {
+        // The equivalence that makes `preset + overrides` a restatement rather than a second
+        // resolver: naming a preset and naming every one of its keys by hand must produce the same
+        // plan, not merely a similar one. The digest is the assertion because it is the strongest
+        // available — it covers the resolved values and the feature set together, so a preset that
+        // drifted by one flag fails here even though both forms still resolve.
+        //
+        // The explicit side is built from the preset definition itself, not from a captured copy of
+        // any harness output: what is under test is the jar's own two statements of one plan.
+        Map<String, String> explicitEntries = new LinkedHashMap<>(Presets.resolve(Presets.MOP));
+        explicitEntries.put("ape.mopDataPath", MOP_DATA_PATH);
+        RunSpec explicit =
+                RunSpec.resolve(explicitEntries, RunSpec.CliValues.of("sata", 42L, null));
+        RunSpec preset = fromPreset(Presets.MOP, "ape.mopDataPath", MOP_DATA_PATH);
+
+        assertEquals(explicit.features(), preset.features());
+        assertEquals(explicit.digest(), preset.digest());
+
         // The digests match, but the two plans are not indistinguishable: presetName records which
         // form was used and RUN_START echoes it. That is exactly why presetName is excluded from
-        // the digest — a run stated as `ape.preset=mop` and the same run stated key by key are the
-        // same experiment and must compare equal, while still being told apart in the trace.
-        RunSpec preset = fromPreset(Presets.MOP, "ape.mopDataPath", CompatFixtures.MOP_DATA_PATH);
-        RunSpec explicit = CompatFixtures.resolve("sata_mop_widget.properties");
-
+        // the digest — the two are the same experiment and must compare equal, while still being
+        // told apart in the trace.
         assertEquals(Presets.MOP, preset.presetName());
         assertEquals(RunSpec.PRESET_EXPLICIT, explicit.presetName());
-        assertEquals(explicit.digest(), preset.digest());
     }
 
     @Test

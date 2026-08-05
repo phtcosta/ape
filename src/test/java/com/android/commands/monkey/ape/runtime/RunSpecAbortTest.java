@@ -92,6 +92,97 @@ public class RunSpecAbortTest {
         }
     }
 
+    /**
+     * A complete arm whose every flag is stated at its off value — the shape a purity control has,
+     * and the shape a harness that still wrote {@code ape.apePureMode} would push it in.
+     */
+    private static Map<String, String> pureShapedArm() {
+        return entries(
+                "ape.defaultGUIThrottle", "200",
+                "ape.backMenuPickCap", "0",
+                "ape.foreignActivityGuard", "false",
+                "ape.treePackageGuard", "false",
+                "ape.dynamicEpsilon", "false",
+                "ape.heuristicInput", "false",
+                "ape.fuzzInputTyped", "false",
+                "ape.formCompletionEnabled", "false",
+                "ape.modelMenuEnabled", "false",
+                "ape.leastVisitedPriorityTiebreak", "false",
+                "ape.treeEnhancementsEnabled", "false",
+                "ape.activityBudgetEnabled", "false",
+                "ape.mopActivitySourceComponents", "false",
+                "ape.mopFrontierWeight", "0",
+                "ape.frontierBoostWeight", "0",
+                "ape.activityTriggerEnabled", "false",
+                "ape.llmPercentageNoSubstrate", "-1");
+    }
+
+    /** A complete MOP arm: substrate, the four live weights, and the baseline flags stated on. */
+    private static Map<String, String> mopShapedArm() {
+        return entries(
+                "ape.mopDataPath", MOP_PATH,
+                "ape.defaultGUIThrottle", "200",
+                "ape.mopWeightDirect", "500",
+                "ape.mopWeightTransitive", "300",
+                "ape.mopWeightOpenMenu", "250",
+                "ape.mopWeightWtg", "200",
+                "ape.backMenuPickCap", "3",
+                "ape.foreignActivityGuard", "true",
+                "ape.treePackageGuard", "true",
+                "ape.dynamicEpsilon", "true",
+                "ape.heuristicInput", "true",
+                "ape.fuzzInputTyped", "true",
+                "ape.formCompletionEnabled", "true",
+                "ape.modelMenuEnabled", "true",
+                "ape.leastVisitedPriorityTiebreak", "true",
+                "ape.treeEnhancementsEnabled", "true",
+                "ape.activityBudgetEnabled", "true",
+                "ape.mopActivitySourceComponents", "false",
+                "ape.mopFrontierWeight", "0",
+                "ape.frontierBoostWeight", "0",
+                "ape.activityTriggerEnabled", "false",
+                "ape.llmPercentageNoSubstrate", "-1");
+    }
+
+    @Test
+    public void aRetiredKeyAbortsEvenInsideAnOtherwiseResolvableArm() {
+        // What the two hand-written negative fixtures carried, that the cases above do not, is
+        // surroundings. Every other abort test in this class states the offending key alone, which
+        // leaves open the reading that classification wins only because there is nothing else to
+        // look at. These state a complete arm and hide the retired key among twenty valid ones.
+        //
+        // The first is the deployment ordering failure itself: what a harness that still writes
+        // ape.apePureMode pushes, meeting a jar that has retired it. The abort is what makes the
+        // ordering a precondition rather than a preference.
+        Map<String, String> pure = pureShapedArm();
+        pure.put("ape.apePureMode", "true");
+        RunSpecException purity = abort(pure);
+        assertEquals(RunSpecException.Reason.RETIRED_KEY, purity.getReason());
+        assertEquals("ape.apePureMode", purity.getKey());
+
+        // The second is a MOP arm carrying the dead scoring weight, and it matters that this aborts
+        // rather than being ignored: an ignored weight reads as configured and fires zero times,
+        // which is the gh71 failure mode — found only in post-hoc analysis of a 2,028-task campaign.
+        Map<String, String> mop = mopShapedArm();
+        mop.put("ape.mopWeightActivity", "250");
+        RunSpecException weight = abort(mop);
+        assertEquals(RunSpecException.Reason.RETIRED_KEY, weight.getReason());
+        assertEquals("ape.mopWeightActivity", weight.getKey());
+    }
+
+    @Test
+    public void theArmsAroundThoseRetiredKeysDoResolve() {
+        // The other half of the case above, and the reason it proves anything: without the retired
+        // key each arm resolves. A negative test whose surroundings were themselves unresolvable
+        // would pass for the wrong reason, and would keep passing if classification order broke.
+        RunSpec pure = RunSpec.resolve(pureShapedArm(), RunSpec.CliValues.of("sata", 42L, null));
+        assertEquals(200L, pure.exploration().lng("ape.defaultGUIThrottle"));
+
+        RunSpec mop = RunSpec.resolve(mopShapedArm(), RunSpec.CliValues.of("sata", 42L, null));
+        assertTrue("the substrate the weights hang off must be active", mop.has(Feature.MOP));
+        assertEquals(MOP_PATH, mop.mop().dataPath());
+    }
+
     @Test
     public void aFileBorneAgentTypeAborts() {
         // The /sdcard agent-swap hole: a stray properties file used to be able to change which
