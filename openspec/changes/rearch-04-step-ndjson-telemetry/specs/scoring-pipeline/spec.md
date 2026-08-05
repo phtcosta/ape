@@ -90,6 +90,82 @@ The former `stepTelemetryEnabled` flag is deleted by this change: step recording
 - **WHEN** `ape.properties` sets `ape.stepTelemetryEnabled=false` (a removed key)
 - **THEN** the run SHALL abort at plan validation with an unknown-key error (fail-fast, run-spec capability) — there is no configuration that suppresses step recording
 
+### Requirement: Scoring Pipeline Assembly from Config
+
+`ScoringPipeline.fromParams(ScoringParams, ScoringContext)` SHALL be the single point that maps the resolved plan's scoring configuration to the ordered list of enabled passes. It SHALL construct the **seven** passes in the fixed order `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `FrontierPass` → `MopFrontierPass` → `CoveragePass` → `FormCompletionPass` (the frontier family contiguous), retain only those whose `isEnabled()` is `true`, and emit exactly one `PIPELINE` sink record (event-sink capability) whose `passes` member lists the retained passes' `name()` values in pipeline order. No other code path SHALL assemble or reorder the pipeline. The former `fromConfig(Config, ScoringContext)` entry point — whose `Config` parameter was decorative (the sole caller passed `null` while the passes read `Config` statics directly) — SHALL be deleted, not shimmed (P3). The class documentation SHALL state the seven-pass roster; the stale "six passes" wording is corrected.
+
+The fixed order SHALL equal the order of the pre-refactor inline scoring blocks in `StatefulAgent.adjustActionsByGUITree()`, which is the order the `mop-guidance` (INV-MOP-05), `ui-coverage`, and `form-completion` specs already require (base → MOP-widget → menu-gateway → WTG → frontier → MOP-frontier → coverage → form). The injection change SHALL NOT alter pass order, boost arithmetic, provenance writes, or the content of the emitted pass list; the sole caller (`StatefulAgent`, at construction) SHALL pass the real `ScoringParams` derived from the `RunSpec` in place of the former `null`.
+
+**The same assembly SHALL also record the candidates it dropped.** Beside the retained list — whose content and format are unchanged — assembly SHALL record every candidate pass with whether it was constructed, carried by the stage-4 `PIPELINE` record's `candidates` member. The census SHALL be produced inside `fromParams`, where the full candidate list is still in scope: the pipeline discards the disabled passes at construction and has no handle on them afterwards, and retaining them in a field only to enumerate them would keep disabled objects alive for telemetry's sake.
+
+The record SHALL be emitted from `fromParams`, where the full candidate list is still in scope: the constructor discards the disabled candidates (`this.passes = enabled`), so a census assembled after construction would have nothing left to enumerate. This is the pass-side counterpart of the decision-pipeline's static stage list, and unlike that one it is data-bearing rather than plan-derivable: `WtgPass`, `FrontierPass` and `MopFrontierPass` each gate on `mopData.hasWtgData()`, which nothing in the plan reveals. The measurement that motivates it — across the decisive campaign's 360 runs the `[APE-ARCH] passes=` line takes exactly three values, split 45/75 in every arm, because **the whole frontier family is never constructed in 25 of the 40 applications**, and the only trace evidence of that today is the absence of three names from a list every analyst read as a configuration echo.
+
+No `reason` field SHALL be added to the entries, and no `disabledReason()` method to the `ScoringPass` interface. Each gate is a conjunction of `mopData != null`, `hasWtgData()` and a weight, and all three conjuncts are already recorded elsewhere in the same trace (`MOP_DATA.status`, `MOP_DATA.wtgEdges`, `RUN_START.params`), so the reason is a lookup rather than a field — and adding it would touch all seven implementations plus the test double for a value that is already there. It would also be unreliable: the three passes do not evaluate their conjuncts in the same order, so a "first failing conjunct" would report source-code order rather than cause, and two passes absent for the same reason would disagree about what it was.
+
+- **INV-ARCH-03**: The pipeline order SHALL equal the order of the pre-refactor inline scoring blocks and SHALL satisfy the pass-order contracts already asserted by `mop-guidance` (INV-MOP-05), `ui-coverage`, and `form-completion`. `MopWidgetPass` SHALL precede `WtgPass`, which SHALL precede `CoveragePass`, which SHALL precede `FormCompletionPass`; `MopFrontierPass` SHALL sit immediately after `FrontierPass`.
+- **INV-ARCH-04**: `ScoringPipeline.fromParams` SHALL be the sole assembly point. The `PIPELINE` record's `passes` member SHALL list exactly the enabled passes, in pipeline order, and nothing else SHALL construct a pipeline. The candidate census (`PIPELINE.candidates`) is a **sibling** record member, never a widening of this list: any consumer reading `passes` SHALL continue to see exactly the constructed passes.
+
+#### Scenario: only enabled passes are assembled and logged
+- **WHEN** `ScoringPipeline.fromParams(params, ctx)` runs with MopData absent (MOP passes off), `coverageBoostWeight=100`, `formCompletionEnabled=true`
+- **THEN** the pipeline SHALL contain `CoveragePass`, `FormCompletionPass` in that order and no MOP/WTG/Frontier pass
+- **AND** one `PIPELINE` record SHALL be emitted with `passes:["CoveragePass","FormCompletionPass"]`
+
+#### Scenario: full MOP arm assembles the ordered set
+- **WHEN** `fromParams` runs with MopData present, `mopWeightWtg=200`, `frontierBoostWeight=200`, `mopFrontierWeight=200`, `coverageBoostWeight=100`, `formCompletionEnabled=true`
+- **THEN** the pipeline order SHALL be `MopWidgetPass, MenuGatewayPass, WtgPass, FrontierPass, MopFrontierPass, CoveragePass, FormCompletionPass`
+
+#### Scenario: empty pipeline under an empty scoring plan
+- **WHEN** `fromParams` runs with a plan carrying no scoring feature (all gates off/zero)
+- **THEN** the pipeline SHALL contain zero passes
+- **AND** the emitted record SHALL carry `passes:[]`
+
+#### Scenario: injection is real — no decorative parameter
+- **WHEN** two `ScoringParams` differing only in `mopFrontierWeight` (0 vs 200) are used to assemble pipelines over the same context
+- **THEN** the first SHALL exclude `MopFrontierPass` and the second SHALL include it
+- **AND** no `Config` mutation SHALL be needed to produce the contrast
+
+### Requirement: MopFrontierPass — Frontier Boost Toward Unvisited MOP Activities
+
+A `MopFrontierPass` (in `com.android.commands.monkey.ape.agent.scoring`, implementing `ScoringPass`) SHALL add `Config.mopFrontierWeight` to the priority of a target-requiring, valid, resolved action when ALL THREE of the following hold for a WTG transition matched to that action:
+
+1. **Widget match** — the action's short resource id equals `WtgTransition.widgetName` (the same resource-id matching used by the WTG-MOP boost and the generic frontier pass), obtained via the pass's own `MopData.getWtgTransitions(activity)` lookup (it SHALL NOT ride `MopScorer.scoreWtg`'s `int` return, which hides the target activity and only fires when MOP-reachable);
+2. **Target is MOP-bearing** — `MopData.activityHasMop(WtgTransition.targetActivity) == true`;
+3. **Target is unvisited** — `Graph.getActivityNode(WtgTransition.targetActivity) == null` at scoring time (evaluated live each pass; the boost recedes once the target is visited).
+
+The boost SHALL be applied as a `setPriority` increment (`action.setPriority(action.getPriority() + mopFrontierWeight)` — the steering mechanism, unchanged) AND recorded in a **dedicated telemetry field** `ModelAction.mopFrontierBoost` via read-modify-write accumulation (`action.setMopFrontierBoost(action.getMopFrontierBoost() + mopFrontierWeight)`). It SHALL NOT write the `wtgBoost` field. This de-aliases the previous behavior, where `MopFrontierPass` accumulated into the same `wtgBoost` that `WtgPass` and the generic `FrontierPass` write — so `decision_source=WTG` conflated the MOP-frontier mechanism with generic WTG navigation, and the corpus's stacked values (400/600 in the `wtg=` field) could not be decomposed by mechanism. The boost is attributable via the step record's `dec.mopf` field and its own `decision_source` value `MopFrontier` in the largest-boost attribution (`action-selection` capability, "Per-action decision-source telemetry").
+
+`MopFrontierPass.isEnabled()` SHALL be true only when `Config.mopFrontierWeight > 0` AND `MopData` is non-null with WTG data present. With `Config.mopFrontierWeight == 0` (default) the pass SHALL be byte-identical to being absent from the pipeline. The pass is independent of and additive to the generic `frontierBoostWeight` (which requires only unvisited, not MOP) — B is the strictly narrower predicate (unvisited AND MOP).
+
+`Config.mopFrontierWeight` SHALL be declared in `Config.java`, loaded via `ape.mopFrontierWeight`, default `0`, and SHALL be declared in the run-spec `Feature` model as the activation key of the `MOP_FRONTIER` feature, which requires `MOP`: an explicit non-zero weight on a plan without MOP data aborts resolution as a missing dependency, and with the feature absent the pass is not constructed (`run-spec` INV-RUN-05 — the recorded substitute for the dissolved INV-ARCH-06 registry). `ScoringPipeline.fromConfig` SHALL assemble `MopFrontierPass` immediately after the generic `FrontierPass` and before `CoveragePass` — the frontier family stays contiguous and the relative-order contracts of INV-ARCH-03 are preserved.
+
+- **INV-MFP-01**: `MopFrontierPass` SHALL add `mopFrontierWeight` to an action **only** when its matched WTG transition target satisfies both `activityHasMop(target) == true` AND `Graph.getActivityNode(target) == null` at scoring time. An action failing either condition SHALL receive nothing from this pass.
+- **INV-MFP-02**: The boost SHALL be applied as a `setPriority` increment AND recorded into `mopFrontierBoost` by read-modify-write; because `mopFrontierBoost` is never read by `getPriority()`, the `setPriority` increment is mandatory for the boost to steer. `MopFrontierPass` SHALL NOT write `wtgBoost`; when `mopWeightWtg` and/or `frontierBoostWeight` co-apply to the same action, `wtgBoost` SHALL reflect only those WTG-family contributions and `mopFrontierBoost` only the MOP-frontier contribution.
+- **INV-MFP-03**: With `Config.mopFrontierWeight == 0`, the scoring outcome SHALL be identical to the pipeline without `MopFrontierPass`.
+
+#### Scenario: unvisited MOP target boosted into its own field
+- **WHEN** widget W's WTG transition targets `com.x.CryptoActivity`, `activityHasMop("com.x.CryptoActivity")==true`, `Graph.getActivityNode("com.x.CryptoActivity")==null`, and `ape.mopFrontierWeight=200`
+- **THEN** W's action priority SHALL be increased by 200
+- **AND** its `mopFrontierBoost` SHALL be 200 and its `wtgBoost` SHALL be unchanged by this pass
+
+#### Scenario: MOP but already visited — no boost
+- **WHEN** the transition target is MOP-bearing but `Graph.getActivityNode(target)` is non-null (visited)
+- **THEN** `MopFrontierPass` SHALL add nothing to that action
+
+#### Scenario: unvisited but non-MOP — no boost
+- **WHEN** the transition target is unvisited but `activityHasMop(target)==false`
+- **THEN** `MopFrontierPass` SHALL add nothing (this is the generic frontier pass's job, not B's)
+
+#### Scenario: co-applying boosts stay decomposable
+- **WHEN** the target is MOP-bearing AND unvisited, with `mopWeightWtg=200`, `frontierBoostWeight=200`, `mopFrontierWeight=200`
+- **THEN** the action's priority SHALL gain +600 total
+- **AND** its `wtgBoost` SHALL be 400 (WTG-MOP + generic frontier) and its `mopFrontierBoost` SHALL be 200 — the mechanisms are separable in the record, as `dec.wtg` and `dec.mopf`
+
+#### Scenario: disabled
+- **WHEN** `ape.mopFrontierWeight=0`
+- **THEN** the scoring pipeline SHALL behave exactly as without `MopFrontierPass`, with no boost recorded in either field
+
+The de-aliasing this requirement performed for `mopFrontierBoost` is completed on the other side by `dec.wtgsrc` (event-sink capability): `wtgBoost` remains a sum of two producers — `WtgPass` writes it and `FrontierPass` read-modify-writes on top — and with both weights at 200 the campaign realises `{0, 200, 400}`, leaving 10,231 steps at 200 ambiguous and only 91 at 400 proving both fired. `wtgsrc` stamps the producer at each write site. It is telemetry-only: this requirement's arithmetic, including the `wtgBoost` sum it deliberately does not touch, is unchanged.
+
 ## Notes
 
 ### Disposition of the former requirement `apePureMode Kill-Switch and Parity`

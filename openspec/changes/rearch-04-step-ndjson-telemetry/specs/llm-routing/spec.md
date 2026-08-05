@@ -6,6 +6,44 @@ Delta for `rearch-04-step-ndjson-telemetry`: LLM telemetry stops being its own s
 
 `Deterministic Dead-Pair Ban` is restated here for the same reason and no other. It is the one requirement outside this capability's telemetry set that names the retired renderings directly — its outcome-feedback clause is anchored on the `[APE-OUTCOME]` line, and its ban-check clause and one scenario are anchored on `[APE-LLM-TEL]`. Left alone it would sync to the main spec demanding line formats that no longer exist anywhere, since nothing rewrites the trace back into the old family. The data is unaffected: the refusal survives as `result:"no_match"` with `reason:"dead_pair"` in the step's `llm[]` sub-event, and the overlay counter as `RUN_END.counters.llm.dead_pair`. The restatement is layered over `rearch-03-decision-pipeline`'s, which had already moved the record and the check onto `CoordinateMapper`.
 
+## Invariants
+
+Disposition of the capability's top-level `INV-RTR-*` block. These four invariants live in a
+top-level `## Invariants` section of `openspec/specs/llm-routing/spec.md`, outside any requirement,
+so they are dispositioned here rather than by a requirement operation — the same treatment the
+`action-selection` delta gives its `INV-SEL-*` block. The other `INV-RTR-*` entries are untouched by
+this change.
+
+- **INV-RTR-10** — **retired with its subject.** It normatizes the `[APE-LLM-CONFIG]` manifest: once
+  per run, at construction, reporting the effective sampling parameters rather than the
+  `ape.properties` map. The manifest is subsumed by the `RUN_START` effective-plan echo (the
+  `Effective LLM Config Manifest` REMOVED entry below carries the full reason). The invariant needs
+  its own disposition because it sits outside that requirement and would otherwise survive it. The
+  property it protected — *the trace reports what was actually sent, not what was configured* —
+  survives in the echo, which is derived from the resolved plan the units are constructed from.
+- **INV-RTR-11** — **re-anchored; the partition is unchanged.** The sum
+  `timeout + http + conn + parse + image + internal + screenshot_failed` still equals the number of
+  attempts abandoned before the mapping step, still exactly one cause per abandoned attempt, and
+  `no_match` is still outside the sum. Only the discriminator is restated: an abandoned attempt is
+  one that returns null **without appending a completed-call entry** to the step's `llm[]` array,
+  where it previously was one that returned null without emitting an `[APE-LLM-TEL]` line. The
+  counters themselves are reported in `RUN_END.counters.llm`.
+- **INV-RTR-12** — **re-anchored.** At most one server-model acknowledgement per run, only after a
+  successful `chat()`, and a run with zero successful responses emits none — its absence, with the
+  failure-cause counters, still diagnostic. The rendering becomes the `LLM_ACK` record
+  (`Server Model Acknowledgement` below).
+- **INV-RTR-20** — **re-anchored onto the line that survives, and this is the one clause of the four
+  where the code moved before the spec did.** Every routing attempt abandoned at screenshot capture
+  SHALL still be counted under `screenshotFailedCount` as its only cause counter, SHALL still
+  produce no completed-call sub-event, and SHALL still carry the foreground activity — but on the
+  free-text `[APE-RV] LLM screenshot capture failed, skipping LLM step activity=<a> detail=<stage>`
+  line, not on an `[APE-LLM-ERROR] cause=screenshot` line. That fold was made by
+  `rearch-03-decision-pipeline` and is stated in this change's `LLM Telemetry Logging` restatement
+  ("keeps its counter and its existing free-text line, with no `error` sub-event"), so the
+  invariant was the last place still demanding the old rendering. It is the failure this capability
+  cares most about attributing: 147 capture failures concentrated in 4 FLAG_SECURE APKs, co-located
+  with 100% of the 57 breaker trips, which is why the activity is on the line at all.
+
 ## MODIFIED Requirements
 
 ### Requirement: LLM Telemetry Logging
@@ -193,6 +231,86 @@ Every share below is computed against a denominator of **6,500 LLM decisions** �
 
 - **WHEN** a new run starts on the same APK
 - **THEN** the ban record SHALL be empty
+
+### Requirement: LLM Unit Lifecycle and Ownership
+
+When the plan carries the LLM feature, `RunContext` SHALL construct and own the LLM units exactly once at bootstrap, wired from the plan's `LlmParams` (never from static `Config`):
+
+- `LlmClient` — transport + circuit breaker as one unit (`llm-infrastructure` capability): base URL, model, `temperature`, `top_p`, `top_k`, `max_tokens` (default `1024`), `timeout_ms`.
+- `ScreenshotStep` — `ScreenshotCapture` + `ImageProcessor` + device-dimension determination.
+- `ApePromptBuilder` — unchanged, variant from `LlmParams`.
+- `ToolCallParser` — unchanged.
+- `CoordinateMapper` — coordinate normalization, boundary bands (`llmBoundaryTopPct`/`llmBoundaryBottomPct`), snap tolerance floor (`llmSnapTolerancePx`), back/long-click preference, `fixTextEdit`, and the dead-pair ban record.
+- `LlmTelemetry` — all LLM counters and latches, and the sink calls that carry them (`llmCall`, `llmError`, `llmBreakerOpen`, `llmDump`, `llmAck`); it exposes the counters through an accessor for `RUN_END` and prints no summary.
+- `LlmEngine` — the thin orchestrator of the Action Selection Pipeline over the units above.
+
+The `max_tokens` value SHALL be read once from `LlmParams` and shared by the request body and the `RUN_START` effective-plan echo, so what the trace reports is what the wire carried. No manifest line SHALL be emitted at `LlmClient` construction: every field it carried (model, temperature, top_p, top_k, max_tokens, timeout_ms, prompt_variant, llm_percentage, on_new_state, on_stagnation, stagnation_threshold, url) is in the echo, which states the whole resolved plan rather than the LLM slice of it.
+
+**Per-request tool schema:** the two schema constants (with and without `type_text`) SHALL be built once at construction and the appropriate one passed to each `chat()` invocation by the same `hasInputField` predicate the system message uses (prompt/wire coherence, INV-LLM-11) — unchanged behavior, now owned by `LlmClient`/`LlmEngine`.
+
+When the plan does NOT carry the LLM feature, none of these units SHALL be constructed and no LLM stage SHALL exist in the decision pipeline (feature absent = stage absent, `decision-pipeline` INV-DP-03; replaces the null `_llmRouter` convention of INV-RTR-01).
+
+All unit references SHALL be final and reused for the entire run; all unit state (counters, latches, ban record, breaker state) is per-run and dies with the process.
+
+#### Scenario: LLM feature in the plan constructs the units once
+- **WHEN** the resolved plan carries the LLM feature with `url=http://10.0.2.2:30000/v1`
+- **THEN** `RunContext` SHALL construct `LlmClient`, `ScreenshotStep`, `ApePromptBuilder`, `ToolCallParser`, `CoordinateMapper`, `LlmTelemetry`, and `LlmEngine` exactly once
+- **AND** the effective values SHALL appear in the `RUN_START` echo, with no manifest line emitted
+
+#### Scenario: LLM feature absent constructs nothing
+- **WHEN** the resolved plan does not carry the LLM feature
+- **THEN** no LLM unit SHALL be constructed and no LLM stage SHALL be assembled
+- **AND** zero LLM-related trace lines SHALL be emitted for the run
+
+#### Scenario: units read the plan, not Config
+- **WHEN** any LLM unit needs a sampling, timeout, boundary, or tolerance parameter during the run
+- **THEN** it SHALL read the value injected from `LlmParams` at construction
+- **AND** no LLM unit SHALL read static `Config` after bootstrap
+
+### Requirement: Action Selection Pipeline
+
+`LlmEngine.selectAction(GUITree tree, State state, List<ModelAction> actions, MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> recentActions, String mode, int step)` SHALL run the LLM decision pipeline over the decomposed units and return `ModelAction` or `null`. The step semantics are **unchanged** from the pre-decomposition `LlmRouter.selectAction`; only the owner of each step changes:
+
+**The argument list is the pre-decomposition one, and it stays that way for a reason worth stating.** `mopData` and `recentActions` are per-step, agent-owned values that step 4 below hands to `ApePromptBuilder.build(...)`, which cannot build a prompt without them. The engine is constructed once per run and owned by `RunContext` (see `LLM Unit Lifecycle and Ownership`), while the per-step view belongs to the stages — so for the engine to source them itself it would have to hold a `StepContext` or the agent, and design D2 exists to prevent exactly that. The calling stage passes them from `ctx.mopData()` and `ctx.actionHistory()`, unchanged.
+
+1. `LlmTelemetry` counts the attempt (`totalCalls++`, per INV-RTR-07).
+2. `ScreenshotStep` determines device dimensions and captures the screenshot. Null capture → breaker failure recorded via `LlmClient`, `screenshot_failed` counter + the free-text screenshot-failure diagnostic carrying the activity and the failing stage via `LlmTelemetry`, return null. This is the one abandoned attempt that produces **no** `llm[]` sub-event (INV-RTR-20).
+3. `ScreenshotStep` resizes and base64-encodes. Null → `image` cause as an `llm[]` sub-event with `result:"error"`, return null.
+4. `ApePromptBuilder.build(...)` builds the messages; `LlmTelemetry` stages the prompt via `llmDump`, which rides the next sub-event as `sys`/`user` when the prompt-dump flag is on (default on).
+5. `LlmClient.chat(messages, tools)` — the tools schema chosen by the same `hasInputField` predicate the prompt used (INV-LLM-11). Null → breaker failure, cause read once from the client's error seam (INV-LLM-08), cause counters + an `llm[]` sub-event with `result:"error"` and that `cause` via `LlmTelemetry`, return null.
+6. `LlmTelemetry` emits the once-per-run `LLM_ACK` record on the first successful response (INV-RTR-12) and stages the response text, which rides the sub-event as `resp`/`tool_calls` under the same prompt-dump flag.
+7. `ToolCallParser.parse(response)` — including the raw-arguments repair pipeline for native tool-call malformations (`SglangClient.ToolCall.rawArguments` → Level 1 → shared `parseJsonString`), surfacing through the existing `repair=` field (INV-LLM-10, INV-RTR-14). Null → `parse` cause (client seam NOT consulted), return null.
+8. `CoordinateMapper` normalizes coordinates, applies the boundary bands, maps to a `ModelAction` (containment → snap tolerance → off-tree `LlmTapAction` synthesis → `fixTextEdit` conversion → back/long-click preference), and applies the dead-pair ban check (a banned answer is a refused answer: same caller-visible path as `no_match`, breaker still records success — INV-RTR-15/16).
+9. `LlmClient` records breaker success; `LlmTelemetry` accounts tokens/latency, classifies the outcome (`matched`/`llm_tap`/`no_match` + `reason`), computes/receives the nearest-widget fields, and appends one `llm[]` sub-event to the current step's record with the same field set as before (renamed per the `LLM Telemetry Logging` mapping; the step, activity and variant keys are dropped as the parent record's envelope or run-constant).
+10. The engine returns the mapped action or null. It SHALL never throw (INV-RTR-02): an unexpected exception is the `internal` cause. Large temporaries SHALL be nulled in a `finally` block (INV-RTR-06).
+
+**type_text handling**: unchanged — when the match is an input-capable widget and text is present, `setInputText(text)` is applied before returning.
+
+**Known defect preserved, deliberately.** "Unchanged" here includes a defect measured at 28 of 1,233 LLM responses (2.3%): a `type_text` answer can execute a `MODEL_LONG_CLICK`. The containment pass restricts the candidate's `ActionType` only when the tool is `"click"` (`LlmRouter.java:689`), and `fixTextEdit` returns the match untouched for any tool that is neither `click` nor `long_click` (`:807`), so the long-click preference can win on a `type_text` answer. This stage is behavior-neutral by contract (parity-gated, R8): `CoordinateMapper` SHALL reproduce this path exactly, defect included. The fix is **out of scope here** and belongs to a separate change against `CoordinateMapper`, whose slicing is precisely what makes it testable in a JVM unit. Recording it is mandatory: a silently inherited defect in a newly extracted unit is indistinguishable from a slicing regression when the parity oracle later disagrees.
+
+The dead-pair outcome feedback SHALL continue to flow from the join-buffer site in `StatefulAgent` — the point where `new_state` is computed for the step record's `out` section — into the ban record, now `CoordinateMapper.recordLlmOutcome(...)` reached through `RunContext`'s LLM units, with unchanged key material and strike semantics.
+
+#### Scenario: Full pipeline success
+- **WHEN** `selectAction()` is called with a valid GUITree and the server is responsive, and the LLM returns `click` at coordinates mapping into a widget's bounds
+- **THEN** that `ModelAction` SHALL be returned, the step's `llm[]` sub-event SHALL carry `result:"matched"`, and the breaker SHALL record success
+
+#### Scenario: Screenshot capture fails trips the breaker
+- **WHEN** `ScreenshotStep` returns null (secure window)
+- **THEN** the engine SHALL return null with no HTTP request made
+- **AND** the breaker SHALL record a failure and `screenshot_failed` SHALL be counted, with its free-text diagnostic and no `llm[]` sub-event
+
+#### Scenario: Repaired native tool call keeps the repair telemetry
+- **WHEN** the model returns a malformed native `tool_calls` arguments string that `ToolCallParser` recovers via the raw-arguments repair pipeline and the coordinate resolves to a widget
+- **THEN** the sub-event SHALL carry `repair:"<form>"` and the decision SHALL count under both `matched` and `repaired` (INV-LLM-10, INV-RTR-14 unchanged)
+
+#### Scenario: Banned answer leaves through the no_match path
+- **WHEN** the mapped action's ban key has reached the strike threshold
+- **THEN** the engine SHALL return null with a `result:"no_match"`, `reason:"dead_pair"` sub-event
+- **AND** `LlmClient` SHALL still record success (a refused answer is not a pipeline failure)
+
+#### Scenario: Engine never throws
+- **WHEN** any unexpected exception occurs inside the engine
+- **THEN** the engine SHALL catch it, count `internal`, append a sub-event with `result:"error"` and `cause:"internal"`, and return null
 
 ## REMOVED Requirements
 
