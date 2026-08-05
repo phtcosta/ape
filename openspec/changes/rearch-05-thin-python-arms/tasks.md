@@ -34,9 +34,57 @@ Stage 2 pinned the jar against the *pre-change* Python output so it could deploy
 
 ## 4. Verification
 
-- [ ] 4.1 `mvn test` — full suite green with the transitional tests gone and the preset-contract tests in their place. **Measure the baseline in the same session as the deletion; do not quote one from this file.** The **1088 tests, 0 failures, 19 skipped** recorded here was true when this change was written on 2026-08-04 and is already wrong: stages 4, 6 and 7 have landed tests since (the `rearch-07` handoff records 1207 as of its group 4, and `CLAUDE.md` still says 937 — three figures, three moments, none of them a contract). What this task actually asserts is a *delta*, not a total: the count falls by what `RunSpecCompatTest` contributed and holds otherwise, and only a before/after pair taken across the deletion itself can show that. **`target/` is shared with whichever sessions are live in this worktree** — check before running, or the two suites will interleave
+- [ ] 4.1 `mvn test` — full suite green with the transitional tests gone and the preset-contract tests in their place. **Measure the baseline in the same session as the deletion; do not quote one from this file.** The **1088 tests, 0 failures, 19 skipped** recorded here was true when this change was written on 2026-08-04 and is already wrong: stages 4, 6 and 7 have landed tests since (`CLAUDE.md` still says 937 — figures from three moments, none of them a contract). What this task actually asserts is a *delta*, not a total: the count falls by what `RunSpecCompatTest` contributed and holds otherwise, and only a before/after pair taken across the deletion itself can show that. **`rearch-07` has already published the expected pair and it should be checked rather than re-derived**: its group 5 measured **1131** in this tree, and its own note predicts **1118** after this change deletes `RunSpecCompatTest` — *"a session that finds 1131 after `rearch-05` lands has a merge problem rather than a lucky suite."* Treat 1118 as the prediction to confirm or falsify, and if the before-count is not 1131, find out what moved before deleting anything. (`RunSpecCompatTest.java` is 308 lines today, not the 301 task 2.1 records — the file has moved since this change was written, which is the same class of drift and the reason the count is measured rather than quoted.) **`target/` is shared with whichever sessions are live in this worktree** — check before running, or the two suites will interleave
 - [ ] 4.2 Confirm the jar is untouched: `git diff --stat` shows no `src/main` path. A red suite in this stage cannot be a jar regression, and this task is what makes that statement checkable
 - [ ] 4.3 Run `/sdd-qa-lint-fix src/test/java`
 - [ ] 4.4 Run `/sdd-verify ape`
 - [ ] 4.5 Run `/sdd-code-reviewer` over the ape-side diff
 - [ ] 4.6 Run `/opsx:verify rearch-05-thin-python-arms` before archiving
+
+## 5. Scenario pairing for the archive (found 2026-08-05, before implementation started)
+
+**This change cannot be archived as it stands, and the number is small enough to close in one
+sitting.** `openspec archive` matches scenarios **by name** inside each `MODIFIED` block against the
+current main spec's requirement, and cannot tell a rename from a deletion — so any name the main
+spec carries and this change's block does not aborts the sync. A set-diff of every `MODIFIED` block
+against the current main specs puts this change at **6 unpaired scenarios across 3 requirements**:
+
+| Capability :: Requirement | main | delta | kept | **unpaired** |
+|---|---|---|---|---|
+| aperv-tool :: Tool Variants | 2 | 4 | 0 | **2** — `Default variant resolved`, `sata_mop variant is wired (replaces Phase 4 placeholder)` |
+| aperv-tool :: configure() Method | 2 | 3 | 0 | **2** — `Valid strategy configured`, `Invalid strategy raises ConfigurationError` |
+| run-spec :: Explicit-Key Resolution When No Preset Is Named | 2 | 2 | 0 | **2** — `current campaign arm resolves unchanged`, `the Python edit precedes the jar` |
+
+Every one of the three requirements has `kept = 0`: their scenarios were renamed wholesale, which is
+exactly what this change does on purpose — it re-expresses arms as *preset + overrides* and de-frames
+stage 2's transitional wording, so the vocabulary the old scenario names encode is the vocabulary it
+retires. That makes most of these renames rather than losses, but each still needs disposition, and
+two are worth checking rather than assuming: `the Python edit precedes the jar` is a **deliberate
+replacement** (the ordering it asserts is the one `gh95` already performed — say where the claim
+went), and `sata_mop variant is wired (replaces Phase 4 placeholder)` may be a **genuine loss**,
+since the roster assertion it carries is precisely what design D1 moves out of this repository.
+
+**The method is established by `rearch-03` group 9 and `rearch-04` group 12 — do not re-derive it.**
+A renamed scenario keeps the **main spec's header** and carries this change's vocabulary in its
+**body**; `REMOVED` + `ADDED` of one requirement is rejected outright and `RENAMED` only rewrites a
+requirement's header before running the same scenario check, so there is no way to re-anchor a name.
+`--no-validate` is not the answer: in `rearch-03` the guard produced two real findings, and in
+`rearch-04` it produced four scenarios that would otherwise have been dropped one archive after
+being rescued. Always dry-run in a sandbox (`cp -r openspec <scratch>/` and archive there) — the
+abort is per-capability and stops at the first failure, so the sandbox is how the whole list is seen
+at once.
+
+- [ ] 5.1 Set-diff every `MODIFIED` block against the current main spec and classify each of the 6
+      pairwise — rename / deliberate replacement / genuine loss. The classification is the
+      deliverable; a count is not one
+- [ ] 5.2 Restate renames under the main spec's header, replace bodies where this change contradicts
+      them (stating the contradiction in the delta's prose), and restate genuine losses. Before
+      declaring a loss, check whether an unmodified requirement already carries the claim
+- [ ] 5.3 `openspec archive rearch-05-thin-python-arms --yes` completes without aborting, verified in
+      a sandbox copy first. Confirm afterwards that the restated scenarios are present in the synced
+      main specs **carrying this change's bodies** — a scenario that pairs but syncs the wrong body
+      is worse than one that aborts
+- [ ] 5.4 Before choosing when to archive, measure the order against the changes this one shares
+      requirements with, as `rearch-03` and `rearch-04` both did: `rearch-07` also modifies
+      `aperv-tool`. Measure **marginal** cost (unpaired before vs after the other's archive), never
+      block-against-block — the two figures differed by 7× for `rearch-03` and 4.5× for `rearch-04`
