@@ -818,7 +818,42 @@ Verified read-only 2026-08-05 at rv-android `a683591e`.
   - Summary line: `PASS: 1123 tests, lint skipped (checkstyle not installed), complexity n/a`. Nothing
     here is new information — it is the confirmation the task asked for, and the only figure worth
     carrying is the 1123
-- [ ] 8.5 Invoke `/sdd-code-reviewer` via Skill tool
+- [x] 8.5 Invoke `/sdd-code-reviewer` via Skill tool
+  - **Verdict `COMMENT`: 0 critical, 8 warnings, 6 notes**, over the production delta
+    `9fa45400~1..HEAD` (9 files) with `mvn test` green at 1123. Security and performance clean —
+    the reader has no injection surface, no secrets and one bounded whole-file read, and the change
+    is net *faster*, the join/recovery/dedup passes having moved host-side.
+  - **The findings were re-verified first-hand before being recorded, and one of my own checks was
+    wrong before the reviewer's was.** A naive grep put `ComponentInfo.getActions()` at 31
+    production readers; every one is `State.getActions()` or `ActionPatchNamer.getActions()`, and
+    the single `.getCategories()` hit is `Monkey.currentIntent.getCategories()` — Android's `Intent`.
+    Disambiguated, the reviewer is right on all three. The lesson is the handoff's: an agent's
+    finding needs checking, and so does the check.
+  - **Confirmed by reading the code:**
+
+    | # | Finding | Verified as |
+    |---|---|---|
+    | WR-03 | `mopActivitySourceComponents=true` + artifact lacking `mopActivitiesAugmented` ⇒ **empty census, no warning** | **Real.** `stringSet(null)` returns an empty set (`:555-563`) and `selectedActivities` takes it unguarded (`:232`). The launcher census, gateway condition 2 and the frontier target tests all silently read empty — the arm explores as near-pure SATA under a `status=loaded` record. This is the one place an otherwise fail-fast reader lets a wrong plan through |
+    | WR-01 | `EventSink.mopData` javadoc still says "the full-JSON loader passes `0` and `null`" and "**both loaders** hold the typed component lists" | **Real, P4.** There is one loader; the site that passes the neutral values is `MopData.reject` |
+    | WR-05 | `ComponentInfo.getActions()`, `ComponentInfo.getCategories()`, `MopData.getDroppedFlaggedNoId()` have zero production readers | **Real, P3.** The first two are pinned only by `ComponentInfoTest`; the third has no reader at all, main or test, the field being read directly at `:285`. The class javadoc this change *added* asserts "every field here has a production reader" — the audit covered fields and not methods |
+    | WR-07 | `ActivityFrontierTest:32` javadoc still `{@link MopLauncherStage#buildDeepLinkUri}` | **Real, P4**, and a broken `{@link}` that would fail `-Xdoclint`. The method is gone; only three textual occurrences remain, and `:398` already records the migration correctly |
+    | WR-08 | `MopLauncherStageTest:27-29` says `buildDeepLinkUri`'s tests "keep their own tests in `ActivityFrontierTest`" | **Real, P4.** Two of the three named seams are there; this one's tests went to `gh96` (task 5.3a). A reader sent looking finds nothing |
+
+  - **The reviewer's own summary of the pattern is the right one and worth keeping**: the substance
+    holds — parser genuinely deleted, no adapter, no dual-format fallback, a legacy document
+    *rejected* rather than misparsed, 1,985 → 814 lines — and what did not keep pace with the
+    deletion is the **prose**, in a codebase where javadoc is load-bearing design record. Three of
+    the eight warnings are docs describing deleted code as present, all three inside this change's
+    own blast radius.
+  - **Not accepted as this change's**: WR-06 (`Config.llmPercentageNoSubstrate` as a dead seam) is
+    correct on the facts — this change removed the last possible implementation path, since the
+    predicate read the parsed `windows[]` the artifact does not carry — but retiring a live plan key
+    means a `KeyOwnership` retirement, a `Presets` vector, a `Feature` ownership edit and a run-spec
+    delta. That is its own change, exactly as the `Presets Resident in the Jar` debt is.
+  - **Disposition of the five verified findings is the owner's** and is recorded in the session
+    report rather than acted on unilaterally: WR-01/07/08 are doc-only corrections inside this
+    change's radius, WR-05 deletes public surface and its test pins, and **WR-03 changes behaviour
+    and would need the `mop-guidance` delta to say so** — it is not a tidy-up
 - [x] 8.6 Run `/sdd-docs-sync ape` (CLAUDE.md + spec cross-references current)
   - **Clean, with one `info`-level pointer.** Scoped as the task names it — `CLAUDE.md` and the spec
     cross-references — rather than swept over every `.md` in the tree, which would have buried the
