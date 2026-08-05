@@ -101,3 +101,52 @@
 - [x] 8.6 Cross-change check, whose condition is already settled the other way round: `telemetry-proof-llm-efficacy` **archived first**, on 2026-08-02 (`openspec/changes/archive/2026-08-02-telemetry-proof-llm-efficacy`), so its deltas are already in the main specs and **this** change archives second — its deltas are what overwrite them. The check is therefore specific rather than conditional: verify that no requirement text that change contributed is lost when this one syncs. Three requirements, two shapes. The two **MODIFIED** bodies — `Stagnation LLM Mode` (`llm-routing`) and `Per-action decision-source telemetry` (`action-selection`) — against the main-spec bodies they replace; and the **REMOVED** `LlmRouter Lifecycle`, whose still-applicable obligations must live on in this change's ADDED `LLM Unit Lifecycle and Ownership`, since the removal is deliberate (4.7 deletes the class) and must not carry the surviving lifecycle content out with it. **This is not a formality**: measured 2026-08-04, the telemetry requirement's delta body is ~350 words shorter than the main spec's (1504 vs 1854), and the lines absent from it include the `decision_source` enum, `activity_has_mop` and `pick_channel`. Each must be confirmed as restated — the delta legitimately rewrites `Config.X` reads as plan values and `LlmRouter` as the stages, so a literal-line diff over-reports — or repaired as a real loss
 - [x] 8.7 Run `/sdd-qa-lint-fix` → `/sdd-verify` → `/sdd-code-reviewer` (final gate)
 - [x] 8.8 Final confirmation that three independent artifacts agree, read off 8.1–8.4's output rather than by re-running them: the per-preset goldens unmodified (`git status --short src/test/resources/goldens` prints nothing), the permanent tests 3.1–3.4 present in the default `mvn test` run, and the build output existing (`target/ape-rv.jar`, from 8.4). The earlier wording delegated this to `superpowers:verification-before-completion`, **which is not a skill this repo or this session has** — unlike the `sdd-*` family there is no `SKILL.md` for it on disk, so it cannot even be followed by hand — hence the check is stated here rather than pointing at a tool that cannot be invoked. All three are required to claim behavior preservation, because each covers what the others cannot: the goldens pin what every step decides, the permanent tests pin the cross-feature interactions no golden spans (INV-DP-08, and the transition forwarding whose probe left the gate at 14/14), and the jar proves the tree those two verified is the tree that ships
+
+## 9. Archive blocker: the scenario sets the deltas would drop (found 2026-08-05)
+
+**Status: this change cannot be archived until this group is closed.** `openspec archive` aborts
+rather than syncing, and it is right to. Attempted on 2026-08-05 and refused twice — first on
+`action-selection`, then on `component-triggering` — with the same class of message: *"current spec
+contains scenario(s) not present in the modified block … Refresh the change spec before archiving to
+avoid dropping scenarios."*
+
+A full set-diff of all seven deltas against the main specs puts the number at **16 scenarios**. They
+are not one thing, and the disposition differs per case:
+
+- **Renames** — the majority, and legitimate: this change re-anchors a mechanism and the scenario
+  header follows it. `"LLM enabled via Config"` → `"LLM enabled via the plan"`, `"launcher disabled"`
+  → `"launcher absent from the plan"`, `"invalid values clamped at load"` → `"…at plan resolution"`,
+  `"empty pipeline under the pure arm"` → `"…under an empty scoring plan"`, and so on. The tool
+  cannot tell a rename from a deletion, because OpenSpec has `RENAMED` for *requirements* and no
+  equivalent for scenarios.
+- **Deliberate replacement** — at least one, and dropping it is correct: `exploration ::
+  "Stagnation hook fires only once per phase"` pins the exact-equality semantics at `threshold/2`,
+  which this change deliberately replaces with `"single-shot at or past midpoint"`. The old scenario
+  contradicts the new behavior and must not survive.
+- **No counterpart found** — two, and these are why the group exists rather than being waved through:
+  - `component-triggering :: Cadence-Based MOP Activity Launch :: "arm contrast is the launched set"`
+    — the control census (`ape.mopActivitySourceComponents=false`) is `{A}` against the treatment's
+    `{A, B, C}`, and the control launcher only ever launches `A`. None of the three added scenarios
+    covers it. This is the campaign's arm contrast, not an implementation detail.
+  - `llm-routing :: Probabilistic LLM Routing :: "High percentage (70%)"` — `shouldRouteRandom()`
+    returns true ~70 % of the time at `llmPercentage=0.7`. The delta adds `"draw order preserved
+    under the same seed"`, which asserts something else; the rate itself is not restated.
+
+The remaining ~11 were not classified pairwise.
+
+**Why it was parked rather than pushed through** (owner-decided 2026-08-05): `rearch-06-memory-surgical`
+does not depend on this archive — the stack lives in the worktree and archiving only syncs specs — so
+nothing is gained by bypassing a guard that has already produced one real finding. `--no-validate` was
+not used: the two uncovered scenarios are exactly what it would have silently discarded.
+
+- [ ] 9.1 Classify all 16 pairwise: rename / deliberate replacement / genuine loss
+- [ ] 9.2 For renames, restate the scenario under the **main spec's** header so the archive's matcher
+      pairs them; the body stays as this change wrote it. (Three were realigned this way on
+      2026-08-05 in `action-selection` and then reverted, so the sweep lands as one consistent edit
+      rather than in fragments)
+- [ ] 9.3 For deliberate replacements, keep the removal and state the reason in the delta's prose —
+      the reader needs to know the old scenario is contradicted, not forgotten
+- [ ] 9.4 For genuine losses, restate the scenario in the delta. `"arm contrast is the launched set"`
+      and `"High percentage (70%)"` are the two known ones
+- [ ] 9.5 `openspec archive rearch-03-decision-pipeline --yes` completes without aborting
+
