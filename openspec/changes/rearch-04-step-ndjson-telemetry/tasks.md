@@ -54,12 +54,12 @@ What is already there: the value grammar (strings, numbers, booleans, null, `Map
 
 ## 4. RUN_END, flushPendingStep, teardown wiring
 
-- [ ] 4.1 Replace `LlmRouter.printSummary()` with a counters accessor (`RunCounters` value object: 17 LLM counters + sink record/dictionary counts)
-- [ ] 4.2 `StatefulAgent.tearDown`: add `safeStep("flushPendingStep", ...)` as the **first** step and `safeStep("runEnd", ...)` as the **last** step; plumb the termination reason (`timeout` on `StopTestingException` path, `crash` otherwise, `unknown` fallback) into `runEnd`
-- [ ] 4.2a Carry `t_first_step` and `t_last_step` on `RUN_END` (the `t` of the first and last step records). No `budget_consumed_ms` and no attempt ordinal: the first is `t_last_step` by another name, the second is a harness value the jar cannot know and the harness already versions per attempt. These are write-only diagnostics (INV-SNK-09) — no Python-side gate may key on them
-- [ ] 4.3 Preserve teardown isolation: INV-EXPL-16/29 untouched — every new step inside `safeStep`; a failing step skips nothing after it
-- [ ] 4.4 Unit tests: teardown order (`flushPendingStep` first, `runEnd` last — Sec. 9.7 jar-side test); `RUN_END` carries reason + counters; a failing naming dump still yields `RUN_END`; non-LLM plan omits the LLM counter block
-- [ ] 4.5 Run `/sdd-test-run ape.agent`
+- [x] 4.1 Replace `LlmRouter.printSummary()` with a counters accessor (`RunCounters` value object: 17 LLM counters + sink record/dictionary counts)
+- [x] 4.2 `StatefulAgent.tearDown`: add `safeStep("flushPendingStep", ...)` as the **first** step and `safeStep("runEnd", ...)` as the **last** step; plumb the termination reason (`timeout` on `StopTestingException` path, `crash` otherwise, `unknown` fallback) into `runEnd`
+- [x] 4.2a Carry `t_first_step` and `t_last_step` on `RUN_END` (the `t` of the first and last step records). No `budget_consumed_ms` and no attempt ordinal: the first is `t_last_step` by another name, the second is a harness value the jar cannot know and the harness already versions per attempt. These are write-only diagnostics (INV-SNK-09) — no Python-side gate may key on them
+- [x] 4.3 Preserve teardown isolation: INV-EXPL-16/29 untouched — every new step inside `safeStep`; a failing step skips nothing after it
+- [x] 4.4 Unit tests: teardown order (`flushPendingStep` first, `runEnd` last — Sec. 9.7 jar-side test); `RUN_END` carries reason + counters; a failing naming dump still yields `RUN_END`; non-LLM plan omits the LLM counter block
+- [x] 4.5 Run `/sdd-test-run ape.agent`
 
 ## 5. Logcat Heartbeat (D4)
 
