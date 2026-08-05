@@ -733,3 +733,168 @@ Verified read-only 2026-08-05 at rv-android `a683591e`.
 - [ ] 8.4 Run `/sdd-verify ape`
 - [ ] 8.5 Invoke `/sdd-code-reviewer` via Skill tool
 - [ ] 8.6 Run `/sdd-docs-sync ape` (CLAUDE.md + spec cross-references current)
+
+## 9. Scenario pairing for the archive (found 2026-08-05, worked before group 7/8 despite its number)
+
+**This change cannot be archived as it stands.** `openspec archive` matches scenarios **by name**
+inside each `MODIFIED` block against the current main spec's requirement, and cannot tell a rename
+from a deletion — so any name the main spec carries and this change's block does not aborts the sync.
+The abort is per-capability and stops at the first failure, so its message shows one of four problems:
+
+```
+aperv-tool MODIFIED failed for header "### Requirement: execute_tool_specific_logic() Flow"
+ - current spec contains scenario(s) not present in the modified block:
+   "sata_mop — JSON present", "sata_mop — JSON absent", "sata variant — no JSON push".
+```
+
+A full set-diff of every `MODIFIED` block against the current main specs puts this change at **27
+unpaired scenarios across 4 capabilities** — reproduced 2026-08-05, and matching the figure the
+session-17 handoff carried:
+
+| Capability :: Requirement | main | delta | kept | **unpaired** |
+|---|---|---|---|---|
+| `aperv-tool :: execute_tool_specific_logic() Flow` | 5 | 9 | 2 | **3** |
+| `component-triggering :: Cadence-Based MOP Activity Launch` | 13 | 14 | 10 | **3** |
+| `mop-guidance :: MopData — Static Analysis JSON Loader` | 15 | 7 | 0 | **15** |
+| `mop-guidance :: MopData — Load Status Line and Fail-Fast` | 4 | 4 | 3 | **1** |
+| `mop-guidance :: MopData — Activity-Level MOP Source from Components (A′)` | 6 | 3 | 1 | **5** |
+
+`static-analysis-entrypoints` is all `ADDED` (9 scenarios, no drop risk), and `mop-guidance` carries
+six `REMOVED` requirements with 0 scenarios each, also no drop risk.
+
+**The target is 29, not 27 — owner decision 2026-08-05.** Because `rearch-04` modifies three of the
+same requirements, the number depends on the archive order: 27 against today's main spec, 29 if
+`rearch-04` archives first (it adds `Gzip failure is non-fatal and write-only` and `transitions
+present, click edges absent` to requirements this change also modifies). Pairing against the **union**
+is the only choice correct under *either* order, because the archive aborts on a main-spec scenario
+missing from the block and never on a surplus one — so the two extra headers are inert if this change
+goes first and load-bearing if it goes second. The cost, stated once here rather than discovered
+later: this change's `MODIFIED` blocks carry two scenarios whose content is `rearch-04`'s. Both are
+restated in this change's own terms, and if `rearch-04` archives afterwards its own block replaces
+the whole requirement anyway, so nothing is durably misattributed.
+
+**This change's pairing is not `rearch-05`'s, and the difference is the whole reason group 9 needs a
+task 9.4 rather than a note.** `rearch-05` measured its archive order at **0 in every direction**
+because the three changes touching `aperv-tool` modify *disjoint* requirements of it. That does not
+hold here: `rearch-04-step-ndjson-telemetry` modifies **the same requirements this change modifies**
+— `execute_tool_specific_logic() Flow`, `Cadence-Based MOP Activity Launch`, `MopData — Load Status
+Line and Fail-Fast` — and additionally `MODIFIED`s four of the six requirements this change `REMOVED`s.
+This is exactly the pairwise interaction that cost `rearch-03` 7× and `rearch-04` 4.5×, and it is
+measured in 9.4 rather than assumed.
+
+**The method is established by `rearch-03` group 9, `rearch-04` group 12 and `rearch-05` group 5 — do
+not re-derive it:**
+
+- A renamed scenario keeps the **main spec's header** and carries this change's vocabulary in its
+  **body**. The resulting stale-looking headers are the tool's cost, not this change's; say so once
+  in each delta's prose and do not fight it.
+- `REMOVED` + `ADDED` of the same requirement is **rejected outright** (*"Requirement present in both
+  ADDED and REMOVED"*). `RENAMED` only rewrites a requirement's header line and then runs the same
+  scenario check. **There is no way to re-anchor a scenario name.**
+- `--no-validate` is **not** the answer. In `rearch-03` the guard produced two real findings; in
+  `rearch-04`, four scenarios that would have been dropped one archive after being rescued.
+- Before declaring a genuine loss, **check whether an unmodified — or sibling — requirement already
+  carries the claim.** It cut both ways in `rearch-03` and `rearch-05`, and it will here: the two
+  package-sanity scenarios stranded in the loader requirement are carried by `MopData — Package /
+  MainActivity Sanity Check`, a *sibling requirement of this same delta*.
+- **Prose is not a gate.** A claim surviving in a requirement's numbered steps or a field table is
+  not a scenario. Restate it.
+- **Never retype spec text.** Extract headers from the main spec programmatically and assert each
+  extraction and each substitution matched **exactly one whole line** (`lines.count(header) == 1`) —
+  `"#### Scenario: Component trigger fires"` is a prefix of `"… fires as a side effect"`, so an
+  `in text` guard reports a false collision.
+
+**The 15-scenario requirement is the hard one and it is hard for a specific reason**: `MopData —
+Static Analysis JSON Loader` has `kept = 0` because every one of its 15 scenario names describes the
+full-JSON parser group 5 deleted, while its 7 new scenarios describe the compact reader. That is 15
+names to dispose of against 7 bodies, so at least 8 headers need a body written rather than
+re-anchored — and the disposition differs per name. Some are relocations to the generator whose
+permanent home is `gh96`'s Python suite; some are *still jar facts* stated under vocabulary that
+left (the OPTIONSMENU gateway trio, whose recompute D3 deliberately kept on-device); and some may be
+genuine losses that need restating — a claim like `Duplicate short id — strongest MOP flag retained`
+is still true of the derivation, and may simply be unstated on this side. Check each against the new
+loader and against the `static-analysis-entrypoints` ADDED block before calling it dead.
+
+- [x] 9.1 Set-diff every `MODIFIED` block against the effective main spec and classify each unpaired
+      scenario pairwise — **rename / deliberate replacement / relocated-with-a-named-home / genuine
+      loss**. The classification is the deliverable; a count is not one. For every "relocated", name
+      the requirement or the `gh96` test that now carries the claim, and check that it *actually*
+      asserts it rather than merely being the plausible destination — the `static-analysis-entrypoints`
+      ADDED block has no A′-union scenario at all, so at least one relocation has no destination and
+      must be restated instead of pointed at
+
+      **Done 2026-08-05. Twenty-nine classified, no genuine loss — but three would have been losses
+      had this block archived as written**, which is the finding rather than the zero. The classes
+      come out **14 renames, 2 deliberate replacements, 8 relocations with a verified home, 2 carried
+      by a sibling requirement of this same delta, and 3 restatements averting a loss.** Every
+      relocation was checked against what the receiving test *asserts*, not against its name.
+
+      | # | Capability :: scenario | Class | Where the claim goes |
+      |---|---|---|---|
+      | 1 | `aperv-tool :: sata_mop — JSON present` | rename | Body `MOP arm — artifact derived and pushed`. Same situation, new destination and vocabulary: the derived artifact at `/data/local/tmp/mop-artifact.json` instead of the full JSON at `/data/local/tmp/static_analysis.json`. `sata_mop` is also a `gh95`-retired arm name; the delta keys off `mop_data == "static_analysis"`, the orchestration key the code actually tests |
+      | 2 | `aperv-tool :: sata_mop — JSON absent` | **deliberate replacement** | Body `MOP arm — full JSON absent fails the task`. The old scenario mandates warn-and-continue, naming the literal WARNING and "execution SHALL continue (APE runs as plain `sata`)". That *is* the V21 silent-degradation class this change exists to kill (INV-APERV-05). Not relocated — falsified on purpose, and its replacement asserts the opposite outcome from the same premise |
+      | 3 | `aperv-tool :: sata variant — no JSON push` | rename | Body `non-MOP arm — no static-analysis interaction`. Same claim; `sata` as an arm name is `gh95`-retired, and the real predicate is the absence of `mop_data` |
+      | 4 | `aperv-tool :: Gzip failure is non-fatal and write-only` | **restated — would have been a loss** | `rearch-04`'s scenario, reachable under the union target. This delta's step 11 carries the claim in prose ("On failure, log a WARNING and continue") and **prose is not a gate**. Restated unchanged in substance: this change does not touch collection |
+      | 5 | `component-triggering :: invalid values clamped at load` | rename | Body `invalid values clamped at plan resolution`. Same clamps (`50` / `0`); "at load" is pre-stage-2 vocabulary — stage 2 moved clamping off `Config` load onto plan resolution |
+      | 6 | `component-triggering :: launcher disabled` | rename | Body `launcher absent from the plan`. "Disabled" implies a kill switch, and stage 2 dissolved kill-switch registration into feature absence (INV-RUN-05) |
+      | 7 | `component-triggering :: arm contrast is the launched set` | **restated — would have been a loss** | **No counterpart among the delta's 14 scenarios and no sibling requirement carries it** — an omission, not a replacement. It pins the requirement's arm-contrast argument: control and treatment launch different sets because of *the census the stage reads*, never the stage's own firing rule, both arms assembling the same stage with the same cadence, cap and cursor. Still exactly true here, with the two censuses now the two wire sets. This change relocates where the sets are computed, so a scenario about *which* set is read is precisely what must survive it |
+      | 8 | `mop-guidance :: Real cryptoapp fixture loads every typed field` | rename | Body `Compact cryptoapp fixture loads every consumed field`. It also corrects the ground truth: two flagged widgets become three, the third arriving through the D8 recovery that `INV-APV-32`'s enrichment shim had been suppressing in production |
+      | 9 | `mop-guidance :: gh60 D15 component trigger-surface fields parsed` | **deliberate replacement** | The D15 `data` block, `readPermission`/`writePermission` and the `targetMethods` signature list left the wire on purpose (delta §7), so the scenario's subject no longer exists. Restated over what the trigger surface *is* now — `permission`, `intentFilters.actions`/`categories`, `hasTargetMethods`, `authorities` — and over the departures as absences. Home: `ComponentInfoTest` (9 tests, incl. `testTargetMethodsDecodeToEmptinessOnly`) |
+      | 10 | `mop-guidance :: Bug-fix regression — widget transitiveMop derived from gh60 Target keys` | relocated, residue kept | Cross-reference half is the generator's: `gh96` `test_index_reachability_stores_direct_and_transitive`, `test_producer_precedence_wins`, `test_direct_implies_transitive`. The jar-side half survives and is still the "SATA-MOP is not silently bare APE" contract — `buttonGenerateHash` is `transitiveMop`, `activityHasMop` holds, `MopScorer.score` returns `mopWeightTransitive`. Restated over the wire |
+      | 11 | `mop-guidance :: Widget metadata extracted on post-task-11 fixture` | rename | Restated over the artifact: `editTextMessageDigest` carries `inputType`/`hint`, the spinner its 13 `entries`. `type` and `text` drop out of the claim because they left the wire (zero production readers). Home: `testCompactFixtureMetadataAndComponentSurface` |
+      | 12 | `mop-guidance :: Top-level package and mainActivity sanity check (default warn-only)` | **carried by a sibling requirement of this delta** | `MopData — Package / MainActivity Sanity Check :: Default warn-only on mismatch`, which this change MODIFIES and keeps 4/4. The `rearch-03`/`rearch-05` pattern repeating — an apparent loss already covered. Restated briefly under its stranded header so the claim is not carried by prose alone. Home: `testCompactPackageMismatchWarnsByDefault` |
+      | 13 | `mop-guidance :: Package mismatch rejected in strict mode` | **carried by a sibling requirement** | Same sibling, scenario `Strict-mode rejection on mismatch`. Home: `testCompactPackageMismatchRejectsWhenStrict` |
+      | 14 | `mop-guidance :: OPTIONSMENU window with MOP widget triggers activityHasMopOptionsMenu` | rename | **Still a jar fact.** D3 refused to ship the gateway set precomputed, so the recompute stays on-device (INV-MOP-13). Restated as condition 1 over `optionsMenus[{activity, hasFlaggedWidget}]` |
+      | 15 | `mop-guidance :: OPTIONSMENU window without MOP widget does not trigger` | rename | Same requirement, the negative of both conditions |
+      | 16 | `mop-guidance :: OPTIONSMENU gateway — menu item navigates to a MOP activity` | rename | Condition 2, now over the wire WTG view and the **selected** activity set. Home: `testFlagOffSelectsTheWidgetDerivedSetAndLeavesTheGatewayShut` / `testFlagOnSelectsTheAugmentedSetAndOpensTheGateway` — the gateway's flip between flag states is the only evidence condition 2 reads the selected set, and therefore the whole reason D3 keeps the recompute |
+      | 17 | `mop-guidance :: Per-event-type reachability maps built` | rename | Body `Per-event flag decoding preserves fallback semantics`. The maps survive; what moved is where their values come from. The `isDirectMop(null)` match-any fallback is preserved verbatim |
+      | 18 | `mop-guidance :: Multiple listeners to the same handler do not double-count` | relocated, residue **stronger** | OR-idempotence is `gh96` `test_index_reachability_merges_duplicate_signatures_by_or`. On this side the property becomes structural: `listeners` do not exist on the wire and there is one flag per event type, so there is nothing to double-count — unrepresentable rather than prevented. The scorer half (`score` returns the weight once, not 2×) is restated |
+      | 19 | `mop-guidance :: Complete-but-empty JSON parses cleanly (gh51-D5 timeout bucket)` | rename | The `complete: true` sentinel became a *generation* precondition, so the device-side half is now "an empty v1 artifact loads cleanly, every accessor empty, `MopScorer.score` returns 0 without NPE". The timeout bucket it protects — a truncated analysis — is now refused host-side by `DerivationError` and cannot reach the device at all. Home: `testCompactArtifactNeedsNoCompletenessSentinel` |
+      | 20 | `mop-guidance :: Duplicate short id — strongest MOP flag retained` | relocated, residue structural | `mopRank` collision policy is `gh96` `test_collision_keeps_strongest_flag` and `test_collision_direct_outranks_transitive_resident`. Jar residue: the wire map is already collision-resolved — one entry per `(baseActivity, shortId)` by JSON-object construction — so the silent demotion this scenario guards against is unrepresentable on the wire |
+      | 21 | `mop-guidance :: Duplicate short id — unflagged does not displace flagged regardless of order` | relocated | The order-independence half is `gh96` `test_collision_tie_keeps_first` plus the `flagged_first` parametrization of `test_collision_keeps_strongest_flag`. Same structural residue as 20, restated under its own header |
+      | 22 | `mop-guidance :: Empty short id not bucketed` | relocated, **home in this change's own ADDED block** | `static-analysis-entrypoints :: a flagged widget with an empty short id still marks its activity` asserts all three halves (widget absent, `stats.droppedFlaggedNoId` counts it, activity still in `mopActivities`), and `gh96` `test_flagged_empty_id_marks_activity` executes it. Jar residue: no empty-string key exists on the wire |
+      | 23 | `mop-guidance :: successful load emits counters` | rename | Body `successful load emits provenance and counters` — a strict superset (the stage-4 census plus `formatVersion`, `sourceDigest`, `components`). The old body's counter values (5 windows, **51** widgets, 12 flagged, 3 dropped, 35 transitions) are the pre-correction cryptoapp numbers task 3.1 found wrong; the restated body carries the corrected ones and drops `transitions` |
+      | 24 | `mop-guidance :: transitions present, click edges absent` | **restated — would have been a loss** | `rearch-04`'s scenario, reachable under the union target. Its point is that `wtgEdges` and `transitions` are different numbers and only one gates anything — the misreading this whole window exists to end. The jar no longer sees raw transitions, so the surviving half (the record carries `wtgEdges` and **no** `transitions` field) is restated over an artifact whose `wtg` map is empty. This delta states it in prose only, and prose is not a gate |
+      | 25 | `mop-guidance :: component-level activity added under the flag` | rename | Body `flag on ⇒ augmented set feeds every consumer`. Source 2 is now a generator input; the jar-side residue is the selection |
+      | 26 | `mop-guidance :: flag off preserves widget-only source` | rename | Body `flag off ⇒ widget-derived set only` |
+      | 27 | `mop-guidance :: union preserves widget-derived entries` | relocated, home **verified by reading** | `gh96` `test_augmented_superset_of_widget_derived` asserts `set(mopActivities) <= set(mopActivitiesAugmented)` outright. Jar residue restated: the flag-on set is a superset of the flag-off set, so no widget-derived entry can be lost by turning the flag on |
+      | 28 | `mop-guidance :: non-reaching component not added` | relocated, home **verified by reading** | `gh96` `test_augmented_union_three_sources` includes an activity `D` with `reachesTarget: False` and asserts it appears in neither set. Read, not assumed — the test's name promises the union, not the negative. Jar residue: an activity in neither wire set is false under both flag states |
+      | 29 | `mop-guidance :: reachability-method source flags a lambda-gapped activity (source 3)` | relocated — **and the one that needed checking hardest** | Source 3 is the lambda-gap-immune source and the device-verified reason the union has three members rather than two. Home: the same `test_augmented_union_three_sources`, whose class `C` is typed `activity` with a reaching method and enters the augmented set through source 3 alone. **But this change's own `static-analysis-entrypoints` ADDED block states the union in prose (item 4) and carries no scenario for it** — so as written the delta would archive a relocation into a requirement that never asserts it, which is the "named home that is only plausible" this task was told to look for. 9.2 fixes it by adding an A′-union scenario to the ADDED block, which is free: ADDED carries no drop risk |
+
+      **What the zero does and does not say.** No claim in this change's four capabilities is being
+      dropped — but rows 4, 7 and 24 were each surviving in prose or in nothing at all, and an
+      archive run against the block as written would have deleted them from the main spec with a
+      green exit code. Row 7 is the one worth carrying forward: it is not a vocabulary casualty like
+      most of this list, it is a scenario the `rearch-03` rewrite of the same requirement and this
+      change's restatement on top of it both simply forgot, and it pins the argument the study's
+      strongest mechanism result rests on.
+- [ ] 9.2 Restate renames under the main spec's header, replace bodies where this change contradicts
+      them (stating the contradiction in the delta's prose), and restate genuine losses. Headers are
+      **extracted, never retyped**, with each match and each substitution asserted to be exactly one
+      whole line, and the script refusing to write when a target header is already present in the
+      delta. Two known traps to carry into it: `component-triggering :: arm contrast is the launched
+      set` has **no counterpart at all** in this delta's 14 scenarios and looks like omission rather
+      than replacement — the census contrast it pins is this study's arm-contrast argument; and the
+      A′ requirement drops 5 against 2 new bodies, so three of its claims need somewhere real to go.
+      Finish with the set-diff at **0** and `openspec validate rearch-07-compact-static-artifact
+      --strict` clean
+- [ ] 9.3 Dry-run `openspec archive rearch-07-compact-static-artifact --yes` in a disposable sandbox
+      (`cp -r openspec <scratch>/`; the CLI resolves its root from the working directory) and confirm
+      it completes without aborting. Then **verify the restated bodies actually landed** by reading
+      the sandbox's synced main specs — a scenario that pairs but syncs the wrong body is worse than
+      one that aborts, and the exit code cannot tell you which happened. The real archive is **not**
+      run here: it is the owner's to sequence, and this task's subject is that it *would* succeed
+- [ ] 9.4 Measure the archive order against `rearch-04-step-ndjson-telemetry` **marginally** (the
+      other change's unpaired count before vs after this one's sandbox archive), never
+      block-against-block. Unlike `rearch-05`, the two changes modify the same three requirements, so
+      a nonzero answer is expected and the direction matters. Report to the owner, whose call the
+      ordering is. Preliminary measurement, 2026-08-05: `rearch-04` is at **0 unpaired** and archives
+      clean today, while archiving it first raises this change from **27 → 29** (`aperv-tool :: Gzip
+      failure is non-fatal and write-only` and `mop-guidance :: transitions present, click edges
+      absent`, both scenarios `rearch-04` adds to requirements this change also modifies). The
+      reverse direction cannot be measured until 9.2 is done, because this change aborts today
+- [ ] 9.5 After the real archive (owner-sequenced, outside this session), check each of the four
+      capabilities' `## Purpose` in `openspec/specs/` **by hand**: `openspec archive` syncs
+      requirements only and prints `delta Purpose ignored; <capability> already has one`, which is
+      how session 16 left `run-spec`'s Purpose asserting the framing its own change had just retired.
+      `mop-guidance` is the one at risk here — its Purpose predates the compact artifact entirely
