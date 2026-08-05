@@ -31,39 +31,121 @@ The record's envelope SHALL carry the step number `s` — the agent exploration 
 
 - **INV-SEL-04**: Exactly one `StepRecord` SHALL be recorded per finally-selected action, covering every selection path including the LLM early-returns and budget/trivial early-returns, in every arm. The record SHALL carry a `dec.src` from the fixed enum, never a free-form string. The boost-attribution rule SHALL only change which enum value is carried; it SHALL NOT add, remove, or duplicate records, and SHALL NOT modify any boost field.
 
-#### Scenario: SATA-selected action recorded
+**Where the retired rendering's assertions went.** Five of the scenarios below keep the header the
+pre-change requirement gave them and carry a body this change contradicts, because what they assert
+is what this change removes. Recorded rather than dropped, since the reader's question is where the
+claim lives now:
+
+| Scenario header | What it asserted | Where the claim is now |
+|---|---|---|
+| `[APE-STEP] carries the MOP-screen bit` | `activity_has_mop=0\|1` on every step line | the `ACT` dictionary entry's `mop` member, emitted once per activity and **on no step record** (`event-sink :: Dictionary Events and Run-Local IDs`, scenario `activity_has_mop recorded once`). A per-step copy of a per-activity constant is exactly what the volume levers exist to remove; the join `dec`→`act`→`ACT.mop` recovers it per step |
+| `MOP-off arm always reports activity_has_mop consistent with MopData` | every line carries `activity_has_mop=0` when `MopData` is null | the same `ACT.mop` member, which is `0` for every activity of a run with no `MopData`. The arm-level property is unchanged; it is read once per activity instead of once per step |
+| `click on a patch-fabricated widget is marked` | `patched=1` on the line | `dec.patched`, whose tri-state (1 / 0 / absent) is asserted by `event-sink :: StepRecord Schema`, scenario `Tri-state patched preserved`. The field is exempt from the defaults-omitted rule precisely so `0` stays distinguishable from "no target" |
+| `targetless actions omit the patch bit` | no `patched` field for `MODEL_BACK`/`MODEL_MENU`/`MODEL_LLM_TAP` | the third state of that same tri-state — absence of the `dec.patched` member |
+| `widget text with a newline stays on one line` | the emitter flattens `\n`/`\r` before writing the line | the serializer, which escapes them by construction (`event-sink` INV-SNK-02). No pre-flattening is required for well-formedness any more; a record physically cannot carry a raw newline |
+| `No [APE-STEP] lines when telemetry is disabled` | zero lines with the gate off, provenance still populated | **nothing, deliberately** — the gate is deleted with its key. There is no disabled case to assert, and the scenario now asserts that: `ape.stepTelemetryEnabled` aborts plan resolution as an unknown key |
+
+#### Scenario: SATA-selected action attributed
 
 - **WHEN** `resolveNewAction()` finalizes an action chosen by the SATA epsilon-greedy strategy with all boosts equal to 0
 - **THEN** a single `StepRecord` SHALL be recorded with `dec.src:"SATA"`
-- **AND** its envelope SHALL include `s` and `t`, and its `dec` SHALL omit all boost fields (defaults-omitted, INV-SNK-05)
+- **AND** its envelope SHALL include `s`, `t`, `act` and `st`, and its `dec` SHALL carry `ch` and omit all boost fields (defaults-omitted, INV-SNK-05)
 
-#### Scenario: MOP-boosted roulette pick attributed to MOP
+#### Scenario: Stage-stamped provenance equals the StageResult label
 
-- **WHEN** the EARLY_STAGE unvisited roulette picks a `ModelAction` whose boosts are `mop=500`, all others 0
+- **WHEN** any stage returns `StageResult.select(action, label)` for a `ModelAction`
+- **THEN** `label` SHALL equal `action.getDecisionSource().name()`
+- **AND** the recorded `dec.src` SHALL equal the same value — one datum, stamped by the selecting stage and carried to the record without a second vocabulary (`decision-pipeline` INV-DP-04)
+
+#### Scenario: MOP-boosted action from the EARLY_STAGE roulette attributed to MOP
+
+- **WHEN** the EARLY_STAGE unvisited roulette (or the MOP preference probing it) picks a `ModelAction` whose boosts are `mop=500`, all others 0
 - **THEN** the action's `decisionSource` SHALL be `MOP` and the record SHALL carry `dec.src:"MOP"` and `dec.mop:500`
 
-#### Scenario: Tie precedence includes MopFrontier
+#### Scenario: MOP-frontier-driven pick attributed to MopFrontier, not WTG
+
+- **WHEN** a roulette pick carries boosts `mop=0, mopf=200, wtg=0, menu=0, cov=100, form=0`
+- **THEN** the action's `decisionSource` SHALL be `MopFrontier` and the record SHALL carry `dec.src:"MopFrontier"`
+- **AND** `dec.mopf:200` SHALL be carried with `dec.wtg` omitted — the two producers stay de-aliased in the record, which is the property `wtg=` reporting the WTG family only was introduced for
+
+#### Scenario: Tie precedence MOP>MopFrontier>WTG>Menu>Form>Coverage
 
 - **WHEN** a roulette pick carries boosts `mop=300, mopf=300`
 - **THEN** the record SHALL carry `dec.src:"MOP"`
 - **AND** when the tie is instead `mopf=300, wtg=300`, `dec.src` SHALL be `"MopFrontier"`
+
+#### Scenario: click on a patch-fabricated widget is marked
+
+- **WHEN** `patchGUITree` sets `clickable=true` on a child that the `AccessibilityNodeInfo` reported as non-clickable, and a later step selects the `MODEL_CLICK` derived from it
+- **THEN** that step's record SHALL carry `dec.patched:1`
+- **AND** a `MODEL_CLICK` on a node whose clickability came from the `AccessibilityNodeInfo` SHALL carry `dec.patched:0` — emitted, not omitted, because the field is exempt from the defaults-omitted rule
+- **AND** the interpretation rules are unchanged: the bit records node provenance, not action causality, and offline analysis SHALL condition on `MODEL_CLICK` before reading it causally
+
+#### Scenario: targetless actions omit the patch bit
+
+- **WHEN** the selected action is `MODEL_BACK`, `MODEL_MENU` or `MODEL_LLM_TAP`
+- **THEN** the record SHALL carry no `dec.patched` member — the third state of the tri-state, consistent with the other target-derived fields
+
+#### Scenario: [APE-STEP] carries the MOP-screen bit
+
+- **WHEN** `MopData` is present and the current activity is in the pre-computed MOP-activity set
+- **THEN** the activity's `ACT` dictionary entry SHALL carry `mop:1`, and the step record SHALL carry no `activity_has_mop` member of its own
+- **AND** an activity outside the set SHALL have `mop:0` on its entry — the bit is recorded once per activity and reached from a step via its `act` ID
+
+#### Scenario: MOP-off arm always reports activity_has_mop consistent with MopData
+
+- **WHEN** a run executes with `MopData` null
+- **THEN** every `ACT` entry of that run SHALL carry `mop:0`
+- **AND** no step record SHALL carry a MOP-screen bit of its own, in this arm or any other
+
+#### Scenario: pick_channel discriminates short-circuit from roulette
+
+- **WHEN** one step is selected by the unvisited-MOP short-circuit and a later step by the epsilon-greedy roulette
+- **THEN** the first record SHALL carry `dec.ch:"short_circuit_unvisited"`
+- **AND** the second SHALL carry `dec.ch:"roulette_greedy"`
+- **AND** both MAY carry `dec.src:"MOP"` (channel and source are independent axes)
+
+#### Scenario: Budget stage early-return attributed
+
+- **WHEN** the `Budget` stage selects the trivial-activity action on an exhausted budget
+- **THEN** that action's `decisionSource` SHALL be `Budget` and its channel `sata_other`
+- **AND** exactly one record SHALL be recorded for it, carrying `dec.src:"Budget"` and `dec.ch:"sata_other"`
+
+#### Scenario: Launcher step attributed Component
+
+- **WHEN** the `MopLauncher` stage selects an `EVENT_TRIGGER_ACTIVITY` action
+- **THEN** the record SHALL carry `dec.src:"Component"` and `dec.ch:"launcher"` (non-model branch, source derived from the action)
+- **AND** it SHALL additionally carry `dec.comp` — evidence of what the launch did, which the retired line could not hold because it was written before dispatch while the record closes at step N+1 (`component-triggering` INV-CT-07)
+
+#### Scenario: widget text with a newline stays on one line
+
+- **WHEN** the selected action's resolved node text is `"Sign\nIn"`
+- **THEN** the record's `dec.a` SHALL carry the text with the newline escaped, and the record SHALL occupy exactly one physical line
+- **AND** well-formedness SHALL NOT depend on any pre-flattening by the emitter: the serializer escapes `\n`, `\r` and every character below U+0020 by construction (`event-sink` INV-SNK-02)
 
 #### Scenario: Boosted action in a priority-blind branch stays SATA
 
 - **WHEN** a `ModelAction` carrying `mop=500` is selected by a branch that does not consume priority (e.g. `greedyPickLeastVisited`, visit-count minimum)
 - **THEN** the record SHALL carry `dec.src:"SATA"` with `dec.mop:500` still visible as a boost field
 
-#### Scenario: LLM early-return attributed
+#### Scenario: LLM early-return attributed with its channel
 
 - **WHEN** the new-state LLM hook returns a non-null action, bypassing `logActionSelected`
-- **THEN** that action's `decisionSource` SHALL be `LLM` and exactly one record SHALL carry `dec.src:"LLM"` for it, with the call's `llm[]` sub-event in the same record
+- **THEN** that action's `decisionSource` SHALL be `LLM` and exactly one record SHALL carry `dec.src:"LLM"` and `dec.ch:"llm"` for it, with the call's `llm[]` sub-event in the same record
 
-#### Scenario: Every step is attributable in every arm
+#### Scenario: Every step is attributable when telemetry is enabled
 
 - **WHEN** any run completes, under any preset
 - **THEN** every executed action SHALL have exactly one `StepRecord`
 - **AND** no selection path SHALL produce zero or more than one record for a single action
-- **AND** no configuration SHALL exist that suppresses or alters the recording (the removed `ape.stepTelemetryEnabled` key aborts plan validation as unknown)
+- **AND** every record SHALL carry exactly one `dec.ch`, and the MOP-screen bit SHALL be reachable for it through its `act` ID
+- **AND** the scenario's precondition is now vacuous and is kept only so the archive can pair the name: there is no enabled case because there is no gate
+
+#### Scenario: No [APE-STEP] lines when telemetry is disabled
+
+- **WHEN** `ape.properties` sets `ape.stepTelemetryEnabled=false`
+- **THEN** plan resolution SHALL abort with an unknown-key diagnostic before the first event — the key is deleted, not defaulted, so no run can execute in the state this scenario describes
+- **AND** the pre-change guarantee it protected (provenance still populated with recording off) is subsumed: `decisionSource` is populated on every selection path unconditionally, and recording is unconditional too
 
 ### Requirement: Per-step counterfactual attribution
 
@@ -100,7 +182,7 @@ Channel semantics:
 - **WHEN** two runs execute with the same seed, APK, and configuration, one with the counterfactual computation enabled and one with it disabled
 - **THEN** the sequence of selected actions SHALL be identical (the live RNG stream consumed exactly the same draws)
 
-#### Scenario: non-MOP channels carry no counterfactual
+#### Scenario: non-MOP channels carry no counterfactual fields
 
 - **WHEN** a step is picked by the LLM stage or the buffer
 - **THEN** its `StepRecord` SHALL NOT contain a `dec.cf` member
