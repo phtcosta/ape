@@ -192,17 +192,97 @@ carries this change's vocabulary in its body. `--no-validate` is not the answer:
 two real findings in `rearch-03`, and here it is aimed at a change whose whole subject is which
 lines a run emits.
 
-- [ ] 12.1 Carry `rearch-03`'s three scenarios into this change's `action-selection` block, restated
+### The pairwise classification (12.2, closed 2026-08-05)
+
+**51 unpaired → 0**, landed as five commits, one per capability. The disposition is 22 renames, 17
+deliberate replacements, 12 genuine losses restated. Grouped by capability; every replacement and
+every loss is named individually, because those are the ones where a reader has to be told what
+happened to the claim.
+
+| # | Capability :: Requirement | Main-spec scenario | Disposition |
+|---|---|---|---|
+| 1-5 | action-selection :: Per-action decision-source telemetry | `SATA-selected action attributed`, `MOP-boosted action from the EARLY_STAGE roulette attributed to MOP`, `Tie precedence MOP>MopFrontier>WTG>Menu>Form>Coverage`, `LLM early-return attributed with its channel`, `Every step is attributable when telemetry is enabled` | rename |
+| 6-8 | action-selection :: Per-action decision-source telemetry | `Stage-stamped provenance equals the StageResult label`, `Budget stage early-return attributed`, `Launcher step attributed Component` | **inherited from the `rearch-03` archive — restated** (task 12.1). The provenance is still stamped by the selecting stage; only its rendering moves to `dec.src`. The launcher one gains `dec.comp`, which the retired line could not carry (written before dispatch; the record closes at step N+1) |
+| 9 | action-selection :: Per-action decision-source telemetry | `MOP-frontier-driven pick attributed to MopFrontier, not WTG` | **genuine loss — restated.** The de-aliasing is asserted at pass level in `scoring-pipeline`, never at decision level after the rename |
+| 10 | action-selection :: Per-action decision-source telemetry | `pick_channel discriminates short-circuit from roulette` | **genuine loss — restated.** `dec.ch` is in the requirement's prose and in no scenario |
+| 11-12 | action-selection :: Per-action decision-source telemetry | `[APE-STEP] carries the MOP-screen bit`, `MOP-off arm always reports activity_has_mop consistent with MopData` | **deliberate replacement.** The bit leaves the step record entirely: it is a member of the activity's `ACT` dictionary entry, emitted once per activity and reached per step through `dec`→`act` (`event-sink :: activity_has_mop recorded once`) |
+| 13-14 | action-selection :: Per-action decision-source telemetry | `click on a patch-fabricated widget is marked`, `targetless actions omit the patch bit` | **deliberate replacement** onto the `dec.patched` tri-state, asserted by `event-sink :: Tri-state patched preserved` |
+| 15 | action-selection :: Per-action decision-source telemetry | `widget text with a newline stays on one line` | **deliberate replacement.** Well-formedness no longer depends on the emitter pre-flattening: the serializer escapes by construction (INV-SNK-02) |
+| 16 | action-selection :: Per-action decision-source telemetry | `No [APE-STEP] lines when telemetry is disabled` | **deliberate replacement.** There is no disabled case; the scenario now asserts the abort, which is the honest content of "disabled" after this change |
+| 17 | action-selection :: Per-step counterfactual attribution | `non-MOP channels carry no counterfactual fields` | rename (`fields` restored) |
+| 18-19 | component-triggering :: Cadence-Based MOP Activity Launch | `invalid values clamped at load`, `launcher disabled` | rename — and the second time these two have been renamed back, `rearch-03` having done it for its own archive |
+| 20 | component-triggering :: Cadence-Based MOP Activity Launch | `arm contrast is the launched set` | **genuine loss — restated**, carried forward from the main spec unmodified. It was `rearch-03`'s own rescue; dropping it here would have deleted it one archive after it was found |
+| 21-22 | exploration :: Output Persistence on Termination | `abnormal termination still persists outputs`, `one failing agent-teardown step does not skip the rest` | rename |
+| 23 | exploration :: Output Persistence on Termination | `saveObjModel disabled` | **genuine loss — restated.** Four retired keys abort resolution, asserted nowhere else |
+| 24 | exploration :: Output Persistence on Termination | `Normal termination with defaults` | **deliberate replacement.** It asserted the coverage dump *and* `action-history.log`; the log's writer is deleted here, and the step-record stream terminated by `RUN_END` is what now records the run |
+| 25 | exploration :: Output Persistence on Termination | `coverage dump precedes the first artifact write` | **deliberate replacement.** After this change no teardown step writes a file at all, so "artifact write" names nothing; the full statement is `ui-coverage`'s, against output rather than files |
+| 26 | exploration :: Output Persistence on Termination | `disconnect failure does not lose the model` | **deliberate replacement.** Subject narrows for the second time (`rearch-02` took the model, this change takes the action history); the isolation it pins is untouched |
+| 27 | exploration :: StatefulAgent — LLM Telemetry at tearDown | `Telemetry printed on normal termination` | **deliberate replacement.** `printSummary()` and its two lines are retired; the aggregate is a member of `RUN_END` and the ratio is derived by consumers |
+| 28-33 | llm-routing :: LLM Telemetry Logging | `Matched widget logged`, `dead-pair ban visible in TEL and summary`, `Repaired tool call logged and counted`, `no_match reason separated`, `Timeout and HTTP failure discriminated`, `Circuit breaker event logged once per open episode` | rename |
+| 34 | llm-routing :: LLM Telemetry Logging | `LLM call telemetry joins step and outcome on one key` | **deliberate replacement — the claim goes nowhere, deliberately.** Call, decision and outcome are members of one record, so there is no key to join on; what the join guaranteed is now structural |
+| 35 | llm-routing :: LLM Telemetry Logging | `Screenshot failure emits an attributable error line` | **deliberate replacement.** The activity and capture stage stay verbatim on the surviving free-text line (INV-RTR-20), with `screenshot_failed` in `RUN_END`; it remains the one abandoned attempt with no `llm[]` sub-event |
+| 36 | llm-routing :: LLM Telemetry Logging | `Stagnation mode triggered` | **deliberate replacement.** Verified rather than assumed: the `[APE-RV] LLM mode=stagnation` line it names has never existed in `src/main/java` at any commit that touched the string — `mode` has always been a *field* of the per-attempt telemetry — and the trigger condition is asserted by `Stagnation LLM Mode`, which this change does not modify |
+| 37 | llm-routing :: LLM Telemetry Logging | `widget text with a newline does not break the prompt log` | **deliberate replacement**, stronger in two places: the builder still flattens (`llm-prompt`, unmodified) and the serializer escapes by construction |
+| 38 | llm-routing :: LLM Telemetry Logging | `Router-side parse failure attributed without the client seam` | **genuine loss — restated.** It survived only as a parenthesis in the field table, and prose is not a gate |
+| 39 | llm-routing :: Server Model Acknowledgement | `Server model acknowledged once` | rename |
+| 40 | llm-routing :: Server Model Acknowledgement | `No acknowledgement without a successful response` | **genuine loss — restated** |
+| 41 | llm-routing :: Action Selection Pipeline | `banned result is refused at step 10, not failed` | rename — and the step-8 placement clause this change's block had let go is restored with it |
+| 42-43 | llm-routing :: Action Selection Pipeline | `Off-tree element becomes a coordinate tap`, `no_match reason is always one of three` | **genuine loss — restated.** Both are `rearch-03`'s own restatements, one archive from being dropped again |
+| 44-46 | scoring-pipeline :: Per-Step Decision Outcome Attribution, Scoring Pipeline Assembly | `LLM decision attributed to a new-state discovery on a MOP screen`, `BadStateException retry emits a single outcome`, `empty pipeline under the pure arm` | rename |
+| 47 | scoring-pipeline :: Per-Step Decision Outcome Attribution | `outcome on a non-MOP screen` | **deliberate replacement.** The landing-side bit is the same `ACT.mop`; the evidential link survives as `out.target`→`STATE.act`→`ACT.mop` instead of a per-step copy |
+| 48 | scoring-pipeline :: Per-Step Decision Outcome Attribution | `Outcome line suppressed under pure mode` | **deliberate replacement.** No arm can suppress attribution; what protects the control arm is the neutrality gate (INV-SNK-07) — a property a test checks — rather than a switch an arm had to be trusted to set |
+| 49 | scoring-pipeline :: Parity Configuration Flags | `a single gate overridden without the kill-switch` | **deliberate replacement, and the only case where the example changed rather than the claim**: it overrode the key this change deletes, so it overrides `ape.modelMenuEnabled` instead. The property — one override disturbs no other gate — is unchanged, and the substitution is stated in the scenario so it does not read as a silent edit |
+| 50 | scoring-pipeline :: Parity Configuration Flags | `retired kill-switch key aborts` | **genuine loss — restated**, carried forward verbatim. It is `rearch-02`'s, and this change has nothing to say about it |
+| 51 | ui-coverage :: Coverage Dump Emitted First Among Teardown Writers | `dump precedes model serialization` | rename |
+
+**The three inherited ones cost what the handoff said they would.** Items 6-8 are the marginal cost
+of the `rearch-03` archive and nothing else in this change's set moved — confirmed by the set-diff,
+not assumed.
+
+**What the sandbox archive produced** (12.4, run 2026-08-05 against a disposable copy of
+`openspec/`): `+ 11, ~ 26, - 2`, fourteen capabilities updated, `event-sink` created, no abort. Eleven
+restated or replaced scenarios were then confirmed present in the sandbox's synced main specs
+carrying this change's bodies — the check `rearch-03` group 9 ran, for the same reason: a scenario
+that pairs but syncs the wrong body is worse than one that aborts.
+
+### The archive order, measured (2026-08-05)
+
+`rearch-04` shares three modified requirements with `rearch-07`: `aperv-tool ::
+execute_tool_specific_logic() Flow`, `component-triggering :: Cadence-Based MOP Activity Launch`,
+and `mop-guidance :: MopData — Load Status Line and Fail-Fast`. Measured before/after rather than
+block-against-block, which is learning 2 of the `rearch-03` write-up and matters here by 4.5×:
+
+| Order | Cost, gross | Cost, **marginal** |
+|---|---|---|
+| `rearch-04` first → what `rearch-07` then owes | 9 names across the three requirements | **2** — `Gzip failure is non-fatal and write-only` and `transitions present, click edges absent`, both this change's own additions. `rearch-07`'s unpaired count goes 27 → 29 |
+| `rearch-07` first → what `rearch-04` then owes | 10 names | **10.** This change's baseline is 0, so nothing absorbs them: every name is a new debt, incurred after the change has closed |
+
+The asymmetry is the whole argument, and it is the same one `rearch-03` faced: `rearch-07` is open
+(25/46) and has an unpaired set of its own to work through regardless — 27 today — so two more cost
+it nothing it is not already paying. `rearch-04` going second would pay 10 into a closed change.
+Two of `rearch-07`'s ten will evaporate anyway when it does its own pairing, because
+`invalid values clamped at plan resolution` and `launcher absent from the plan` are renames it will
+have to reverse exactly as this group just did.
+
+`rearch-07`'s numbers are a snapshot of a change being edited in this worktree right now; the
+direction of the asymmetry is stable, the second decimal is not.
+
+- [x] 12.1 Carry `rearch-03`'s three scenarios into this change's `action-selection` block, restated
       in this change's vocabulary (they describe decision-source attribution, which the `StepRecord`
       now carries in `dec` rather than on an `[APE-STEP]` line)
-- [ ] 12.2 Set-diff every MODIFIED block against the current main spec and classify each unpaired
+- [x] 12.2 Set-diff every MODIFIED block against the current main spec and classify each unpaired
       scenario pairwise — rename / deliberate replacement / genuine loss — as `rearch-03` group 9
       did. The classification is the deliverable: a count is not one
-- [ ] 12.3 Restate renames under the main spec's header, replace bodies where this change
+- [x] 12.3 Restate renames under the main spec's header, replace bodies where this change
       contradicts them (stating the contradiction in the delta's prose), and restate genuine losses.
       A scenario asserting a rendering this change deletes is a **replacement**, not a loss — but say
       so in the prose, since the reader's question will be where the assertion went
 - [ ] 12.4 `openspec archive rearch-04-step-ndjson-telemetry --yes` completes without aborting.
       Runnable against a sandbox copy of `openspec/` first (`cp -r openspec <scratch>/` and archive
       there) — the abort is per-capability and stops at the first failure, so the sandbox is how the
-      whole list is seen at once rather than one capability per attempt
+      whole list is seen at once rather than one capability per attempt. **Sandbox run green
+      2026-08-05** (`+ 11, ~ 26, - 2`, fourteen capabilities, `event-sink` created; eleven restated
+      bodies confirmed in the synced specs afterwards). **The real archive is deliberately not run
+      here**: it is the act that ends the change, it mutates the main specs `rearch-07` is being
+      written against in this same worktree, and the order measurement above — 2 against 10 — is an
+      argument for going first, not an authorisation to. Owner's call
