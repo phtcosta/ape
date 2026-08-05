@@ -54,38 +54,63 @@ public class Model implements Serializable {
         STATE_ABSTRACTION,
     }
 
-    public static class ActionRecord implements Serializable {
-        /**
-         * 
-         */
-        private static final long serialVersionUID = 1L;
+    /**
+     * A snapshot of one executed action, kept for post-hoc diagnostics.
+     *
+     * <p>The record holds primitives and strings only — never an {@link Action}, a
+     * {@link GUITreeAction}, a {@link GUITree} or a {@link GUITreeNode} (INV-MODEL-18). It used to
+     * hold the action and its {@code GUITreeAction}, and through the latter a whole GUI tree: one
+     * full tree pinned per executed step for the rest of the run, which is the retainer the history
+     * field's own TODO blamed for the {@code OutOfMemoryError} (V11). Every field below is captured
+     * in {@link Model#appendToActionHistory}, where the action's resolved objects are still valid
+     * because the append happens in the step that resolved them.
+     *
+     * <p>Conventions for the absent cases, chosen so a reader can tell them apart from real data:
+     * {@code stateId} is null for a non-model action, {@code targetXPath} is null for a targetless
+     * one, and {@code treeId}/{@code treeTimestamp} are -1 when the action carried no resolved
+     * {@code GUITreeAction} — the crash records, which were appended with a null one before this
+     * change too.
+     */
+    public static class ActionRecord {
         public final long clockTimestamp;
         public final int agentTimestamp;
-        public final Action modelAction;
-        public final GUITreeAction guiAction;
-        public ActionRecord(long clockTimestamp, int agentTimestamp, Action action, GUITreeAction guiAction) {
+        public final String actionType;
+        public final String stateId;
+        public final String targetXPath;
+        public final int treeId;
+        public final int treeTimestamp;
+        public final int throttle;
+
+        public ActionRecord(long clockTimestamp, int agentTimestamp, String actionType, String stateId,
+                String targetXPath, int treeId, int treeTimestamp, int throttle) {
             this.clockTimestamp = clockTimestamp;
             this.agentTimestamp = agentTimestamp;
-            this.modelAction = action;
-            this.guiAction = guiAction;
+            this.actionType = actionType;
+            this.stateId = stateId;
+            this.targetXPath = targetXPath;
+            this.treeId = treeId;
+            this.treeTimestamp = treeTimestamp;
+            this.throttle = throttle;
         }
+    }
 
-        public void resolveModelAction() {
-            if (this.modelAction.isModelAction()) {
-                ModelAction modelAction = (ModelAction) this.modelAction;
-                if (guiAction == null) {
-                    throw new IllegalStateException("GUI action should not be null.");
-                }
-                GUITree tree = guiAction.getGUITree();
-                int throttle = guiAction.getThrotlle();
-                if (modelAction.requireTarget()) {
-                    GUITreeNode node = guiAction.getGUITreeNode();
-                    GUITreeNode[] nodes = tree.pickNodes(modelAction);
-                    modelAction.resolveAt(agentTimestamp, throttle, tree, node, nodes);
-                } else {
-                    modelAction.resolveAt(agentTimestamp, throttle, tree, null, null);
-                }
-            }
+    /**
+     * The rich {@code (ModelAction, GUITreeAction)} pair {@link Model#actionHistory} keeps at
+     * depth 1 so that {@code StatefulAgent.recoverCurrentState} can restore a lost current state.
+     *
+     * <p>This is the only rich retention left in the history subsystem, and it retains at most one
+     * GUI tree — one the owning state's {@code treeHistory} retains anyway.
+     */
+    public static class RecoveryPoint implements Serializable {
+
+        private static final long serialVersionUID = 1L;
+
+        public final ModelAction modelAction;
+        public final GUITreeAction guiAction;
+
+        public RecoveryPoint(ModelAction modelAction, GUITreeAction guiAction) {
+            this.modelAction = modelAction;
+            this.guiAction = guiAction;
         }
     }
 
@@ -99,8 +124,20 @@ public class Model implements Serializable {
     protected NamingManager namingManager;
     // the state machine
     protected Graph graph;
-    // A list of all actions, TODO: may be the cause of OOM
+    // A snapshot per executed action, for post-hoc diagnostics; nothing reads it at runtime. It is
+    // O(steps) records of primitives and strings — hundreds of KB over a 600 s run — and retains no
+    // model object, so it is no longer the OOM retainer its predecessor was (V11, INV-MODEL-18).
     protected List<ActionRecord> actionHistory = new ArrayList<ActionRecord>();
+
+    // The depth-1 rich recovery point that replaces the backward scan over the history.
+    // recoverCurrentState used to walk the rich records from the end for the most recent
+    // model-action record, stopping at a more recent record that canStartApp(). The snapshots above
+    // cannot serve that, so the same predicate is maintained incrementally here on every append:
+    // a start action blocks recovery, a model action becomes the point and unblocks it, and
+    // anything else leaves both alone. The precedence matches the scan's — canStartApp is tested
+    // before isModelAction — because an action that is both would have stopped the scan.
+    protected RecoveryPoint recoveryPoint;
+    protected boolean recoveryBlocked;
 
     protected int version;
 
@@ -126,16 +163,70 @@ public class Model implements Serializable {
         return Collections.unmodifiableList(this.actionHistory);
     }
 
-    public synchronized void updateActionHistory(int i, ActionRecord record) {
-        this.actionHistory.set(i, record);
+    /**
+     * The rich pair to recover a lost current state from, or null if none was ever appended.
+     *
+     * <p>Callers must consult {@link #isRecoveryBlocked()} as well: a point can be present and
+     * blocked, which is the scan's "a start action is more recent than the last model action" case.
+     */
+    public synchronized RecoveryPoint getRecoveryPoint() {
+        return this.recoveryPoint;
+    }
+
+    public synchronized boolean isRecoveryBlocked() {
+        return this.recoveryBlocked;
+    }
+
+    /**
+     * Replaces the recovery point, leaving the blocked flag alone.
+     *
+     * <p>Used by {@code StatefulAgent.updateModel} to remap the point's action reference across a
+     * naming-refinement rebuild — the append rules are the only other writer.
+     */
+    public synchronized void setRecoveryPoint(RecoveryPoint recoveryPoint) {
+        this.recoveryPoint = recoveryPoint;
     }
 
     public synchronized void appendToActionHistory(long clockTimestamp, Action action, int agentTimestamp) {
+        GUITreeAction guiAction = null;
+        String stateId = null;
         if (action.isModelAction()) {
             ModelAction modelAction = (ModelAction) action;
-            this.actionHistory.add(new ActionRecord(clockTimestamp, agentTimestamp, action, modelAction.getResolvedGUITreeAction()));
-        } else {
-            this.actionHistory.add(new ActionRecord(clockTimestamp, agentTimestamp, action, null));
+            guiAction = modelAction.getResolvedGUITreeAction();
+            State state = modelAction.getState();
+            stateId = state == null ? null : state.getGraphId();
+        }
+        // A crash record is appended with no resolved GUI action; the tree fields say so with -1
+        // rather than guessing, and the throttle falls back to the action's own.
+        int treeId = -1;
+        int treeTimestamp = -1;
+        int throttle = action.getThrottle();
+        if (guiAction != null) {
+            GUITree tree = guiAction.getGUITree();
+            treeId = tree.getId();
+            treeTimestamp = tree.getTimestamp();
+            throttle = guiAction.getThrotlle();
+        }
+        Name target = action.getTarget();
+        this.actionHistory.add(new ActionRecord(clockTimestamp, agentTimestamp, action.getType().name(),
+                stateId, target == null ? null : target.toXPath(), treeId, treeTimestamp, throttle));
+        updateRecoveryPoint(action, guiAction);
+    }
+
+    /**
+     * The three rules that keep the recovery point equivalent to the backward scan it replaced.
+     *
+     * <p>The scan's outcome is "the most recent model-action record, unless a {@code canStartApp()}
+     * record is more recent" — so a start action blocks (rule 1), a model action becomes the point
+     * and clears the block (rule 2), and everything else — fuzz events, crash records, lifecycle
+     * events — is invisible to it (rule 3), exactly as the scan skipped them.
+     */
+    private void updateRecoveryPoint(Action action, GUITreeAction guiAction) {
+        if (action.canStartApp()) {
+            this.recoveryBlocked = true;
+        } else if (action.isModelAction()) {
+            this.recoveryPoint = new RecoveryPoint((ModelAction) action, guiAction);
+            this.recoveryBlocked = false;
         }
     }
 

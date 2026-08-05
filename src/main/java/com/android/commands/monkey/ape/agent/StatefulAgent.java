@@ -42,7 +42,7 @@ import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.GraphListener;
 import com.android.commands.monkey.ape.model.Model;
-import com.android.commands.monkey.ape.model.Model.ActionRecord;
+import com.android.commands.monkey.ape.model.Model.RecoveryPoint;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
@@ -374,20 +374,25 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             }
             actionBuffer = newBuffer;
         }
-        List<ActionRecord> actionHistory = getActionHistory();
-        final int size = actionHistory.size();
-        for (int i = 0; i < size; i++) {
-            ActionRecord actionPair = actionHistory.get(i);
-            Action action = actionPair.modelAction;
-            GUITreeAction guiAction = actionPair.guiAction;
-            if (action.isModelAction() && action.requireTarget()) {
-                if (guiAction == null) {
-                    throw new RuntimeException("Sanity check failed!");
-                }
-                action = newModel.update((ModelAction)action, guiAction);
-                updateActionHistory(i, new ActionRecord(actionPair.clockTimestamp,
-                        actionPair.agentTimestamp, action, guiAction));
+        // The history itself needs no remapping: its records are snapshots of primitives and
+        // strings, so nothing in them can go stale (INV-MODEL-18). What does need it is the depth-1
+        // recovery point, the one rich pair left — remapped here through the same
+        // model.update(action, guiAction) discipline as the agent's own field pairs above.
+        //
+        // The requireTarget() guard is the one the deleted per-record loop applied, carried forward
+        // deliberately. recoverCurrentState accepts any model action, so at HEAD a targetless one
+        // (MODEL_BACK, MODEL_MENU) held as the recovery point kept pointing at the pre-rebuild
+        // object. Remapping it unconditionally would very likely be better — less stale recovery —
+        // but it is a behavior change, and this stage is a memory repair sold as decision-neutral
+        // (INV-MODEL-20), with no evidence able to measure the difference. It is left to a change
+        // that can.
+        RecoveryPoint point = newModel.getRecoveryPoint();
+        if (point != null && point.modelAction.requireTarget()) {
+            if (point.guiAction == null) {
+                throw new RuntimeException("Sanity check failed!");
             }
+            ModelAction remapped = newModel.update(point.modelAction, point.guiAction);
+            newModel.setRecoveryPoint(new RecoveryPoint(remapped, point.guiAction));
         }
     }
 
@@ -1046,26 +1051,19 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         if (currentState != null) {
             return;
         }
-        List<ActionRecord> history = getActionHistory();
-        if (history.isEmpty()) {
+        // The model maintains this point on every append under the same predicate the backward scan
+        // over the rich history computed: the most recent model action, unless a start action came
+        // after it (which is the blocked case, the scan's early return).
+        if (model.isRecoveryBlocked()) {
+            // do nothing if is start
             return;
         }
-        ActionRecord record = null;
-        for (int index = history.size() - 1; index >= 0; index--) {
-            record = history.get(index);
-            if (record.modelAction.canStartApp()) {
-                // do nothing if is start
-                return;
-            }
-            if (record.modelAction.isModelAction()) {
-                break;
-            }
-        }
-        if (record == null || !record.modelAction.isModelAction()) {
+        RecoveryPoint point = model.getRecoveryPoint();
+        if (point == null) {
             return; // no valid action
         }
-        ModelAction modelAction = (ModelAction) record.modelAction;
-        GUITreeAction guiAction = record.guiAction;
+        ModelAction modelAction = point.modelAction;
+        GUITreeAction guiAction = point.guiAction;
         currentState = modelAction.getState();
         currentAction = modelAction;
         currentGUITree = guiAction.getGUITree();
@@ -1935,14 +1933,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * to land.
      */
     protected void dumpCoverage() {
-    }
-
-    public List<ActionRecord> getActionHistory() {
-        return this.model.getActionHistory();
-    }
-
-    public void updateActionHistory(int index, ActionRecord record) {
-        this.model.updateActionHistory(index, record);
     }
 
     public void appendToActionHistory(long clockTimestamp, Action action) {
