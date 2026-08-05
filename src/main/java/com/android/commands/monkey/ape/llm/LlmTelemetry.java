@@ -1,7 +1,7 @@
 package com.android.commands.monkey.ape.llm;
 
-import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.telemetry.EventSink;
+import com.android.commands.monkey.ape.telemetry.RunCounters;
 import com.android.commands.monkey.ape.utils.Logger;
 
 import java.util.List;
@@ -26,10 +26,10 @@ import java.util.function.IntSupplier;
  * <p><b>The engine decides, this unit records.</b> The classification of an answer
  * ({@code matched}/{@code llm_tap}/{@code no_match} and its reason) is the engine's judgement,
  * because it is the engine that holds what the mapping returned; what arrives here is that verdict
- * plus the fields the line prints. That division is what lets the whole telemetry surface be
+ * plus the fields the sub-event carries. That division is what lets the whole telemetry surface be
  * exercised without a device, a model or a screenshot.
  *
- * <p><b>What the counters mean, since the summary is read offline months later.</b>
+ * <p><b>What the counters mean, since {@code RUN_END} is read offline months later.</b>
  * {@code totalCalls} counts <em>attempts</em>, incremented before anything can fail (INV-RTR-07).
  * The seven cause counters partition the attempts abandoned before the mapping step: exactly one
  * fires per abandoned attempt, and {@code screenshotFailedCount} is a peer of the other six rather
@@ -53,7 +53,7 @@ public final class LlmTelemetry {
     private final boolean promptDump;
 
     /**
-     * The breaker's trip count, asked for when the summary is printed.
+     * The breaker's trip count, asked for when the counters are totalled at teardown.
      *
      * <p>A function rather than a mirrored field, because the trip count belongs to
      * {@link LlmClient} (design D5) and a mirror can only ever restate it. A field refreshed at
@@ -77,7 +77,7 @@ public final class LlmTelemetry {
     // Successful decisions whose tool call needed a ToolCallParser repair (repair-form label other
     // than none, per llm-infrastructure INV-LLM-09). A subset overlay on matched/llm_tap/no_match —
     // NOT a cause counter and NOT part of the decisions denominator (INV-RTR-13) — so the base×v2
-    // tool-call fidelity contrast stays countable post-hoc from the summary line alone.
+    // tool-call fidelity contrast stays countable post-hoc from RUN_END.counters alone.
     private int repairedCount   = 0;
     // Discriminated failure-cause counters (INV-RTR-11): each attempt abandoned before the mapping
     // step increments exactly one, so the seven counters partition the retired single nullCount and
@@ -92,8 +92,8 @@ public final class LlmTelemetry {
     private int internalErrorCount = 0;
     private int screenshotFailedCount = 0;
     // Dead-pair overlay counter: each banned decision is already counted under noMatchCount, and is
-    // counted again here so bucket D — the ban's falsification gate — is readable from the summary
-    // line alone, without joining the per-decision [APE-LLM-TEL] stream.
+    // counted again here so bucket D — the ban's falsification gate — is readable from RUN_END alone,
+    // without walking every step record's llm[] array.
     private int deadPairCount   = 0;
 
     // The prompt of the attempt in flight, held only because the response arrives later and the
@@ -102,7 +102,7 @@ public final class LlmTelemetry {
     private String pendingUser;
 
     /**
-     * @param breakerTrips how many times the run's breaker has opened, asked at summary time
+     * @param breakerTrips how many times the run's breaker has opened, asked when the counters total
      * @param sink where the per-attempt sub-events go
      * @param promptDump whether the prompt and response text ride each sub-event
      */
@@ -119,10 +119,9 @@ public final class LlmTelemetry {
     /**
      * Count one attempt, before anything about it is known.
      *
-     * <p>Placed at the very top of the engine's pipeline on purpose (INV-RTR-07): {@code calls} on
-     * the summary line is how many times the LLM was asked, so an attempt that dies at the
-     * screenshot must still be one of them, and the {@code call=} field of a decision line is the
-     * ordinal of that attempt.
+     * <p>Placed at the very top of the engine's pipeline on purpose (INV-RTR-07): {@code calls} is how
+     * many times the LLM was asked, so an attempt that dies at the screenshot must still be one of
+     * them, and a sub-event's {@code call} field is the ordinal of that attempt.
      */
     public void countAttempt() {
         totalCalls++;
@@ -338,68 +337,41 @@ public final class LlmTelemetry {
     }
 
     // -------------------------------------------------------------------------
-    // Summary
+    // Totals
     // -------------------------------------------------------------------------
 
     /**
-     * Print what the run's LLM did, once, at teardown.
+     * What this run's LLM did, totalled, for the {@code RUN_END} record teardown writes.
+     *
+     * <p>No ratio is carried. The decision ratio is {@code matched / decisions} over counters the
+     * record already holds, so a consumer computes it — and its denominator has been redefined once
+     * in this study's lifetime (INV-RTR-11 split a single {@code nullCount} into seven causes),
+     * which a stored ratio would have frozen into every trace that carried it.
+     *
+     * <p>Read once, at teardown, which is also when the breaker's trip count is asked for — the
+     * only value here this unit does not own.
+     *
+     * @return the counters as of this moment
      */
-    public void printSummary() {
-        // The seven cause counters partition the retired single nullCount (INV-RTR-11), so the
-        // decisions denominator is value-identical to the pre-change matched + llm_tap + no_match +
-        // null. screenshot_failed is a peer cause (no longer a subset of an aggregate); llmTapCount is
-        // a completed mapping outcome inside decisions; the numerator stays matchedCount (match rate).
-        int failureCount = getFailureCount();
-        int decisions = matchedCount + llmTapCount + noMatchCount + failureCount;
-        double matchRate = decisions > 0 ? (matchedCount * 100.0 / decisions) : 0.0;
-        Logger.println("[APE-RV] LLM Summary"
-                + " calls=" + totalCalls
-                + " tokens_in=" + totalTokensIn
-                + " tokens_out=" + totalTokensOut
-                + " time_ms=" + totalTimeMs
-                + " matched=" + matchedCount
-                + " llm_tap=" + llmTapCount
-                + " no_match=" + noMatchCount
-                + " dead_pair=" + deadPairCount
-                + " repaired=" + repairedCount
-                + " timeout=" + timeoutCount
-                + " http_error=" + httpErrorCount
-                + " conn_error=" + connErrorCount
-                + " parse_error=" + parseErrorCount
-                + " image_error=" + imageErrorCount
-                + " internal_error=" + internalErrorCount
-                + " screenshot_failed=" + screenshotFailedCount
-                + " breaker_trips=" + breakerTrips.getAsInt());
-        Logger.println(String.format("[APE-RV] LLM Decision ratio: %.1f%% (%d/%d)",
-                matchRate, matchedCount, decisions));
+    public RunCounters counters() {
+        RunCounters counters = new RunCounters();
+        counters.calls = totalCalls;
+        counters.tokensIn = totalTokensIn;
+        counters.tokensOut = totalTokensOut;
+        counters.timeMs = totalTimeMs;
+        counters.matched = matchedCount;
+        counters.llmTap = llmTapCount;
+        counters.noMatch = noMatchCount;
+        counters.deadPair = deadPairCount;
+        counters.repaired = repairedCount;
+        counters.timeout = timeoutCount;
+        counters.httpError = httpErrorCount;
+        counters.connError = connErrorCount;
+        counters.parseError = parseErrorCount;
+        counters.imageError = imageErrorCount;
+        counters.internalError = internalErrorCount;
+        counters.screenshotFailed = screenshotFailedCount;
+        counters.breakerTrips = breakerTrips.getAsInt();
+        return counters;
     }
-
-    // -------------------------------------------------------------------------
-    // Accessors
-    // -------------------------------------------------------------------------
-
-    /** Attempts made, whether or not they produced a decision. */
-    public int getCallCount() { return totalCalls; }
-
-    /** Answers that resolved to a widget action. */
-    public int getMatchedCount() { return matchedCount; }
-
-    /** Synthesized off-tree coordinate taps (MODEL_LLM_TAP). */
-    public int getLlmTapCount() { return llmTapCount; }
-
-    /** Completed decisions that selected nothing. */
-    public int getNoMatchCount() { return noMatchCount; }
-
-    /**
-     * Total attempts abandoned before the mapping step — the sum of the seven cause counters
-     * (partition of the retired {@code nullCount}, INV-RTR-11). {@code no_match} outcomes are
-     * excluded (they emit an {@code [APE-LLM-TEL]} line and are counted by {@link #getNoMatchCount()}).
-     */
-    public int getFailureCount() {
-        return timeoutCount + httpErrorCount + connErrorCount + parseErrorCount
-                + imageErrorCount + internalErrorCount + screenshotFailedCount;
-    }
-
-    /** Attempts abandoned because the screen could not be read (peer cause counter). */
-    public int getScreenshotFailedCount() { return screenshotFailedCount; }
 }

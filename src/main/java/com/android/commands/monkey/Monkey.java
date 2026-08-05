@@ -807,6 +807,18 @@ public class Monkey {
         int crashedAtCycle = 0;
         try {
             crashedAtCycle = runMonkeyCycles();
+        } catch (Throwable t) {
+            // What ended the run is known here and nowhere later: the finally below cannot see the
+            // exception, and by teardown it has already been rethrown past everything that could
+            // name it. The class name travels because "crash" alone does not distinguish a device
+            // going away from a defect in the agent.
+            try {
+                recordTermination(RunContext.REASON_CRASH, t.getClass().getName());
+            } catch (Throwable ignored) {
+                // INV-EXPL-16 reaches here too: recording how the run ended must never replace the
+                // exception that ended it. Losing the reason costs one field of one record.
+            }
+            throw t;
         } finally {
             // INV-EXPL-16: nothing in this finally may throw. A throw here would replace the
             // exception that ended runMonkeyCycles, destroying the identity of the real failure,
@@ -1357,6 +1369,21 @@ public class Monkey {
      * @return Returns the last cycle which executed. If the value == mCount, no
      *         errors detected.
      */
+    /**
+     * Records how the run ended, when this run has a context to record it in.
+     *
+     * <p>The guard is not defensive: the random event source is a Monkey mode with no plan, no
+     * context and no trace, so there is nothing for a termination reason to be written on.
+     *
+     * @param reason one of {@code RunContext}'s reason constants
+     * @param detail the crash's exception class name, or null
+     */
+    private void recordTermination(String reason, String detail) {
+        if (mEventSource instanceof MonkeySourceApe) {
+            RunContext.current().terminated(reason, detail);
+        }
+    }
+
     private int runMonkeyCycles() {
         int eventCounter = 0;
         int cycleCounter = 0;
@@ -1386,6 +1413,10 @@ public class Monkey {
             } else {
                 currentTime = SystemClock.elapsedRealtime();
                 if (currentTime > mEndTime) {
+                    // The ordinary end of a campaign run: the wall-clock budget is what every
+                    // measured arm runs against, so this branch — not the count above — is what
+                    // "timeout" names in RUN_END.
+                    recordTermination(RunContext.REASON_TIMEOUT, null);
                     break;
                 }
             }

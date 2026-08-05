@@ -79,12 +79,23 @@ public final class NdjsonSink implements EventSink {
     private boolean disabled;
 
     /**
-     * Step records written so far. Nothing reads it yet: it is one of the counts {@code RUN_END}
-     * carries, and {@code RUN_END} arrives with the teardown wiring of group 4. Counted here rather
-     * than there because this is the only place that knows a record was actually written — a count
-     * taken at teardown from the agent's step number would report steps attempted.
+     * Step records written so far, which is what {@code RUN_END} reports as {@code steps}. Counted
+     * here rather than at teardown because this is the only place that knows a record was actually
+     * written — a count taken from the agent's step number would report steps attempted.
      */
     private int stepRecords;
+
+    /**
+     * The {@code t} of the first and last step records written, which {@code RUN_END} carries.
+     *
+     * <p>Their span against the run's budget is what separates a run that explored for its whole
+     * budget from one that was alive and idle: the decisive campaign contains a run recorded
+     * {@code COMPLETED} with 1,871 s of execution time whose 150 step records span 446 s. Taken at
+     * write time rather than at {@code beginStep} so they describe records the trace actually
+     * contains.
+     */
+    private long firstStepT;
+    private long lastStepT;
 
     /** Whether {@code LLM_ACK} has been written, which caps it at one record per run. */
     private boolean acknowledged;
@@ -358,10 +369,78 @@ public final class NdjsonSink implements EventSink {
         }
     }
 
+    @Override
+    public void runEnd(String reason, String detail, RunCounters counters) {
+        if (disabled) {
+            return;
+        }
+        try {
+            sideBuf.reset().beginObject();
+            sideBuf.name("type").value("RUN_END");
+            sideBuf.name("reason").value(reason);
+            if (detail != null) {
+                sideBuf.name("detail").value(detail);
+            }
+            sideBuf.name("steps").value(stepRecords);
+            if (stepRecords > 0) {
+                // Omitted rather than zeroed on a run that wrote no step: a run that never began
+                // exploring has no first step, and a pair of zeros would say it began and ended at
+                // the origin. Absence is the honest encoding, and INV-SNK-05's rule for it.
+                sideBuf.name("t_first_step").value(firstStepT);
+                sideBuf.name("t_last_step").value(lastStepT);
+            }
+            sideBuf.name("counters").beginObject();
+            sideBuf.name("acts").value(activityIds.size());
+            sideBuf.name("states").value(stateIds.size());
+            if (counters != null) {
+                writeLlmCounters(counters);
+            }
+            sideBuf.endObject();
+            write(sideBuf.endObject().toLine());
+        } catch (Throwable failure) {
+            latch("runEnd", failure);
+        }
+    }
+
+    /**
+     * The LLM block of {@code RUN_END.counters} — the seventeen totals of the retired
+     * {@code [APE-RV] LLM Summary} line, under the names the reader expects.
+     *
+     * <p>Written whole, with no default omission: a counter at zero is a measurement here, not an
+     * absent field. "The run made no LLM call that timed out" and "this trace does not say" are
+     * different claims, and the block is one record per run rather than one per step, so the volume
+     * rule that motivates omission elsewhere buys nothing.
+     */
+    private void writeLlmCounters(RunCounters counters) {
+        sideBuf.name("llm").beginObject();
+        sideBuf.name("calls").value(counters.calls);
+        sideBuf.name("tok_in").value(counters.tokensIn);
+        sideBuf.name("tok_out").value(counters.tokensOut);
+        sideBuf.name("ms").value(counters.timeMs);
+        sideBuf.name("matched").value(counters.matched);
+        sideBuf.name("llm_tap").value(counters.llmTap);
+        sideBuf.name("no_match").value(counters.noMatch);
+        sideBuf.name("dead_pair").value(counters.deadPair);
+        sideBuf.name("repaired").value(counters.repaired);
+        sideBuf.name("timeout").value(counters.timeout);
+        sideBuf.name("http_error").value(counters.httpError);
+        sideBuf.name("conn_error").value(counters.connError);
+        sideBuf.name("parse_error").value(counters.parseError);
+        sideBuf.name("image_error").value(counters.imageError);
+        sideBuf.name("internal_error").value(counters.internalError);
+        sideBuf.name("screenshot_failed").value(counters.screenshotFailed);
+        sideBuf.name("breaker_trips").value(counters.breakerTrips);
+        sideBuf.endObject();
+    }
+
     /** Serializes the open record, writes it, and returns the accumulator to its empty state. */
     private void writePending() {
         pending.writeTo(recordBuf);
         write(recordBuf.toLine());
+        if (stepRecords == 0) {
+            firstStepT = pending.tRelMs();
+        }
+        lastStepT = pending.tRelMs();
         stepRecords++;
         pending.reset();
     }

@@ -1434,6 +1434,10 @@ public class MonkeySourceApe implements MonkeyEventSource {
             try {
                 generateEvents();
             } catch (StopTestingException e) {
+                // The agent asked to stop, which ends the run as orderly as the budget expiring
+                // does — the cycle loop sees a null event and breaks. Recorded here because the
+                // loop cannot tell this break from any other.
+                RunContext.current().terminated(RunContext.REASON_TIMEOUT, null);
                 clearEvent();
                 return null;
             }

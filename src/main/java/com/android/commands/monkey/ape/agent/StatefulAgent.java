@@ -1878,12 +1878,25 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         }
     }
 
+    /**
+     * The teardown chain, whose first and last steps belong to the trace.
+     *
+     * <p><b>{@code flushPendingStep} runs first</b> because it is the step that bounds loss: the
+     * record for the step that was in flight when the run ended is still open, and every moment
+     * between here and its write is a moment a SIGKILL takes it. It is the only teardown step whose
+     * artifact is already half-written, so it goes before the ones that build theirs from scratch.
+     *
+     * <p><b>{@code runEnd} runs last</b> so that {@code RUN_END} is the last sink record of a normal
+     * termination (INV-SNK-09) — a reader that finds it knows nothing else was going to be written.
+     * Later stdout lines from other teardown steps may still follow it; it is the last <em>record</em>,
+     * not the last line, and nothing validates either (owner decision D5).
+     *
+     * <p>Both are ordinary {@code safeStep}s, so a failure in either costs only its own artifact and
+     * the steps after it still run (INV-EXPL-16/29) — including {@code runEnd} itself, which is why
+     * a run whose naming dump throws still ends with a record saying how it ended.
+     */
     public void tearDown() {
-        safeStep("llmSummary", () -> {
-            if (RunContext.current().hasLlm()) {
-                RunContext.current().llmTelemetry().printSummary();
-            }
-        });
+        safeStep("flushPendingStep", () -> RunContext.current().sink().flushPendingStep());
         safeStep("superTearDown", super::tearDown);
         safeStep("coverageDump", this::dumpCoverage);
         safeStep("saveActionHistory", this::saveActionHistory);
@@ -1891,17 +1904,23 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         safeStep("activityNodes", () -> getGraph().printActivityNodes());
         safeStep("namingDump", () -> model.getNamingManager().dump());
         safeStep("modelCounters", () -> model.printCounters());
+        safeStep("runEnd", () -> {
+            RunContext context = RunContext.current();
+            context.sink().runEnd(context.terminationReason(), context.terminationDetail(),
+                    context.hasLlm() ? context.llmTelemetry().counters() : null);
+        });
     }
 
     /**
      * The teardown step that emits the UI-coverage dump (INV-COV-10). No-op here: only
      * {@code SataAgent} can supply the dump's {@code mopReach} predicate, so it overrides this.
      *
-     * <p>Ordering is the whole mechanism, and the boundary is <b>first among the writers</b>: this
-     * step runs before {@code saveActionHistory}, the only remaining teardown step that writes to
-     * {@code /sdcard}. It lands third in the chain, after {@code llmSummary} and
-     * {@code superTearDown}, neither of which writes anything. The boundary is stated on chain
-     * position among writers rather than on a fixed index, so it stays verifiable as later stages
+     * <p>Ordering is the whole mechanism, and the boundary is <b>first among the {@code /sdcard}
+     * writers</b>: this step runs before {@code saveActionHistory}, the only remaining teardown step
+     * that writes there. It lands third in the chain, after {@code flushPendingStep} and
+     * {@code superTearDown}; the first of those writes one line to the trace, which is a different
+     * destination and is itself loss-bounding. The boundary is stated on chain position among the
+     * {@code /sdcard} writers rather than on a fixed index, so it stays verifiable as later stages
      * add and remove steps.
      *
      * <p>The reason the property exists is measured. Across 800 {@code aperv} calibration runs the

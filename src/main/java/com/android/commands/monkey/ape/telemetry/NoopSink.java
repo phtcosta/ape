@@ -101,4 +101,8 @@ public final class NoopSink implements EventSink {
     @Override
     public void llmAck(String serverModel) {
     }
+
+    @Override
+    public void runEnd(String reason, String detail, RunCounters counters) {
+    }
 }

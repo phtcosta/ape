@@ -101,6 +101,11 @@ final class StepRecord {
         return step;
     }
 
+    /** This record's {@code t}, which the sink keeps as the run's first and last step stamp. */
+    long tRelMs() {
+        return tRelMs;
+    }
+
     void open(int step, long tRelMs, int actId, int stateId) {
         reset();
         this.open = true;

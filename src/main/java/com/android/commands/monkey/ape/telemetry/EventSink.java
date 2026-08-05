@@ -224,4 +224,30 @@ public interface EventSink {
 
     /** Records the model the server actually served, at most once per run. */
     void llmAck(String serverModel);
+
+    /**
+     * Writes {@code RUN_END}, the last sink record of a normal termination (INV-SNK-09).
+     *
+     * <p>Called as the last teardown step, after every other one has had its chance to run. The
+     * record carries how the run ended, how many step records it wrote, the {@code t} of its first
+     * and last step, and the counters. It is <b>write-only</b>: nothing on the Python side reads or
+     * validates it, no task status depends on it, and its absence means only that the process was
+     * killed before teardown (owner decision D5).
+     *
+     * <p>The counters the sink itself owns — the step-record count and the two dictionary sizes —
+     * are not parameters: the sink is the only thing that knows them, and asking teardown to fetch
+     * them so it could hand them back would be indirection with one subscriber.
+     *
+     * @param reason how the run ended: {@code timeout} (the time budget or a
+     *        {@code StopTestingException}), {@code crash} (a {@code Throwable} escaped the
+     *        exploration loop), or {@code unknown} when nothing said
+     * @param detail the crash's exception class name, or {@code null} — the sketch in the design's
+     *        API section carried no such parameter, and it is here because the same section
+     *        specifies the class name as part of what {@code crash} means, which a bare reason
+     *        enum cannot say
+     * @param counters the LLM totals, or {@code null} on a plan with no LLM — in which case the
+     *        record carries no LLM counter block at all, since a zeroed one would read as an LLM
+     *        that was asked nothing rather than an arm that has none
+     */
+    void runEnd(String reason, String detail, RunCounters counters);
 }

@@ -56,6 +56,21 @@ import com.android.commands.monkey.ape.utils.RandomHelper;
  */
 public final class RunContext {
 
+    /** The run ended on its own terms: the time budget expired, or the source signalled a stop. */
+    public static final String REASON_TIMEOUT = "timeout";
+
+    /** A {@code Throwable} escaped the exploration loop; its class name travels as the detail. */
+    public static final String REASON_CRASH = "crash";
+
+    /**
+     * Nothing said how the run ended.
+     *
+     * <p>The value a run carries until something decides otherwise, and a real outcome rather than
+     * a placeholder: a run that exhausted an event count, or was aborted, ends without any of the
+     * two sites below firing, and reporting that as a timeout would be a claim the jar cannot make.
+     */
+    public static final String REASON_UNKNOWN = "unknown";
+
     /** Compact UTC stamp for the generated run id: sortable, no separators to strip. */
     private static final String RUN_ID_TIMESTAMP = "yyyyMMdd'T'HHmmss'Z'";
 
@@ -95,6 +110,20 @@ public final class RunContext {
     private final CoordinateMapper coordinateMapper;
     private final LlmTelemetry llmTelemetry;
     private final LlmEngine llmEngine;
+
+    /**
+     * How this run ended, for the {@code RUN_END} record teardown writes.
+     *
+     * <p>It lives here because the two sites that know are not the site that writes: the time
+     * budget expires inside {@code Monkey}'s cycle loop and a {@code StopTestingException} is
+     * caught in the event source, while the record is written by the agent's last teardown step.
+     * Threading it through would mean a termination-reason parameter on {@code Agent.tearDown} and
+     * therefore on every agent, none of which has anything to do with the answer.
+     */
+    private String terminationReason = REASON_UNKNOWN;
+
+    /** The crash's exception class name, or null on every other ending. */
+    private String terminationDetail;
 
     private RunContext(RunSpec spec, long seed) {
         this.spec = spec;
@@ -214,6 +243,31 @@ public final class RunContext {
     /** Where this run's observations go, for every arm alike. */
     public EventSink sink() {
         return sink;
+    }
+
+    /**
+     * Records how the run ended, for the {@code RUN_END} record.
+     *
+     * <p>Last writer wins, and the two callers cannot both fire: an orderly stop leaves the cycle
+     * loop by a break and a crash leaves it by a throw. The value is write-only inside the jar —
+     * nothing reads it but the teardown step that emits the record.
+     *
+     * @param reason one of {@link #REASON_TIMEOUT}, {@link #REASON_CRASH}, {@link #REASON_UNKNOWN}
+     * @param detail the crash's exception class name, or {@code null}
+     */
+    public void terminated(String reason, String detail) {
+        this.terminationReason = reason;
+        this.terminationDetail = detail;
+    }
+
+    /** How the run ended — {@link #REASON_UNKNOWN} until something says otherwise. */
+    public String terminationReason() {
+        return terminationReason;
+    }
+
+    /** What ended it, when that is a crash: the exception's class name. Otherwise null. */
+    public String terminationDetail() {
+        return terminationDetail;
     }
 
     /**
