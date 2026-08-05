@@ -231,8 +231,58 @@ that group 1 found (task 2.9).
     what the invariant actually says.
   - The invariant's harness half ("in the jar or in the harness") is not in this repository and this
     task does not claim it.
-- [ ] 3.5 JVM unit tests on the compact fixture: every scenario of the mop-guidance delta (fixture load, legacy-JSON rejection, per-event fallback decoding, flag-selected sets, absent metadata, unknown-key tolerance, strict-match reasons)
-- [ ] 3.6 Run `/sdd-test-run MopDataTest`
+- [x] 3.5 JVM unit tests on the compact fixture: every scenario of the mop-guidance delta (fixture load, legacy-JSON rejection, per-event fallback decoding, flag-selected sets, absent metadata, unknown-key tolerance, strict-match reasons)
+  - 18 tests in one contiguous section at the end of `MopDataTest`, plus one in
+    `StatefulAgentTriggerTest`. The section boundary is not cosmetic: group 5 deletes the full-JSON
+    parser and every test above that drives it, so a block is a deletion instead of an unpicking.
+    The section reuses the helpers session 12 left for it (`recordsIn`, `sha256Hex`, `COMPACT`) and
+    extends `onlyCompactLoadRecord` with the expected-package pair rather than cloning it.
+  - **The synthetic of task 3.3's note is now a checked-in resource**
+    (`src/test/resources/synthetic-activity-selection.mop.json`), because two tasks need it and only
+    one of them is this one — 4.1 reuses it as its INV-DRV-06 member. It is what makes two
+    assertions possible that the cryptoapp artifact cannot make at all, its two MOP-activity sets
+    being equal: the **flip of gateway `G`** between flag states, which is the only evidence that
+    condition 2 reads the *selected* set (and therefore the entire reason D3 refuses to ship
+    gateways precomputed), and a **non-vacuous `mopActsAugmented`** — 1 under *both* flag states,
+    which is the flag-independence the owner decision of 2026-08-05 defines. `H`, qualifying on its
+    own flagged menu widget, is the control that must not move.
+  - **"Exactly three flagged widgets" is asserted by walking the wire, not by naming three.**
+    `getWidget` is the only query into the widget map, so a test that named three widgets and asked
+    about those three could not tell three from thirty; the helper enumerates every `(activity,
+    shortId)` key in the artifact and asks the loaded model about each. It also asserts in passing
+    that every wire key is reachable through the query API, which is the whole of what this reader
+    is supposed to do (INV-MOP-35). Mutation-checked by flagging every widget at ingest.
+  - The MainActivity gateway is asserted **together with the wire fact that makes it interesting**:
+    that record carries `hasFlaggedWidget: false`, so the only route to a true is condition 2. Read
+    off the artifact in the test rather than asserted from memory — without it the test would pass
+    against a loader that ignored the WTG view entirely.
+  - **Task 7.3(a)'s JVM half is discharged here, and as a join rather than as two halves.**
+    `StatefulAgentTriggerTest.testLegacyJsonRejectionAbortsTheMopArm` loads the legacy full JSON
+    through the compact loader, asserts the null, and feeds *that* null to `requireMopArm`. The two
+    ends were already asserted separately and separately they leave the drill's actual question
+    open, which is about the join: does the null a rejected artifact produces reach the code that
+    aborts on it? It lives in the agent package because `requireMopArm` is package-private there.
+  - **The deep-link scenario is only half assertable in this suite, and the test says which half.**
+    The loader half — `deepLinkUri` verbatim from the wire, null when omitted, and no intent-filter
+    `data` block existing to walk — is asserted on a synthetic and on the fixture. The dispatch half
+    is `MonkeySourceApe`'s and will not class-load off-device (task 3.4a established that), so 5.3a
+    owns what survives on the jar side and INV-DRV-07's assembly rule is the generator's.
+  - **Scenarios of this delta that are deliberately not in this file**, so the count is not read as
+    a gap: the four `Config.mopDataPath Flag` scenarios (defaults 500/300, custom override, flag
+    absent/set) are plan-resolution facts and are pinned by `ScoringParamsDefaultsTest`,
+    `RunSpecResolveTest` and `PresetsTest`; "explicit activation without MOP data aborts" is
+    `FeatureDerivationTest.theMopFamilyDependsOnMop` plus resolution. None of them reaches a loader.
+  - **Mutation-checked, seven mutations, all seven caught**: selection ignoring the flag, gateway
+    condition 2 deleted, explicit-`none` entries dropped at ingest, `mopActsAugmented` recomputed
+    against the selected set, `deepLinkUri` not decoded, the version gate accepting anything, and
+    every widget arriving flagged. One mutation first matched its anchor three times and was
+    re-anchored before it ran — a mutation that silently matches nothing is indistinguishable from
+    a guard that failed to fire, so the script asserts its own target count before invoking maven.
+- [x] 3.6 Run `/sdd-test-run MopDataTest`
+  - The `sdd-*` skills are not in this session's registry (a standing condition of this stage, not a
+    failure), so the skill's own action was run directly: `mvn -o test -Dtest=MopDataTest` → **76
+    passed, 0 failures**, and the full `mvn -o test` → **1201 / 0 failures / 19 skipped**, which is
+    session 12's 1182 plus this task's 19 new tests.
 
 ## 4. Equivalence gate for the cutover — fixture-scoped (owner decision 2026-08-05)
 

@@ -1,6 +1,7 @@
 package com.android.commands.monkey.ape.agent;
 
 import com.android.commands.monkey.ape.StopTestingException;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.MopData;
 
@@ -181,5 +182,35 @@ public class StatefulAgentTriggerTest {
     public void testRequireMopArmNoThrowWhenPathUnset() {
         // mopDataPath unset → MOP disabled, null is a valid outcome (SATA as today)
         assertNull(StatefulAgent.requireMopArm(null, null));
+    }
+
+    /**
+     * The version-skew drill, end to end at JVM level: a pre-change full static-analysis JSON
+     * reaching the post-change jar.
+     *
+     * <p>The two halves are asserted separately elsewhere — the loader's rejection in
+     * {@code MopDataTest}, the abort in the three tests above — and separately they leave the
+     * question the drill actually asks unanswered, because it is a question about the join: does
+     * the null a rejected artifact produces reach the code that aborts on it? A deployment where
+     * the wrong document was pushed either stops loudly here or explores as pure SATA while
+     * reporting itself a MOP arm, which is the silent-degradation class this composition exists to
+     * close. What no JVM test can attest is that the <em>deployed</em> pair behaves this way; that
+     * half is the counterpart campaign's pre-flight.
+     */
+    @Test
+    public void testLegacyJsonRejectionAbortsTheMopArm() {
+        java.net.URL fixture = StatefulAgentTriggerTest.class
+                .getResource("/cryptoapp.apk.gh60-fresh.json");
+        assertNotNull("legacy full-JSON fixture not on classpath", fixture);
+        String path = new java.io.File(fixture.getFile()).getAbsolutePath();
+
+        MopData loaded = MopData.loadCompact(path, null, null, new NoopSink());
+        assertNull("a full static-analysis JSON carries no formatVersion (INV-MOP-34)", loaded);
+        try {
+            StatefulAgent.requireMopArm(loaded, path);
+            fail("expected StopTestingException rather than a silent SATA run");
+        } catch (StopTestingException expected) {
+            // ok
+        }
     }
 }

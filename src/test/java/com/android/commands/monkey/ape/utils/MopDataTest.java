@@ -6,6 +6,7 @@ import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
@@ -16,8 +17,10 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -482,8 +485,13 @@ public class MopDataTest {
 
     private static JSONObject onlyCompactLoadRecord(String path, boolean activitySourceComponents)
             throws Exception {
+        return onlyCompactLoadRecord(path, null, null, activitySourceComponents);
+    }
+
+    private static JSONObject onlyCompactLoadRecord(String path, String pkg, String main,
+            boolean activitySourceComponents) throws Exception {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        MopData.loadCompact(path, null, null, activitySourceComponents,
+        MopData.loadCompact(path, pkg, main, activitySourceComponents,
                 new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
         List<JSONObject> records = recordsIn(buffer);
         assertEquals("exactly one MOP_DATA record per load", 1, records.size());
@@ -1129,5 +1137,446 @@ public class MopDataTest {
         sb.append(",\"components\":").append(compObj.isEmpty() ? "{}" : compObj);
         sb.append("}");
         return sb.toString();
+    }
+
+    // =========================================================================
+    // Task 3.5 — the compact artifact loader, scenario by scenario
+    //
+    // Everything above this line drives the full-JSON parser, which group 5 deletes. These tests
+    // are kept in one contiguous block for that reason: the cutover is then a deletion of the
+    // block above rather than an unpicking of interleaved assertions.
+    //
+    // What the block asserts is the `mop-guidance` delta's scenario list, on two inputs. The
+    // cryptoapp artifact answers everything a real derivation can answer; the synthetic answers
+    // the one question it structurally cannot, because cryptoapp's two MOP-activity sets are
+    // equal and a fixture where two sets are equal cannot test a selection between them.
+    // =========================================================================
+
+    private static final String CRYPTO = "br.unb.cic.cryptoapp.generated.CryptographyActivity";
+
+    /**
+     * The artifact whose {@code mopActivitiesAugmented} strictly contains its {@code mopActivities}
+     * — {@code A} in both, {@code B} only in the augmented set — plus a gateway {@code G} whose one
+     * WTG edge lands on {@code B} and a gateway {@code H} that qualifies on its own flagged menu
+     * widget.
+     *
+     * <p>It is a checked-in resource rather than a temp file because two things need it and only
+     * one of them is here: task 4.1's equivalence gate reuses it as its INV-DRV-06 member, and a
+     * synthetic that is written and deleted inside a test method has to be written twice.
+     */
+    private static final String SELECTION = "synthetic-activity-selection.mop.json";
+
+    /** A v1 artifact envelope carrying whatever top-level members the caller appends. */
+    private static String compactArtifact(String members) {
+        return "{\"formatVersion\":1,\"package\":\"p\",\"mainActivity\":\"p.A\"" + members + "}";
+    }
+
+    private static MopData loadCompactFixture(String name, boolean activitySourceComponents) {
+        return MopData.loadCompact(fixturePath(name), null, null, activitySourceComponents,
+                new NoopSink());
+    }
+
+    private static String readText(String path) throws Exception {
+        return new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path)),
+                java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Every widget the artifact carries, walked from the wire and asked of the loaded model — the
+     * ids that came back MOP-flagged.
+     *
+     * <p>Enumerating the wire rather than the model is what makes "exactly three" a claim about the
+     * whole artifact: {@code getWidget} is the only query into the widget map, so a test that named
+     * three widgets and asked about those three could not tell three from thirty. It also asserts
+     * in passing that every wire key is reachable through the query API, which is the whole of what
+     * this reader is supposed to do (INV-MOP-35).
+     */
+    private static List<String> flaggedWidgetsOf(MopData data, String artifactPath)
+            throws Exception {
+        JSONObject widgets = new JSONObject(readText(artifactPath)).getJSONObject("widgets");
+        List<String> flagged = new ArrayList<>();
+        for (Iterator<String> ai = widgets.keys(); ai.hasNext(); ) {
+            String activity = ai.next();
+            JSONObject byId = widgets.getJSONObject(activity);
+            for (Iterator<String> wi = byId.keys(); wi.hasNext(); ) {
+                String shortId = wi.next();
+                MopData.Widget w = data.getWidget(activity, shortId);
+                assertNotNull("wire widget not reachable through getWidget: "
+                        + activity + "#" + shortId, w);
+                if (w.directMop || w.transitiveMop) {
+                    flagged.add(shortId);
+                }
+            }
+        }
+        return flagged;
+    }
+
+    /** The wire's own {@code hasFlaggedWidget} for an activity's OPTIONSMENU record. */
+    private static boolean wireMenuHasFlaggedWidget(String artifactPath, String activity)
+            throws Exception {
+        JSONArray records = new JSONObject(readText(artifactPath)).getJSONArray("optionsMenus");
+        for (int i = 0; i < records.length(); i++) {
+            if (activity.equals(records.getJSONObject(i).getString("activity"))) {
+                return records.getJSONObject(i).getBoolean("hasFlaggedWidget");
+            }
+        }
+        throw new AssertionError("no optionsMenus record for " + activity);
+    }
+
+    private static ComponentInfo.ActivityInfo activityNamed(MopData data, String className) {
+        for (ComponentInfo.ActivityInfo a : data.getActivities()) {
+            if (className.equals(a.className)) {
+                return a;
+            }
+        }
+        throw new AssertionError("no activity component named " + className);
+    }
+
+    // --- Scenario: Compact cryptoapp fixture loads every consumed field -------
+
+    /**
+     * The flag set is three widgets and the third is there only through the D8 synthetic-lambda
+     * recovery: {@code executeButton}'s handler is a {@code $$ExternalSyntheticLambda0} wrapper
+     * that no {@code reachability[]} signature matches, so it is flagged through the enclosing
+     * class's reaching {@code lambda$setupExecuteButton$0} (INV-DRV-01). An artifact asserting two
+     * is asserting that the recovery did not run in the generator.
+     */
+    @Test
+    public void testCompactFixtureFlagsExactlyTheThreeMopWidgets() throws Exception {
+        MopData d = loadCompactFixture(COMPACT, false);
+        assertNotNull(d);
+        assertEquals(PKG, d.getPackageName());
+        assertEquals(MAIN, d.getMainActivity());
+
+        List<String> flagged = flaggedWidgetsOf(d, fixturePath(COMPACT));
+        assertEquals("exactly three flagged widgets in the whole artifact: " + flagged,
+                3, flagged.size());
+        assertTrue(flagged.contains("buttonGenerateHash"));
+        assertTrue(flagged.contains("btn_cipher_encrypt"));
+        assertTrue("the recovered Execute button", flagged.contains("executeButton"));
+
+        for (String[] pair : new String[][]{{MDA, "buttonGenerateHash"},
+                {CIPHER, "btn_cipher_encrypt"}, {CRYPTO, "executeButton"}}) {
+            MopData.Widget w = d.getWidget(pair[0], pair[1]);
+            assertTrue(pair[1] + " is transitively MOP-reachable", w.transitiveMop);
+            assertFalse(pair[1] + " is not a direct JCA caller", w.directMop);
+            assertTrue(w.isTransitiveMop("click"));
+        }
+    }
+
+    /**
+     * The three MOP activities, and the MainActivity menu gateway that reaches them.
+     *
+     * <p>The gateway is asserted together with the wire fact that makes it interesting: the record
+     * for MainActivity carries {@code hasFlaggedWidget: false}, so the only route to
+     * {@code activityHasMopOptionsMenu} being true is condition 2 — a click edge out of that
+     * activity landing in the selected MOP set (INV-MOP-13). Without that second assertion the
+     * test would pass just as well against a loader that ignored the WTG view entirely.
+     */
+    @Test
+    public void testCompactFixtureActivitySetAndTheMenuGateway() throws Exception {
+        MopData d = loadCompactFixture(COMPACT, false);
+        assertEquals(3, d.getMopActivities().size());
+        assertTrue(d.activityHasMop(MDA));
+        assertTrue(d.activityHasMop(CIPHER));
+        assertTrue(d.activityHasMop(CRYPTO));
+        assertFalse("MainActivity holds no flagged widget", d.activityHasMop(MAIN));
+
+        assertFalse("the wire record itself does not qualify MainActivity",
+                wireMenuHasFlaggedWidget(fixturePath(COMPACT), MAIN));
+        assertTrue("so the gateway can only come from its edges into the MOP sub-activities",
+                d.activityHasMopOptionsMenu(MAIN));
+        assertTrue(d.hasWtgData());
+    }
+
+    /** The metadata and component surface the prompt builder and the launcher read. */
+    @Test
+    public void testCompactFixtureMetadataAndComponentSurface() {
+        MopData d = loadCompactFixture(COMPACT, false);
+
+        MopData.Widget spinner = d.getWidget(MDA, "spinnerMessageDigest");
+        assertEquals(13, spinner.entries.size());
+        assertEquals("Select", spinner.entries.get(0));
+        MopData.Widget editText = d.getWidget(MDA, "editTextMessageDigest");
+        assertEquals("Input text ...", editText.hint);
+        assertEquals("textPersonName", editText.inputType);
+
+        assertEquals(4, d.getActivities().size());
+        assertEquals(1, d.getProviders().size());
+        assertEquals("br.unb.cic.cryptoapp.androidx-startup", d.getProviders().get(0).authorities);
+        assertTrue(d.getReceivers().isEmpty());
+        assertTrue(d.getServices().isEmpty());
+        assertTrue(d.hasComponents());
+        for (ComponentInfo c : d.getActivities()) {
+            assertFalse(c.className + " reaches no monitored operation", c.reachesTarget);
+        }
+        assertFalse(d.getProviders().get(0).reachesTarget);
+    }
+
+    // --- Scenario: Absent metadata stays null and costs zero tokens ----------
+
+    /**
+     * A wire widget carrying only its {@code mop} map decodes to null metadata, not to empty
+     * strings: {@code ApePromptBuilder} renders a field when it is non-null and non-empty, so a
+     * null and an empty string cost the same zero tokens here but differ everywhere a value is
+     * compared. Absent stays absent.
+     */
+    @Test
+    public void testAbsentWidgetMetadataDecodesToNullAndEmpty() {
+        MopData.Widget w = loadCompactFixture(COMPACT, false).getWidget(CIPHER, "btn_cipher_encrypt");
+        assertNull(w.hint);
+        assertNull(w.prompt);
+        assertNull(w.inputType);
+        assertNull(w.spinnerMode);
+        assertNull(w.contentDescription);
+        assertNull(w.tooltipText);
+        assertTrue(w.entries.isEmpty());
+        assertEquals("the wire key is the short id", "btn_cipher_encrypt", w.idName);
+    }
+
+    // --- Scenario: Legacy full static-analysis JSON is rejected --------------
+
+    /**
+     * The skew case: the pre-change full JSON meeting the post-change jar. It carries no
+     * {@code formatVersion}, so the version gate names it (INV-MOP-34) and the load is null —
+     * which is what {@code StatefulAgent} turns into a {@code StopTestingException} rather than a
+     * silent SATA run. That composition is asserted in {@code StatefulAgentTriggerTest}, where
+     * {@code requireMopArm} is reachable; this half is the loader's.
+     */
+    @Test
+    public void testLegacyFullJsonIsRejectedAsVersionMismatch() throws Exception {
+        assertNull(MopData.loadCompact(fixturePath(FRESH), null, null, false, new NoopSink()));
+        JSONObject record = onlyCompactLoadRecord(fixturePath(FRESH), false);
+        assertEquals("rejected", record.getString("status"));
+        assertEquals("version-mismatch", record.getString("reason"));
+        assertFalse("a load that never reached an artifact has no digest to report",
+                record.has("sourceDigest"));
+    }
+
+    // --- Scenario: Per-event flag decoding preserves fallback semantics ------
+
+    /**
+     * An explicit {@code none} on the wire is not the same as an absent key, and the difference is
+     * the whole reason the generator emits {@code none} entries at all: a present key answers for
+     * its own event, an absent one falls back to the aggregate (INV-MOP-14). Dropping the
+     * {@code none} entries on the wire would make {@code scroll} inherit {@code click}'s flag.
+     */
+    @Test
+    public void testPerEventDecodingKeepsExplicitNoneAndFallsBackOnAbsentKeys() throws Exception {
+        String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{\"mop\":"
+                + "{\"click\":\"both\",\"scroll\":\"none\"}}}}"));
+        MopData.Widget w = MopData.loadCompact(path, null, null, false, new NoopSink())
+                .getWidget("p.A", "b");
+
+        assertTrue(w.isDirectMop("click"));
+        assertTrue(w.isTransitiveMop("click"));
+        assertFalse("explicit none, not the aggregate", w.isDirectMop("scroll"));
+        assertFalse("explicit none, not the aggregate", w.isTransitiveMop("scroll"));
+        assertTrue("absent key falls back to the aggregate", w.isDirectMop("longClick"));
+        assertTrue(w.isTransitiveMop("longClick"));
+        assertTrue("aggregates are the OR across the map", w.directMop);
+        assertTrue(w.transitiveMop);
+        assertTrue("the query side normalizes, so the ingest side must too",
+                w.isDirectMop("long_click"));
+    }
+
+    /**
+     * The four wire tokens decode positionally into the two bits ({@code none}=00,
+     * {@code direct}=10, {@code transitive}=01, {@code both}=11).
+     *
+     * <p>{@code direct} is asserted even though a conforming generator never emits it — at
+     * derivation time {@code direct} implies {@code transitive} (INV-DRV-01), so the reachable
+     * value set is {@code none}/{@code transitive}/{@code both}. The encoding exists so the
+     * decoder stays positional, and a decoder that dropped the token would be a loader that
+     * rejects an input the format admits.
+     */
+    @Test
+    public void testWireTokensDecodeToTheTwoBitsPositionally() throws Exception {
+        String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{"
+                + "\"n\":{\"mop\":{\"click\":\"none\"}},"
+                + "\"d\":{\"mop\":{\"click\":\"direct\"}},"
+                + "\"t\":{\"mop\":{\"click\":\"transitive\"}},"
+                + "\"b\":{\"mop\":{\"click\":\"both\"}}}}"));
+        MopData d = MopData.loadCompact(path, null, null, false, new NoopSink());
+
+        assertFalse(d.getWidget("p.A", "n").isDirectMop("click"));
+        assertFalse(d.getWidget("p.A", "n").isTransitiveMop("click"));
+        assertTrue(d.getWidget("p.A", "d").isDirectMop("click"));
+        assertFalse(d.getWidget("p.A", "d").isTransitiveMop("click"));
+        assertFalse(d.getWidget("p.A", "t").isDirectMop("click"));
+        assertTrue(d.getWidget("p.A", "t").isTransitiveMop("click"));
+        assertTrue(d.getWidget("p.A", "b").isDirectMop("click"));
+        assertTrue(d.getWidget("p.A", "b").isTransitiveMop("click"));
+    }
+
+    // --- Scenario: Flag-selected MOP-activity set ---------------------------
+
+    /**
+     * Flag off: the widget-derived set, and the gateway that depends on it stays shut.
+     *
+     * <p>{@code G} is the assertion that matters. Its one WTG edge targets {@code B}, which is in
+     * the augmented set only, so {@code G} qualifies as a gateway exactly when the run selected
+     * the augmented set. A gateway set shipped precomputed could not have this property, which is
+     * why design D3 refuses to ship one. {@code H} qualifies on its own flagged menu widget and is
+     * therefore the control: it must be true under both selections.
+     */
+    @Test
+    public void testFlagOffSelectsTheWidgetDerivedSetAndLeavesTheGatewayShut() {
+        MopData d = loadCompactFixture(SELECTION, false);
+        assertEquals(new HashSet<>(Arrays.asList("A")), d.getMopActivities());
+        assertTrue(d.activityHasMop("A"));
+        assertFalse("B is augmented-only", d.activityHasMop("B"));
+        assertFalse("G's only edge lands on B, which this selection excludes",
+                d.activityHasMopOptionsMenu("G"));
+        assertTrue("H qualifies on condition 1 under either selection",
+                d.activityHasMopOptionsMenu("H"));
+    }
+
+    /** Flag on: the augmented set, and the same gateway opens. */
+    @Test
+    public void testFlagOnSelectsTheAugmentedSetAndOpensTheGateway() {
+        MopData d = loadCompactFixture(SELECTION, true);
+        assertEquals(new HashSet<>(Arrays.asList("A", "B")), d.getMopActivities());
+        assertTrue(d.activityHasMop("B"));
+        assertTrue("condition 2 reads the selected set, so G flips with it",
+                d.activityHasMopOptionsMenu("G"));
+        assertTrue(d.activityHasMopOptionsMenu("H"));
+    }
+
+    /**
+     * {@code mopActsAugmented} reports what the augmented source <em>would</em> contribute, so it
+     * is the same number under both flag states; {@code mopActivities} reports the selected set,
+     * so it is not. The two fields answer different questions on purpose, and this is the input
+     * that can tell them apart — on the cryptoapp artifact the two wire sets are equal, so its
+     * assertion of 0 is vacuous and says so.
+     */
+    @Test
+    public void testAugmentedCountReportsAvailabilityUnderBothFlagStates() throws Exception {
+        JSONObject off = onlyCompactLoadRecord(fixturePath(SELECTION), false);
+        JSONObject on = onlyCompactLoadRecord(fixturePath(SELECTION), true);
+        assertEquals(1, off.getInt("mopActsAugmented"));
+        assertEquals("availability does not vary with the flag", 1, on.getInt("mopActsAugmented"));
+        assertEquals("mopActivities is the selected set", 1, off.getInt("mopActivities"));
+        assertEquals(2, on.getInt("mopActivities"));
+    }
+
+    // --- Scenario: Deep-link dispatch reads the wire field -------------------
+
+    /**
+     * The loader half of the deep-link scenario: {@code deepLinkUri} arrives verbatim on the
+     * activity component, or null when the wire omits it.
+     *
+     * <p>The dispatch half — {@code ACTION_VIEW} plus {@code setPackage} for a non-null URI, the
+     * explicit component for null — cannot be asserted in this suite: it lives in
+     * {@code MonkeySourceApe}, which will not class-load off-device. Task 5.3a owns the jar-side
+     * assertions that survive the cutover, and INV-DRV-07's assembly rule is the generator's.
+     * What this test pins is that the string reaches {@code MopLauncherStage} at all, since the
+     * structure the launcher used to walk to build it is gone.
+     */
+    @Test
+    public void testDeepLinkUriIsReadFromTheWireAndNullWhenAbsent() throws Exception {
+        String path = writeTempJson(compactArtifact(",\"components\":{\"activities\":["
+                + "{\"className\":\"p.X\",\"deepLinkUri\":\"myapp://detail/x\"},"
+                + "{\"className\":\"p.Y\"}]}"));
+        MopData d = MopData.loadCompact(path, null, null, false, new NoopSink());
+        assertEquals("myapp://detail/x", activityNamed(d, "p.X").deepLinkUri);
+        assertNull("absent on the wire means the explicit-component intent",
+                activityNamed(d, "p.Y").deepLinkUri);
+
+        for (ComponentInfo.ActivityInfo a : loadCompactFixture(COMPACT, false).getActivities()) {
+            assertNull("cryptoapp declares no deep link", a.deepLinkUri);
+            assertTrue("no intent-filter data block exists on the wire to walk",
+                    a.intentFilters.isEmpty());
+        }
+    }
+
+    // --- Scenario: Unknown keys in a v1 artifact are ignored -----------------
+
+    /**
+     * Tolerance here is the absence of a check, not an affordance: rejecting unknown keys would
+     * mean writing code. Under the coordinated cut the generator and the jar ship together, so an
+     * unknown key in a v1 artifact is a skew signal to read in the trace, not a version to
+     * accommodate — and the fields around it must still decode.
+     */
+    @Test
+    public void testUnknownKeysInAV1ArtifactAreIgnored() throws Exception {
+        String path = writeTempJson(compactArtifact(",\"futureBlock\":{\"whatever\":[1,2,3]}"
+                + ",\"mopActivities\":[\"A\"]"
+                + ",\"widgets\":{\"p.A\":{\"b\":{\"hint\":\"h\",\"futureWidgetKey\":7,"
+                + "\"mop\":{\"click\":\"transitive\"}}}}"));
+        MopData d = MopData.loadCompact(path, null, null, false, new NoopSink());
+        assertNotNull(d);
+        assertEquals("h", d.getWidget("p.A", "b").hint);
+        assertTrue(d.getWidget("p.A", "b").isTransitiveMop("click"));
+        assertTrue(d.activityHasMop("A"));
+    }
+
+    // --- Scenarios: package / mainActivity sanity check ----------------------
+
+    @Test
+    public void testCompactPackageMismatchWarnsByDefault() {
+        assertNotNull("default is warn-only, and the artifact is still served",
+                MopData.loadCompact(fixturePath(COMPACT), "x.y.z.OTHER", null, false,
+                        new NoopSink()));
+    }
+
+    @Test
+    public void testCompactPackageMismatchRejectsWhenStrict() throws Exception {
+        TestRunSpecs.installMop("ape.mopStrictPackageMatch", "true");
+        assertNull(MopData.loadCompact(fixturePath(COMPACT), "x.y.z.OTHER", null, false,
+                new NoopSink()));
+        JSONObject record = onlyCompactLoadRecord(fixturePath(COMPACT), "x.y.z.OTHER", null, false);
+        assertEquals("rejected", record.getString("status"));
+        assertEquals("package-mismatch", record.getString("reason"));
+    }
+
+    /** Null expected values bypass the comparison entirely, strict mode or not. */
+    @Test
+    public void testCompactNullExpectedValuesBypassTheCheck() {
+        TestRunSpecs.installMop("ape.mopStrictPackageMatch", "true");
+        assertNotNull(loadCompactFixture(COMPACT, false));
+    }
+
+    // --- Scenarios: reject vocabulary and the unset path ---------------------
+
+    /**
+     * The compact path's whole reject vocabulary, driven one reason at a time. The three reasons
+     * that are missing here — {@code too-large}, {@code oom}, {@code incomplete} — are missing
+     * because their mechanisms are not on this path: there is no parse budget, no OOM catch and no
+     * completeness sentinel to fail. They still exist on the full-JSON path, which is group 4's
+     * oracle, and they die with it in 5.1/5.2.
+     */
+    @Test
+    public void testCompactRejectVocabulary() throws Exception {
+        assertEquals("file-missing", onlyCompactLoadRecord("/nonexistent/artifact.json", false)
+                .getString("reason"));
+        assertEquals("parse-error", onlyCompactLoadRecord(writeTempJson("{ not json "), false)
+                .getString("reason"));
+        assertEquals("version-mismatch", onlyCompactLoadRecord(
+                writeTempJson("{\"formatVersion\":2,\"package\":\"p\"}"), false).getString("reason"));
+        assertEquals("an artifact with no version at all is the same rejection",
+                "version-mismatch",
+                onlyCompactLoadRecord(writeTempJson("{\"package\":\"p\"}"), false)
+                        .getString("reason"));
+    }
+
+    /**
+     * The version gate replaced the {@code "complete": true} sentinel rather than joining it: the
+     * generator derives only from complete analyses, so a versioned artifact is complete by
+     * construction and demanding the sentinel too would reject every artifact ever produced.
+     */
+    @Test
+    public void testCompactArtifactNeedsNoCompletenessSentinel() throws Exception {
+        assertNotNull(MopData.loadCompact(writeTempJson(compactArtifact("")), null, null, false,
+                new NoopSink()));
+    }
+
+    /** Path unset ⇒ MOP disabled: no load, no record, no reject (exploration stays SATA). */
+    @Test
+    public void testCompactNullPathLoadsAndRecordsNothing() throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        assertNull(MopData.loadCompact(null, null, null, false,
+                new NdjsonSink(new PrintStream(buffer, true, "UTF-8"))));
+        assertTrue(recordsIn(buffer).isEmpty());
     }
 }
