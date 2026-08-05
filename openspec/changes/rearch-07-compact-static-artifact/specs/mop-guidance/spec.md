@@ -83,7 +83,7 @@ Unknown JSON keys within a supported `formatVersion` are ignored (INV-MOP-11). T
 
 #### Scenario: Deep-link dispatch reads the wire field
 - **WHEN** the artifact's `components.activities[]` entry for `X` carries `"deepLinkUri": "myapp://detail/x"` and the MOP stagnation launcher selects `X`
-- **THEN** the `ActivityTriggerAction` SHALL carry that string verbatim, and the injected intent SHALL be `ACTION_VIEW` with `Uri.parse("myapp://detail/x")`, targeted at the component (INV-CT-07 dispatch unchanged)
+- **THEN** the `ActivityTriggerAction` SHALL carry that string verbatim, and the injected intent SHALL be `ACTION_VIEW` with `Uri.parse("myapp://detail/x")` targeted at the package via `setPackage`, the platform resolving the handling activity (INV-CT-07 dispatch unchanged — see the `component-triggering` delta for why that clause no longer says "component")
 - **AND WHEN** the entry omits `deepLinkUri`
 - **THEN** the intent SHALL be the explicit-component intent, exactly as when `buildDeepLinkUri` returned null before this change
 - **AND** no jar code path SHALL read an intent-filter `data` block, because none exists on the wire
