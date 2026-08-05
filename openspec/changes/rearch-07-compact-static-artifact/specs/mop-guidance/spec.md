@@ -182,7 +182,7 @@ Fail-fast composition (kills the V21 silent-degradation class end to end):
 When `Config.mopDataPath` is unset, behavior is unchanged (MOP scoring disabled, no status record required beyond the absence of a load).
 
 #### Scenario: successful load emits provenance and counters
-- **WHEN** `MopData.load` parses a v1 artifact derived from a full JSON whose SHA-256 is `d`, with 51 widgets, 3 flagged, 0 dropped, 12 WTG edges
+- **WHEN** `MopData.load` parses a v1 artifact derived from a full JSON whose SHA-256 is `d`, with 30 widgets, 3 flagged, 0 dropped, 16 WTG edges
 - **THEN** one `status=loaded` record SHALL be emitted carrying `formatVersion=1`, `sourceDigest=d`, and those counters
 
 #### Scenario: rejected load names the reason

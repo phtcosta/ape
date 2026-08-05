@@ -55,11 +55,24 @@ that group 1 found (task 2.9).
 - [x] 2.8 Run `/rv-doc-code modules/aperv-tool/src/aperv_tool/tools/aperv/derive_mop_artifact.py` (rv-android module ⇒ `rv-*` skill)
   - `gh96` 4.5. The docstrings argue *why* at each relocated rule — the D8 tier explains what the recovery buys and why it cannot flag every wrapper; `_build_widget_map` explains what deriving the activity set from the emitted map would cost.
 
-- [ ] 2.9 **Owed to `gh96`, found by task 1.1**: stop emitting `exported`. `_project_component()` writes `"exported": entry.get("exported") is True` (`derive_mop_artifact.py:1151`) and the tests assert it; no consumer in either repository reads it, and `component-triggering` forbids one from ever existing. Needs an rv-android edit under `gh96` (owner authorization + a `plan(gh96)` commit before the `feat(gh96)` one, per the cross-repo rules). Until it lands, the group-4 gate compares a field the jar will not carry
+- [x] 2.9 **Owed to `gh96`, found by task 1.1**: stop emitting `exported`. `_project_component()` writes `"exported": entry.get("exported") is True` (`derive_mop_artifact.py:1151`) and the tests assert it; no consumer in either repository reads it, and `component-triggering` forbids one from ever existing. Needs an rv-android edit under `gh96` (owner authorization + a `plan(gh96)` commit before the `feat(gh96)` one, per the cross-repo rules). Until it lands, the group-4 gate compares a field the jar will not carry
+  - Landed 2026-08-05 as `gh96` group 9 (`a297de3b` plan, `8e86c9f9` feat). `_project_component` no longer
+    emits it and the projection test now asserts its absence on all three component kinds — mutation-checked,
+    since the five existing `exported` occurrences were all *input* documents and nothing would have noticed
+    the field returning. aperv-tool suite 282 passed, 30 skipped.
 
 ## 3. Jar-side rewrite, with the old parser retained as the equivalence oracle (ape, working tree only)
 
-- [ ] 3.1 Generate the fixtures with the Group-2 generator: `src/test/resources/cryptoapp.apk.mop.json` (from `cryptoapp.apk.gh60-fresh.json`) and `test-apks/cryptoapp.apk.mop.json` (from `test-apks/cryptoapp.apk.json`)
+- [x] 3.1 Generate the fixtures with the Group-2 generator: `src/test/resources/cryptoapp.apk.mop.json` (from `cryptoapp.apk.gh60-fresh.json`) and `test-apks/cryptoapp.apk.mop.json` (from `test-apks/cryptoapp.apk.json`)
+  - Generated 2026-08-05 with the post-2.9 generator, so neither fixture carries `exported`. The two
+    inputs are byte-identical (`md5 e4f7d9af…`), so the artifacts differ only in `source.file` and its
+    digest: **69,977 → 4,126 bytes, 5.9 % of the source.** Both carry `flagged=3`, `mopActivities` of
+    three, 4 activities and 1 provider — the corrected ground truth, not the stale 2.
+  - The generation surfaced two counter facts that the artifacts had wrong, both now fixed: `widgetsTotal`
+    is **30**, not the 51 this task's author (and I, initially) got by counting raw widgets — the counter
+    is defined over the widget map after the dialog merge, and the jar's own record agrees at 30. And
+    `wtgEdges` is **16** against the jar's **17**, the difference being one exact-duplicate edge the
+    derivation removes; see 4.2 for what that obliges the gate to do.
 - [ ] 3.2 Implement the compact-format parser as new code paths in `MopData`. The full-JSON parser stays in the working tree only because it is the **oracle** of the group-4 equivalence gate (tasks 4.2/4.3 — never adjust the oracle); group 5 deletes it, and groups 3+5 land in one commit (task 7.1), so no shipped state ever contains both. This is oracle scaffolding, not a fallback window (design D8): version gate (`reason=version-mismatch`, INV-MOP-34), widget/flag decoding with explicit-`none` entries, wire sets, WTG view, components, stats echo
 - [ ] 3.2a `ComponentInfo` gains `deepLinkUri`, decoded from the wire for activities; the launcher call site (`MopLauncherStage:117`) passes `candidate.deepLinkUri` and `MonkeySourceApe`'s dispatch is untouched. Verify against the `component-triggering` delta that the restored dispatch paragraph matches what the code does — that paragraph also carries the explicit-intent rule and the pool exclusion, which the `rearch-03` rewrite of the same requirement had dropped
 - [ ] 3.3 Implement the on-device OPTIONSMENU-gateway recompute from `optionsMenus` + WTG + the flag-selected activity set (INV-MOP-13) and the `mopActivitySourceComponents` set selection (INV-MOP-27)
@@ -72,6 +85,14 @@ that group 1 found (task 2.9).
 
 - [ ] 4.1 Batch-derive artifacts for the pinned corpus: run the generator over `<workspace>/rvsec-dataset/static_analysis/*.apk.json` (345 apps); record per-app derivation time and artifact size (confirm the ≤ 1–5 MB ceiling); re-measure the `reachability`/`windows`/`transitions` byte split over these 345 and amend `design.md` with the command and result (the 57.7 %/5.0 %/10.1 % figures came from a different, unreproducible 134-file working set); and count how many apps genuinely exercise each of the four relocated rules — the coarse presence counts are 229 with empty `idName`, 321 with `ExternalSyntheticLambda`, 165 with DIALOG windows
 - [ ] 4.2 Write `MopArtifactEquivalenceTest` (gated by `-Dmop.corpusDir`; hard-fail when unset or empty rather than passing on zero apps): old parser on full JSON vs new parser on derived artifact — assert identical widget flag maps (per-event + aggregate), metadata, both activity sets (flag off/on), gateway sets (flag off/on), WTG views, trigger/provider tuples, **per-activity `deepLinkUri` including null cases** (activities are excluded from the trigger-tuple pool, so nothing else compares them), `package`/`mainActivity`
+  - **The WTG comparison MUST be set-based, not list-based**, and this is not a preference: the jar keeps
+    exact-duplicate `(widget, target)` edges and the derivation removes them, so cryptoapp alone diverges
+    17 vs 16 before the gate reaches a single corpus app. A list comparison would report that as a
+    derivation bug. The licence for it is the multiplicity audit `gh96` 7.3 asked for, now done: every WTG
+    consumer is first-match (`MopScorer.scoreWtg:117`, `StatefulAgent.frontierBoost:1199`,
+    `matchesQualifyingTarget:128`) or set-accumulating (`FrontierPass:58`, `MopFrontierPass:62`,
+    `qualifyingMopTargets:115`), so multiplicity cannot reach a decision. Do **not** compare `stats` —
+    they are counters under INV-DRV-04 and `wtgEdges` legitimately differs across the cut.
 - [ ] 4.3 Run the gate over the corpus; investigate and fix every divergence in the generator (the old parser is the oracle — never adjust the oracle); re-run until 345/345 green. A rule exercised by zero apps fails the gate: cover it with a synthetic fixture in the 2.7 suite and record the substitution
 - [ ] 4.4 Record the gate result (corpus digest list + pass summary) in the change directory for the archive trail
 

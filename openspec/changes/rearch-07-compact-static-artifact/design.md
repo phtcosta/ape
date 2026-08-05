@@ -259,9 +259,9 @@ Same signature, same null-on-failure contract (INV-MOP-01), same status-line/rec
     "providers":  [{"className": "…", "isMain": false,
                      "permission": null, "reachesMop": true, "authorities": "…"}]
   },
-  "stats": {"windows": 5, "widgetsTotal": 51, "flagged": 3, "droppedFlaggedNoId": 0,
+  "stats": {"windows": 5, "widgetsTotal": 30, "flagged": 3, "droppedFlaggedNoId": 0,
             "orphanDialogs": 0, "handlersUnmatched": 5, "syntheticLambda": 1,
-            "recovered": 1, "wtgEdges": 12, "dedupedTransitions": 0}
+            "recovered": 1, "wtgEdges": 16, "dedupedTransitions": 1}
 }
 ```
 
