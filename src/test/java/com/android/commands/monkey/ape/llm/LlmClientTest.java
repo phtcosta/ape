@@ -12,12 +12,14 @@ import com.android.commands.monkey.ape.tree.GUITreeNode;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import com.android.commands.monkey.ape.telemetry.NoopSink;
+import com.android.commands.monkey.ape.telemetry.NdjsonSink;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -42,6 +44,15 @@ public class LlmClientTest {
 
     private static final String URL = "http://localhost:9999/v1";
 
+    private ByteArrayOutputStream sinkBuffer;
+    private NdjsonSink sink;
+
+    @Before
+    public void setUp() throws Exception {
+        sinkBuffer = new ByteArrayOutputStream();
+        sink = new NdjsonSink(new PrintStream(sinkBuffer, true, "UTF-8"));
+    }
+
     /** A plan carrying the LLM feature, from which the client takes every value it sends. */
     private static RunSpec.LlmParams llmParams(String... keyValues) {
         String[] withUrl = new String[keyValues.length + 2];
@@ -51,8 +62,13 @@ public class LlmClientTest {
         return TestRunSpecs.spec(withUrl).llm();
     }
 
-    private static LlmClient client(String... keyValues) {
-        return new LlmClient(llmParams(keyValues), new NoopSink());
+    /**
+     * A client whose breaker episodes land in {@code sink} — a real {@link NdjsonSink} over a
+     * buffer, not a recording double, because what the breaker owes the trace is a sub-event on the
+     * step that was running, and only the real sink decides where a sub-event lands.
+     */
+    private LlmClient client(String... keyValues) {
+        return new LlmClient(llmParams(keyValues), sink);
     }
 
     private static SglangClient sglang() {
@@ -215,25 +231,33 @@ public class LlmClientTest {
     // -------------------------------------------------------------------------
 
     /**
-     * The breaker-OPEN line is emitted once per open episode, not once per declined decision.
+     * The breaker-OPEN episode is recorded once per episode, not once per declined decision, and it
+     * is recorded on the step whose selection was declined.
      *
      * <p>This is the half of the LLM's structural fallback (INV-DP-11) that the decision pipeline
      * cannot see. A stage returns Continue whether its trigger was denied by the breaker, by a
      * disabled mode or by a coin, and that is by design — one path for every refusal. So the only
      * place the breaker's own contract is observable is here, in the gate that consults it.
      *
-     * <p>An open episode that logged per decision would flood a run's trace: the breaker stays open
+     * <p>An open episode recorded per decision would flood a run's trace: the breaker stays open
      * for a 60-second window, which at a normal step rate is dozens of declines. The latch makes
-     * the line mean "the breaker just opened", and re-arming it when the breaker next allows an
-     * attempt is what lets a second trip say so again.
+     * the sub-event mean "the breaker just opened", and re-arming it when the breaker next allows
+     * an attempt is what lets a second trip say so again.
+     *
+     * <p>The two episodes are driven in two different steps because that is the claim the trace has
+     * to support and a single-step version could not distinguish: the sub-event belongs to the step
+     * of the <em>first</em> decline, which is how a reader attributes a stalled stretch of a run to
+     * the breaker without a {@code step=} key to join on. The free-text line survives the
+     * re-encoding and is asserted alongside — it is what an operator watching stdout reads.
      */
     @Test
-    public void breakerOpenIsLoggedOncePerOpenEpisode() {
+    public void breakerOpenIsRecordedOncePerOpenEpisodeOnTheStepThatWasDeclined() throws Exception {
         final LlmClient client = client();
         final LlmCircuitBreaker breaker = client.getBreaker();
 
         String trace = trace(new Runnable() {
             @Override public void run() {
+                sink.beginStep(10, 1000L, "com.example.MainActivity", true, "S1");
                 trip(breaker);
                 for (int i = 0; i < 5; i++) {
                     assertFalse(client.allows());
@@ -244,17 +268,62 @@ public class LlmClientTest {
                 breaker.recordSuccess();
                 assertTrue(client.allows());
 
+                sink.beginStep(11, 2000L, "com.example.MainActivity", true, "S1");
                 trip(breaker);
                 for (int i = 0; i < 5; i++) {
                     assertFalse(client.allows());
                 }
+                sink.flushPendingStep();
             }
         });
 
-        assertEquals("ten declined decisions across two open episodes must log twice, not ten times",
+        List<JSONObject> steps = stepRecords();
+        assertEquals("one record per step, whatever the breaker did inside it", 2, steps.size());
+        assertEquals("ten declined decisions across two open episodes are two sub-events, not ten",
+                Arrays.asList(1, 2), breakerTrips(steps.get(0), steps.get(1)));
+
+        assertEquals("the free-text line keeps its own once-per-episode discipline",
                 2, countOccurrences(trace, "LLM circuit breaker OPEN"));
         assertTrue("the second line reports the second trip; got: " + trace,
                 trace.contains("(trips=1)") && trace.contains("(trips=2)"));
+    }
+
+    /**
+     * The breaker sub-events of each record in order, as their trip counts.
+     *
+     * <p>Asserting the trip count rather than a bare count is what separates "recorded twice"
+     * from "recorded once per episode": a latch that never re-armed would still produce two
+     * sub-events if it were reset by the second {@code beginStep}, and both would say
+     * {@code trips=1}.
+     */
+    private static List<Integer> breakerTrips(JSONObject... records) throws Exception {
+        List<Integer> trips = new ArrayList<>();
+        for (JSONObject record : records) {
+            JSONArray llm = record.optJSONArray("llm");
+            for (int i = 0; llm != null && i < llm.length(); i++) {
+                JSONObject event = llm.getJSONObject(i);
+                assertEquals("the only sub-event a declined step has is the breaker's",
+                        "breaker_open", event.getString("result"));
+                trips.add(event.getInt("trips"));
+            }
+        }
+        return trips;
+    }
+
+    /** The step records written to the sink's buffer, in order; run-level records are skipped. */
+    private List<JSONObject> stepRecords() throws Exception {
+        List<JSONObject> records = new ArrayList<>();
+        String written = new String(sinkBuffer.toByteArray(), StandardCharsets.UTF_8);
+        for (String line : written.split("\n")) {
+            if (line.isEmpty()) {
+                continue;
+            }
+            JSONObject record = new JSONObject(line);
+            if (!record.has("type")) {
+                records.add(record);
+            }
+        }
+        return records;
     }
 
     /** Three consecutive failures, which is the default threshold. */

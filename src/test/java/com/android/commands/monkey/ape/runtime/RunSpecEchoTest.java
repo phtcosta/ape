@@ -194,6 +194,102 @@ public class RunSpecEchoTest {
     }
 
     // -----------------------------------------------------------------------------------------
+    // The retired [APE-LLM-CONFIG] manifest is carried here now
+    // -----------------------------------------------------------------------------------------
+
+    /**
+     * The retired manifest field by field: its name, the plan key whose value it printed, and a
+     * value to state the run at.
+     *
+     * <p>The stated values are chosen so the key reaches {@code params} for one of the two reasons
+     * that put a key there, because a test that stated jar defaults would assert absence and prove
+     * nothing about carriage. Eight of them differ from their jar default. {@code ape.llmUrl} has
+     * no default, so any value it holds was chosen. The remaining three are activation keys of
+     * active features, which the record emits whatever their value — and two of them are stated at
+     * their default deliberately: the non-default value of a {@code Rule.TRUE} activation key is
+     * {@code false}, which switches the feature off and moves the key to {@code inert}.
+     */
+    private static final String[][] RETIRED_LLM_MANIFEST = {
+            {"model", "ape.llmModel", "Qwen/Qwen3-VL-8B-Instruct"},
+            {"temperature", "ape.llmTemperature", "0.7"},
+            {"top_p", "ape.llmTopP", "0.9"},
+            {"top_k", "ape.llmTopK", "20"},
+            {"max_tokens", "ape.llmMaxTokens", "2048"},
+            {"timeout_ms", "ape.llmTimeoutMs", "20000"},
+            {"prompt_variant", "ape.llmPromptVariant", "ape_v2"},
+            {"llm_percentage", "ape.llmPercentage", "0.7"},
+            {"on_new_state", "ape.llmOnNewState", "true"},
+            {"on_stagnation", "ape.llmOnStagnation", "true"},
+            {"stagnation_threshold", "ape.graphStableRestartThreshold", "50"},
+            {"url", "ape.llmUrl", LLM_URL},
+    };
+
+    /**
+     * The manifest emitter was deleted, not replaced, so what has to hold is that every field it
+     * printed is in this record. The check is per-field rather than by digest because the claim
+     * being retired is field-level: a reader of a stage-4 trace looks for {@code temperature} and
+     * finds it under a plan key, and a digest equal by luck would not tell them that.
+     *
+     * <p>{@code stagnation_threshold} is the one field whose key is not LLM-scoped — the
+     * exploration restart threshold that the router only read the midpoint of. It reached the
+     * manifest through a constructor parameter that existed for no other purpose, which is why
+     * that parameter died with the emitter.
+     */
+    @Test
+    public void runStartCarriesEveryFieldOfTheRetiredLlmConfigManifest() throws Exception {
+        Map<String, String> plan = entries();
+        for (String[] field : RETIRED_LLM_MANIFEST) {
+            plan.put(field[1], field[2]);
+        }
+        JSONObject json = record(resolve(plan));
+        JSONObject params = json.getJSONObject("params");
+
+        for (String[] field : RETIRED_LLM_MANIFEST) {
+            String manifestField = field[0];
+            String key = field[1];
+            assertTrue("the manifest's " + manifestField + " has no carrier in the record",
+                    params.has(key));
+            assertTrue(manifestField + " reached the record with a different value",
+                    KeyOwnership.typeOf(key)
+                            .sameValue(key, String.valueOf(params.get(key)), field[2]));
+        }
+        // The manifest said what the run would send; t0 says when it started sending. A trace
+        // needs both, and stage 4's step records are measured from this one.
+        assertTrue("the time base rides the same record", json.has("t0"));
+    }
+
+    /**
+     * The same fields on a run that states none of them — the case the record answers by omission.
+     *
+     * <p>This is the honest half of the previous test. A minimal LLM arm states only the server
+     * URL, and eight manifest fields then sit at their jar default and are absent from
+     * {@code params} by the volume rule. They are recoverable rather than lost, and what makes
+     * them recoverable is that the jar holding the default is named by {@code build.sha} in the
+     * same record — so the assertion here is that each such key <em>has</em> a jar default to be
+     * recovered from. A key with no default and no value stated would be genuinely unreadable.
+     */
+    @Test
+    public void aManifestFieldLeftAtItsDefaultStaysRecoverableFromTheJarTheRecordNames()
+            throws Exception {
+        JSONObject json = record(resolve(entries("ape.llmUrl", LLM_URL)));
+        JSONObject params = json.getJSONObject("params");
+
+        assertFalse("the build stamp is what the omitted defaults are recovered from",
+                json.getJSONObject("build").getString("sha").isEmpty());
+        for (String[] field : RETIRED_LLM_MANIFEST) {
+            String key = field[1];
+            if (params.has(key)) {
+                // Either chosen (ape.llmUrl, which has no default) or the activation key of an
+                // active feature, which the record emits so that reading it never requires
+                // knowing which defaults happen to be on.
+                continue;
+            }
+            assertTrue("the manifest's " + field[0] + " is omitted with nothing to recover it from",
+                    KeyOwnership.defaultOf(key) != null);
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
     // inert, corpus_basis, build
     // -----------------------------------------------------------------------------------------
 
