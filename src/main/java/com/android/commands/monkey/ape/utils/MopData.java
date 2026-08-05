@@ -1273,7 +1273,13 @@ public class MopData {
     // Precompute OPTIONSMENU gateway set (T1.2, D13)
     // -------------------------------------------------------------------------
 
-    private static Set<String> precomputeMopOptionsMenus(
+    /**
+     * Package-visible for the same reason {@link #augmentActivitiesFromSources} is: the equivalence
+     * gate has to drive this path with both MOP-activity sets, and the load-time caller can only
+     * pass the one {@link Config#mopActivitySourceComponents} names. Visibility only — no caller
+     * outside the gate exists, and both this method and the gate are deleted at the cutover.
+     */
+    static Set<String> precomputeMopOptionsMenus(
             List<Window> windows, Map<String, List<WtgTransition>> wtgTransitions,
             Set<String> mopActivities) {
         Set<String> result = new HashSet<>();

@@ -1,0 +1,114 @@
+{
+  "complete": true,
+  "components": {
+    "activities": [],
+    "providers": [],
+    "receivers": [],
+    "services": []
+  },
+  "mainActivity": "p.Main",
+  "package": "p",
+  "reachability": [
+    {
+      "className": "p.H",
+      "componentType": null,
+      "isMain": false,
+      "methods": [
+        {
+          "directlyReachesTarget": false,
+          "name": "go",
+          "reachable": true,
+          "reachesTarget": true,
+          "signature": "<p.H: void go(android.view.View)>"
+        }
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "events": [
+        {
+          "type": "click",
+          "widgetClass": "android.widget.Button",
+          "widgetId": 1,
+          "widgetName": "open"
+        }
+      ],
+      "sourceId": 1,
+      "targetId": 2
+    }
+  ],
+  "windows": [
+    {
+      "id": 1,
+      "isMain": false,
+      "name": "p.Host",
+      "type": "ACTIVITY",
+      "widgets": [
+        {
+          "contentDescription": null,
+          "entries": [],
+          "hint": "",
+          "id": 8187786,
+          "idName": "open",
+          "inputType": "",
+          "listeners": [],
+          "prompt": null,
+          "spinnerMode": null,
+          "text": "",
+          "tooltipText": null,
+          "type": "android.widget.Button"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "isMain": false,
+      "name": "android.app.AlertDialog",
+      "type": "DIALOG",
+      "widgets": [
+        {
+          "contentDescription": null,
+          "entries": [],
+          "hint": "",
+          "id": 13684592,
+          "idName": "confirm",
+          "inputType": "",
+          "listeners": [
+            {
+              "eventType": "click",
+              "handler": "<p.H: void go(android.view.View)>"
+            }
+          ],
+          "prompt": null,
+          "spinnerMode": null,
+          "text": "",
+          "tooltipText": null,
+          "type": "android.widget.Button"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "isMain": false,
+      "name": "p.Orphan#Dialog",
+      "type": "DIALOG",
+      "widgets": [
+        {
+          "contentDescription": null,
+          "entries": [],
+          "hint": "",
+          "id": 15367720,
+          "idName": "stranded",
+          "inputType": "",
+          "listeners": [],
+          "prompt": null,
+          "spinnerMode": null,
+          "text": "",
+          "tooltipText": null,
+          "type": "android.widget.Button"
+        }
+      ]
+    }
+  ]
+}

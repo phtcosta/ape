@@ -1,0 +1,138 @@
+{
+  "complete": true,
+  "components": {
+    "activities": [
+      {
+        "className": "p.Link",
+        "exported": true,
+        "intentFilters": [
+          {
+            "actions": [
+              "android.intent.action.VIEW"
+            ],
+            "categories": [],
+            "data": {
+              "hosts": [
+                "detail"
+              ],
+              "mimeTypes": [],
+              "pathPatterns": [],
+              "pathPrefixes": [],
+              "paths": [
+                "/x"
+              ],
+              "ports": [],
+              "schemes": [
+                "myapp"
+              ]
+            }
+          }
+        ],
+        "isMain": false,
+        "permission": null,
+        "reachesTarget": false,
+        "targetMethods": []
+      },
+      {
+        "className": "p.SchemeOnly",
+        "exported": true,
+        "intentFilters": [
+          {
+            "actions": [
+              "android.intent.action.VIEW"
+            ],
+            "categories": [],
+            "data": {
+              "hosts": [],
+              "mimeTypes": [],
+              "pathPatterns": [],
+              "pathPrefixes": [],
+              "paths": [],
+              "ports": [],
+              "schemes": [
+                "only"
+              ]
+            }
+          }
+        ],
+        "isMain": false,
+        "permission": null,
+        "reachesTarget": false,
+        "targetMethods": []
+      },
+      {
+        "className": "p.NoView",
+        "exported": true,
+        "intentFilters": [
+          {
+            "actions": [
+              "android.intent.action.MAIN"
+            ],
+            "categories": [],
+            "data": {
+              "hosts": [
+                "h"
+              ],
+              "mimeTypes": [],
+              "pathPatterns": [],
+              "pathPrefixes": [],
+              "paths": [
+                "/p"
+              ],
+              "ports": [],
+              "schemes": [
+                "ignored"
+              ]
+            }
+          }
+        ],
+        "isMain": false,
+        "permission": null,
+        "reachesTarget": false,
+        "targetMethods": []
+      },
+      {
+        "className": "p.EmptyScheme",
+        "exported": true,
+        "intentFilters": [
+          {
+            "actions": [
+              "android.intent.action.VIEW"
+            ],
+            "categories": [],
+            "data": {
+              "hosts": [],
+              "mimeTypes": [],
+              "pathPatterns": [],
+              "pathPrefixes": [],
+              "paths": [],
+              "ports": [],
+              "schemes": []
+            }
+          }
+        ],
+        "isMain": false,
+        "permission": null,
+        "reachesTarget": false,
+        "targetMethods": []
+      },
+      {
+        "className": "p.NoFilters",
+        "exported": true,
+        "intentFilters": [],
+        "isMain": false,
+        "permission": null,
+        "reachesTarget": false,
+        "targetMethods": []
+      }
+    ],
+    "providers": [],
+    "receivers": [],
+    "services": []
+  },
+  "mainActivity": "p.Main",
+  "package": "p",
+  "reachability": [],
+  "transitions": [],
+  "windows": []
+}

@@ -1,0 +1,81 @@
+{
+  "complete": true,
+  "components": {
+    "activities": [
+      {
+        "className": "p.A",
+        "exported": true,
+        "intentFilters": [],
+        "isMain": false,
+        "permission": null,
+        "reachesTarget": false,
+        "targetMethods": []
+      }
+    ],
+    "providers": [],
+    "receivers": [],
+    "services": []
+  },
+  "mainActivity": "p.Main",
+  "package": "p",
+  "reachability": [
+    {
+      "className": "p.H",
+      "componentType": null,
+      "isMain": false,
+      "methods": [
+        {
+          "directlyReachesTarget": false,
+          "name": "onClick",
+          "reachable": true,
+          "reachesTarget": true,
+          "signature": "<p.H: void onClick(android.view.View)>"
+        }
+      ]
+    }
+  ],
+  "transitions": [],
+  "windows": [
+    {
+      "id": 1,
+      "isMain": false,
+      "name": "p.A",
+      "type": "ACTIVITY",
+      "widgets": [
+        {
+          "contentDescription": null,
+          "entries": [],
+          "hint": "",
+          "id": 13901196,
+          "idName": "",
+          "inputType": "",
+          "listeners": [
+            {
+              "eventType": "click",
+              "handler": "<p.H: void onClick(android.view.View)>"
+            }
+          ],
+          "prompt": null,
+          "spinnerMode": null,
+          "text": "",
+          "tooltipText": null,
+          "type": "android.widget.Button"
+        },
+        {
+          "contentDescription": null,
+          "entries": [],
+          "hint": "a hint",
+          "id": 11303224,
+          "idName": "plain",
+          "inputType": "",
+          "listeners": [],
+          "prompt": null,
+          "spinnerMode": null,
+          "text": "",
+          "tooltipText": null,
+          "type": "android.widget.Button"
+        }
+      ]
+    }
+  ]
+}
