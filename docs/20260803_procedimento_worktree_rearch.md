@@ -51,8 +51,39 @@ feito em `61274ba` sai marcado `b7baa68`. Verificado nas versões 9.0.1 e 10.0.0
 ao pom para contorná-la. Num clone normal (`.git` diretório) o carimbo está correto, confirmado por
 build de controle. Consequência prática: **o `GIT_SHA` de um jar construído na worktree não serve para
 identificar o que ele contém** — enquanto os sete estágios estiverem em voo, use o sha do commit da
-`rearch` que você mesmo construiu. Como nenhum jar de worktree é deployado (o `mvn install` que copia
-para o `aperv-tool` não é rodado daqui), nenhum jar entregue carrega o carimbo errado.
+`rearch` que você mesmo construiu.
+
+**Emenda de 2026-08-05 — a contenção acabou, e acabou antes do que se previa.** Este parágrafo
+fechava dizendo que, como nenhum jar de worktree era deployado (o `mvn install` que copia para o
+`aperv-tool` não é rodado daqui), nenhum jar entregue carregava o carimbo errado. Isso deixou de
+ser verdade. O `gh97-rearch-ab-gate` D10 antecipou que a sua tarefa 6.2 seria o primeiro deploy de
+um jar de worktree e que caberia a ela emendar esta frase; na prática **a premissa já estava falsa
+quando a 6.2 rodou**. O jar encontrado em
+`modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar` às 13:49 daquele dia — sha256
+`605b4174…`, build de estágio 4 — carrega `GIT_SHA = c638142`, que é o HEAD do **`master`**,
+exatamente o defeito descrito acima. Ele foi preservado em
+`rv-android/backup/gh97-6.2-superseded/` como o contra-exemplo físico.
+
+A partir daqui, portanto: **jars de worktree são deployados, e um jar deployado sem os flags abaixo
+carrega o carimbo do `master`.** A regra que substitui a contenção é a do próprio D10 — quem
+constrói fornece o carimbo, e o plugin sai da frente:
+
+```bash
+mvn -o package -Dmaven.gitcommitid.skip=true \
+    -Dgit.commit.id.abbrev=$(git rev-parse --short HEAD) \
+    -Dgit.build.time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+```
+
+As duas propriedades andam juntas: omitir `git.build.time` deixa `JAR_BUILT` em `unknown`.
+Verificado em 2026-08-05 na `gh97` 6.2 — build em `9e948102` saiu carimbado `9e948102`, e não
+`c638142` como sairia sem os flags.
+
+Por que isso importa mais do que um campo cosmético: o `Dockerfile` do rv-android clona
+`phtcosta/ape` sem pin, isto é, o **`master`**. Um jar `rearch` carimbado com a revisão do `master`
+fica indistinguível do jar da própria imagem justamente pelo campo que existe para distingui-los, e
+a verificação 3 do pré-voo passaria verde e cega — o modo de falha da gh71. Nada medido até aqui foi
+afetado: a `rearch-04` 9.1a estabeleceu a identidade dos jars por sha256 recomputado antes de cada
+lançamento, e diz isso explicitamente (*"never by `build.sha`"*).
 
 **Execução de 2026-08-03**: worktree criada em `b7baa68`, `mvn package` e `mvn test` verdes antes de
 qualquer edição. Dois números que valem como linha de base: o `target/ape-rv.jar` da worktree saiu
