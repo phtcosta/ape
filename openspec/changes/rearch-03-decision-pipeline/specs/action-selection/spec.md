@@ -47,6 +47,11 @@ When emitted, the `[APE-STEP]` line SHALL carry a `step=<N>` field, where `<N>` 
 - **THEN** the action's `decisionSource` SHALL be `MOP`
 - **AND** when `stepTelemetryEnabled` is `true` the emitted `[APE-STEP]` line SHALL report `decision_source=MOP`
 
+#### Scenario: MOP-frontier-driven pick attributed to MopFrontier, not WTG
+- **WHEN** a roulette pick carries boosts `mop=0, mop_frontier=200, wtg=0, menu=0, coverage=100, form=0`
+- **THEN** the action's `decisionSource` SHALL be `MopFrontier`
+- **AND** the line SHALL report `mop_frontier=200 wtg=0`
+
 #### Scenario: Tie precedence MOP>MopFrontier>WTG>Menu>Form>Coverage
 - **WHEN** a roulette pick carries boosts `mop=300, mop_frontier=300, wtg=0, menu=0, coverage=0, form=0`
 - **THEN** the action's `decisionSource` SHALL be `MOP`
@@ -56,6 +61,30 @@ When emitted, the `[APE-STEP]` line SHALL carry a `step=<N>` field, where `<N>` 
 - **WHEN** the buffer rung selects a `ModelAction` whose boosts are `mop=500, wtg=0, menu=0, coverage=0`
 - **THEN** the action's `decisionSource` SHALL be `SATA`
 - **AND** the line SHALL carry `pick_channel=buffer`
+
+#### Scenario: click on a patch-fabricated widget is marked
+- **WHEN** `patchGUITree` sets `clickable=true` on a child that the `AccessibilityNodeInfo` reported as non-clickable, and a later step selects the `MODEL_CLICK` derived from it
+- **THEN** the emitted `[APE-STEP]` line SHALL carry `patched=1`
+- **AND** a `MODEL_CLICK` on a node whose clickability came from the `AccessibilityNodeInfo` SHALL carry `patched=0`
+
+#### Scenario: targetless actions omit the patch bit
+- **WHEN** the selected action is `MODEL_BACK`, `MODEL_MENU` or `MODEL_LLM_TAP`
+- **THEN** the emitted `[APE-STEP]` line SHALL NOT carry a `patched` field
+
+#### Scenario: [APE-STEP] carries the MOP-screen bit
+- **WHEN** `stepTelemetryEnabled` is `true`, `MopData` is present, and the current activity is in the pre-computed MOP-activity set
+- **THEN** the emitted `[APE-STEP]` line SHALL carry `activity_has_mop=1`
+- **AND** on an activity outside the set it SHALL carry `activity_has_mop=0`
+
+#### Scenario: MOP-off arm always reports activity_has_mop consistent with MopData
+- **WHEN** a run executes with `MopData` null
+- **THEN** every `[APE-STEP]` line SHALL carry `activity_has_mop=0`
+
+#### Scenario: pick_channel discriminates short-circuit from roulette
+- **WHEN** one step is selected by the unvisited-MOP short-circuit and a later step by the epsilon-greedy roulette
+- **THEN** the first line SHALL carry `pick_channel=short_circuit_unvisited`
+- **AND** the second SHALL carry `pick_channel=roulette_greedy`
+- **AND** both MAY carry `decision_source=MOP` (channel and source are independent axes)
 
 #### Scenario: Budget stage early-return attributed
 - **WHEN** the `Budget` stage selects the trivial-activity action on an exhausted budget
@@ -70,6 +99,10 @@ When emitted, the `[APE-STEP]` line SHALL carry a `step=<N>` field, where `<N>` 
 #### Scenario: Launcher step attributed Component
 - **WHEN** the `MopLauncher` stage selects an `EVENT_TRIGGER_ACTIVITY` action
 - **THEN** the emitted `[APE-STEP]` line SHALL carry `decision_source=Component pick_channel=launcher` (non-model branch, source derived from the action)
+
+#### Scenario: widget text with a newline stays on one line
+- **WHEN** the selected action's resolved node text is `"Sign\nIn"`
+- **THEN** the emitted `[APE-STEP]` line SHALL contain `"Sign In"` and SHALL occupy exactly one physical line
 
 #### Scenario: Every step is attributable when telemetry is enabled
 - **WHEN** `stepTelemetryEnabled` is `true` and a run completes
