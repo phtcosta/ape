@@ -25,8 +25,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import android.util.Log;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -54,6 +57,14 @@ public class NdjsonSinkTest {
     public void setUp() throws Exception {
         captured = new ByteArrayOutputStream();
         sink = new NdjsonSink(new PrintStream(captured, true, "UTF-8"));
+        Log.reset();
+    }
+
+    @After
+    public void leaveNoHeartbeatsBehind() {
+        // The stub is static, as android.util.Log is; a test that wrote to it would otherwise be
+        // counted by the next one.
+        Log.reset();
     }
 
     // --- lifecycle (INV-SNK-03, INV-SNK-08) -----------------------------------------------------
@@ -551,6 +562,70 @@ public class NdjsonSinkTest {
         assertTrue(counters.has("states"));
     }
 
+    // --- the logcat heartbeat (INV-SNK-10, INV-SNK-14) --------------------------------------------
+
+    @Test
+    public void oneHeartbeatLinePerStepOnTheStepsOwnClock() throws Exception {
+        sink.beginStep(1, 1_500L, "com.foo/.Main", false, "S1");
+        sink.outcome(false, "S1", "com.foo/.Main", false, false);
+        sink.beginStep(2, 9_800L, "com.foo/.Main", false, "S1");
+        sink.outcome(false, "S1", "com.foo/.Main", false, false);
+
+        List<Log.Entry> beats = Log.entries();
+        assertEquals("one line per step, no more", 2, beats.size());
+        // The tag is what the capture-side allowlist admits and what clock_logcat_join.py matches;
+        // a different literal is dropped at the device and the mechanism is inert while looking fine.
+        assertEquals("ApeRvHb", beats.get(0).tag);
+        assertEquals(NdjsonSink.HEARTBEAT_TAG, beats.get(0).tag);
+        // The payload is the record's own s and t — one number shared, not a second clock reading,
+        // which is what makes the trace↔logcat mapping exact rather than approximate.
+        assertEquals("s=1 t=1500", beats.get(0).message);
+        assertEquals("s=2 t=9800", beats.get(1).message);
+    }
+
+    @Test
+    public void aSelectionRetryDoesNotBeatTwice() throws Exception {
+        // The retry re-enters the same step; one step is one record (INV-SNK-03) and one heartbeat,
+        // or the logcat line count stops being a step count.
+        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1");
+        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1");
+
+        assertEquals(1, Log.entries().size());
+    }
+
+    @Test
+    public void theTraceIsByteIdenticalWithTheHeartbeatOff() throws Exception {
+        ByteArrayOutputStream withoutBuffer = new ByteArrayOutputStream();
+        scriptedRun(new NdjsonSink(new PrintStream(withoutBuffer, true, "UTF-8"), false));
+        assertTrue("a heartbeat-off run writes no logcat line at all", Log.entries().isEmpty());
+
+        scriptedRun(sink);
+
+        assertEquals("and a heartbeat-on run writes one per step", 2, Log.entries().size());
+        assertEquals("but the records are byte-identical: the flag moves nothing between the two"
+                + " destinations", new String(withoutBuffer.toByteArray(), StandardCharsets.UTF_8),
+                new String(captured.toByteArray(), StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void aFailingHeartbeatCostsTheHeartbeatAndNotTheTrace() throws Exception {
+        // A logcat write failing is a device-side condition with no bearing on the record. The sink
+        // latches off for its own failures (INV-SNK-12); it must not latch off for this one.
+        Log.failWith(new IllegalStateException("logcat is gone"));
+
+        String warnings = onStdout(() -> {
+            sink.beginStep(1, 1L, "com.foo/.Main", false, "S1");
+            sink.outcome(false, "S1", "com.foo/.Main", false, false);
+            sink.beginStep(2, 2L, "com.foo/.Main", false, "S1");
+            sink.outcome(false, "S1", "com.foo/.Main", false, false);
+        });
+
+        assertEquals("both steps are still on the record", 2, stepRecords().size());
+        assertEquals("and the failure is said once, not once per step — a silently absent heartbeat"
+                + " is the mode INV-SNK-14 exists to prevent",
+                1, countOccurrences(warnings, "heartbeat disabled for the rest of the run"));
+    }
+
     // --- neutrality by shape (INV-SNK-07) ---------------------------------------------------------
 
     @Test
@@ -625,6 +700,40 @@ public class NdjsonSinkTest {
             }
         }
         return steps;
+    }
+
+    /** Two ordinary resolved steps, the same script through whichever sink is handed in. */
+    private static void scriptedRun(NdjsonSink target) {
+        target.beginStep(1, 1_500L, "com.foo/.Main", true, "S1");
+        target.decision("model=CLICK@x", "MOP", "roulette_greedy", 9,
+                500, 0, 0, 0, 0, 0, null, 1, EventSink.ABSENT, null);
+        target.outcome(true, "S2", "com.foo/.Detail", false, true);
+        target.beginStep(2, 9_800L, "com.foo/.Detail", false, "S2");
+        target.decisionNonModel("EVENT_TRIGGER_ACTIVITY", "Component", "launcher");
+        target.outcome(false, "S2", "com.foo/.Detail", false, false);
+    }
+
+    /** Runs {@code body} with stdout captured, and returns what the free-text side received. */
+    private static String onStdout(Runnable body) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream original = System.out;
+        try {
+            System.setOut(new PrintStream(out, true));
+            body.run();
+        } finally {
+            System.setOut(original);
+        }
+        return out.toString();
+    }
+
+    private static int countOccurrences(String haystack, String needle) {
+        int count = 0;
+        int at = haystack.indexOf(needle);
+        while (at >= 0) {
+            count++;
+            at = haystack.indexOf(needle, at + needle.length());
+        }
+        return count;
     }
 
     private JSONObject runEnd() throws Exception {

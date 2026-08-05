@@ -15,8 +15,12 @@
  */
 package com.android.commands.monkey.ape.runtime;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
+
+import android.util.Log;
 
 import com.android.commands.monkey.ape.utils.RandomHelper;
 
@@ -159,5 +163,35 @@ public class RunContextTest {
         assertNotNull(RunContext.current().rng());
         assertTrue(RunContext.current().runId().contains("-99-"));
         assertTrue(RunContext.current().spec().has(Feature.MOP));
+    }
+
+    /**
+     * The heartbeat flag reaches the sink, which is the half of it a sink test cannot see.
+     *
+     * <p>{@code NdjsonSinkTest} pins what the sink does with the flag; this pins that the plan's
+     * value is what it gets. The two together are what makes {@code ape.telemetryHeartbeat=false}
+     * mean anything — a key nothing reads would have looked identical from either side alone.
+     */
+    @Test
+    public void theHeartbeatFlagReachesTheSinkFromThePlan() {
+        PrintStream realOut = System.out;
+        try {
+            System.setOut(new PrintStream(new ByteArrayOutputStream()));
+
+            RunContext.installForTest(spec(entries("ape.telemetryHeartbeat", "false"), 5L));
+            Log.reset();
+            RunContext.current().sink().beginStep(1, 1L, "com.foo/.Main", false, "S1");
+            assertTrue("a plan that turned the heartbeat off gets no logcat line",
+                    Log.entries().isEmpty());
+
+            RunContext.resetForTest();
+            RunContext.installForTest(spec(entries(), 5L));
+            RunContext.current().sink().beginStep(1, 1L, "com.foo/.Main", false, "S1");
+            assertEquals("and a plan that says nothing gets one: the default is on", 1,
+                    Log.entries().size());
+        } finally {
+            System.setOut(realOut);
+            Log.reset();
+        }
     }
 }
