@@ -4,6 +4,10 @@
 
 Delta for `rearch-04-step-ndjson-telemetry`: the exploration engine stops writing the legacy per-run output files (`sataGraph.dot`, `sataGraph.vis.js`, per-state `step-*.txt`, `action-history.log`, `produce.log`, `consume.log`, `sataTimeline.vis.js`) and its termination path is restated around the event sink — teardown gains `flushPendingStep` (first agent step) and the `RUN_END` emission (last agent step), both as isolated safeSteps. The teardown isolation invariants INV-EXPL-16/29 are preserved untouched in mechanism; only the step roster changes. INV-EXPL-17 (per-step PNG/XML debug artifacts default off) is unaffected by this change.
 
+## Invariants
+
+- **INV-EXPL-29 — step roster re-anchored, isolation semantics unchanged.** The invariant enumerates the teardown steps its isolation guarantee ranges over — *"rotation restore, `disconnect()`, LLM summary, `super.tearDown()`, coverage dump, action-history save, action counters, activity nodes, naming dump, model counters"* — and it lives in this capability's top-level `## Invariants` block, outside every requirement this delta modifies. Two members of that list stop existing here: the **LLM summary** step (retired with `printSummary()` by this change's "StatefulAgent — LLM Telemetry at tearDown") and the **action-history save** (deleted with `Model.saveActionHistory`, task 7.2). Two are added: **`flushPendingStep`** first and **`runEnd`** last. The roster therefore becomes `flushPendingStep`, `super.tearDown()`, coverage dump, action counters, activity nodes, naming dump, model counters, `runEnd` — inside `MonkeySourceApe.tearDown`, the rotation restore and `disconnect()` are unchanged. **The guarantee itself is untouched**: a `Throwable` from any one step SHALL NOT prevent any subsequent step from executing, which is the property the "Output Persistence on Termination" requirement below restates over the new roster. Only the enumeration moves; nothing about isolation is weakened, and the two new steps are ordinary `safeStep`s precisely so the invariant continues to range over them.
+
 ## MODIFIED Requirements
 
 ### Requirement: Output Persistence on Termination

@@ -24,7 +24,7 @@ The step's `StepRecord` decision section (`event-sink` capability) SHALL include
 - **THEN** exactly one line SHALL be emitted: `[APE-RV] FORM boost: state=<activity>#<key>, fields=3, submit=btn_encrypt`
 
 #### Scenario: Form boost reported on the per-step line
-- **WHEN** the selected action carries a form boost of `W_FILL` set by the pass and `stepTelemetryEnabled` is `true`
+- **WHEN** the selected action carries a form boost of `W_FILL` set by the pass
 - **THEN** the step's `StepRecord` SHALL carry `dec.form:<W_FILL>` alongside the `dec.mop`/`dec.wtg`/`dec.cov`/`dec.menu` fields that are non-zero
 
 #### Scenario: No log line when context absent
