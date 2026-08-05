@@ -17,20 +17,20 @@ Every production read of `MopData` in `src/main`, established by exhaustive call
 | MopData surface | Production consumers | Fields actually read |
 |---|---|---|
 | `getWidget(activity, shortId)` | `MopScorer.score`/`stateMopDensity`, `scoring/MopWidgetPass`, `ApeAgent.generateInputText` (typed input), `ApePromptBuilder` (MOP marker + T1.1 metadata) | `isDirectMop(evt)`/`isTransitiveMop(evt)` (per-normalized-eventType maps + aggregate fallback); `inputType`, `hint`, `prompt`, `spinnerMode`, `contentDescription`, `tooltipText`, `entries` |
-| `activityHasMop(activity)` | `MopScorer.scoreWtg`/`stateMopDensity`, `MopFrontierPass`, `SataAgent:347` (navigation tiebreak predicate), `StatefulAgent:245` | set membership |
-| `getMopActivities()` | `SataAgent.selectTriggerCandidate` (launcher census) | the set |
+| `activityHasMop(activity)` | `MopScorer.scoreWtg`/`stateMopDensity`, `MopFrontierPass:117`, `SataAgent:370` (navigation tiebreak predicate), `StatefulAgent:257` | set membership |
+| `getMopActivities()` | `MopLauncherStage.selectTriggerCandidate` (`:108`, launcher census) | the set |
 | `activityHasMopOptionsMenu(activity)` | `MopScorer.scoreOpenMenu` (via `MenuGatewayPass`) | set membership |
 | `hasWtgData()` / `getWtgTransitions(activity)` | `WtgPass`, `FrontierPass`, `MopFrontierPass`, `MopScorer.scoreWtg`, `StatefulAgent.frontierBoost` | `WtgTransition.widgetName`, `WtgTransition.targetActivity` — **`widgetClass` has zero production readers** |
 | `getReceivers()` / `getServices()` | `StatefulAgent.buildTriggerTuples`, `dispatchTrigger`, `triggerLogLine` | `className`, `componentType` (log), `reachesTarget`, `intentFilters[].actions`, `intentFilters[].categories`, `targetMethods` (**emptiness test only**), `permission` (log via `hasPermissionGate`) |
 | `getProviders()` | `buildProviderTuples`, `buildContentCommand` | `className`, `reachesTarget`, `authorities` |
-| `getActivities()` | `SataAgent.selectTriggerCandidate`; **`SataAgent.buildDeepLinkUri`** (`:869`, called at `:543` inside the MOP stagnation launcher, consumed at `MonkeySourceApe.java:993-1002`); `MopData.augmentActivitiesFromSources` (A′ source 2, parse-time) | `className`, `isMain`, `permission`, `reachesTarget`; **`intentFilters[].actions` and `intentFilters[].data.{schemes,hosts,paths}`** — the deep-link inputs |
-| `hasComponents()` | `SataAgent:547` gate | non-emptiness |
+| `getActivities()` | `MopLauncherStage.selectTriggerCandidate` (`:106`); **`MopLauncherStage.buildDeepLinkUri`** (`:195`, called at `:117` inside the MOP cadence launcher, consumed at `MonkeySourceApe.java:962-975`); `MopData.augmentActivitiesFromSources` (A′ source 2, parse-time) | `className`, `isMain`, `permission`; **`intentFilters[].actions` and `intentFilters[].data.{schemes,hosts,paths}`** — the deep-link inputs. `reachesTarget` is read here **only** at parse time by A′ source 2: `MopLauncherStage` is forbidden to consult it (it false-negatives lambda-triggered activities), so no exploration-time reader of an activity's flag exists |
+| `hasComponents()` | `ComponentTriggerStage:69` gate | non-emptiness |
 | `getPackageName()` / `getMainActivity()` | trigger `ComponentName` (INV-CT-04), `selectTriggerCandidate`, T1.7 strict-match | scalars |
 | `getReachability()`, `getWindows()`, `getWindow(id)`, `getTransitions()`, `isWidgetlessSubstrate()`, `getDroppedFlaggedNoId()` | **tests only** (`MopDataTest`) | — parse-time inputs to the projections above; never read at exploration time |
 
-Parse-time-only consumption (moves to the generator): `reachability[]` → widget flag cross-reference (`bySignature`), D8 synthetic-lambda recovery (FIX 2, INV-MOP-30), A′ source 3; `windows[]` → widget map, collision policy (INV-MOP-19), empty-id drop (INV-MOP-20), OPTIONSMENU precompute (INV-MOP-13), dialog re-keying (INV-MOP-25); `transitions[]` → WTG click view keyed by base activity (INV-WTG-04), dialog host resolution; `components.activities[].reachesTarget` → A′ source 2 (INV-MOP-27). Also production-unused and dropped from the wire: `ProviderInfo.readPermission`/`writePermission`, `Widget.id`/`text`/`type`, raw `listeners[]`, `WtgTransition.widgetClass`, `targetMethods` signature list (compacted to a boolean).
+Parse-time-only consumption (moves to the generator): `reachability[]` → widget flag cross-reference (`bySignature`), D8 synthetic-lambda recovery (FIX 2, INV-MOP-30), A′ source 3; `windows[]` → widget map, collision policy (INV-MOP-19), empty-id drop (INV-MOP-20), OPTIONSMENU precompute (INV-MOP-13), dialog re-keying (INV-MOP-25); `transitions[]` → WTG click view keyed by base activity (INV-WTG-04), dialog host resolution; `components.activities[].reachesTarget` → A′ source 2 (INV-MOP-27). Also production-unused and dropped from the wire: `ProviderInfo.readPermission`/`writePermission`, `Widget.id`/`text`/`type`, raw `listeners[]`, `WtgTransition.widgetClass`, `targetMethods` signature list (compacted to a boolean), and **`exported`** — parsed and stored on every component today, read by nothing in either repository. The `component-triggering` requirement says so outright ("Eligibility SHALL NOT include an `exported` test: the dispatch path launches non-exported activities"), so dropping it from the wire turns that prohibition into a structural guarantee: there is no field left to test.
 
-**`IntentFilter.data` (D15 `DataSpec`) is not in that list, and an earlier revision of this design wrongly put it there.** It has a production consumer: `SataAgent.buildDeepLinkUri` reads `f.data.schemes/hosts/paths` of the first `ACTION_VIEW` filter to build `scheme://host + path`, and `MonkeySourceApe.java:993-1002` switches the trigger intent to `Intent.ACTION_VIEW` + `Uri.parse(...)` whenever that string is non-null. Dropping it would silently downgrade every `EVENT_TRIGGER_ACTIVITY` to an explicit-component intent and make activities reachable only by `ACTION_VIEW` unopenable — a direct hit on `sata_mop_act_frontier`, invisible in the trace (the run still reports `status=loaded`). The structure is nonetheless the wrong thing to ship: what the explorer consumes is one string per activity, not the filter list. The **derivation** therefore moves host-side like every other parse-time semantic, and the wire carries the result: `components.activities[].deepLinkUri` (see the schema below and INV-DRV-07).
+**`IntentFilter.data` (D15 `DataSpec`) is not in that list, and an earlier revision of this design wrongly put it there.** It has a production consumer: `MopLauncherStage.buildDeepLinkUri` reads `f.data.schemes/hosts/paths` of the first `ACTION_VIEW` filter to build `scheme://host + path`, and `MonkeySourceApe.java:962-975` switches the trigger intent to `Intent.ACTION_VIEW` + `Uri.parse(...)` whenever that string is non-null. Dropping it would silently downgrade every `EVENT_TRIGGER_ACTIVITY` to an explicit-component intent and make activities reachable only by `ACTION_VIEW` unopenable — a direct hit on `sata_mop_act_frontier`, invisible in the trace (the run still reports `status=loaded`). The structure is nonetheless the wrong thing to ship: what the explorer consumes is one string per activity, not the filter list. The **derivation** therefore moves host-side like every other parse-time semantic, and the wire carries the result: `components.activities[].deepLinkUri` (see the schema below and INV-DRV-07).
 
 ## Architecture
 
@@ -249,14 +249,14 @@ Same signature, same null-on-failure contract (INV-MOP-01), same status-line/rec
     "<sourceBaseActivity>": [{"widget": "<widgetName>", "target": "<targetBaseActivity>"}]
   },
   "components": {
-    "activities": [{"className": "…", "isMain": false, "exported": true,
+    "activities": [{"className": "…", "isMain": false,
                      "permission": null, "reachesMop": false,
                      "deepLinkUri": "myapp://host/path"}],
-    "receivers":  [{"className": "…", "isMain": false, "exported": true,
+    "receivers":  [{"className": "…", "isMain": false,
                      "permission": null, "reachesMop": true, "hasTargetMethods": true,
                      "intentFilters": [{"actions": ["…"], "categories": ["…"]}]}],
     "services":   [{"…": "same shape as receivers"}],
-    "providers":  [{"className": "…", "isMain": false, "exported": false,
+    "providers":  [{"className": "…", "isMain": false,
                      "permission": null, "reachesMop": true, "authorities": "…"}]
   },
   "stats": {"windows": 5, "widgetsTotal": 51, "flagged": 2, "droppedFlaggedNoId": 0,
