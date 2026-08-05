@@ -90,10 +90,15 @@ The cadence (`ape.activityTriggerStagnationStep`, default `50`; a configured val
 - **WHEN** `activityTriggerMaxPerRun=0` (default) and 10 launches have already been emitted
 - **THEN** the stage SHALL still fire at the next firing point (subject to the other gates)
 
-#### Scenario: invalid values clamped at plan resolution
+#### Scenario: invalid values clamped at load
 - **WHEN** the properties set `ape.activityTriggerStagnationStep=0` and `ape.activityTriggerMaxPerRun=-3`
 - **THEN** plan resolution SHALL clamp them to `50` and `0` respectively and log each clamp
 
-#### Scenario: launcher absent from the plan
+#### Scenario: launcher disabled
 - **WHEN** the plan does not enable activity triggering
 - **THEN** no `MopLauncher` stage SHALL exist, no `EVENT_TRIGGER_ACTIVITY` step SHALL ever be produced, and the probabilistic pool SHALL contain no activities
+
+#### Scenario: arm contrast is the launched set
+- **WHEN** the control arm census (`ape.mopActivitySourceComponents=false`) is `{A}` and the treatment census (`=true`) is `{A, B, C}`
+- **THEN** the control arm's `MopLauncher` SHALL only ever launch `A` while the treatment arm's can launch `A`, `B`, and `C`
+- **AND** the contrast SHALL come from the census the stage reads, never from the stage's own firing rule — both arms assemble the same stage with the same cadence, cap and cursor
