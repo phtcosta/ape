@@ -35,7 +35,7 @@ import static org.junit.Assert.fail;
  */
 public class PresetsTest {
 
-    /** {@code _BASELINE_ARM_FLAGS} minus {@code ape_pure_mode}, plus {@code throttle_ms}. */
+    /** The baseline exploration vector: every RV feature flag the preset states, plus the throttle. */
     private static final Map<String, String> APERV_VECTOR = vector(
             "ape.backMenuPickCap", "3",
             "ape.foreignActivityGuard", "true",
@@ -55,14 +55,14 @@ public class PresetsTest {
             "ape.mopFrontierWeight", "0",
             "ape.defaultGUIThrottle", "200");
 
-    /** {@code _MOP_SUBSTRATE} minus {@code mop_data}, which is deployment-specific. */
+    /** The MOP scoring weights. The artifact path is deployment-specific and is not a preset value. */
     private static final Map<String, String> MOP_WEIGHTS = vector(
             "ape.mopWeightDirect", "500",
             "ape.mopWeightTransitive", "300",
             "ape.mopWeightOpenMenu", "250",
             "ape.mopWeightWtg", "200");
 
-    /** {@code _LLM_FLAGS} minus {@code llm_url}, which is deployment-specific. */
+    /** The LLM gates and sampling block. The endpoint is deployment-specific and is not a preset value. */
     private static final Map<String, String> LLM_BLOCK = vector(
             "ape.llmOnNewState", "true",
             "ape.llmOnStagnation", "true",
@@ -112,11 +112,12 @@ public class PresetsTest {
 
     @Test
     public void theSixteenSurvivingArmDefiningFlagsAreAllPresent() {
-        // The harness's ARM_DEFINING_KEYS had eighteen members; ape_pure_mode left with the
-        // stage-2 edit and ape.stepTelemetryEnabled leaves here, because telemetry stopped being a
-        // mechanism an arm may define (event-sink INV-SNK-07). The other sixteen must all be stated
-        // by the baseline preset or the arm stops being fully explicit — the property the harness's
-        // own guard tests enforce.
+        // These sixteen are the flags that decide what an arm *is*, so the baseline preset must
+        // state every one of them: a flag it leaves unstated would be inherited from a jar default
+        // rather than chosen, and the arm would stop being fully explicit. Two keys that once
+        // belonged here are deliberately absent — ape.apePureMode, retired because purity is
+        // structural, and ape.stepTelemetryEnabled, because telemetry stopped being a mechanism an
+        // arm may define at all (event-sink INV-SNK-07).
         Set<String> armDefining = new LinkedHashSet<>(Arrays.asList(
                 "ape.frontierBoostWeight", "ape.activityTriggerEnabled", "ape.backMenuPickCap",
                 "ape.foreignActivityGuard", "ape.treePackageGuard", "ape.dynamicEpsilon",
@@ -172,10 +173,14 @@ public class PresetsTest {
 
     // --- The contract: a preset resolves, overrides win, and the result validates like any plan. --
 
-    /** Path the harness pushes the compacted static-analysis JSON to; activates {@code MOP}. */
+    /**
+     * A device path standing in for the MOP artifact, whose only role here is to activate
+     * {@code MOP}. The tests round-trip this value and never dereference it, so it is deliberately
+     * not a claim about which path the harness pushes to — that is rv-android's to state.
+     */
     private static final String MOP_DATA_PATH = "/data/local/tmp/static_analysis.json";
 
-    /** The SGLang endpoint a deployment supplies; activates {@code LLM}. */
+    /** An endpoint standing in for the SGLang server; its only role here is to activate {@code LLM}. */
     private static final String LLM_URL = "http://10.0.2.2:30000/v1";
 
     /**
