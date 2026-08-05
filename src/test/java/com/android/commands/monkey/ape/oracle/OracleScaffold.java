@@ -259,8 +259,16 @@ import java.util.Set;
  */
 public final class OracleScaffold {
 
-    /** The MOP fixture the {@code mop} and {@code llm_mop} presets load, via {@code MopData.load}. */
-    static final String MOP_FIXTURE = "cryptoapp.apk.gh60-fresh.json";
+    /**
+     * The MOP fixture the {@code mop} and {@code llm_mop} presets load, via {@code MopData.load}.
+     *
+     * <p>It is the derived artifact, not the static-analysis document it came from: after the
+     * cutover the loader reads only the compact format, so pointing the presets at the source would
+     * make every MOP golden run with a null {@code MopData} and quietly become an APERV golden.
+     * The projections are the same either way — that equality is what the cutover gate established
+     * before it was deleted — so the goldens do not move.
+     */
+    static final String MOP_FIXTURE = "cryptoapp.apk.mop.json";
 
     private static final String MOP_FIXTURE_PACKAGE = "br.unb.cic.cryptoapp";
     private static final String MOP_FIXTURE_MAIN_ACTIVITY = "br.unb.cic.cryptoapp.MainActivity";

@@ -84,7 +84,7 @@ public class ComponentTriggerStageTest {
                 .invoke(theUnsafe.get(null), MopData.class);
         List<ComponentInfo.ReceiverInfo> pool = new ArrayList<>();
         for (int i = 0; i < receivers; i++) {
-            pool.add(new ComponentInfo.ReceiverInfo("com.example.app.R" + i, false, true,
+            pool.add(new ComponentInfo.ReceiverInfo("com.example.app.R" + i, false,
                     Collections.<ComponentInfo.IntentFilter>emptyList(), true,
                     Collections.<String>emptyList(), null));
         }

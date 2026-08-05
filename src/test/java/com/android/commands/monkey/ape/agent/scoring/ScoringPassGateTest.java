@@ -62,7 +62,7 @@ public class ScoringPassGateTest {
     private static MopData mopWithWtg() {
         Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
         wtg.put("com.x.Main", Collections.singletonList(
-                new MopData.WtgTransition("btn", "android.widget.Button", "com.x.Detail")));
+                new MopData.WtgTransition("btn", "com.x.Detail")));
         return MopData.forTest(null, null, wtg);
     }
 

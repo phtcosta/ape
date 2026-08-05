@@ -258,7 +258,7 @@ final class PipelineFixture {
         MopData data = (MopData) unsafeClass.getMethod("allocateInstance", Class.class)
                 .invoke(theUnsafe.get(null), MopData.class);
         List<ComponentInfo.ActivityInfo> activities = new ArrayList<>();
-        activities.add(new ComponentInfo.ActivityInfo(TRIGGER_TARGET, false, true,
+        activities.add(new ComponentInfo.ActivityInfo(TRIGGER_TARGET, false,
                 Collections.<ComponentInfo.IntentFilter>emptyList(), true,
                 Collections.<String>emptyList(), null));
         FakeStepContext.setField(data, "activities", activities);

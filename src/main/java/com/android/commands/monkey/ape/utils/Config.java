@@ -174,10 +174,13 @@ public class Config {
             Math.max(0.0, Math.min(1.0, Config.getDouble("ape.llmPercentage", 0.02)));
     public static final String llmPromptVariant = Config.get("ape.llmPromptVariant", "ape_current");
     // mop-reach-strategies F′ (INV-RTR-09): LLM random-routing probability to use when the current
-    // screen is a widgetless substrate (MopData.isWidgetlessSubstrate). Default -1 sentinel = "no
-    // override" (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt from the
-    // [0,1] clamp; a >=0 value is clamped to [0,1]; any real negative collapses to the sentinel. Seam
-    // only — no consumer yet (wiring it is a later round).
+    // screen is a widgetless substrate — a UI (Compose, canvas) where static analysis found no
+    // addressable widget, so widget-level MOP guidance has nothing to bind to. Default -1 sentinel =
+    // "no override" (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt
+    // from the [0,1] clamp; a >=0 value is clamped to [0,1]; any real negative collapses to the
+    // sentinel. Seam only — no consumer yet, and the predicate a consumer would need does not exist
+    // either: the on-device test used to read the parsed windows[], which the artifact does not
+    // carry. Wiring it means deriving the fact host-side first.
     public static final double llmPercentageNoSubstrate =
             clampLlmPercentageNoSubstrate(Config.getDouble("ape.llmPercentageNoSubstrate", -1.0));
     // llm-native-toolcall-repair J1b/J1c: four previously hard-coded LLM values exposed as config keys

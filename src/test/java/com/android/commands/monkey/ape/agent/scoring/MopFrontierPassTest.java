@@ -27,7 +27,7 @@ import static org.junit.Assert.*;
 public class MopFrontierPassTest {
 
     private static MopData.WtgTransition edge(String widget, String target) {
-        return new MopData.WtgTransition(widget, "android.widget.Button", target);
+        return new MopData.WtgTransition(widget, target);
     }
 
     /** INV-MFP-01: MOP+unvisited qualifies; MOP+visited does not; non-MOP+unvisited does not. */

@@ -16,10 +16,10 @@ someone who was not in the sessions that captured them.
 | File | Written by | Preset | Seed | Fixture | What its records pin |
 |---|---|---|---|---|---|
 | `aperv/baseline.ndjson` | `ParityOracleApervTest` | `aperv` | 4242 | — | the EARLY_STAGE forward pick on a fresh screen (step 0), then **both** legs of the epsilon-greedy rung: the priority roulette (step 1) and the least-visited pick walking `b0`/`b1`/`b2` (steps 2–4) |
-| `mop/baseline.ndjson` | `ParityOracleMopTest` | `mop` | 5150 | `cryptoapp.apk.gh60-fresh.json` | EARLY_STAGE, the cadence launcher firing into `MessageDigestActivity`, the unvisited-MOP short-circuit, then the epsilon-greedy roulette |
+| `mop/baseline.ndjson` | `ParityOracleMopTest` | `mop` | 5150 | `cryptoapp.apk.mop.json` | EARLY_STAGE, the cadence launcher firing into `MessageDigestActivity`, the unvisited-MOP short-circuit, then the epsilon-greedy roulette |
 | `llm/baseline.ndjson` | `ParityOracleLlmTest` | `llm` | 6060 | — | all four LLM provenance values — `accepted`, `declined`, `timeout`, `not_routed` — with every non-accept falling through to `roulette_early` |
-| `llm_mop/baseline.ndjson` | `ParityOracleLlmMopTest` | `llm_mop` | 7070 | `cryptoapp.apk.gh60-fresh.json` | accept → decline into the MOP short-circuit → `not_routed` into the launcher → timeout into the SATA chain |
-| `llm_mop/preemption.ndjson` | `PreemptionGoldenTest` | `llm_mop` | 8080 | `cryptoapp.apk.gh60-fresh.json` | the precedence order itself: an accept preempting a launcher that was due, a decline falling through **into** that launcher on the same step, then the SATA chain as the fallback |
+| `llm_mop/baseline.ndjson` | `ParityOracleLlmMopTest` | `llm_mop` | 7070 | `cryptoapp.apk.mop.json` | accept → decline into the MOP short-circuit → `not_routed` into the launcher → timeout into the SATA chain |
+| `llm_mop/preemption.ndjson` | `PreemptionGoldenTest` | `llm_mop` | 8080 | `cryptoapp.apk.mop.json` | the precedence order itself: an accept preempting a launcher that was due, a decline falling through **into** that launcher on the same step, then the SATA chain as the fallback |
 
 Format and semantics live in `DecisionRecord` and `GoldenFile` (design D4). The short version:
 one header line, then one line per selection step, keys in a fixed order, fields that do not

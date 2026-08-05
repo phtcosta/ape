@@ -91,7 +91,8 @@ public class MopScorerTest {
     public void testScoreWtg_widgetLeadsToMopActivity() {
         List<MopData.WtgTransition> transitions = new ArrayList<>();
         transitions.add(new MopData.WtgTransition(
-                "settings", "android.view.MenuItem", "com.example.SettingsActivity"));
+                "settings",
+                "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
@@ -110,7 +111,8 @@ public class MopScorerTest {
     public void testScoreWtg_widgetLeadsToNonMopActivity() {
         List<MopData.WtgTransition> transitions = new ArrayList<>();
         transitions.add(new MopData.WtgTransition(
-                "about", "android.widget.Button", "com.example.AboutActivity"));
+                "about",
+                "com.example.AboutActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         // AboutActivity is NOT in mopActivities
@@ -128,7 +130,8 @@ public class MopScorerTest {
     public void testScoreWtg_noMatchForWidget() {
         List<MopData.WtgTransition> transitions = new ArrayList<>();
         transitions.add(new MopData.WtgTransition(
-                "settings", "android.view.MenuItem", "com.example.SettingsActivity"));
+                "settings",
+                "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
@@ -167,7 +170,8 @@ public class MopScorerTest {
     public void testScoreWtg_nullActivity() {
         List<MopData.WtgTransition> transitions = new ArrayList<>();
         transitions.add(new MopData.WtgTransition(
-                "settings", "android.view.MenuItem", "com.example.SettingsActivity"));
+                "settings",
+                "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
@@ -185,7 +189,8 @@ public class MopScorerTest {
     public void testScoreWtg_nullOrEmptyShortId() {
         List<MopData.WtgTransition> transitions = new ArrayList<>();
         transitions.add(new MopData.WtgTransition(
-                "settings", "android.view.MenuItem", "com.example.SettingsActivity"));
+                "settings",
+                "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
@@ -206,10 +211,10 @@ public class MopScorerTest {
     public void testScoreWtg_menuItemToMopActivity() {
         List<MopData.WtgTransition> transitions = new ArrayList<>();
         transitions.add(new MopData.WtgTransition(
-                "menu_item_cipher", "android.view.MenuItem",
+                "menu_item_cipher",
                 "br.unb.cic.cryptoapp.cipher.CipherActivity"));
         transitions.add(new MopData.WtgTransition(
-                "menu_item_message_digest", "android.view.MenuItem",
+                "menu_item_message_digest",
                 "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
 
         Set<String> mopActivities = new HashSet<>();
@@ -234,7 +239,8 @@ public class MopScorerTest {
     public void testScoreWtg_wrongSourceActivity() {
         List<MopData.WtgTransition> transitions = new ArrayList<>();
         transitions.add(new MopData.WtgTransition(
-                "settings", "android.view.MenuItem", "com.example.SettingsActivity"));
+                "settings",
+                "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
@@ -257,29 +263,27 @@ public class MopScorerTest {
         return f.getAbsolutePath();
     }
 
-    /** Activity C with an OPTIONSMENU whose item's click handler directly reaches target. */
+    /**
+     * Activity {@code C} whose OPTIONSMENU is a MOP gateway.
+     *
+     * <p>The fixture states the gateway rather than deriving it: the cross-reference that used to
+     * turn a menu item's handler into a flag runs host-side now, so what reaches the scorer is the
+     * record {@code {activity: C, hasFlaggedWidget: true}} and its recomputation (INV-MOP-13).
+     * Which handler made the menu item MOP-reaching is no longer a question this suite can ask,
+     * and pretending otherwise would test the generator through the scorer.
+     */
     private static MopData loadMenuMopFixture() throws Exception {
-        String json = "{\"package\":\"p\",\"mainActivity\":\"p.C\",\"complete\":true," +
-                "\"reachability\":[{\"className\":\"C\",\"methods\":[" +
-                "{\"signature\":\"<C: void m()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true}]}]," +
-                "\"windows\":[{\"id\":1,\"type\":\"OPTIONSMENU\",\"name\":\"C#OptionsMenu\",\"widgets\":[" +
-                "{\"idName\":\"mi\",\"type\":\"android.view.MenuItem\",\"listeners\":[" +
-                "{\"eventType\":\"click\",\"handler\":\"<C: void m()>\"}]}]}]," +
-                "\"transitions\":[],\"components\":{}}";
-        return MopData.load(writeTempJson(json), null, null, new NoopSink());
+        String artifact = "{\"formatVersion\":1,\"package\":\"p\",\"mainActivity\":\"p.C\","
+                + "\"optionsMenus\":[{\"activity\":\"C\",\"hasFlaggedWidget\":true}]}";
+        return MopData.load(writeTempJson(artifact), null, null, new NoopSink());
     }
 
     /** Widget b with click→MOP-direct and longClick→not (per-event-type maps). */
     private static MopData loadEventTypeFixture() throws Exception {
-        String json = "{\"package\":\"p\",\"mainActivity\":\"p.C\",\"complete\":true," +
-                "\"reachability\":[{\"className\":\"C\",\"methods\":[" +
-                "{\"signature\":\"<C: void clk()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true}]}]," +
-                "\"windows\":[{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"C\",\"widgets\":[" +
-                "{\"idName\":\"b\",\"type\":\"android.widget.Button\",\"listeners\":[" +
-                "{\"eventType\":\"click\",\"handler\":\"<C: void clk()>\"}," +
-                "{\"eventType\":\"longClick\",\"handler\":\"<C: void none()>\"}]}]}]," +
-                "\"transitions\":[],\"components\":{}}";
-        return MopData.load(writeTempJson(json), null, null, new NoopSink());
+        String artifact = "{\"formatVersion\":1,\"package\":\"p\",\"mainActivity\":\"p.C\","
+                + "\"widgets\":{\"C\":{\"b\":{\"mop\":{\"click\":\"direct\",\"longclick\":\"none\"}}}},"
+                + "\"mopActivities\":[\"C\"]}";
+        return MopData.load(writeTempJson(artifact), null, null, new NoopSink());
     }
 
     @Test // 17.1
@@ -558,31 +562,10 @@ public class MopScorerTest {
         assertTrue(widget > aPrime && aPrime > nonMop);
     }
 
-    // -------------------------------------------------------------------------
-    // mop-parser-fidelity (#0) 2.3(b): parser → scorer integration.
-    // A "#"-suffixed WTG target window reduces to its base activity, so scoreWtg
-    // finds activityHasMop(base) and returns mopWeightWtg (INV-WTG-04).
-    // -------------------------------------------------------------------------
-
-    @Test
-    public void testScoreWtg_suffixedTargetReducedToBase() throws Exception {
-        String reaches = "{\"className\":\"Tgt\",\"methods\":["
-                + "{\"signature\":\"<Tgt: void enc()>\",\"reachesTarget\":true,\"directlyReachesTarget\":true}]}";
-        String wins = "{\"id\":1,\"type\":\"ACTIVITY\",\"name\":\"Src\",\"widgets\":[]},"
-                + "{\"id\":2,\"type\":\"ACTIVITY\",\"name\":\"Tgt#Dialog\",\"widgets\":["
-                + "{\"idName\":\"go\",\"type\":\"android.widget.Button\",\"listeners\":["
-                + "{\"eventType\":\"click\",\"handler\":\"<Tgt: void enc()>\"}]}]}";
-        String trans = "{\"sourceId\":1,\"targetId\":2,\"events\":["
-                + "{\"type\":\"click\",\"widgetId\":9,\"widgetClass\":\"x\",\"widgetName\":\"toCrypto\"}]}";
-        MopData d = MopData.load(writeTempJson(jsonDoc(reaches, wins, trans)), null, null, new NoopSink());
-        assertEquals(W_WTG, MopScorer.scoreWtg("Src", "toCrypto", d, W_WTG));
-    }
-
-    private static String jsonDoc(String reach, String wins, String trans) {
-        return "{\"package\":\"P\",\"mainActivity\":\"Src\",\"complete\":true"
-                + ",\"reachability\":[" + reach + "]"
-                + ",\"windows\":[" + wins + "]"
-                + ",\"transitions\":[" + trans + "]"
-                + ",\"components\":{}}";
-    }
+    // The parser → scorer integration test that closed this file drove a "#"-suffixed WTG target
+    // through the old parser to show it reduced to its base activity before scoreWtg looked it up.
+    // Both ends of that reduction are now the generator's (INV-DRV-03/INV-WTG-04) and its permanent
+    // test is `gh96`'s test_wtg_click_only_deduped_base_keyed; on this side the wire arrives already
+    // base-keyed, so what is left to assert is scoreWtg over a base-keyed edge, which every
+    // forTest-built case above already does.
 }

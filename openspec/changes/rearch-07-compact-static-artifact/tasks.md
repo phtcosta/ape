@@ -388,11 +388,137 @@ what task 2.7 already designated as the permanent protection) and `gh97`'s campa
 
 ## 5. Jar cutover (BREAKING — lands only with Group 6)
 
-- [ ] 5.1 Delete the full-JSON parse machinery from `MopData.java`: `parseReachability`/`parseWindows`/`parseWidget`/`parseListener`/`deriveWidgetMopFlags`/`parseTransitions`/`parseComponents`/`parseIntentFilters`/`parseDataSpec`/`rekeyDialogsToHost`/`augmentActivitiesFromSources`/`precomputeMopOptionsMenus`/`computeHandlerJoinDiagnostics`, the `Window`/`Listener`/`Transition`/`TransitionEvent`/`ReachabilityClass`/`ReachabilityMethod` POJOs, and the test-only getters (`getReachability`, `getWindows`, `getWindow`, `getTransitions`, `isWidgetlessSubstrate`)
-- [ ] 5.2 Delete the memory-safety machinery (design D5, V19): `PARSE_FOOTPRINT_FACTOR`, `PARSE_BUDGET_BYTES`, the budget-parameter test seam, `reason=too-large`, and the outer `catch (OutOfMemoryError)`; grep-verify zero `OutOfMemoryError` catches remain in the repo
-- [ ] 5.3 Delete `WtgTransition.widgetClass`, the `DataSpec`/`readPermission`/`writePermission`/**`exported`** surfaces from `ComponentInfo`, and `Widget.id`/`text`/`type`/`listeners`. `ComponentInfo` gains `deepLinkUri` (read from the wire) and `MopLauncherStage.buildDeepLinkUri` is deleted with the structure it walked — its call site at `:117` passes `candidate.deepLinkUri` instead. Dropping `exported` changes every `ComponentInfo` subclass constructor and the `ActivityFrontierTest` fixtures that pass it positionally. This is the one place outside `MopData`/`ComponentInfo` that changes; everything else compiles clean because the query API is unchanged by construction
-- [ ] 5.3a Migrate the deep-link assertions of `ActivityFrontierTest` ("Lever B", 6 assertions over `buildDeepLinkUri`) to the Python generator suite (task 2.7) — they pin INV-DRV-07 now, on the side that computes it. Assert what remains on the jar side instead: a `ComponentInfo` carrying `deepLinkUri` dispatches `ACTION_VIEW`, one carrying null dispatches the explicit component. **Deleting these assertions instead of migrating them is the wrong fix** — they are the only thing standing between a schema omission and a silently degraded activity frontier
-- [ ] 5.4 Delete `MopArtifactEquivalenceTest`, the synthetic full-JSON fragments of task 4.1 and the old-format test resources (`cryptoapp.apk.gh60*.json` fixtures move to test-only history; the compact fixture is now the only loader fixture); update the D7 vocabulary-boundary javadoc on `MopData` (boundary now: generator host-side). The synthetics go with the oracle for the same reason it does — they are full-JSON documents, and a full-JSON document in the test tree after this group is an input no shipped code path can read. Their *rules* do not go with them: each one's permanent home is the named test `gh96` task 2.7 owns, which is where the substitution table of 4.4 points
+- [x] 5.1 Delete the full-JSON parse machinery from `MopData.java`: `parseReachability`/`parseWindows`/`parseWidget`/`parseListener`/`deriveWidgetMopFlags`/`parseTransitions`/`parseComponents`/`parseIntentFilters`/`parseDataSpec`/`rekeyDialogsToHost`/`augmentActivitiesFromSources`/`precomputeMopOptionsMenus`/`computeHandlerJoinDiagnostics`, the `Window`/`Listener`/`Transition`/`TransitionEvent`/`ReachabilityClass`/`ReachabilityMethod` POJOs, and the test-only getters (`getReachability`, `getWindows`, `getWindow`, `getTransitions`, `isWidgetlessSubstrate`)
+  - **`MopData.java` 1,703 → 800 lines** (53 % gone; the design's target was "≤ ~450 from 1212", a
+    figure written before stages 3–6 added the compact reader, the gateway recompute and the
+    provenance record to the same file — the parser share it was about is what left).
+    Four contiguous cuts, located by their banner comments and each asserted to match exactly once
+    before it ran: the `Loading` section (197 lines), passes 1–2 (218), the A′ augmentation plus the
+    handler-join diagnostics (81), and passes 3–4 with the OPTIONSMENU precompute and the dialog
+    re-key (267). `orInto` and `normalizeEventType` sat inside those ranges and are survivors, so
+    the cuts are bounded on them rather than on the section ends.
+  - Fields, constructor and both `forTest` overloads lost `complete`, `reachability`, `windows`,
+    `windowsById` and `transitions`; the five test-only getters and `isComplete` went with them.
+  - **Helpers checked one at a time against `src/main` and `src/test` before deletion**, as the task
+    demanded: `readFile`, `optStringOrNull`, `stringList`, `normalizeEventType`, `orInto` and
+    `reject` survive with live callers; `optBooleanOrNull`, `baseActivity`, `mopRank`,
+    `countWidgets`, `countWtgEdges`, `countFlagged`, `SYNTH_LAMBDA` and
+    `syntheticLambdaEnclosingClass` had none left and are gone. `syntheticLambdaEnclosingClass` was
+    the one the handoff flagged as possibly having a test — it did not.
+  - **`loadCompact` → `load`, both overloads.** With one loader the qualifier is lineage (P4), the
+    spec's requirement is written about `MopData.load`, and `StatefulAgent:181` already called
+    `load` — so the production call site did not move. The test-side helpers `loadCompactFixture`
+    and `onlyCompactLoadRecord` were renamed for the same reason.
+  - Class javadoc rewritten (task 5.4's D7 half): the `Target`→`MOP` boundary is described as
+    living in the generator, and the `Parser` section is now a `Reader, not parser` section that
+    names the one thing still derived on device — the gateway set, because D3 will not let it be
+    shipped.
+  - One dangling reference the deletion created and P3 requires closing: `Config`'s
+    `llmPercentageNoSubstrate` comment named `MopData.isWidgetlessSubstrate`. The flag is a live
+    plan key with no consumer, so it stays; the comment now describes the substrate concept and
+    says plainly that the predicate a consumer would need no longer exists, because it read the
+    parsed `windows[]` that the artifact does not carry.
+  - Incidental: the `TAG` constant went too. It was already dead at `3b1b560b` (one occurrence, its
+    own declaration) — not something this cut created, just something it stopped hiding.
+- [x] 5.2 Delete the memory-safety machinery (design D5, V19): `PARSE_FOOTPRINT_FACTOR`, `PARSE_BUDGET_BYTES`, the budget-parameter test seam, `reason=too-large`, and the outer `catch (OutOfMemoryError)`; grep-verify zero `OutOfMemoryError` catches remain in the repo
+  - Deleted with the `Loading` section of 5.1 — they were one contiguous block, and the budget
+    guard was the first statement inside the `try` the OOM catch closed.
+  - **Grep-verified, and the result needs its qualifier stated.** Three `OutOfMemoryError`
+    occurrences remain in `src/main` and **none is a catch**: `MopData`'s is the sentence in the
+    class javadoc explaining why this reader has no containment, and `ScreenshotCapture:60` /
+    `Model:63` are pre-existing comments that likewise explain why *they* do not catch it. The
+    invariant the task wanted is zero handlers, which holds; reporting "zero occurrences" would
+    have been false and reporting "three occurrences" would have been alarming, so the check was
+    run on the construct rather than the token.
+  - `readFile`'s javadoc claimed "the `load` budget guard rejects far smaller files first". With no
+    guard that sentence became a reference to something absent; rewritten to say the
+    `Integer.MAX_VALUE` check is now unbacked, which is the true state.
+- [x] 5.3 Delete `WtgTransition.widgetClass`, the `DataSpec`/`readPermission`/`writePermission`/**`exported`** surfaces from `ComponentInfo`, and `Widget.id`/`text`/`type`/`listeners`. `ComponentInfo` gains `deepLinkUri` (read from the wire) and `MopLauncherStage.buildDeepLinkUri` is deleted with the structure it walked — its call site at `:117` passes `candidate.deepLinkUri` instead. Dropping `exported` changes every `ComponentInfo` subclass constructor and the `ActivityFrontierTest` fixtures that pass it positionally. This is the one place outside `MopData`/`ComponentInfo` that changes; everything else compiles clean because the query API is unchanged by construction
+  - **The task's last sentence is wrong, and the number is worth recording rather than glossing.**
+    "Everything else compiles clean" held for the *query* API and not for the *construction* API:
+    dropping a positional `boolean exported` from four subclass constructors broke **nine** test
+    files, not the two the task named — `StatefulAgentTriggerTest` (13 sites), `ComponentInfoTest`,
+    `ActivityFrontierTest`, `MopLauncherStageTest`, `ComponentTriggerStageTest`, `PipelineFixture`,
+    and, through `WtgTransition`, `MopFrontierPassTest`, `ScoringPassGateTest` and
+    `ScoringPipelineTest`. A positional boolean is invisible to the caller audit that cleared this
+    field of *readers*: nothing read `exported`, and 19 sites still passed it.
+  - The 19 argument drops were done by a script that splits arguments at paren depth 1 (quote- and
+    nesting-aware) and removes the third **only when it is a boolean literal**, so a call passing a
+    variable was left for a human. That is how `ActivityFrontierTest`'s `activity(...)` helper was
+    caught rather than silently mangled — its third argument was the parameter `exported`.
+  - `ComponentInfo` also lost `DataSpec`, `IntentFilter.data` and the providers'
+    `readPermission`/`writePermission`. Its class javadoc now argues each absence: the `exported`
+    one is the load-bearing case, because "eligibility SHALL NOT include an `exported` test" turns
+    from a rule someone must remember into a property of the type.
+  - `MopLauncherStage`'s eligibility javadoc said "Exported status is NOT consulted"; it now says it
+    cannot be, and why the frontier would shrink if it were.
+  - **`testNonExportedCensusMemberIsLaunched` lost its subject and was rewritten, not deleted.** It
+    varied `exported` and checked the result did not move — impossible with no field to vary. It is
+    now `testNoExportedFieldExistsForTheWalkToConsult`, which asserts over `ComponentInfo`'s public
+    fields that no `exported` exists, and keeps the launch assertion. The absence claim is strictly
+    stronger: the old test showed *this* walk ignoring the flag and left a future walk free to
+    consult it.
+- [x] 5.3a Migrate the deep-link assertions of `ActivityFrontierTest` ("Lever B", 6 assertions over `buildDeepLinkUri`) to the Python generator suite (task 2.7) — they pin INV-DRV-07 now, on the side that computes it. Assert what remains on the jar side instead: a `ComponentInfo` carrying `deepLinkUri` dispatches `ACTION_VIEW`, one carrying null dispatches the explicit component. **Deleting these assertions instead of migrating them is the wrong fix** — they are the only thing standing between a schema omission and a silently degraded activity frontier
+  - **Five of the six assertions already had their permanent home; the sixth does not, and that is
+    stated rather than quietly counted as migrated.** `gh96`'s `test_derive_mop_artifact.py` carries
+    `test_deep_link_from_first_action_view` (scheme+host+path, and the first-`ACTION_VIEW` selection
+    over a preceding `MAIN` filter and a following second `VIEW`), `_absent_without_scheme`,
+    `_absent_without_action_view`, `_absent_without_filters` and `_empty_host_and_path` (`myapp://`).
+    The one with no counterpart is **scheme + host, no path** (`testDeepLinkSchemeHost`,
+    `https://x.com`) — the case that shows `path` defaults independently of `host`. Writing it is an
+    rv-android edit to a file outside the group-6 authorization of §0, so it is **owed, not done**:
+    it belongs to `gh96` task 2.7 and needs the owner's word before it lands. Nothing regresses
+    meanwhile — the two flanking cases pin the assembly — but the box is not honest without this.
+  - What stays on the jar side is the pair the task names, in `ActivityFrontierTest`:
+    `testTriggerActionCarriesTheWireDeepLinkOrNull` (the candidate's `deepLinkUri` reaches
+    `ActivityTriggerAction` **verbatim**, and null stays null, which is what `MonkeySourceApe` reads
+    as "explicit component" — INV-CT-13) and `testOnlyActivitiesCanCarryADeepLink`. Verbatim is the
+    load-bearing word: any rebuilding, normalizing or defaulting here would be a second
+    implementation of INV-DRV-07, free to diverge from the generator's the first time either moved.
+- [x] 5.4 Delete `MopArtifactEquivalenceTest`, the synthetic full-JSON fragments of task 4.1 and the old-format test resources (`cryptoapp.apk.gh60*.json` fixtures move to test-only history; the compact fixture is now the only loader fixture); update the D7 vocabulary-boundary javadoc on `MopData` (boundary now: generator host-side). The synthetics go with the oracle for the same reason it does — they are full-JSON documents, and a full-JSON document in the test tree after this group is an input no shipped code path can read. Their *rules* do not go with them: each one's permanent home is the named test `gh96` task 2.7 owns, which is where the substitution table of 4.4 points
+  - Deleted: `MopArtifactEquivalenceTest`, the ten `gate-*.{sa,mop}.json` files, `MopDataLoadTest`,
+    `MopDataLambdaReachTest`, `MopDataActivityCountersTest`, and `cryptoapp.apk.gh60.json`
+    (a 70 KB resource nothing loaded — `GoldenFileTest` only names it in a header string).
+    `gate-report.md` stays, as its own task requires.
+  - **`cryptoapp.apk.gh60-fresh.json` is NOT deleted, and the task's instruction to move the
+    full-JSON fixtures "to test-only history" no longer holds for it.** Task 3.5 gave it a second
+    job: it is the document `testLegacyJsonRejectionAbortsTheMopArm` and
+    `testLegacyFullJsonIsRejectedAsVersionMismatch` feed to the loader to prove the rejection, and
+    `testCompactLoadRecordCarriesProvenanceAndTheComponentCount` digests it to check the provenance
+    chain end to end. Deleting it would delete the skew drill of task 7.3(a) — the one thing that
+    shows a stale push failing loud. Its constant now carries a comment saying why it is on the
+    classpath, so the next reader does not remove it as leftover.
+  - **`MopDataTest` was cut by what each test drives, not by the line the 3.5 block starts at.**
+    Session 13's plan was "delete everything above the block"; that would have taken with it eight
+    `forTest`-based query-layer tests (lines 87–256) that never touched the parser and test an API
+    the cutover does not change, and two compact tests session 12 had left above the line
+    (`testCompactLoadRecordCarriesProvenanceAndTheComponentCount` and its `sha256Hex` helper). Six
+    anchored cuts instead of one: **1,582 → 840 lines**, with the query-layer block kept.
+  - `testEventTypeNormalizationSnakeCamelEqual` kept its unit half and had its end-to-end half
+    **re-anchored on the wire** rather than deleted. INV-MOP-08 did not move host-side — the
+    generator writes whatever token the producer used, so a snake_case wire key must still answer a
+    camelCase query. The new fixture uses `item_selected`, a key no other test in the file uses and
+    the widget's only entry, so a loader that skipped normalization on ingest leaves the map holding
+    an unreachable key and the query falls back to a false aggregate.
+  - `testWtgTransitionFields` became `testWtgTransitionCarriesOnlyTheConsumedPair`: it asserts the
+    field count is 2, so a re-added `widgetClass` fails rather than passing unnoticed.
+  - **`MopScorerTest`'s two synthetic fixtures were rewritten as artifacts, not deleted.** They test
+    the *scorer*, and the scorer still needs a gateway and a per-event flag map to score; what
+    changed is that the fixture now states them instead of deriving them from listeners and a call
+    graph. Its third old-parser test (the `#`-suffixed WTG target reducing to base) was deleted
+    outright: that reduction is the generator's now, and its permanent test is `gh96`'s
+    `test_wtg_click_only_deduped_base_keyed`.
+  - `ComponentInfoTest` was rewritten against the wire. It gained the assertion the compact format
+    made possible and the old one could not have: `hasTargetMethods` decodes to a list of the right
+    *emptiness* across true/false/absent, which is exactly what `buildTriggerTuples` reads.
+  - **`OracleScaffold.MOP_FIXTURE` had to move to the compact artifact, and this is the trap the
+    cutover set.** The `mop` and `llm_mop` presets load it through `MopData.load`; left pointing at
+    the full JSON they would have taken a null and every MOP golden would have silently become an
+    APERV golden — a passing suite asserting nothing. The three goldens then failed on their
+    **header's `fixture` field only**, every decision record reproducing byte-for-byte across the
+    cut, which is the strongest behavioural evidence this stage has that the projection is
+    unchanged: three seeded end-to-end decision traces, produced by the old parser and reproduced by
+    the new reader. Headers and `goldens/README.md` updated; no decision line touched.
 - [ ] 5.5 Update `CLAUDE.md` (MopData naming note, `mopDataPath` artifact description) and run `/sdd-doc-code src/main/java/com/android/commands/monkey/ape/utils/MopData.java`
 - [ ] 5.6 Run `/sdd-test-run ape` (full `mvn test` — 145-test suite adjusted for the removed seams)
 

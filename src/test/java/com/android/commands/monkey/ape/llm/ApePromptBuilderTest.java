@@ -271,7 +271,6 @@ public class ApePromptBuilderTest {
     @Test // 20.6
     public void testInputTypeAndHintAppearInPrompt() {
         MopData.Widget w = new MopData.Widget();
-        w.type = "android.widget.EditText";
         w.inputType = "textPassword";
         w.hint = "Your password";
         String m = ApePromptBuilder.widgetMetadata(w);

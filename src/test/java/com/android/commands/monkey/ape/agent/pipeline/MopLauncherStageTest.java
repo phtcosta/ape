@@ -34,7 +34,7 @@ public class MopLauncherStageTest {
     private static final String MAIN = "com.example.app.MainActivity";
 
     private static ComponentInfo.ActivityInfo activity(String className) {
-        return new ComponentInfo.ActivityInfo(className, false, true,
+        return new ComponentInfo.ActivityInfo(className, false,
                 java.util.Collections.<ComponentInfo.IntentFilter>emptyList(), true,
                 java.util.Collections.<String>emptyList(), null);
     }

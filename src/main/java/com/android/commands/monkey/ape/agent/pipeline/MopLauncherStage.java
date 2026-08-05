@@ -143,8 +143,11 @@ public final class MopLauncherStage implements DecisionStage {
      * activity (by {@code isMain} flag or by name equal to {@code mainActivity}), and currently
      * unvisited ({@code className} not in {@code visitedActivities}).
      *
-     * <p>Exported status is NOT consulted — the dispatch path ({@code IActivityManager.startActivity}
-     * from uid 2000) launches non-exported activities. There is no non-census fallback: a null/empty
+     * <p>Exported status is not consulted, and cannot be: the artifact carries no such field,
+     * because the dispatch path ({@code IActivityManager.startActivity} from uid 2000) launches
+     * non-exported activities and an export test would silently shrink the frontier. What used to
+     * be a rule this walk had to remember is now a property of the data it reads
+     * (INV-CT-10). There is no non-census fallback: a null/empty
      * census, or no eligible census member, yields null. The census is the reachability-augmented
      * {@code MopData.activityHasMop} truth (INV-MOP-27), NOT the component-level
      * {@code ComponentInfo.reachesTarget} field, which false-negatives lambda-triggered activities.
@@ -178,35 +181,6 @@ public final class MopLauncherStage implements DecisionStage {
                     && !visitedActivities.contains(c.className)) {
                 return c;
             }
-        }
-        return null;
-    }
-
-    /**
-     * The deep-link seam (pure). Returns {@code scheme + "://" + host + path} built from the first
-     * intent-filter that declares {@code ACTION_VIEW} and a non-empty scheme list (host/path default
-     * to empty when absent); null when no such filter exists, in which case dispatch falls back to
-     * the explicit component. Best-effort URI from the parsed manifest parts (INV-CT-07 dispatch
-     * precondition).
-     *
-     * @param activity the census entry about to be launched
-     * @return its deep link, or {@code null}
-     */
-    public static String buildDeepLinkUri(ComponentInfo activity) {
-        if (activity == null) {
-            return null;
-        }
-        for (ComponentInfo.IntentFilter f : activity.intentFilters) {
-            if (!f.actions.contains("android.intent.action.VIEW")) {
-                continue;
-            }
-            if (f.data.schemes.isEmpty()) {
-                continue;
-            }
-            String scheme = f.data.schemes.get(0);
-            String host = f.data.hosts.isEmpty() ? "" : f.data.hosts.get(0);
-            String path = f.data.paths.isEmpty() ? "" : f.data.paths.get(0);
-            return scheme + "://" + host + path;
         }
         return null;
     }
