@@ -67,7 +67,7 @@ tool.py execute():                                       widgets / mopActivities
 | `MopData.load(path, expectedPackage, expectedMainActivity)` (rewritten) | Parse the compact artifact only; unchanged public query API; version/sentinel/strict-match validation; status line / `MOP_DATA` record | device file | `MopData` or `null` |
 | `MopData` query surface (unchanged) | `getWidget`, `activityHasMop`, `getMopActivities`, `activityHasMopOptionsMenu`, `getWtgTransitions`, component getters, `getPackageName`/`getMainActivity` | — | — (zero consumer edits) |
 | Gateway recompute (jar, ~10 LOC) | `optionsMenus[]` records + WTG + the flag-selected MOP-activity set → `activitiesWithMopOptionsMenu` (keeps INV-MOP-13 sensitive to `mopActivitySourceComponents`) | loaded artifact | gateway set |
-| `MopArtifactEquivalenceTest` (one-shot cutover gate) | Old parser (full JSON) vs new parser (derived artifact): projection identity over the pinned corpus (`rvsec-dataset/static_analysis/`, 345 apps) | corpus dir (`-Dmop.corpusDir`) | pass/fail; deleted after cutover with the old parser |
+| `MopArtifactEquivalenceTest` (one-shot cutover gate) | Old parser (full JSON) vs new parser (derived artifact): projection identity over the cryptoapp pair plus one synthetic per relocated rule | in-tree test resources; no external directory, no property | pass/fail; deleted after cutover with the old parser and the synthetics |
 
 ## Mapping: Spec → Implementation → Test
 
@@ -75,12 +75,12 @@ tool.py execute():                                       widgets / mopActivities
 |---|---|---|
 | Compact artifact contents (static-analysis-entrypoints: Derived compact MOP artifact) | `derive_mop_artifact.derive` | `test_derive_mop_artifact.py` (cryptoapp expectations mirroring `MopDataTest`) |
 | Generator determinism (INV-DRV-05) | `serialize_canonical` | `test_derive_determinism` (same bytes in ⇒ same bytes out, twice) |
-| Relocated derivation semantics INV-DRV-01..04 and INV-DRV-07 (ex INV-MOP-12/17/19/20/25/30, INV-WTG-04, and the deep-link assembly of INV-CT-07) | `derive_mop_artifact` sub-functions | per-rule unit tests + corpus equivalence gate |
+| Relocated derivation semantics INV-DRV-01..04 and INV-DRV-07 (ex INV-MOP-12/17/19/20/25/30, INV-WTG-04, and the deep-link assembly of INV-CT-07) | `derive_mop_artifact` sub-functions | per-rule unit tests (permanent) + the fixture-scoped equivalence gate (one-shot) |
 | Loader consumes only the compact format; unknown/full JSON rejected (`version-mismatch`) | `MopData.load` rewrite | `MopDataTest` (rewritten on `cryptoapp.apk.mop.json` fixture) |
 | Fail-fast: MOP plan + missing/unreadable/mismatched artifact aborts before step 1 (INV-MOP-22 preserved; V21 killed) | `StatefulAgent` `requireMopArm` (existing) + `tool.py` raise | jar: existing INV-MOP-22 tests extended; Python: `test_aperv_tool.py` absent-JSON raises |
 | `MOP_DATA` record fields (status, reason, formatVersion, sourceDigest, counts) | status-line emission in `MopData.load` (record framing owned by rearch-04) | log-line assertion tests |
 | Push path switch, cache, no warn-and-continue | `tool.py` step 1c | `test_aperv_tool.py` push/cache/error tests |
-| R9 preservation (frozen metric sets) | full JSON untouched host-side; equivalence gate for mechanism sets | corpus equivalence test + grep audit that no metric pipeline reads `*.mop.json` |
+| R9 preservation (frozen metric sets) | full JSON untouched host-side; equivalence gate for mechanism sets | fixture-scoped equivalence test + grep audit that no metric pipeline reads `*.mop.json` |
 | OOM path deletion (V19) | remove `catch(OutOfMemoryError)`, `PARSE_FOOTPRINT_FACTOR`, `PARSE_BUDGET_BYTES`, `reason=too-large` | grep-clean + compile; `MopDataTest` no longer references budget seam |
 
 ## Goals / Non-Goals
@@ -89,7 +89,7 @@ tool.py execute():                                       widgets / mopActivities
 
 - Device artifact contains exactly the projection the explorer consumes (~KB–low-MB; ceiling well under the 1–5 MB target — the projection excludes the 57.7 % call-graph share and the duplicate-heavy raw `transitions[]`).
 - Single authority for derivation semantics, on the host, in testable pure Python; the jar parser becomes a thin typed reader.
-- Behavior identity: every scoring/routing/trigger decision that today flows from the on-device parse is byte-identical when flowing from the derived artifact (corpus-gated).
+- Behavior identity: every scoring/routing/trigger decision that today flows from the on-device parse is byte-identical when flowing from the derived artifact — demonstrated over the gate's designed input set rather than over a corpus ("Corpus provenance" states what that costs).
 - Silent no-MOP degradation (V21) eliminated on both sides; every skew direction (old jar × new artifact, new jar × old JSON, stale cache) fails loud before step 1.
 - `MopData.java` shrinks from 1212 LOC to a target ≤ ~450 LOC; the only `catch(OutOfMemoryError)` in the repo is deleted.
 
@@ -133,24 +133,31 @@ Two validation layers, both before step 1, with distinct responsibilities: (1) *
 
 ### D8 — Single coordinated cut; no fallback window
 
-The wire format is BREAKING cross-repo. Rollout: one ape commit (parser rewrite + fixture) and one rv-android commit (generator + push switch) land together; the Docker image rebuilds `ape-rv.jar` from source at build time (hard constraint 2b), so a single image rebuild deploys both sides atomically — there is no state in which a fleet mixes formats within one experiment. No compatibility shim in either direction (P3): the corpus equivalence gate (run pre-cutover with both parsers in-tree) is the safety mechanism, and any post-cutover skew (e.g., a stale jar on a dev device) fails loud per D6. Alternative (jar accepts both formats for one release) rejected: it preserves the 1212-LOC parser this change exists to delete and reintroduces a silent-path risk.
+The wire format is BREAKING cross-repo. Rollout: one ape commit (parser rewrite + fixture) and one rv-android commit (generator + push switch) land together; the Docker image rebuilds `ape-rv.jar` from source at build time (hard constraint 2b), so a single image rebuild deploys both sides atomically — there is no state in which a fleet mixes formats within one experiment. No compatibility shim in either direction (P3): the equivalence gate (run pre-cutover with both parsers in-tree) is the safety mechanism, and any post-cutover skew (e.g., a stale jar on a dev device) fails loud per D6. Alternative (jar accepts both formats for one release) rejected: it preserves the 1212-LOC parser this change exists to delete and reintroduces a silent-path risk.
 
 ### D9 — R9 preservation is by provenance first, equivalence second
 
-The frozen metric definitions never touch the device artifact: *MOP coverage* is computed over `directly_reaches_mop` from the **full JSON** host-side; *unique misuse* and the `Mneut` prefix test are computed from logcat via the instrumented APK. The full JSON remains where it is, byte-identical, as the host-side source of truth — so the metric sets are untouched by construction, and a grep audit asserts no analysis-pipeline code reads `*.mop.json`. What the derivation must additionally preserve is the *mechanism* under study: the exact sets that steer exploration (widget flag maps incl. per-event entries, both MOP-activity sets, gateway inputs, WTG views, trigger tuples, `package`/`mainActivity`). That is the corpus equivalence gate: for every JSON of the corpus plus the cryptoapp fixture, old-parser(full) and new-parser(derive(full)) must produce identical projections.
+The frozen metric definitions never touch the device artifact: *MOP coverage* is computed over `directly_reaches_mop` from the **full JSON** host-side; *unique misuse* and the `Mneut` prefix test are computed from logcat via the instrumented APK. The full JSON remains where it is, byte-identical, as the host-side source of truth — so the metric sets are untouched by construction, and a grep audit asserts no analysis-pipeline code reads `*.mop.json`. What the derivation must additionally preserve is the *mechanism* under study: the exact sets that steer exploration (widget flag maps incl. per-event entries, both MOP-activity sets, gateway inputs, WTG views, trigger tuples, `package`/`mainActivity`). That is the equivalence gate: for the cryptoapp fixture and every synthetic of the gate's input set, old-parser(full) and new-parser(derive(full)) must produce identical projections.
 
-**Corpus provenance — pinned.** The gate corpus is the sibling dataset repo's static-analysis output:
+**Corpus provenance, and what the corpus did and did not license.** The pinned dataset is the sibling repo's static-analysis output:
 
 ```
 <workspace>/rvsec-dataset/static_analysis/          345 *.apk.json, 766 MB (verified 2026-08-03)
 ```
 
-This is the directory `-Dmop.corpusDir` names. `data/instrumented_apks/` — cited by earlier revisions of this design and still by nothing else — **does not exist in this repository**; `data/` holds only `system-broadcast.json`. Nothing in `ape` produces or vendors these JSONs, and nothing should: they are dataset artifacts, and the dataset repo is their home.
+`data/instrumented_apks/` — cited by earlier revisions of this design and still by nothing else — **does not exist in this repository**; `data/` holds only `system-broadcast.json`. Nothing in `ape` produces or vendors these JSONs, and nothing should: they are dataset artifacts, and the dataset repo is their home.
 
-*Two caveats, both load-bearing:*
+**Owner decision 2026-08-05: the JVM equivalence gate is not run over this corpus.** The APE-RV side executes exactly once, in `gh97-rearch-ab-gate`, and `gh97` is a merge gate rather than a cutover gate — it runs after both repositories are complete and it measures coverage outcomes, not parse equivalence. The equivalence gate is therefore fixture-scoped (tasks 4.1–4.4): the cryptoapp pair plus one synthetic per relocated rule, inside the ordinary `mvn test` suite, with no `-Dmop.corpusDir` and nothing that can be skipped by an unset property.
 
-1. **The byte-split percentages (57.7 % / 5.0 % / 10.1 %) were measured over a different, 134-file working set that is not reproducible.** They are retained above as an order-of-magnitude claim about where the bytes sit, not as a corpus statistic. Task 4.1 re-measures the split over the pinned 345 while it batch-derives, and this design is amended with the command and the result. No decision in this change depends on the exact figures — the projection excludes `reachability[]` entirely whatever its share is.
-2. **The corpus must be shown to *exercise* the relocated semantics, not merely to be large.** A gate that compares 345 apps on rules none of them trigger proves nothing. Coarse presence counts over the raw JSON (verified 2026-08-03, string-level — they establish presence of the input shape, not that the widget in question ends up MOP-flagged):
+This is a real reduction in what the gate demonstrates, and the design records both halves of it honestly:
+
+1. **The generator's exposure to real-world variety is already established, and by a run that happened.** `gh96` 7.1/7.2 derived all 345 documents — no crash, no refusal — and its totals (flagged widgets 3,733 → 4,965; the D8 recovery reaching 10 apps and 1,232 widgets) are recorded in that change and were independently reproduced by `gh97` group 3 while computing the G3 substrate displacement. What the corpus never demonstrated, and now never will, is the *jar-side* comparison: `MopData`'s old parser and new parser agreeing on the same application.
+2. **What is genuinely uncovered**: an application shape that neither cryptoapp nor a designed synthetic anticipates, whose old-parser and new-parser projections differ. Its only remaining nets are `gh96`'s permanent per-rule Python suite and `gh97`'s campaign — the second of which would surface such a divergence as a coverage outcome, late and indirectly. This residual is accepted, not eliminated.
+
+*Two standing caveats:*
+
+1. **The byte-split percentages (57.7 % / 5.0 % / 10.1 %) were measured over a different, 134-file working set that is not reproducible, and they stay that way.** An earlier revision of this design promised task 4.1 would re-measure the split over the pinned 345 and amend this section with the command and result; with no corpus run, that promise is **withdrawn rather than left pending**. They are an order-of-magnitude claim about where the bytes sit and are never upgraded to a corpus statistic. No decision in this change depends on the exact figures — the projection excludes `reachability[]` entirely whatever its share is.
+2. **A gate must be shown to *exercise* the relocated semantics, not merely to be large — and the fixture-scoped gate inherits that obligation in a stricter form.** A corpus could satisfy it by accident; a designed input set has to satisfy it on purpose. Task 4.3 requires every relocated rule to have a member of the input set that *fires* it, and a synthetic that derives to an artifact where the rule did not fire is a defect in the synthetic, not a covered rule. The coarse corpus presence counts below are retained only as evidence that these shapes are common in real applications, which is why each is worth a synthetic:
 
    | Signal in the full JSON | Apps | Relocated semantics it can exercise |
    |---|---:|---|
@@ -158,9 +165,7 @@ This is the directory `-Dmop.corpusDir` names. `data/instrumented_apks/` — cit
    | `ExternalSyntheticLambda` | 321 / 345 | D8 synthetic-lambda recovery (INV-DRV-01) |
    | `"DIALOG"` | 165 / 345 | dialog re-keying and host promotion (INV-DRV-03) |
 
-   Task 4.1 converts these into exact counts of apps that genuinely exercise each rule (flagged-and-dropped widgets, recovered handlers, re-keyed dialogs, A′ sets that differ) and fails the gate if any of the four is exercised by **zero** apps — at which point the missing case is covered by a synthetic fixture in the Python unit suite instead.
-
-   Note for the record: `labnex` and `duress` — the two apps the parser-fidelity investigation named as losing 100 % of per-widget granularity to empty ids (`docs/20260622_investigacao_mop.md`) — are **not** in this corpus, and their static-analysis JSONs are not present anywhere in the workspace. The 229-app empty-id population is what covers that case instead; it is broader than the two named apps and actually available.
+   Note for the record: `labnex` and `duress` — the two apps the parser-fidelity investigation named as losing 100 % of per-widget granularity to empty ids (`docs/20260622_investigacao_mop.md`) — are **not** in this corpus, and their static-analysis JSONs are not present anywhere in the workspace. The empty-id synthetic of task 4.1 is what covers that case now.
 
 ### D10 — The listener enrichment (INV-APV-32) is retired, not relocated
 
@@ -200,10 +205,13 @@ the ordering *among* MOP widgets is unchanged while the magnitude of the MOP sig
 weights is not. Runs from before and after this stage are not substrate-comparable, and no campaign
 may mix arms across the cut.
 
-This also fixes the gate's oracle: the corpus files are raw producer output, so the equivalence gate
-already compares against `MopData` on the un-enriched JSON, which is the correct oracle under this
-decision. Task 4.3's rule — "the old parser is the oracle, never adjust the oracle" — stands, and
-specifically forbids enriching the corpus to make a divergence disappear.
+This also fixes the gate's oracle, and the fixture rescope does not disturb it: both the cryptoapp
+fixture and every synthetic of the gate's input set are raw producer-shaped documents carrying no
+enrichment, so the gate compares against `MopData` on the un-enriched JSON, which is the correct
+oracle under this decision. Task 4.3's rule — "the old parser is the oracle, never adjust the oracle"
+— stands, and specifically forbids writing the enrichment into a synthetic to make a divergence
+disappear. The corpus-wide consequence stated above (3,733 → 4,965) keeps its status as a measured
+fact: it came from `gh96`'s executed 345-app derivation, not from the gate this group runs.
 
 ## API Design
 
@@ -291,7 +299,7 @@ Notes: metadata fields and `entries` are emitted only when non-empty (absent = n
 
 ## Risks / Trade-offs
 
-- [Derivation semantics drift from what the old parser did] → the corpus equivalence gate runs both parsers over the full pinned corpus pre-cutover (path and count fixed by task 1.4); per-rule unit tests pin each relocated invariant permanently on the Python side.
+- [Derivation semantics drift from what the old parser did] → the equivalence gate runs both parsers pre-cutover over the cryptoapp pair plus one synthetic per relocated rule; per-rule unit tests pin each relocated invariant permanently on the Python side. **Partially mitigated, deliberately**: the corpus run that would have covered unanticipated real-application shapes is not executed (owner decision 2026-08-05, "Corpus provenance"), leaving `gh97`'s campaign as the late and indirect net for that residual.
 - [Coordinated cut leaves a skewed pair somewhere (dev device, stale image)] → every skew direction is a reasoned reject + pre-step-1 abort (D6); no silent path exists.
 - [Dropping parsed-and-exposed surfaces (`widgetClass`, `targetMethods` list, windows/reachability getters) forecloses future consumers] → they remain in the full JSON host-side; re-adding a field is a `formatVersion` bump + generator change, cheap and loud. Accepted per P1/P3. The list is deliberately shorter than it was: `IntentFilter.data` left it once the deep-link consumer was found, which is the reason task 1.2 re-verifies every remaining member against `src/main` before the schema freezes rather than trusting this table.
 - [Two artifacts per app on the host (~+KBs) and a derivation step in the task path] → derivation is milliseconds on host hardware and cached; negligible against the removed on-device parse of MBs per run.
@@ -303,9 +311,9 @@ Notes: metadata fields and `entries` are emitted only when non-empty (absent = n
 |-------|-------------|-----|-------|
 | Unit (Python) | `derive` rules: flags/precedence/lambda recovery, collision rank, empty-id drop, dialog re-keying, WTG keying+dedup, A′ dual sets, optionsMenus, stats; `serialize_canonical` determinism; cache/digest logic; fail-fast raise | pytest on cryptoapp + synthetic fragments | ~25 |
 | Unit (JVM) | rewritten `MopData.load` on `cryptoapp.apk.mop.json` fixture: every query-API expectation currently in `MopDataTest` restated against the compact fixture; reject reasons; gateway recompute; flag-selected set | JUnit, fixture in `src/test/resources/` + `test-apks/` | ~20 (replacing the parse-machinery share of the current 1005-line `MopDataTest`) |
-| Equivalence (one-shot gate) | old-parser(full) ≡ new-parser(derived) on widget maps, both activity sets, gateways, WTG views, trigger/provider tuples, **per-activity deep-link URIs**, scalars | JVM test over the pinned corpus directory via `-Dmop.corpusDir` (345 apps, "Corpus provenance"); deleted with the old parser after green | 1 × corpus |
+| Equivalence (one-shot gate) | old-parser(full) ≡ new-parser(derived) on widget maps, both activity sets, gateways, WTG views, trigger/provider tuples, **per-activity deep-link URIs**, scalars | JVM test in the ordinary suite over the cryptoapp pair + one synthetic per relocated rule ("Corpus provenance" for why not the corpus); deleted with the old parser after green | 1 + ~5 |
 | Integration (Python) | `tool.py` step 1c: derive-cache-push order, device path, properties line, error propagation, non-MOP arms untouched | pytest with mocked adb | ~6 |
-| End-to-end | cryptoapp `sata_mop` on the RVSec AVD: `MOP_DATA status=loaded`, boost fires, run completes | manual device smoke | 1 |
+| End-to-end | `MOP_DATA status=loaded formatVersion=1 sourceDigest=…`, a MOP boost firing, runs completing | **`gh97-rearch-ab-gate`'s smoke** (tasks 7.1–7.4, three arms over a `subset40` subset) — this stage runs no device execution of its own | 1, executed elsewhere |
 
 ## Open Questions
 

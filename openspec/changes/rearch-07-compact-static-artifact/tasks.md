@@ -5,7 +5,9 @@
 <!-- Subagent dispatch hints:
      - Group 1 (inventory ratification) must complete first — the schema is derived from it.
      - Group 2 (generator, rv-android) and Group 3 (jar fixture + new parser) can proceed in
-       parallel after Group 1; both are gated by Group 4 (corpus equivalence) before any deletion.
+       parallel after Group 1; both are gated by Group 4 (equivalence) before any deletion.
+       Group 4 was a 345-app corpus gate and is now fixture-scoped — see its header for what that
+       costs and what already paid for the breadth it no longer measures.
      - Group 5 (jar cutover: delete old parser) and Group 6 (tool.py push switch) are the
        coordinated BREAKING pair — they land together (design D8), after Group 4 is green.
      - Critical path: 1 → 2 → 4 → 5/6 → 7 → 8.
@@ -150,24 +152,65 @@ that group 1 found (task 2.9).
     `gatewayG` is the point — it is what proves condition 2 reads the *selected* set, which is the
     entire reason D3 refuses to ship the gateway set precomputed.
 - [ ] 3.4 Update the load status record: new success fields (`formatVersion`, `sourceDigest`, echoed stats), reject reasons reduced to `file-missing|parse-error|version-mismatch|package-mismatch` (INV-MOP-21 unchanged; INV-MOP-22 abort unchanged). **Keep `windows`** — it is on the stage-4 record and survives as `stats.windows`, so dropping it here would make the field appear at stage 4 and vanish at stage 7. Verify field-by-field against the stage-4 census that this record is a superset of it, minus `transitions` only (superseded by `wtgEdges` and deliberately never reinstated)
+  - **`mopActsAugmented` keeps the wire semantics — owner decision 2026-08-05.** The number is
+    `|augmented \ widget-derived|`, computed from the two wire sets and therefore **independent of
+    `Config.mopActivitySourceComponents`**, not the old parser's "entries the augmentation added",
+    which is 0 on every flag-off run. Three reasons, in the order they decided it. The flag is
+    *already recoverable from the trace by another record*: `RunSpecEcho` emits `features` (carrying
+    `MOP_ACTIVITY_SOURCE` when active) and `params` with the activation key of every live mechanism,
+    so a reader recovers the applied augmentation as flag × available and loses nothing — whereas the
+    old definition destroys the availability fact and nothing else carries it. Nothing consumes the
+    field programmatically (`trace_ndjson.py:525` exposes `MOP_DATA` verbatim; no script in either
+    repository reads this key), so the comparability at stake is human reading, not a pipeline. And
+    after this stage the jar augments nothing: "what the augmentation added" stops being a fact about
+    this load and becomes a fact about the wire, which is what the new number reports.
+  - **Correct `mop-guidance`'s REMOVED note while implementing this.** It justifies folding INV-MOP-32
+    by asserting that "counters over the load" and "counters over the wire sets" are *the same numbers*.
+    They are not, on any flag-off run, under either definition — the sentence is false as written and
+    must be qualified rather than left standing behind a decision it misdescribes.
+  - **Old path's values for the three new fields**: `formatVersion=0` and `sourceDigest=null` are
+    genuinely neutral — they are facts only a derived artifact has. `components` is **not** given a
+    neutral 0: the full-JSON path has the typed component lists in hand at the emission site
+    (`MopData.java:274-276`), so a 0 there would be a falsehood about something the path knows.
+    Neutral where the fact is absent, true where it is present.
 - [ ] 3.4a Surface the launch result on the dispatch path (INV-CT-14). **The mechanism already landed — verify, do not rebuild.** `AndroidDevice.startActivity` returns a `LaunchResult` carrying the platform's `START_*` code (`:515-571`) and `MonkeySourceApe:980` hands it to the sink as `componentLaunch(launch.code, launch.error)`; the delta's "SHALL surface" reads as future work only because it was written before `rearch-04`. What is genuinely owed is the second sentence: recording only — no retry, no re-dispatch, no cursor or budget effect (INV-CT-12's "returned actions" accounting unchanged) — and **the test asserting the launcher behaves identically with the recording present and absent, which does not exist**. `LaunchResult` is referenced by exactly one test file (`NdjsonSinkTest`), and nothing tests INV-CT-14's no-effect clause
 - [ ] 3.5 JVM unit tests on the compact fixture: every scenario of the mop-guidance delta (fixture load, legacy-JSON rejection, per-event fallback decoding, flag-selected sets, absent metadata, unknown-key tolerance, strict-match reasons)
 - [ ] 3.6 Run `/sdd-test-run MopDataTest`
 
-## 4. Corpus equivalence gate (cutover condition)
+## 4. Equivalence gate for the cutover — fixture-scoped (owner decision 2026-08-05)
 
-- [ ] 4.1 Batch-derive artifacts for the pinned corpus: run the generator over `<workspace>/rvsec-dataset/static_analysis/*.apk.json` (345 apps); record per-app derivation time and artifact size (confirm the ≤ 1–5 MB ceiling); re-measure the `reachability`/`windows`/`transitions` byte split over these 345 and amend `design.md` with the command and result (the 57.7 %/5.0 %/10.1 % figures came from a different, unreproducible 134-file working set); and count how many apps genuinely exercise each of the four relocated rules — the coarse presence counts are 229 with empty `idName`, 321 with `ExternalSyntheticLambda`, 165 with DIALOG windows
-- [ ] 4.2 Write `MopArtifactEquivalenceTest` (gated by `-Dmop.corpusDir`; hard-fail when unset or empty rather than passing on zero apps): old parser on full JSON vs new parser on derived artifact — assert identical widget flag maps (per-event + aggregate), metadata, both activity sets (flag off/on), gateway sets (flag off/on), WTG views, trigger/provider tuples, **per-activity `deepLinkUri` including null cases** (activities are excluded from the trigger-tuple pool, so nothing else compares them), `package`/`mainActivity`
+This group was written around a JVM gate over the pinned 345-app corpus. **That run does not happen.**
+The owner's decision of 2026-08-05 is that the only execution the APE-RV side gets is `gh97-rearch-ab-gate`'s
+campaign, and `gh97` cannot stand in for this group: it runs *after* both repositories are complete
+(its task 6.1 gates on exactly that), and it measures coverage outcomes, not parse equivalence. A gate
+that runs after the cutover licenses a merge, not a deletion.
+
+What survives the rescope, and it is more than it looks: **the corpus half that was expensive has already
+been paid.** `gh96` 7.1/7.2 built and ran the batch derivation over all 345 producer documents — the
+generator survived every one with no crash and no refusal, and its totals (flagged widgets 3,733 → 4,965)
+are recorded in `gh96`'s `specs/aperv/spec.md` and were independently reproduced by `gh97` group 3 while
+computing the G3 displacement. So *the generator has met real-world variety*; what was never demonstrated
+is the jar-side half — old parser and new parser agreeing on the same app — and that is what this group
+now delivers, over a designed case set instead of a corpus.
+
+**State the loss rather than let the green imply otherwise**: equality over cryptoapp plus synthetics is
+evidence about the cases someone thought of. A real-app shape that neither the fixture nor a synthetic
+anticipates is not covered here, and its only remaining net is `gh96`'s permanent Python suite (which is
+what task 2.7 already designated as the permanent protection) and `gh97`'s campaign.
+
+- [ ] 4.1 Assemble the gate's input set: the cryptoapp pair already generated by 3.1 (`cryptoapp.apk.gh60-fresh.json` → `cryptoapp.apk.mop.json`), plus one synthetic **full-JSON** fragment per relocated rule the fixture cannot exercise, each derived through the real generator so the artifact side is never hand-written: flagged-widget-with-empty-`idName` (INV-DRV-02 activity marking + `droppedFlaggedNoId`), `$$ExternalSyntheticLambda` recovery **including the negative case** (INV-DRV-01), DIALOG re-keying with host promotion (INV-DRV-03), an A′ union that differs from the widget-derived set (INV-DRV-06 — the fixture's two sets are equal, so it is blind to this), and the three `deepLinkUri` null cases (INV-DRV-07). Record which rule each fragment exercises; that table is what task 4.4 archives
+  - The `mopActivitiesAugmented` synthetic of task 3.3's note is already written and already discriminates the two sets — reuse it rather than authoring a second one.
+- [ ] 4.2 Write `MopArtifactEquivalenceTest` over the 4.1 set, running in the **ordinary `mvn test` suite** — no `-Dmop.corpusDir`, no external directory, no skip-when-unset branch (the property and its hard-fail-on-unset clause die with the corpus scope; a gate that can be silently skipped is the failure mode this group exists to avoid, and a fixture-scoped gate has nothing to skip). Old parser on the full JSON vs new parser on the derived artifact: assert identical widget flag maps (per-event + aggregate), metadata, both activity sets (flag off/on), gateway sets (flag off/on), WTG views, trigger/provider tuples, **per-activity `deepLinkUri` including null cases** (activities are excluded from the trigger-tuple pool, so nothing else compares them), `package`/`mainActivity`
   - **The WTG comparison MUST be set-based, not list-based**, and this is not a preference: the jar keeps
     exact-duplicate `(widget, target)` edges and the derivation removes them, so cryptoapp alone diverges
-    17 vs 16 before the gate reaches a single corpus app. A list comparison would report that as a
+    17 vs 16 — on the very first case the gate reaches. A list comparison would report that as a
     derivation bug. The licence for it is the multiplicity audit `gh96` 7.3 asked for, now done: every WTG
     consumer is first-match (`MopScorer.scoreWtg:117`, `StatefulAgent.frontierBoost:1199`,
     `matchesQualifyingTarget:128`) or set-accumulating (`FrontierPass:58`, `MopFrontierPass:62`,
     `qualifyingMopTargets:115`), so multiplicity cannot reach a decision. Do **not** compare `stats` —
     they are counters under INV-DRV-04 and `wtgEdges` legitimately differs across the cut.
-- [ ] 4.3 Run the gate over the corpus; investigate and fix every divergence in the generator (the old parser is the oracle — never adjust the oracle); re-run until 345/345 green. A rule exercised by zero apps fails the gate: cover it with a synthetic fixture in the 2.7 suite and record the substitution
-- [ ] 4.4 Record the gate result (corpus digest list + pass summary) in the change directory for the archive trail
+- [ ] 4.3 Run the gate; investigate and fix every divergence **in the generator** (the old parser is the oracle — never adjust the oracle) until green on every member of the 4.1 set. The rule that a case exercised by nothing fails the gate is unchanged in force and changed in subject: it no longer asks how many corpus apps trigger a rule, it asks that every relocated rule have a member of the input set that triggers it — a synthetic that derives to an artifact where the rule did not fire is not coverage, and must be corrected rather than counted
+- [ ] 4.4 Record the gate result in the change directory for the archive trail: the input-set table of 4.1 (fragment → rule → what fired), the pass summary, and — explicitly, so the archive does not read as if a corpus gate had run — the two breadth facts this group now leans on instead: `gh96`'s recorded 345-app derivation and its totals, and the deferral of real-application variety to `gh97`'s campaign
 
 ## 5. Jar cutover (BREAKING — lands only with Group 6)
 
@@ -175,7 +218,7 @@ that group 1 found (task 2.9).
 - [ ] 5.2 Delete the memory-safety machinery (design D5, V19): `PARSE_FOOTPRINT_FACTOR`, `PARSE_BUDGET_BYTES`, the budget-parameter test seam, `reason=too-large`, and the outer `catch (OutOfMemoryError)`; grep-verify zero `OutOfMemoryError` catches remain in the repo
 - [ ] 5.3 Delete `WtgTransition.widgetClass`, the `DataSpec`/`readPermission`/`writePermission`/**`exported`** surfaces from `ComponentInfo`, and `Widget.id`/`text`/`type`/`listeners`. `ComponentInfo` gains `deepLinkUri` (read from the wire) and `MopLauncherStage.buildDeepLinkUri` is deleted with the structure it walked — its call site at `:117` passes `candidate.deepLinkUri` instead. Dropping `exported` changes every `ComponentInfo` subclass constructor and the `ActivityFrontierTest` fixtures that pass it positionally. This is the one place outside `MopData`/`ComponentInfo` that changes; everything else compiles clean because the query API is unchanged by construction
 - [ ] 5.3a Migrate the deep-link assertions of `ActivityFrontierTest` ("Lever B", 6 assertions over `buildDeepLinkUri`) to the Python generator suite (task 2.7) — they pin INV-DRV-07 now, on the side that computes it. Assert what remains on the jar side instead: a `ComponentInfo` carrying `deepLinkUri` dispatches `ACTION_VIEW`, one carrying null dispatches the explicit component. **Deleting these assertions instead of migrating them is the wrong fix** — they are the only thing standing between a schema omission and a silently degraded activity frontier
-- [ ] 5.4 Delete `MopArtifactEquivalenceTest` and the old-format test resources (`cryptoapp.apk.gh60*.json` fixtures move to test-only history; the compact fixture is now the only loader fixture); update the D7 vocabulary-boundary javadoc on `MopData` (boundary now: generator host-side)
+- [ ] 5.4 Delete `MopArtifactEquivalenceTest`, the synthetic full-JSON fragments of task 4.1 and the old-format test resources (`cryptoapp.apk.gh60*.json` fixtures move to test-only history; the compact fixture is now the only loader fixture); update the D7 vocabulary-boundary javadoc on `MopData` (boundary now: generator host-side). The synthetics go with the oracle for the same reason it does — they are full-JSON documents, and a full-JSON document in the test tree after this group is an input no shipped code path can read. Their *rules* do not go with them: each one's permanent home is the named test `gh96` task 2.7 owns, which is where the substitution table of 4.4 points
 - [ ] 5.5 Update `CLAUDE.md` (MopData naming note, `mopDataPath` artifact description) and run `/sdd-doc-code src/main/java/com/android/commands/monkey/ape/utils/MopData.java`
 - [ ] 5.6 Run `/sdd-test-run ape` (full `mvn test` — 145-test suite adjusted for the removed seams)
 
@@ -190,13 +233,13 @@ that group 1 found (task 2.9).
 ## 7. Coordinated deploy (design D8)
 
 - [ ] 7.1 Land the ape commit (Groups 3+5) and the rv-android commit (Groups 2+6) together; `mvn install -Drvsec_home=…` refreshes the module-local `ape-rv.jar`
-- [ ] 7.2 Rebuild the Docker image (hard constraint 2b: jar rebuilt from source) and verify the image contains the new jar and the new aperv-tool module in the same build
-- [ ] 7.3 Skew drill on the bench: (a) old full JSON pushed to the new jar path → `status=rejected reason=version-mismatch` + `StopTestingException`; (b) MOP arm with the full JSON removed from `results_dir` → `RVToolExecutionError` before launch; both loud, no silent SATA run
+- [ ] 7.2 **Delegated to `gh97-rearch-ab-gate` tasks 6.2–6.5** (owner decision 2026-08-05: the APE-RV side executes once, there). That change builds the jar from this worktree, pushes the rv-android commits *before* the image build (its 6.3 — the image's stage-4 layer clones `PAMunb/rvsec` at build time, so unpushed work is silently absent), builds `phtcosta/rvandroid:0.9.3-rearch` as a **new tag** rather than rebuilding `0.9.3` in place, and records both image IDs. Nothing is owed here beyond confirming, when this change closes, that `gh97` 6.1's precondition ("stages `rearch-03`…`rearch-07` complete") is truthfully satisfiable — that gate is not advisory and this is the change it gates on
+- [ ] 7.3 Skew drill — **split by what can actually observe each half**, since the bench run does not happen. (a) *Old full JSON meets the new jar* is a JVM fact and is asserted at JVM level: `status=rejected reason=version-mismatch` from `MopData.load` (task 3.5's rejection scenario) plus `StatefulAgent` aborting with `StopTestingException` on a null return (INV-MOP-22). (b) *MOP arm with the full JSON absent* is a host fact and is asserted in pytest: `RVToolExecutionError` raised before any device interaction (task 6.3's absent-JSON case). What neither can attest is that the **deployed** pair behaves this way, and that is the half `gh97`'s pre-flight now carries (`gh97` task 7.2a) — a `build.sha`/`MOP_DATA` mismatch there is the gh71 failure mode caught before the campaign spends 24 hours. Record here that the drill was discharged in three places rather than one bench session, because "both loud, no silent SATA run" is the property, and it is now proven by three different observers rather than one
 
 ## 8. Verification
 
-- [ ] 8.1 End-to-end device smoke: cryptoapp `sata_mop` on the RVSec AVD — assert `status=loaded formatVersion=1 sourceDigest=…` in the trace, MOP boost fires on `btn_cipher_encrypt`/`buttonGenerateHash`, menu-gateway boost fires on MainActivity, run completes to timeout
-- [ ] 8.2 Confirm artifact-size and load-time deltas on device (trace timestamps around agent construction) against a pre-change trace for one call-graph-heavy app (e.g. `com.blogspot.e_kanivets.moneytracker`, 12.45 MB full → compact artifact)
+- [ ] 8.1 **Delegated to `gh97-rearch-ab-gate` tasks 7.1–7.4**, whose smoke is the only device execution this stage gets (owner decision 2026-08-05). The delegation is only honest if that smoke *checks what this task was going to check*, so it is not a pointer but a dependency: `gh97` 7.2a — added by this decision — asserts `MOP_DATA status=loaded` with `formatVersion=1` and a non-empty `sourceDigest` on every MOP arm, and a MOP boost actually firing. Note what changes and what does not: the application is no longer cryptoapp but the smoke subset of `subset40`, which is **better** evidence (real applications, three arms) and **worse** in one specific way — the named-widget assertions (`btn_cipher_encrypt`, `buttonGenerateHash`, the MainActivity menu gateway) have no subject there. Those keep their subject on the fixture instead, in task 3.5, where they are assertions about the loader rather than about a run
+- [ ] 8.2 Artifact-size and load-time deltas — **rescoped to what is measurable without a paired device run**. The size half is already a measured host fact and needs no device: the cryptoapp artifact is 4,126 bytes against a 69,977-byte source (5.9 %, task 3.1), and `gh96`'s 345-app derivation is the population version of the same claim (task 7.5 there). The load-time half had a pre-change device trace as its comparator and that comparator does not exist: the E3 leg-A logcats carry **no** `[APE-MOP-DATA]` line at all (measured by `gh97` task 3.5), so there is no pre-change load record to difference against, and inventing one from a post-hoc bench run would compare two different jars on two different days. Report the size reduction as the measured claim, and record the load-time delta as **not measured**, with this reason — do not leave the box implying a measurement that no available artifact can support
 - [ ] 8.3 Run `/rv-qa-lint-fix aperv-tool` (rv-android) and `/sdd-qa-lint-fix ape` (this repo)
 - [ ] 8.4 Run `/sdd-verify ape`
 - [ ] 8.5 Invoke `/sdd-code-reviewer` via Skill tool
