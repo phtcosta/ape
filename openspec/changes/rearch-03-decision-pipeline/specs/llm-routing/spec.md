@@ -108,7 +108,7 @@ When the plan enables the LLM stagnation mode, the `LlmStagnation` stage SHALL b
 - **AND** the stage SHALL NOT fire again until a new edge re-arms it
 - **AND** if `graphStableCounter` eventually exceeds the full threshold, `requestRestart()` SHALL be called (existing behavior)
 
-#### Scenario: new edge re-arms the episode via the transition hook
+#### Scenario: new edge re-arms the episode
 - **WHEN** the flag is burned and a later step records a `NEW_ACTION` edge
 - **THEN** the stage's `onStateTransition` SHALL re-arm the flag
 - **AND** a subsequent stagnation reaching the midpoint SHALL fire again (new episode)
@@ -151,6 +151,11 @@ When the stage fires and the engine returns a non-null action, the telemetry mod
 - **WHEN** two builds (pre-pipeline and pipeline) run the same preset, seed, and fixtures
 - **THEN** the sequence of `nextDouble()` draws consumed by probabilistic routing SHALL be identical
 
+#### Scenario: High percentage (70%)
+- **WHEN** `llm.percentage` is `0.7`, neither the new-state nor the stagnation stage decided the step, and the precondition holds
+- **THEN** the `LlmRandom` stage's trigger SHALL hold on approximately 70 % of the steps that reach it
+- **AND** the rate SHALL be the plan's value applied to a single draw, never a per-stage rescaling: the stage is assembled with `percentage` and evaluates `nextDouble() < percentage` once per reached step
+
 ---
 
 ### Requirement: Action Selection Pipeline
@@ -189,10 +194,22 @@ The dead-pair outcome feedback SHALL continue to flow from the `[APE-OUTCOME]` j
 - **WHEN** the model returns a malformed native `tool_calls` arguments string that `ToolCallParser` recovers via the raw-arguments repair pipeline and the coordinate resolves to a widget
 - **THEN** the `[APE-LLM-TEL]` line SHALL carry `repair=<form>` and the decision SHALL count under both `matched` and `repaired` (INV-LLM-10, INV-RTR-14 unchanged)
 
-#### Scenario: Banned answer leaves through the no_match path
+#### Scenario: banned result is refused at step 10, not failed
 - **WHEN** the mapped action's ban key has reached the strike threshold
 - **THEN** the engine SHALL return null with `result=no_match reason=dead_pair` telemetry
 - **AND** `LlmClient` SHALL still record success (a refused answer is not a pipeline failure)
+- **AND** the check SHALL run inside step 8 above — after the mapping, before the return — so a banned decision is a refused answer rather than a failed pipeline
+
+#### Scenario: Off-tree element becomes a coordinate tap
+- **WHEN** the pipeline succeeds with a `click` at in-bounds pixel `(600, 900)` on a 1080x1794 device
+- **AND** `CoordinateMapper` finds no widget containing the point and none within the snap tolerance
+- **THEN** `selectAction()` SHALL return an `LlmTapAction` of type `MODEL_LLM_TAP` carrying `(600, 900)`
+- **AND** the outcome SHALL be classified `llm_tap`, not `no_match` (the synthesis is a decision, and `Coordinate-to-ModelAction Mapping` owns the unit-level rule this end-to-end path exercises)
+
+#### Scenario: no_match reason is always one of three
+- **WHEN** any decision in a run ends as `result=no_match`
+- **THEN** its `[APE-LLM-TEL]` line SHALL carry exactly one `reason` from `degenerate`, `boundary`, `dead_pair`
+- **AND** the closure SHALL hold across the decomposition: `CoordinateMapper` produces the first two and the ban check the third, and `LlmTelemetry` SHALL have no fourth reason to emit
 
 #### Scenario: Engine never throws
 - **WHEN** any unexpected exception occurs inside the engine

@@ -63,7 +63,7 @@ No `reason` field SHALL be added to the entries, and no `disabledReason()` metho
 - **WHEN** `fromParams` runs with MopData present, `mopWeightWtg=200`, `frontierBoostWeight=200`, `mopFrontierWeight=200`, `coverageBoostWeight=100`, `formCompletionEnabled=true`
 - **THEN** the pipeline order SHALL be `MopWidgetPass, MenuGatewayPass, WtgPass, FrontierPass, MopFrontierPass, CoveragePass, FormCompletionPass`
 
-#### Scenario: empty pipeline under an empty scoring plan
+#### Scenario: empty pipeline under the pure arm
 - **WHEN** `fromParams` runs with a plan carrying no scoring feature (all gates off/zero)
 - **THEN** the pipeline SHALL contain zero passes
 - **AND** the emitted line SHALL be `[APE-ARCH] passes=[]`

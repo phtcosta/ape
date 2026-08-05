@@ -6,7 +6,7 @@ Probabilistic component triggering SHALL be a `ComponentTrigger` decision stage,
 
 On each step that reaches it, when `MopData.hasComponents()` is true the stage SHALL draw one coin from the run's seeded RNG; when the draw is below `componentPercentage` it SHALL call `triggerMopComponent()` — the method triggers one component (round-robin, cursor owned by the stage) — and return `StageResult.SideEffect`; otherwise it SHALL return `Continue`. A `SideEffect` never decides the step: the pipeline records it and continues, and the `SataChain` stage (or nothing else) selects the step's action — semantics identical to the pre-change side-effect-without-return block. The coin SHALL be drawn at the same point in the seeded stream as before (after the data guard, only on steps that reach the stage — `decision-pipeline` INV-DP-10); a step decided by an earlier stage draws no coin (unchanged: the block was textually after the LLM/launcher returns).
 
-#### Scenario: Component trigger fires as a side effect
+#### Scenario: Component trigger fires
 - **WHEN** the stage is assembled with `componentPercentage=0.05`, `MopData.hasComponents()` is true, and `random.nextDouble() < 0.05` on a step that reaches the stage
 - **THEN** `triggerMopComponent()` SHALL be called and the stage SHALL return `SideEffect`
 - **AND** the `SataChain` stage SHALL still select the step's action (trigger does not replace the step)
@@ -15,7 +15,7 @@ On each step that reaches it, when `MopData.hasComponents()` is true the stage S
 - **WHEN** `random.nextDouble() >= componentPercentage`
 - **THEN** no component trigger occurs and the stage SHALL return `Continue`
 
-#### Scenario: No component-trigger feature in the plan
+#### Scenario: No mopDataPath set
 - **WHEN** the plan does not enable component triggering (percentage 0 or MOP absent)
 - **THEN** no `ComponentTrigger` stage SHALL exist in the pipeline
 - **AND** no coin SHALL ever be drawn for triggering (identical stream to the pre-change short-circuit)
@@ -88,10 +88,15 @@ The cadence (`ape.activityTriggerStagnationStep`, default `50`; a configured val
 - **WHEN** `activityTriggerMaxPerRun=0` (default) and 10 launches have already been emitted
 - **THEN** the stage SHALL still fire at the next firing point (subject to the other gates)
 
-#### Scenario: invalid values clamped at plan resolution
+#### Scenario: invalid values clamped at load
 - **WHEN** the properties set `ape.activityTriggerStagnationStep=0` and `ape.activityTriggerMaxPerRun=-3`
 - **THEN** plan resolution SHALL clamp them to `50` and `0` respectively and log each clamp
 
-#### Scenario: launcher absent from the plan
+#### Scenario: launcher disabled
 - **WHEN** the plan does not enable activity triggering
 - **THEN** no `MopLauncher` stage SHALL exist, no `EVENT_TRIGGER_ACTIVITY` step SHALL ever be produced, and the probabilistic pool SHALL contain no activities
+
+#### Scenario: arm contrast is the launched set
+- **WHEN** the control arm census (`ape.mopActivitySourceComponents=false`) is `{A}` and the treatment census (`=true`) is `{A, B, C}`
+- **THEN** the control arm's `MopLauncher` SHALL only ever launch `A` while the treatment arm's can launch `A`, `B`, and `C`
+- **AND** the contrast SHALL come from the census the stage reads, never from the stage's own firing rule — both arms assemble the same stage with the same cadence, cap and cursor

@@ -130,12 +130,12 @@ INV-SEL-01 and INV-SEL-02 describe the `priorityTiebreak=true` behavior.
 - **WHEN** actions have visitedCounts [0, 3, 5]
 - **THEN** the action with visitedCount=0 SHALL be selected (unchanged behavior, independent of the flag)
 
-#### Scenario: Tie broken by priority (argument true)
+#### Scenario: Tie broken by priority (flag on)
 - **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=true` and actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
 - **THEN** the action with visitedCount=2 and priority=532 SHALL be selected
 - **AND** the MOP boost (+500) on that action effectively influenced the greedy selection
 
-#### Scenario: All actions have same visitedCount (argument true)
+#### Scenario: All actions have same visitedCount (flag on)
 - **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=true` and all 10 actions have visitedCount=0 and priorities [32, 32, 232, 32, 532, 32, 32, 32, 32, 32]
 - **THEN** the action with priority=532 (MOP-boosted) SHALL be selected
 
@@ -148,7 +148,7 @@ INV-SEL-01 and INV-SEL-02 describe the `priorityTiebreak=true` behavior.
 - **WHEN** actions have visitedCounts [1, 1, 3] and priorities [52, 52, 32]
 - **THEN** either of the two tied actions MAY be selected (implementation picks the first encountered)
 
-#### Scenario: Tie broken by array order when the argument is false
+#### Scenario: Tie broken by array order when the flag is off
 - **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=false` and actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
 - **THEN** the first action with visitedCount=2 in array order SHALL be selected (priority=32), NOT the priority=532 action
 - **AND** no RV priority boost SHALL influence the greedy pick (upstream APE behavior)

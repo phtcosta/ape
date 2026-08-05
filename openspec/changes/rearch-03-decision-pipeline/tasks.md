@@ -110,8 +110,8 @@ rather than syncing, and it is right to. Attempted on 2026-08-05 and refused twi
 contains scenario(s) not present in the modified block … Refresh the change spec before archiving to
 avoid dropping scenarios."*
 
-A full set-diff of all seven deltas against the main specs puts the number at **16 scenarios**. They
-are not one thing, and the disposition differs per case:
+The first sweep of the seven deltas against the main specs put the number at 16; the complete
+set-diff below puts it at **19**. They are not one thing, and the disposition differs per case:
 
 - **Renames** — the majority, and legitimate: this change re-anchors a mechanism and the scenario
   header follows it. `"LLM enabled via Config"` → `"LLM enabled via the plan"`, `"launcher disabled"`
@@ -132,21 +132,76 @@ are not one thing, and the disposition differs per case:
     returns true ~70 % of the time at `llmPercentage=0.7`. The delta adds `"draw order preserved
     under the same seed"`, which asserts something else; the rate itself is not restated.
 
-The remaining ~11 were not classified pairwise.
-
 **Why it was parked rather than pushed through** (owner-decided 2026-08-05): `rearch-06-memory-surgical`
 does not depend on this archive — the stack lives in the worktree and archiving only syncs specs — so
 nothing is gained by bypassing a guard that has already produced one real finding. `--no-validate` was
 not used: the two uncovered scenarios are exactly what it would have silently discarded.
 
-- [ ] 9.1 Classify all 16 pairwise: rename / deliberate replacement / genuine loss
-- [ ] 9.2 For renames, restate the scenario under the **main spec's** header so the archive's matcher
+### The pairwise classification (9.1, closed 2026-08-05)
+
+**The count is 19, not 16.** The earlier figure came from the two capabilities the archive aborted on
+plus a partial sweep; a set-diff of every `MODIFIED` block against its main-spec requirement finds
+three more, all in `llm-routing`. The disposition:
+
+| # | Capability :: Requirement | Main-spec scenario | Disposition |
+|---|---|---|---|
+| 1-3 | action-selection :: greedyPickLeastVisited | `Tie broken by priority (flag on)`, `All actions have same visitedCount (flag on)`, `Tie broken by array order when the flag is off` | rename (`flag` → `argument`) |
+| 4 | component-triggering :: Probabilistic | `Component trigger fires` | rename (`… as a side effect`) |
+| 5 | component-triggering :: Probabilistic | `No mopDataPath set` | rename. Its second claim — `mopDataPath` null ⇒ `componentPercentage` defaults to `0.0` — survives untouched in `Config — componentPercentage`, which this change does not modify |
+| 6-7 | component-triggering :: Cadence | `invalid values clamped at load`, `launcher disabled` | rename (`at plan resolution`, `absent from the plan`) |
+| 8 | component-triggering :: Cadence | `arm contrast is the launched set` | **genuine loss — restated** |
+| 9 | exploration :: LLM Router Integration | `LLM enabled via Config` | rename (`via the plan`) |
+| 10 | exploration :: New-State Hook | `LLM returns null, SATA takes over` | rename (`remainder takes over`). Its `[APE-RV] … falling back to SATA` warning is deliberately dropped: the string no longer exists in `src/main/java` (verified) — the fall-through is structural now |
+| 11 | exploration :: New-State Hook | `LLM disabled, zero overhead` | rename (`LLM absent`) |
+| 12 | exploration :: Stagnation Hook | `LLM breaks stagnation (single-shot at midpoint)` | rename (`at or past midpoint`) |
+| 13 | exploration :: Stagnation Hook | `Stagnation hook fires only once per phase` | **deliberate replacement** — see below |
+| 14 | llm-routing :: Stagnation LLM Mode | `new edge re-arms the episode` | rename (`via the transition hook`) |
+| 15 | llm-routing :: Probabilistic LLM Routing | `High percentage (70%)` | **genuine loss — restated** |
+| 16 | llm-routing :: Action Selection Pipeline | `banned result is refused at step 10, not failed` | rename (`Banned answer leaves through the no_match path`) |
+| 17 | llm-routing :: Action Selection Pipeline | `Off-tree element becomes a coordinate tap` | **restated.** The unit-level rule survives in the unmodified `Coordinate-to-ModelAction Mapping :: "Off-tree click builds an LlmTapAction"`; the end-to-end claim through `selectAction()` did not, and restating costs four lines |
+| 18 | llm-routing :: Action Selection Pipeline | `no_match reason is always one of three` | **restated.** The three-reason closure survives as *prose* in `LLM Telemetry Logging`'s field table, but no scenario asserted it; prose is not a gate |
+| 19 | scoring-pipeline :: Assembly | `empty pipeline under the pure arm` | rename (`under an empty scoring plan`) |
+
+**On 13, the one deliberate replacement.** Task 9.3 as written ("keep the removal") cannot be
+executed: the archive matcher is keyed on the scenario *name*, so a removal aborts exactly like a
+rename. It does not have to be — the name asserts *once per episode*, which this change preserves and
+in fact strengthens (a burned flag, not an equality test). Only the **body** was contradicted, so the
+scenario is restated under its own header with the new mechanism, and `exploration`'s requirement
+prose states which claim was replaced and where the counter-jump case now lives. Nothing is
+smuggled: the old exact-equality assertion is gone and said to be gone.
+
+**Renaming a scenario is not expressible in OpenSpec, and this was verified rather than assumed.**
+`specs-apply.js` matches by scenario name inside the `MODIFIED` block, and the two apparent escapes
+are both closed: `REMOVED` + `ADDED` of one requirement is rejected outright (*"Requirement present
+in both ADDED and REMOVED"*, reproduced in a sandbox), and `RENAMED` only rewrites a requirement's
+header line before running the same scenario check. So every renamed scenario keeps the main spec's
+header, and the change's vocabulary lives in the body — the cost being headers like `"LLM enabled via
+Config"` on a body that reads the plan. That cost is the tool's, not this change's.
+
+- [x] 9.1 Classify all 16 pairwise: rename / deliberate replacement / genuine loss — **19, tabled above**
+- [x] 9.2 For renames, restate the scenario under the **main spec's** header so the archive's matcher
       pairs them; the body stays as this change wrote it. (Three were realigned this way on
       2026-08-05 in `action-selection` and then reverted, so the sweep lands as one consistent edit
-      rather than in fragments)
-- [ ] 9.3 For deliberate replacements, keep the removal and state the reason in the delta's prose —
-      the reader needs to know the old scenario is contradicted, not forgotten
-- [ ] 9.4 For genuine losses, restate the scenario in the delta. `"arm contrast is the launched set"`
-      and `"High percentage (70%)"` are the two known ones
+      rather than in fragments) — 14 renames, landed as one sweep
+- [x] 9.3 For deliberate replacements, keep the removal and state the reason in the delta's prose —
+      the reader needs to know the old scenario is contradicted, not forgotten — **amended**: the
+      removal cannot be kept (the matcher aborts on it); the header survives, the body is replaced,
+      and the reason is in `exploration`'s requirement prose
+- [x] 9.4 For genuine losses, restate the scenario in the delta. `"arm contrast is the launched set"`
+      and `"High percentage (70%)"` are the two known ones — restated, plus the two `llm-routing`
+      cases (17, 18) the earlier sweep had not reached
 - [ ] 9.5 `openspec archive rearch-03-decision-pipeline --yes` completes without aborting
+
+**9.5 is proven executable and deliberately not run** (2026-08-05). Against a sandbox copy of
+`openspec/` the command completes: `+ 11, ~ 16, - 1`, seven capabilities updated, `decision-pipeline`
+created. What it waits on is the archive *order*, because three changes modify the same requirement,
+`component-triggering :: Cadence-Based MOP Activity Launch`. Measured on the sandbox rather than
+argued: archiving this change costs **`rearch-07` nothing** (zero new unpaired scenarios — it may
+archive before or after, freely) and costs **`rearch-04` exactly three** — `Stage-stamped provenance
+equals the StageResult label`, `Budget stage early-return attributed` and `Launcher step attributed
+Component`, the three scenarios this change adds to `action-selection :: Per-action decision-source
+telemetry`, which `rearch-04` also modifies without carrying them. `rearch-04` must then carry them
+into its own block. Both changes already owe far more to the same guard independently of this one —
+48 unpaired scenarios in `rearch-04`, 27 in `rearch-07`, measured before this group's edits — so the
+group-9 sweep is work each of them still faces, not a debt this change creates.
 
