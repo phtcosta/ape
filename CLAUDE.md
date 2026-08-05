@@ -108,6 +108,7 @@ The central research contribution. `NamingFactory` manages a lattice of abstract
 | `ape.naming` | **Core innovation**: abstraction/refinement via Naming, Namer, NamingFactory |
 | `ape.events` | Event generation: ApeClickEvent, ApeDragEvent, ApeKeyEvent, etc. |
 | `ape.llm` | LLM integration: SglangClient, LlmRouter, ApePromptBuilder, ToolCallParser, ImageProcessor, ScreenshotCapture, CoordinateNormalizer, LlmCircuitBreaker |
+| `ape.telemetry` | The event sink: `EventSink`, `NdjsonSink`, `NoopSink`, `StepRecord`, `RunCounters` |
 | `ape.utils` | Config (100+ flags), Logger, RandomHelper, Utils |
 | `reducer/` | Crash test-case minimization (delta debugging) |
 
@@ -120,6 +121,55 @@ Resolution is **total and fail-fast**: an unknown key, a key outside the `ape.` 
 Presets (`aperv`, `mop`, `llm`, `llm_mop`) name the campaign arms; `ape.preset` selects one and explicit keys override it.
 
 The first line of a run's output is a level-0 `RUN_START` JSON record (`RunSpecEcho`) carrying the run id, seed, agent, preset, active features, resolved params, inert keys, plan digest and the build stamp — so a trace says which jar produced it and under which plan. `BuildInfo.GIT_SHA` / `JAR_BUILT` are filled at package time from git.
+
+### Telemetry (the NDJSON trace)
+
+Everything the jar records about its own behavior goes through one component, `EventSink`, as
+NDJSON on `System.out` — the same stdout the harness captures into the `.trace`. A trace line is a
+sink record **iff it begins with `{`**; every `Logger` line begins with `[APE] `, so the two streams
+are mechanically separable and no free-text diagnostic can be mistaken for data.
+
+The unit is one **`StepRecord` per exploration step**: envelope once (`s`, `t`, `act`, `st`), the
+decision in `dec`, every LLM routing attempt of that step as an ordered `llm[]`, and the outcome in
+`out`. The record is opened at selection and closed when its outcome resolves during step N+1's
+graph update — the same timing the decision join buffer always encoded — so a decision, the calls
+that produced it and its result share one line with no join key. A step whose outcome legitimately
+never resolves closes without an `out` member; teardown's `flushPendingStep` writes a still-open one
+with `out:{"resolved":false}`, which bounds loss on sudden death at one record.
+
+Alongside the step records the same stream carries `RUN_START` (first, from `RunSpecEcho`), the
+`ACT`/`STATE` dictionary entries that give the trace's longest repeated strings run-local integer
+ids, `MOP_DATA`, `PIPELINE`, `LLM_ACK`, and `RUN_END` (reason + counters) last. Volume is managed by
+omitting defaults — an absent boost field means `0` — with two deliberate exemptions, `dec.patched`
+and `dec.cf`, whose absence is itself information.
+
+**Telemetry is always on and identical for every arm.** There is no plan key selecting the sink and
+no flag disabling it: `RunContext` constructs `NdjsonSink` on every production path, and `NoopSink`
+is reachable only through `RunContext.installForTest`. `ape.stepTelemetryEnabled` no longer exists
+and aborts resolution as an unknown key. What replaces the old arm-level switch is a property that
+can be checked rather than trusted — with the sink on or replaced by a no-op, the same seed produces
+the same action sequence, and `SinkNeutralityTest` is a permanent gate on it.
+
+Two keys remain, and neither gates a mechanism: `ape.telemetryHeartbeat` (default `true`) writes one
+`Log.i` line per step under the tag **`ApeRvHb`**, so the analysis side can join violations to steps
+on one clock — the literal is fixed by `LogcatManager.default_tags` in rv-android and a mismatch is
+silent on both sides; and `ape.llmPromptDump` (default `true`) carries the prompt and response text
+as `sys`/`user`/`resp` fields on the LLM sub-event.
+
+Serialization is `ape.runtime.Json`, hand-written and dependency-free, and it escapes by
+construction: quotes, backslash, everything below U+0020 including NUL, and U+2028/U+2029. A record
+never contains a raw newline. `org.json` appears only on the test classpath, as the round-trip parser.
+
+A sink failure never reaches the exploration loop — the first internal `Throwable` latches the sink
+off for the run with one warning, and the run continues untelemetered rather than dying of its own
+instrumentation.
+
+**Not written any more**: `sataGraph.dot`, `sataGraph.vis.js`, per-state `step-*.txt`,
+`action-history.log`, `sataTimeline.vis.js`, `produce.log`, `consume.log`, and the `[APE-STEP]` /
+`[APE-OUTCOME]` / `[APE-LLM-TEL]` `key=value` line family the record replaces. The keys that gated
+them (`ape.saveDotGraph`, `ape.saveVisGraph`, `ape.saveStates`) are retired and abort resolution
+with a reason. `ApeRRFormatter` survives as a **reader** only: `ReplayAgent` still consumes an
+externally supplied replay log through it.
 
 ### Central Configuration
 
