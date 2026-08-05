@@ -73,13 +73,6 @@ public class StartAction extends Action {
         return true;
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jAction = super.toJSONObject();
-        jAction.put("packageName", packageName);
-        jAction.put("className", className);
-        return jAction;
-    }
-
     public static Action fromJSON(JSONObject jAction) throws JSONException {
         ActionType actionType = ActionType.valueOf(jAction.getString("actionType"));
         String packageName = jAction.getString("packageName");

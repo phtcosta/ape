@@ -43,13 +43,6 @@ public class ApeRotationEvent extends AbstractApeEvent {
         return Collections.<MonkeyEvent>singletonList(new MonkeyRotationEvent(rotationDegree, persist));
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jEvent = super.toJSONObject();
-        jEvent.put("degree", rotationDegree);
-        jEvent.put("persist", persist);
-        return jEvent;
-    }
-
     public static ApeEvent fromJSONObject(JSONObject jEvent) throws JSONException {
         boolean persist = jEvent.getBoolean("persist");
         int degree = jEvent.getInt("degree");

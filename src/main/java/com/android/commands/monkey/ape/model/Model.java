@@ -17,10 +17,6 @@ package com.android.commands.monkey.ape.model;
 
 import static com.android.commands.monkey.ape.utils.Config.activityManagerType;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,7 +28,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import com.android.commands.monkey.ApeRRFormatter;
 import com.android.commands.monkey.ape.naming.ActivityNamingManager;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
@@ -92,35 +87,6 @@ public class Model implements Serializable {
                 }
             }
         }
-    }
-
-    public static void saveActionHistory(File file, List<ActionRecord> actionHistory) {
-        int skipped = 0;
-        try (PrintWriter pw = new PrintWriter(new FileWriter(file))) {
-            for (ActionRecord record : actionHistory) {
-                Action action = record.modelAction;
-                int timestamp = record.agentTimestamp;
-                long clockTime = record.clockTimestamp;
-                // INV-MODEL-15: a naming refinement can leave a recorded descriptor unresolvable
-                // against its own tree. Skipping that record costs one line; letting the exception
-                // out aborts the whole teardown and the run keeps no history at all.
-                try {
-                    if (action.isModelAction()) {
-                        record.resolveModelAction();
-                    }
-                } catch (RuntimeException e) {
-                    skipped++;
-                    Logger.wformat("[APE-RV] ActionHistory skip: %s (%s)", action, e);
-                    continue;
-                }
-                ApeRRFormatter.startLogAction(pw, action, clockTime, timestamp);
-                ApeRRFormatter.endLogAction(pw, action, timestamp);
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-            Logger.wformat("Fail to save action history into %s.", actionHistory);
-        }
-        Logger.format("[APE-RV] ActionHistory total=%d skipped=%d", actionHistory.size(), skipped);
     }
 
     /**

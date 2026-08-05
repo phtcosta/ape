@@ -28,7 +28,7 @@ import static org.junit.Assert.assertTrue;
  */
 public class StatefulAgentTearDownTest {
 
-    /** A StatefulAgent whose 4th teardown step (saveActionHistory) throws. */
+    /** A StatefulAgent whose 3rd teardown step (coverageDump) throws. */
     public static class ThrowingAgent extends StatefulAgent {
         /** Never invoked — the instance is Unsafe-allocated; declared only to satisfy javac. */
         public ThrowingAgent() {
@@ -36,7 +36,7 @@ public class StatefulAgentTearDownTest {
         }
 
         @Override
-        protected void saveActionHistory() {
+        protected void dumpCoverage() {
             throw new IllegalStateException("Cannot find widget");
         }
 
@@ -113,7 +113,7 @@ public class StatefulAgentTearDownTest {
 
         String log = captured.toString();
         assertTrue("the failing step must be reported by label: " + log,
-                log.contains("tearDown step failed: saveActionHistory"));
+                log.contains("tearDown step failed: coverageDump"));
         assertTrue("the failure must carry a stack trace: " + log,
                 log.contains("IllegalStateException") && log.contains("Cannot find widget"));
         assertTrue("a step after the failing one must still be attempted: " + log,

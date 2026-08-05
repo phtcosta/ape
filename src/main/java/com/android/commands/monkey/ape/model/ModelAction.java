@@ -15,12 +15,8 @@
  */
 package com.android.commands.monkey.ape.model;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 
-import com.android.commands.monkey.ApeRRFormatter;
 import com.android.commands.monkey.ape.naming.Name;
-import com.android.commands.monkey.ape.naming.NamerFactory;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -395,27 +391,4 @@ public class ModelAction extends Action {
         return Math.min(Math.max(0, this.resolvedSaturation), 1.0F);
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jAction = super.toJSONObject();
-        if (requireTarget()) {
-            String xpath = getTarget().toXPath();
-            jAction.put("target", xpath);
-        }
-        GUITreeNode node = getResolvedNode();
-        if (node != null) {
-            Name full = NamerFactory.fullNamer().naming(node);
-            jAction.put("full", full.toXPath());
-            Rect bounds = node.getBoundsInScreen();
-            jAction.put("bounds", ApeRRFormatter.formatRect(bounds));
-            String inputText = node.getInputText();
-            if (inputText != null) {
-                jAction.put("inputText", inputText);
-            }
-        }
-        GUITreeAction guiAction = this.resolvedGUITreeAction;
-        if (guiAction != null) {
-
-        }
-        return jAction;
-    }
 }

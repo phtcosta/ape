@@ -15,8 +15,6 @@
  */
 package com.android.commands.monkey.ape.model;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 
 public class CrashAction extends Action {
 
@@ -32,9 +30,4 @@ public class CrashAction extends Action {
         this.crash = crash;
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jAction = super.toJSONObject();
-        jAction.put("crash", this.crash.toJSONObject());
-        return jAction;
-    }
 }

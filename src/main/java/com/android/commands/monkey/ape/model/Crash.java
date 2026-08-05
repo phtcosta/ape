@@ -17,8 +17,6 @@ package com.android.commands.monkey.ape.model;
 
 import java.io.Serializable;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import com.android.commands.monkey.ape.utils.Logger;
 
@@ -54,15 +52,5 @@ public class Crash implements Serializable {
         Logger.println("// Long Msg: " + longMsg);
         Logger.println("// " + stackTrace.replace("\n", "\n" + Logger.TAG + "// "));
     }
-    
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jAction = new JSONObject();
-        jAction.put("processName", this.processName);
-        jAction.put("pid", this.pid);
-        jAction.put("shortMsg", this.shortMsg);
-        jAction.put("longMsg", this.longMsg);
-        jAction.put("timeMillis", this.timeMillis);
-        jAction.put("stackTrace", this.stackTrace);
-        return jAction;
-    }
+
 }

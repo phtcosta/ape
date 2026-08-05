@@ -18,8 +18,6 @@ package com.android.commands.monkey.ape.model;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -243,13 +241,6 @@ public class Action extends GraphElement implements PriorityObject {
         if (type != other.type)
             return false;
         return true;
-    }
-
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jAction = new JSONObject();
-        jAction.put("actionType", getType());
-        jAction.put("throttle", getThrottle());
-        return jAction;
     }
 
 }

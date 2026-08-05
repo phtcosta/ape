@@ -1899,7 +1899,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         safeStep("flushPendingStep", () -> RunContext.current().sink().flushPendingStep());
         safeStep("superTearDown", super::tearDown);
         safeStep("coverageDump", this::dumpCoverage);
-        safeStep("saveActionHistory", this::saveActionHistory);
         safeStep("actionCounters", () -> actionCounters.print());
         safeStep("activityNodes", () -> getGraph().printActivityNodes());
         safeStep("namingDump", () -> model.getNamingManager().dump());
@@ -1915,13 +1914,15 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * The teardown step that emits the UI-coverage dump (INV-COV-10). No-op here: only
      * {@code SataAgent} can supply the dump's {@code mopReach} predicate, so it overrides this.
      *
-     * <p>Ordering is the whole mechanism, and the boundary is <b>first among the {@code /sdcard}
-     * writers</b>: this step runs before {@code saveActionHistory}, the only remaining teardown step
-     * that writes there. It lands third in the chain, after {@code flushPendingStep} and
-     * {@code superTearDown}; the first of those writes one line to the trace, which is a different
-     * destination and is itself loss-bounding. The boundary is stated on chain position among the
-     * {@code /sdcard} writers rather than on a fixed index, so it stays verifiable as later stages
-     * add and remove steps.
+     * <p>Ordering is the whole mechanism, and the boundary is <b>first among the steps that produce
+     * output</b>: this step runs before {@code actionCounters}, the first of the free-text dumps.
+     * No teardown step writes a file any more — the boundary was the model serialization, then the
+     * action-history save, and both are deleted — so the ordering is stated against what remains to
+     * be lost. It lands third in the chain, after {@code flushPendingStep} and {@code superTearDown};
+     * the first of those writes one already-serialized record to the trace and is itself
+     * loss-bounding, which is why it sits outside the boundary rather than violating it. Stating the
+     * boundary on chain position among producers of output rather than on a fixed index is what
+     * keeps it verifiable as later stages add and remove steps.
      *
      * <p>The reason the property exists is measured. Across 800 {@code aperv} calibration runs the
      * dump was the last instruction of the whole teardown, behind the {@code /sdcard} writes, and
@@ -1948,11 +1949,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         int agentTimestamp = getTimestamp();
         this.model.appendToActionHistory(clockTimestamp, action, agentTimestamp);
         //actionCounters.logEvent(action.getType());
-    }
-
-    protected void saveActionHistory() {
-        File actionHistoryFile = new File(checkOutputDir(), "action-history.log");
-        Model.saveActionHistory(actionHistoryFile, getActionHistory());
     }
 
 }

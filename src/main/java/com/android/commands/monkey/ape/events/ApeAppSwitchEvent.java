@@ -55,12 +55,6 @@ public class ApeAppSwitchEvent extends AbstractApeEvent {
         return Arrays.asList(appSwitchDown, appSwitchUp, throttle, postDown, postUp);
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jEvent = super.toJSONObject();
-        jEvent.put("home", home);
-        return jEvent;
-    }
-
     public static ApeEvent fromJSONObject(JSONObject jEvent) throws JSONException {
         boolean home = jEvent.getBoolean("home");
         return new ApeAppSwitchEvent(home);

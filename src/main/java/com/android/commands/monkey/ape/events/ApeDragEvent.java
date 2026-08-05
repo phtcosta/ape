@@ -69,12 +69,6 @@ public class ApeDragEvent extends AbstractApeEvent {
         return events;
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jEvent = super.toJSONObject();
-        jEvent.put("values", values);
-        return jEvent;
-    }
-
     public static ApeEvent fromJSONObject(JSONObject jEvent) throws JSONException {
         JSONArray jValues = jEvent.getJSONArray("values");
         float[] values = new float[jValues.length()];

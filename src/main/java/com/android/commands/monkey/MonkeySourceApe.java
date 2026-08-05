@@ -27,11 +27,7 @@ import static com.android.commands.monkey.ape.utils.Config.refectchInfoWaitingIn
 import static com.android.commands.monkey.ape.utils.Config.swipeDuration;
 import static com.android.commands.monkey.ape.utils.Config.treePackageGuard;
 
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -64,7 +60,6 @@ import com.android.commands.monkey.ape.utils.RandomHelper;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.ActivityManager.RunningAppProcessInfo;
-import android.app.ActivityManager.RunningTaskInfo;
 import android.app.UiAutomation;
 import android.app.UiAutomationConnection;
 import android.content.ComponentName;
@@ -124,10 +119,6 @@ public class MonkeySourceApe implements MonkeyEventSource {
     private int mEventId = 0;
     private int statusBarHeight = -1;
     private File mOutputDirectory;
-    private PrintWriter mEventProduceLogger;
-    private PrintWriter mEventConsumeLogger;
-    private File mEventProduceLoggerFile;
-    private File mEventConsumeLoggerFile;
     private ImageWriterQueue[] mImageWriters;
 
     // Counter
@@ -242,12 +233,6 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 writer.tearDown();
             }
         });
-        safeStep("eventProduceLogger", () -> this.mEventProduceLogger.close());
-        safeStep("eventConsumeLogger", () -> this.mEventConsumeLogger.close());
-        safeStep("visTimeline", () -> {
-            File visOutput = new File(getOutputDirectory(), "sataTimeline.vis.js");
-            ApeRRFormatter.toVisTimeline(mEventProduceLoggerFile, visOutput);
-        });
     }
 
     public MonkeySourceApe(Random random,
@@ -269,24 +254,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
         mPermissionUtil.setTargetSystemPackages(permissionTargetSystem);
         // mPermissionUtil.populatePermissionsMapping();
         mOutputDirectory = outputDirectory;
-        mEventProduceLoggerFile = new File(mOutputDirectory, "produce.log");
-        mEventProduceLogger = openWriter(mEventProduceLoggerFile);
-        mEventConsumeLoggerFile = new File(mOutputDirectory, "consume.log");
-        mEventConsumeLogger = openWriter(mEventConsumeLoggerFile);
-
         mAgent = ApeAgent.createAgent(this, runSpec);
         connect();
-    }
-
-    static PrintWriter openWriter(File logFile) {
-        try {
-            return new PrintWriter(new BufferedWriter(new FileWriter(logFile)));
-        } catch (IOException e) {
-            e.printStackTrace();
-            Logger.wprintln("Cannot open " + logFile);
-            System.exit(1);
-        }
-        return null;
     }
 
     public Agent getAgent() {
@@ -703,13 +672,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
     private final void addEvent(MonkeyEvent event) {
         mQ.addLast(event);
         event.setEventId(mEventId++);
-        ApeRRFormatter.logProduce(mEventProduceLogger, event);
     }
 
     private final void clearEvent() {
         while (!mQ.isEmpty()) {
-            MonkeyEvent e = mQ.removeFirst();
-            ApeRRFormatter.logDrop(mEventConsumeLogger, e);
+            mQ.removeFirst();
         }
     }
 
@@ -1034,12 +1001,10 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     private void generateEventsForAction(Action action) {
         long clockTimestamp = System.currentTimeMillis();
-        startLogAction(clockTimestamp, action);
         mAgent.appendToActionHistory(clockTimestamp, action);
         generateEventsForActionInternal(action);
         long throttle = mThrottle + action.getThrottle();
         generateThrottleEvent(throttle);
-        endLogAction(action);
     }
 
     public void clearPackage(String packageName) {
@@ -1214,14 +1179,6 @@ public class MonkeySourceApe implements MonkeyEventSource {
             generateKeyBackEvent();
         }
         generateThrottleEvent(mThrottle);
-    }
-
-    private void startLogAction(long clockTimestamp, Action action) {
-        ApeRRFormatter.startLogAction(mEventProduceLogger, action, clockTimestamp, mAgent.getTimestamp());
-    }
-
-    private void endLogAction(Action action) {
-        ApeRRFormatter.endLogAction(mEventProduceLogger, action, mAgent.getTimestamp());
     }
 
     protected void generateThrottleEvent(long base) {
@@ -1444,7 +1401,6 @@ public class MonkeySourceApe implements MonkeyEventSource {
         }
         mEventCount++;
         MonkeyEvent e = popEvent();
-        ApeRRFormatter.logConsume(mEventConsumeLogger, e);
         return e;
     }
 

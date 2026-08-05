@@ -356,8 +356,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     }
 
     /**
-     * Per-state UI-coverage dump (read-only), emitted strictly before {@code saveActionHistory} —
-     * the first teardown step that writes an artifact (INV-COV-10). {@code mopReach} is computed
+     * Per-state UI-coverage dump (read-only), emitted strictly before {@code actionCounters} —
+     * the first teardown step that produces output (INV-COV-10). {@code mopReach} is computed
      * here because the tracker holds no
      * MopData reference (D4): a state's Activity gates a MOP target iff
      * {@code _mopData != null && activityHasMop(activity)} — which is why the hoist is an

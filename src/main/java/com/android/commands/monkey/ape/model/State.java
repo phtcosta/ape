@@ -15,7 +15,6 @@
  */
 package com.android.commands.monkey.ape.model;
 
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -336,14 +335,6 @@ public class State extends GraphElement {
     public void dumpState() {
         Logger.format("Dumpping state %s", this);
         stateKey.dumpState();
-    }
-
-    public void saveState(PrintWriter pw) {
-        stateKey.saveState(pw);
-        pw.println();
-        for (int i = 0; i < actions.length; i++) {
-            pw.format("%3d %s\n", i, actions[i]);
-        }
     }
 
     public ModelAction firstEnabledUnvisitedValidAction() {
