@@ -65,7 +65,7 @@ The infrastructure is designed for graceful degradation: if any component fails 
 
 The constructor SHALL accept `baseUrl` (String, including `/v1` prefix), `model` (String), `temperature` (double), `topP` (double), `topK` (int), `maxTokens` (int), and `timeoutMs` (int). Both connection and read timeouts SHALL be set to `timeoutMs`. **The `tools` schema SHALL be supplied per invocation** — `chat(messages, tools)` includes the supplied array in that request's body. The `setTools(JSONArray)` method and the run-wide field it installed are **removed**: a single schema fixed at construction cannot track the screen, which is what produced the measured incoherence where the wire always advertised `type_text` while the system message omitted it conditionally. No dual path remains (P3, INV-LLM-11).
 
-Response parsing SHALL use `new JSONObject(responseBody)` to deserialize the response, extract `choices[0].message.content` and `choices[0].message.tool_calls`, and construct a `ChatResponse` object. It SHALL also extract the response envelope's top-level `model` field into `ChatResponse` (null when the server omits it), so the caller can log the server-reported model (`[APE-LLM-CONFIG-ACK]`, per the `llm-routing` capability). A missing `model` field is not a parse failure.
+Response parsing SHALL use `new JSONObject(responseBody)` to deserialize the response, extract `choices[0].message.content` and `choices[0].message.tool_calls`, and construct a `ChatResponse` object. It SHALL also extract the response envelope's top-level `model` field into `ChatResponse` (null when the server omits it), so the caller can record the server-reported model (the `LLM_ACK` sink record, per the `llm-routing` capability). A missing `model` field is not a parse failure.
 
 **Raw-arguments preservation (INV-LLM-10):** for each tool call, the constructed `ToolCall` SHALL carry, in addition to the best-effort parsed arguments map, the arguments in raw string form via `getRawArguments()`:
 
@@ -86,10 +86,8 @@ The failure-cause classification (`getLastErrorCause()`, INV-LLM-08) is unchange
 #### Scenario: server-reported model still extracted
 
 - **WHEN** the response envelope carries a top-level `model` field
-- **THEN** `ChatResponse` SHALL carry it for the `[APE-LLM-CONFIG-ACK]` line
+- **THEN** `ChatResponse` SHALL carry it for the `LLM_ACK` record
 - **AND** its absence SHALL NOT be a parse failure
-
----
 
 ### Requirement: ScreenshotCapture — SurfaceControl Screenshot
 
@@ -499,7 +497,9 @@ Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unava
 - `allows() -> boolean` — the single breaker consultation per routing decision: it SHALL call `shouldAttempt()` exactly once (preserving the OPEN→HALF_OPEN probe transition), reset the open-episode log latch when the breaker allows, and emit the `[APE-RV] LLM circuit breaker OPEN, skipping (trips=<N>)` line at the FIRST breaker-caused decline of each open episode using the side-effect-free `isOpen()` for the emission check — never a second `shouldAttempt()`.
 - `recordSuccess()` / `recordFailure()` — breaker outcome recording, with the trip count readable for telemetry.
 
-`LlmClient` SHALL emit the `[APE-LLM-CONFIG]` effective-manifest line exactly once at construction, with the same fields as before (the values it will actually send, including the shared `max_tokens`). It SHALL NOT read static `Config` after bootstrap; every parameter arrives via `LlmParams`.
+`LlmClient` SHALL NOT emit a configuration manifest line: the effective sampling parameters are echoed once by `RUN_START` (run-spec capability), which is the record that carries the whole resolved plan rather than the LLM slice of it. It SHALL NOT read static `Config` after bootstrap; every parameter arrives via `LlmParams` — this clause is the requirement's real subject and is unchanged.
+
+The shared-`max_tokens` discipline survives the manifest that used to demonstrate it. `max_tokens` SHALL still be read once and used both in the request body and in the echoed plan, so what the trace reports is what the wire carried; only the record it is checked against moves.
 
 #### Scenario: single breaker consultation per decision
 - **WHEN** an LLM stage's trigger evaluation reaches the breaker gate
@@ -513,11 +513,14 @@ Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unava
 
 #### Scenario: construction from the plan
 - **WHEN** the resolved plan carries the LLM feature with `timeout_ms=15000` and `max_tokens=1024`
-- **THEN** `LlmClient` SHALL configure `SglangClient` with those values and emit one `[APE-LLM-CONFIG]` line carrying them
+- **THEN** `LlmClient` SHALL configure `SglangClient` with those values, and the same values SHALL appear in the `RUN_START` effective-plan echo
+- **AND** no manifest line SHALL be emitted at construction
 - **AND** no `Config` static SHALL be read by the unit during the run
 
 #### Scenario: composition is the only access path
 - **WHEN** any code outside `LlmClient` needs the HTTP client or the breaker
 - **THEN** it SHALL go through `LlmClient`'s methods
 - **AND** no other class SHALL hold a `SglangClient` or `LlmCircuitBreaker` reference
+
+---
 

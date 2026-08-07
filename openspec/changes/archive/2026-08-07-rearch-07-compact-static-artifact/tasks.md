@@ -1148,8 +1148,43 @@ loader and against the `static-analysis-entrypoints` ADDED block before calling 
       It is the ordinary consequence of two live changes modifying the same requirements, which is
       exactly the interaction `rearch-05` measured as absent for itself and which this group's header
       predicted would be present here
-- [ ] 9.5 After the real archive (owner-sequenced, outside this session), check each of the four
+- [x] 9.5 After the real archive (owner-sequenced, outside this session), check each of the four
       capabilities' `## Purpose` in `openspec/specs/` **by hand**: `openspec archive` syncs
       requirements only and prints `delta Purpose ignored; <capability> already has one`, which is
       how session 16 left `run-spec`'s Purpose asserting the framing its own change had just retired.
       `mop-guidance` is the one at risk here — its Purpose predates the compact artifact entirely
+
+      **Checked 2026-08-07, immediately after the real archive. The prediction was right about
+      `mop-guidance` and understated it — three of the four Purposes were stale, and one contradicted
+      a requirement in its own file.** All four `delta Purpose ignored` warnings fired exactly as this
+      task anticipated, so nothing was synced and every Purpose was read by hand against the
+      requirements beside it.
+
+      | Capability | Verdict | What was wrong |
+      |---|---|---|
+      | `aperv-tool` | **clean, untouched** | Describes the plugin's registration and invocation model, none of which this change touched |
+      | `component-triggering` | one clause corrected | Sourced intent data from "the static analysis JSON's `components{}` section". The cadence-launcher paragraph was already current — it is the rest of the sentence that aged |
+      | `mop-guidance` | **rewritten** | See below |
+      | `static-analysis-entrypoints` | rewritten | Pre-implementation framing throughout ("**Currently**, `getEntryPoints()` enumerates only Activity classes… this specification defines how Services and BroadcastReceivers **SHALL be incorporated**"), describing as an open gap the work that closed it. A P4 violation that reads as a proposal rather than a spec |
+
+      **`mop-guidance` was not merely stale — it asserted the opposite of a synced requirement.** Its
+      Purpose said that when `ape.mopDataPath` is absent "the system operates identically to plain
+      `sata`", which is precisely the V21 silent-degradation this change killed (INV-APERV-05) and
+      whose replacement scenario, `MOP arm — full JSON absent fails the task`, sits a few lines below
+      it. It also declared the artifact to contain "`windows[]`, `reachability[]`, `transitions[]`"
+      — the three sections group 5 deleted, in a file whose loader requirement now carries
+      `Legacy full static-analysis JSON is rejected` — credited the jar with the listener
+      cross-referencing that moved host-side to the generator, and named the `gh95`-retired arm
+      `aperv:sata_mop`. Rewritten as current state: the compact v1 artifact and what it carries, the
+      derivation being the generator's rather than the jar's, absence as fatal on a MOP arm and why
+      (a run that looks like treatment and behaves like control), and the two things D3 deliberately
+      keeps on-device — the OPTIONSMENU gateway recompute and the flag-selected activity set.
+
+      **Two checks on the rewrite itself.** `windows[]`, `reachability[]` and `transitions[]` still
+      appear in the new `mop-guidance` Purpose, and that is deliberate: they occur inside the clause
+      *"the artifact has no `windows[]`, no `reachability[]` and no `transitions[]` to parse"* — the
+      same negation pattern 9.2's own negative check had to distinguish from stale text. And
+      `openspec validate --specs --strict` is **23 passed, 0 failed** afterwards.
+
+      **Requirement bodies were not touched.** Only the four `## Purpose` blocks. The scenario
+      headers that read oddly are 9.2's recorded and accepted cost, not something to fix here

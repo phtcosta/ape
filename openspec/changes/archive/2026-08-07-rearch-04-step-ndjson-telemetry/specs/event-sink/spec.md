@@ -140,7 +140,7 @@ The sink SHALL serialize records with a self-contained serializer (no runtime de
 
 #### Scenario: Hostile widget text round-trips
 
-- **WHEN** an action string contains a newline, a double quote, a backslash, a NUL, and non-ASCII text (e.g. `"Salvar\n\"opção\" \\fim"`)
+- **WHEN** an action string contains a newline, a double quote, a backslash, a NUL, and non-ASCII text (e.g. `"Salvar\n\"opção\"\u0000\\fim"`)
 - **THEN** the emitted record SHALL remain one line, SHALL parse as valid JSON, and the parsed value SHALL equal the original string
 
 #### Scenario: One-line invariant is a permanent test

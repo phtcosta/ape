@@ -22,10 +22,20 @@ import com.android.commands.monkey.ape.naming.Naming;
  * whether or not the tree still has a current naming.
  *
  * <h2>Why the fixtures are blank instances</h2>
- * A real {@link GUITree} cannot be built on the JVM: its constructor takes a {@link GUITreeNode},
- * which holds an {@code AccessibilityNodeInfo} that is not on the test classpath — the same wall
- * {@code GUITreeContainsTest} hit, and the one {@code rearch-01} recorded as finding 2.1-a. It does
- * not need to be built here. The caches key on {@code GUITree} and {@code Naming} by identity
+ * What bars a real {@link GUITree} here is the surefire classpath, not the node type. The pom
+ * excludes {@code dalvik_stub} and {@code framework-full-debug} from the test runtime (so
+ * {@code dalvik_stub}'s {@code org.json} stubs cannot shadow the real {@code org.json}), which
+ * means no {@code android.*} class loads in any JVM test in this tree — and {@code GUITree}'s
+ * constructor needs a {@code ComponentName}, so it throws {@code NoClassDefFoundError}.
+ * {@code Unsafe} bypasses that constructor entirely.
+ *
+ * <p>Two things this deliberately does <em>not</em> claim, because both were measured false on
+ * 2026-08-07: a {@link GUITreeNode} builds fine on the JVM ({@code new GUITreeNode(null)} — its
+ * {@code AccessibilityNodeInfo} field is {@code transient} and every other field is a plain
+ * {@code String}/{@code boolean}/{@code int}), and {@code AccessibilityNodeInfo} is in fact present
+ * in both jars. The wall is the classpath exclusion, not the node's contents.
+ *
+ * <p>The caches key on {@code GUITree} and {@code Naming} by identity
  * (neither class overrides {@code equals}/{@code hashCode}), and the sweep reads nothing from
  * either — so an {@code Unsafe}-allocated instance is a faithful stand-in for a cache key, which is
  * the only role the fixtures play. {@code Unsafe.allocateInstance} is the established technique in

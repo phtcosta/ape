@@ -46,9 +46,7 @@ The prompt uses Qwen3-VL's normalized coordinate space [0, 1000) for both input 
 - **INV-PRM-05**: Every target-action element line whose node carries at least one of text / content-description / resource-id SHALL render a non-empty identifier (fallback order: text → content-description → short resource-id); rendered identifiers SHALL contain no unescaped `\n`/`\r`.
 
 ---
-
 ## Requirements
-
 ### Requirement: System Message
 
 `ApePromptBuilder` SHALL generate a system message with role `"system"`. The system message SHALL be compact (~120 tokens), modeled on rvsmart V13 which proved effective in experiments. Verbose reasoning steps (V17-style, ~300 tokens) did not show significant improvement and waste tokens/latency.
@@ -123,7 +121,7 @@ For input-capable widgets (EditText, SearchView, AutoCompleteTextView) with a no
 Where:
 - `<index>` is the 0-based position in the actions list
 - `<WidgetClass>` is the widget's Android class simple name (e.g., `Button`, `EditText`, `ImageView`)
-- `<text>` is the widget's **identifier text**, resolved by fallback: the widget's text; else its content-description; else its short resource-id (the `":id/"` suffix, rendered as `id=<shortId>`). Truncated to 50 characters; embedded `\n`/`\r` flattened to spaces (keeps the element list and the `[APE-LLM-PROMPT]` dump per-line parseable). Only when text, content-description, AND resource-id are all empty is the identifier omitted. Measured motivation: 35.8% of grounding tests rendered elements with no identifier at all — the model hit 33.1% on identifier-less lines vs 71.4% with an identifier, and ImageView (0/210 hits) is the canonical victim: icon buttons routinely carry a content-description or resource-id but no text, and the previous rendering gave the model nothing to anchor the coordinates to.
+- `<text>` is the widget's **identifier text**, resolved by fallback: the widget's text; else its content-description; else its short resource-id (the `":id/"` suffix, rendered as `id=<shortId>`). Truncated to 50 characters; embedded `\n`/`\r` flattened to spaces, so the element list stays one physical line per action — the property the prompt format itself depends on. It is no longer a trace concern: the prompt and response dumps travel as JSON-escaped `sys`/`user`/`resp` fields of the step record's `llm[]` sub-event, where any character is safe by construction (`event-sink` INV-SNK-02). Only when text, content-description, AND resource-id are all empty is the identifier omitted. Measured motivation: 35.8% of grounding tests rendered elements with no identifier at all — the model hit 33.1% on identifier-less lines vs 71.4% with an identifier, and ImageView (0/210 hits) is the canonical victim: icon buttons routinely carry a content-description or resource-id but no text, and the previous rendering gave the model nothing to anchor the coordinates to.
 - `hint="<hint>"` is the widget's hint text, included only for input-capable widgets when `GUITreeNode.getHint()` is non-null and non-empty; truncated to 30 characters.
 - `@(<normX>,<normY>)` is the center of the widget's bounds converted to Qwen3-VL [0,1000) normalized space: `normX = (int)((centerPixelX / deviceWidth) * 1000)`, `normY = (int)((centerPixelY / deviceHeight) * 1000)`. This is the SAME coordinate space the LLM responds in. Omitted if node is not resolved.
 - `<MOP_MARKER>` is `[DM]` (direct monitored), `[M]` (transitive monitored), or omitted if no MOP match
@@ -178,8 +176,6 @@ The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`
 
 - **WHEN** a widget's text is `"Sign\nIn"`
 - **THEN** the element line SHALL render `"Sign In"` on one physical line
-
----
 
 ### Requirement: MOP Marker Annotation
 
@@ -285,3 +281,4 @@ The text content SHALL include a compact one-line exploration context after the 
 - **WHEN** the state has been visited 5 times
 - **AND** `mopData` is null
 - **THEN** the text SHALL contain: `Visited 5x.`
+

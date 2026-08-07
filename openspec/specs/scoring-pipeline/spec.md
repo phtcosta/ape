@@ -44,23 +44,23 @@ public interface ScoringPass {
 
 ### Requirement: Scoring Pipeline Assembly from Config
 
-`ScoringPipeline.fromParams(ScoringParams, ScoringContext)` SHALL be the single point that maps the resolved plan's scoring configuration to the ordered list of enabled passes. It SHALL construct the **seven** passes in the fixed order `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `FrontierPass` → `MopFrontierPass` → `CoveragePass` → `FormCompletionPass` (the frontier family contiguous), retain only those whose `isEnabled()` is `true`, and emit exactly one `[APE-ARCH] passes=[...]` line listing the retained passes' `name()` values in pipeline order. No other code path SHALL assemble or reorder the pipeline. The former `fromConfig(Config, ScoringContext)` entry point — whose `Config` parameter was decorative (the sole caller passed `null` while the passes read `Config` statics directly) — SHALL be deleted, not shimmed (P3). The class documentation SHALL state the seven-pass roster; the stale "six passes" wording is corrected.
+`ScoringPipeline.fromParams(ScoringParams, ScoringContext)` SHALL be the single point that maps the resolved plan's scoring configuration to the ordered list of enabled passes. It SHALL construct the **seven** passes in the fixed order `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `FrontierPass` → `MopFrontierPass` → `CoveragePass` → `FormCompletionPass` (the frontier family contiguous), retain only those whose `isEnabled()` is `true`, and emit exactly one `PIPELINE` sink record (event-sink capability) whose `passes` member lists the retained passes' `name()` values in pipeline order. No other code path SHALL assemble or reorder the pipeline. The former `fromConfig(Config, ScoringContext)` entry point — whose `Config` parameter was decorative (the sole caller passed `null` while the passes read `Config` statics directly) — SHALL be deleted, not shimmed (P3). The class documentation SHALL state the seven-pass roster; the stale "six passes" wording is corrected.
 
-The fixed order SHALL equal the order of the pre-refactor inline scoring blocks in `StatefulAgent.adjustActionsByGUITree()`, which is the order the `mop-guidance` (INV-MOP-05), `ui-coverage`, and `form-completion` specs already require (base → MOP-widget → menu-gateway → WTG → frontier → MOP-frontier → coverage → form). The injection change SHALL NOT alter pass order, boost arithmetic, provenance writes, or the `[APE-ARCH]` line format; the sole caller (`StatefulAgent`, at construction) SHALL pass the real `ScoringParams` derived from the `RunSpec` in place of the former `null`.
+The fixed order SHALL equal the order of the pre-refactor inline scoring blocks in `StatefulAgent.adjustActionsByGUITree()`, which is the order the `mop-guidance` (INV-MOP-05), `ui-coverage`, and `form-completion` specs already require (base → MOP-widget → menu-gateway → WTG → frontier → MOP-frontier → coverage → form). The injection change SHALL NOT alter pass order, boost arithmetic, provenance writes, or the content of the emitted pass list; the sole caller (`StatefulAgent`, at construction) SHALL pass the real `ScoringParams` derived from the `RunSpec` in place of the former `null`.
 
 **The same assembly SHALL also record the candidates it dropped.** Beside the retained list — whose content and format are unchanged — assembly SHALL record every candidate pass with whether it was constructed, carried by the stage-4 `PIPELINE` record's `candidates` member. The census SHALL be produced inside `fromParams`, where the full candidate list is still in scope: the pipeline discards the disabled passes at construction and has no handle on them afterwards, and retaining them in a field only to enumerate them would keep disabled objects alive for telemetry's sake.
 
-This is the pass-side counterpart of the decision-pipeline's static stage list, and unlike that one it is data-bearing rather than plan-derivable: `WtgPass`, `FrontierPass` and `MopFrontierPass` each gate on `mopData.hasWtgData()`, which nothing in the plan reveals. The measurement that motivates it — across the decisive campaign's 360 runs the `[APE-ARCH] passes=` line takes exactly three values, split 45/75 in every arm, because **the whole frontier family is never constructed in 25 of the 40 applications**, and the only trace evidence of that today is the absence of three names from a list every analyst read as a configuration echo.
+The record SHALL be emitted from `fromParams`, where the full candidate list is still in scope: the constructor discards the disabled candidates (`this.passes = enabled`), so a census assembled after construction would have nothing left to enumerate. This is the pass-side counterpart of the decision-pipeline's static stage list, and unlike that one it is data-bearing rather than plan-derivable: `WtgPass`, `FrontierPass` and `MopFrontierPass` each gate on `mopData.hasWtgData()`, which nothing in the plan reveals. The measurement that motivates it — across the decisive campaign's 360 runs the `[APE-ARCH] passes=` line takes exactly three values, split 45/75 in every arm, because **the whole frontier family is never constructed in 25 of the 40 applications**, and the only trace evidence of that today is the absence of three names from a list every analyst read as a configuration echo.
 
 No `reason` field SHALL be added to the entries, and no `disabledReason()` method to the `ScoringPass` interface. Each gate is a conjunction of `mopData != null`, `hasWtgData()` and a weight, and all three conjuncts are already recorded elsewhere in the same trace (`MOP_DATA.status`, `MOP_DATA.wtgEdges`, `RUN_START.params`), so the reason is a lookup rather than a field — and adding it would touch all seven implementations plus the test double for a value that is already there. It would also be unreliable: the three passes do not evaluate their conjuncts in the same order, so a "first failing conjunct" would report source-code order rather than cause, and two passes absent for the same reason would disagree about what it was.
 
 - **INV-ARCH-03**: The pipeline order SHALL equal the order of the pre-refactor inline scoring blocks and SHALL satisfy the pass-order contracts already asserted by `mop-guidance` (INV-MOP-05), `ui-coverage`, and `form-completion`. `MopWidgetPass` SHALL precede `WtgPass`, which SHALL precede `CoveragePass`, which SHALL precede `FormCompletionPass`; `MopFrontierPass` SHALL sit immediately after `FrontierPass`.
-- **INV-ARCH-04**: `ScoringPipeline.fromParams` SHALL be the sole assembly point. The `[APE-ARCH] passes=[...]` startup line SHALL list exactly the enabled passes, in pipeline order, and nothing else SHALL construct a pipeline. The candidate census (`PIPELINE.candidates`) is a **sibling** record member, never a widening of this list: any consumer reading `passes` SHALL continue to see exactly the constructed passes.
+- **INV-ARCH-04**: `ScoringPipeline.fromParams` SHALL be the sole assembly point. The `PIPELINE` record's `passes` member SHALL list exactly the enabled passes, in pipeline order, and nothing else SHALL construct a pipeline. The candidate census (`PIPELINE.candidates`) is a **sibling** record member, never a widening of this list: any consumer reading `passes` SHALL continue to see exactly the constructed passes.
 
 #### Scenario: only enabled passes are assembled and logged
 - **WHEN** `ScoringPipeline.fromParams(params, ctx)` runs with MopData absent (MOP passes off), `coverageBoostWeight=100`, `formCompletionEnabled=true`
 - **THEN** the pipeline SHALL contain `CoveragePass`, `FormCompletionPass` in that order and no MOP/WTG/Frontier pass
-- **AND** one `[APE-ARCH] passes=[CoveragePass, FormCompletionPass]` line SHALL be emitted
+- **AND** one `PIPELINE` record SHALL be emitted with `passes:["CoveragePass","FormCompletionPass"]`
 
 #### Scenario: full MOP arm assembles the ordered set
 - **WHEN** `fromParams` runs with MopData present, `mopWeightWtg=200`, `frontierBoostWeight=200`, `mopFrontierWeight=200`, `coverageBoostWeight=100`, `formCompletionEnabled=true`
@@ -69,7 +69,7 @@ No `reason` field SHALL be added to the entries, and no `disabledReason()` metho
 #### Scenario: empty pipeline under the pure arm
 - **WHEN** `fromParams` runs with a plan carrying no scoring feature (all gates off/zero)
 - **THEN** the pipeline SHALL contain zero passes
-- **AND** the emitted line SHALL be `[APE-ARCH] passes=[]`
+- **AND** the emitted record SHALL carry `passes:[]`
 
 #### Scenario: injection is real — no decorative parameter
 - **WHEN** two `ScoringParams` differing only in `mopFrontierWeight` (0 vs 200) are used to assemble pipelines over the same context
@@ -124,39 +124,42 @@ Each pass's scoring semantics (what boost it computes and where it writes proven
 
 ### Requirement: Parity Configuration Flags
 
-`Config.java` SHALL declare the following flags, loaded from `ape.properties` at class-loading time. Every default SHALL preserve current aperv behavior. Each flag is the activation key of the corresponding `Feature` in the run-spec capability's feature model; with a flag `false`, the feature is absent from the resolved plan and its mechanism is not constructed.
+`Config.java` SHALL declare the following flags, loaded from `ape.properties` at class-loading time. Every default SHALL preserve current aperv behavior. Each flag is the activation key of the corresponding `Feature` in the run-spec capability's feature model (per `rearch-02-runspec`); with a flag `false`, the feature is absent from the resolved plan and its mechanism is not constructed.
 
 | Flag | Property Key | Type | Default | Gate |
 |------|-------------|------|---------|------|
 | `formCompletionEnabled` | `ape.formCompletionEnabled` | boolean | `true` | `FormCompletionPass` + the deterministic-fill branch in `ApeAgent.checkInput()` |
-| `stepTelemetryEnabled` | `ape.stepTelemetryEnabled` | boolean | `true` | the `[APE-STEP]` per-step line + per-action timing |
 | `modelMenuEnabled` | `ape.modelMenuEnabled` | boolean | `true` | inclusion of the fork `menuAction` in `State.getActions()` |
 | `leastVisitedPriorityTiebreak` | `ape.leastVisitedPriorityTiebreak` | boolean | `true` | the priority tiebreak in `State.greedyPickLeastVisited()` |
 | `treeEnhancementsEnabled` | `ape.treeEnhancementsEnabled` | boolean | `true` | the three `GUITreeBuilder` perception enhancements (WebView-prune actionable count, AndroidX actionability, ViewPager scrollable) |
 | `activityBudgetEnabled` | `ape.activityBudgetEnabled` | boolean | `true` | `ActivityBudgetTracker` instantiation + the budget check in `SataAgent.selectNewActionNonnull()` |
 
-The `apePureMode` row no longer exists (`ape.apePureMode` is a retired key that aborts resolution — see the REMOVED requirement above).
+The former `stepTelemetryEnabled` flag is deleted by this change: step recording is always-on (event-sink capability) and no configuration key gates or alters it. The former `apePureMode` row is deleted by `rearch-02-runspec` together with its mechanism.
 
-- **INV-ARCH-07**: With none of these keys set in `ape.properties`, `formCompletionEnabled`, `stepTelemetryEnabled`, `modelMenuEnabled`, `leastVisitedPriorityTiebreak`, `treeEnhancementsEnabled`, and `activityBudgetEnabled` SHALL be `true`, and the agent's action-selection behavior SHALL be identical to the pre-change aperv.
+- **INV-ARCH-07**: With none of these keys set in `ape.properties`, `formCompletionEnabled`, `modelMenuEnabled`, `leastVisitedPriorityTiebreak`, `treeEnhancementsEnabled`, and `activityBudgetEnabled` SHALL be `true`, and the agent's action-selection behavior SHALL be identical to the pre-change aperv.
 
 #### Scenario: defaults preserve current behavior
 
 - **WHEN** `ape.properties` sets none of the parity flags
-- **THEN** the six behavior gates SHALL be `true`
-- **AND** the pipeline, telemetry, menu action, tiebreak, tree perception, and activity budget SHALL all be active as before
+- **THEN** the five behavior gates SHALL be `true`
+- **AND** the pipeline, menu action, tiebreak, tree perception, and activity budget SHALL all be active as before this change
 
 #### Scenario: a single gate overridden without the kill-switch
 
-- **WHEN** `ape.properties` sets only `ape.stepTelemetryEnabled=false`
-- **THEN** `Config.stepTelemetryEnabled` SHALL be `false` and no `[APE-STEP]` line SHALL be emitted
+- **WHEN** `ape.properties` sets only `ape.modelMenuEnabled=false`
+- **THEN** `Config.modelMenuEnabled` SHALL be `false` and the fork `menuAction` SHALL be absent from `State.getActions()`
 - **AND** all other gates SHALL retain their `true` defaults
+- **AND** the example key changed because the one the pre-change scenario used, `ape.stepTelemetryEnabled`, no longer exists to override — the property being asserted is that a single override disturbs nothing else, and that is unchanged
 
 #### Scenario: retired kill-switch key aborts
 
 - **WHEN** `ape.properties` sets `ape.apePureMode=true`
 - **THEN** resolution SHALL abort with a retired-key diagnostic before step 1
 
----
+#### Scenario: telemetry has no gate
+
+- **WHEN** `ape.properties` sets `ape.stepTelemetryEnabled=false` (a removed key)
+- **THEN** the run SHALL abort at plan validation with an unknown-key error (fail-fast, run-spec capability) — there is no configuration that suppresses step recording
 
 ### Requirement: MopFrontierPass — Frontier Boost Toward Unvisited MOP Activities
 
@@ -166,7 +169,7 @@ A `MopFrontierPass` (in `com.android.commands.monkey.ape.agent.scoring`, impleme
 2. **Target is MOP-bearing** — `MopData.activityHasMop(WtgTransition.targetActivity) == true`;
 3. **Target is unvisited** — `Graph.getActivityNode(WtgTransition.targetActivity) == null` at scoring time (evaluated live each pass; the boost recedes once the target is visited).
 
-The boost SHALL be applied as a `setPriority` increment (`action.setPriority(action.getPriority() + mopFrontierWeight)` — the steering mechanism, unchanged) AND recorded in a **dedicated telemetry field** `ModelAction.mopFrontierBoost` via read-modify-write accumulation (`action.setMopFrontierBoost(action.getMopFrontierBoost() + mopFrontierWeight)`). It SHALL NOT write the `wtgBoost` field. This de-aliases the previous behavior, where `MopFrontierPass` accumulated into the same `wtgBoost` that `WtgPass` and the generic `FrontierPass` write — so `decision_source=WTG` conflated the MOP-frontier mechanism with generic WTG navigation, and the corpus's stacked values (400/600 in the `wtg=` field) could not be decomposed by mechanism. The boost is attributable via a new `[APE-STEP] ... mop_frontier=` field and its own `decision_source` value `MopFrontier` in the largest-boost attribution (`action-selection` capability, "Per-action decision-source telemetry").
+The boost SHALL be applied as a `setPriority` increment (`action.setPriority(action.getPriority() + mopFrontierWeight)` — the steering mechanism, unchanged) AND recorded in a **dedicated telemetry field** `ModelAction.mopFrontierBoost` via read-modify-write accumulation (`action.setMopFrontierBoost(action.getMopFrontierBoost() + mopFrontierWeight)`). It SHALL NOT write the `wtgBoost` field. This de-aliases the previous behavior, where `MopFrontierPass` accumulated into the same `wtgBoost` that `WtgPass` and the generic `FrontierPass` write — so `decision_source=WTG` conflated the MOP-frontier mechanism with generic WTG navigation, and the corpus's stacked values (400/600 in the `wtg=` field) could not be decomposed by mechanism. The boost is attributable via the step record's `dec.mopf` field and its own `decision_source` value `MopFrontier` in the largest-boost attribution (`action-selection` capability, "Per-action decision-source telemetry").
 
 `MopFrontierPass.isEnabled()` SHALL be true only when `Config.mopFrontierWeight > 0` AND `MopData` is non-null with WTG data present. With `Config.mopFrontierWeight == 0` (default) the pass SHALL be byte-identical to being absent from the pipeline. The pass is independent of and additive to the generic `frontierBoostWeight` (which requires only unvisited, not MOP) — B is the strictly narrower predicate (unvisited AND MOP).
 
@@ -192,83 +195,91 @@ The boost SHALL be applied as a `setPriority` increment (`action.setPriority(act
 #### Scenario: co-applying boosts stay decomposable
 - **WHEN** the target is MOP-bearing AND unvisited, with `mopWeightWtg=200`, `frontierBoostWeight=200`, `mopFrontierWeight=200`
 - **THEN** the action's priority SHALL gain +600 total
-- **AND** its `wtgBoost` SHALL be 400 (WTG-MOP + generic frontier) and its `mopFrontierBoost` SHALL be 200 — the mechanisms are separable in the `[APE-STEP]` line
+- **AND** its `wtgBoost` SHALL be 400 (WTG-MOP + generic frontier) and its `mopFrontierBoost` SHALL be 200 — the mechanisms are separable in the record, as `dec.wtg` and `dec.mopf`
 
 #### Scenario: disabled
 - **WHEN** `ape.mopFrontierWeight=0`
 - **THEN** the scoring pipeline SHALL behave exactly as without `MopFrontierPass`, with no boost recorded in either field
 
+The de-aliasing this requirement performed for `mopFrontierBoost` is completed on the other side by `dec.wtgsrc` (event-sink capability): `wtgBoost` remains a sum of two producers — `WtgPass` writes it and `FrontierPass` read-modify-writes on top — and with both weights at 200 the campaign realises `{0, 200, 400}`, leaving 10,231 steps at 200 ambiguous and only 91 at 400 proving both fired. `wtgsrc` stamps the producer at each write site. It is telemetry-only: this requirement's arithmetic, including the `wtgBoost` sum it deliberately does not touch, is unchanged.
+
 ### Requirement: Per-Step Decision Outcome Attribution
 
-When `stepTelemetryEnabled` is true, after a state transition is recorded (`Model.addTransition(source, action, target, ...)` in `StatefulAgent.updateGraph()`), `StatefulAgent` SHALL emit one `[APE-OUTCOME]` line attributing the executed action's result back to the `decision_source` that selected it. The line SHALL be correlated to the action's `[APE-STEP]` line by a shared `step` value, so an offline join on `step` pairs each decision with its outcome without any timestamp reconstruction. The `step=<N>` field contract on `[APE-STEP]` is defined by the `action-selection` capability (`Per-action decision-source telemetry`). LLM routing attempts carry the same `step` on their `[APE-LLM-TEL]`/`[APE-LLM-ERROR]` lines (llm-routing capability), so for LLM-routed decisions the call, the decision, and the outcome all join on one key.
+After a state transition is recorded (`Model.addTransition(source, action, target, ...)` in `StatefulAgent.updateGraph()`), `StatefulAgent` SHALL attribute the executed action's result back to the decision that selected it by attaching the `out` section to that decision's pending `StepRecord` and closing it (event-sink capability). Attribution is unconditional — there is no telemetry gate and no arm-level variation. Call, decision, and outcome share one record: no offline join exists.
 
-The `step` carried by `[APE-OUTCOME]` SHALL be the exploration step at which the executed action was **selected** (the `step` value emitted on that action's `[APE-STEP]` line), NOT the step at emission time. Because an action is selected at step N and its resulting transition is only observed during step N+1's processing (the agent timestamp has already advanced), `StatefulAgent` SHALL buffer the selection step and the selected action when the model-action `[APE-STEP]` line is emitted, and read the buffered values back when emitting `[APE-OUTCOME]`.
+The record closed SHALL be the one opened at the exploration step at which the executed action was **selected**. Because an action is selected at step N and its resulting transition is only observed during step N+1's processing (the agent timestamp has already advanced), `StatefulAgent` SHALL buffer the selection step and the selected action at decision time, and consume the buffer at outcome time.
 
-**Buffer discipline.** The non-model `[APE-STEP]` emission branch (event-level actions, e.g. the stagnation activity launcher) SHALL clear the buffer instead of writing it: non-model actions do not produce transitions under their own identity, and a stale model-action buffer could otherwise be resurrected later by state recovery (`recoverCurrentState()` re-installs the last history action as `currentAction`).
+**Buffer discipline.** The non-model decision branch (event-level actions, e.g. the stagnation activity launcher) SHALL clear the buffer instead of writing it: non-model actions do not produce transitions under their own identity, and a stale model-action buffer could otherwise be resurrected later by state recovery (`recoverCurrentState()` re-installs the last history action as `currentAction`). The non-model step's record is closed without an `out` member.
 
-**Emission point and guards.** The `[APE-OUTCOME]` emission SHALL live in `StatefulAgent.updateGraph()`, immediately after `Model.addTransition(...)` returns — NOT inside `Model`/`Graph` — so the refinement rebuild replay (which re-records transitions via the `Graph.addTransition(GUITreeTransition)` overload, bypassing `Model.addTransition`) cannot emit spurious lines. Emission SHALL occur only when ALL of the following hold, and the buffer SHALL be consumed (cleared) upon emission:
+**Emission point and guards.** The outcome closure SHALL live in `StatefulAgent.updateGraph()`, immediately after `Model.addTransition(...)` returns — NOT inside `Model`/`Graph` — so the refinement rebuild replay (which re-records transitions via the `Graph.addTransition(GUITreeTransition)` overload, bypassing `Model.addTransition`) cannot close spurious records. Closure with `out` SHALL occur only when ALL of the following hold, and the buffer SHALL be consumed (cleared) upon closure:
 
-1. the `StateTransition` returned by `Model.addTransition` is non-null (`addTransition` returns null on the run's first step, after restarts, and on the stale-ephemeral drop; an unguarded emission would fault on the very first step of every run);
+1. the `StateTransition` returned by `Model.addTransition` is non-null (`addTransition` returns null on the run's first step, after restarts, and on the stale-ephemeral drop);
 2. a decision is buffered and the buffered action is reference-equal to `currentAction` (state recovery and non-model interludes install a different action object; a mismatch means the recorded transition does not belong to the buffered decision);
-3. the buffer has not already been consumed for this decision — single-shot consumption guarantees that a second `addTransition` for the same decision (the `BadStateException` selection-retry path re-enters the update without advancing the timestamp; recovery can re-record the last history action) cannot emit a duplicate `[APE-OUTCOME]`.
+3. the buffer has not already been consumed for this decision — single-shot consumption guarantees that a second `addTransition` for the same decision (the `BadStateException` selection-retry path re-enters the update without advancing the timestamp; recovery can re-record the last history action) cannot attach a duplicate outcome.
 
-**Refinement remap.** Model refinement (`preEvolveModel()` → `updateModel()`) replaces `currentAction` with the corresponding action object of the rebuilt model before `updateGraph()` runs. `updateModel()` SHALL remap the buffered action through the same `model.update(...)` mapping applied to `currentAction`, so refinement steps still emit their `[APE-OUTCOME]`. Without the remap, the reference guard would fail exactly on the non-deterministic steps — a systematic attribution bias against the most informative steps.
+**Refinement remap.** Model refinement (`preEvolveModel()` → `updateModel()`) replaces `currentAction` with the corresponding action object of the rebuilt model before `updateGraph()` runs. `updateModel()` SHALL remap the buffered action through the same `model.update(...)` mapping applied to `currentAction`, so refinement steps still receive their `out`. Without the remap, the reference guard would fail exactly on the non-deterministic steps — a systematic attribution bias against the most informative steps.
 
-The line SHALL carry the following fields:
+The `out` section SHALL carry:
 
 | Field | Source |
 |-------|--------|
-| `step` | buffered selection step of the executed action (join key to `[APE-STEP]`) |
-| `decision_source` | `executedAction.getDecisionSource().name()` |
-| `new_state` | `true` when the target state was visited for the first time (`_isNewState`), else `false` |
-| `target_state` | target `State.getStateKey()` |
-| `activity_changed` | `true` when the target activity differs from the source activity (negation of the recorded `StateTransition.isSameActivity()`) |
-| `activity_has_mop` | `1` when `MopData` is non-null AND `MopData.activityHasMop(<target activity>)` is true, else `0` — whether the step **landed on** a MOP screen, the outcome half of the evidential link that `activity_has_mop` on `[APE-STEP]` opens (where the step started) |
+| `new_state` | `true` when the target state was visited for the first time (`_isNewState`); omitted when `false` |
+| `target` | target state's run-local `STATE` dictionary ID (the state key is on the dictionary entry) |
+| `act_changed` | `true` when the target activity differs from the source activity (negation of the recorded `StateTransition.isSameActivity()`); omitted when `false` |
 
-`target_state` reports the state observed at the next model update. When fuzzing piggybacks events after the selected action, or a bad-state `EVENT_ACTIVATE` interlude executes, the recorded transition — and hence `target_state` / `new_state` — reflects the selected action plus those trailing events. The `step` join remains exact; offline analysis SHOULD treat the outcome as "state reached by the step", not "immediate post-action state".
+`decision_source` is not repeated in `out` — it is the same record's `dec.src` by construction. The outcome-side `activity_has_mop` is derivable via `out.target → STATE.act → ACT.mop`. `target` reports the state observed at the next model update: when fuzzing piggybacks events after the selected action, or a bad-state `EVENT_ACTIVATE` interlude executes, the recorded transition — and hence `target`/`new_state` — reflects the selected action plus those trailing events; offline analysis SHOULD treat the outcome as "state reached by the step", not "immediate post-action state".
 
-Example:
-```
-[APE-STEP]    step=42 clock=... activity=A state=S1 action=MODEL_CLICK decision_source=LLM ... activity_has_mop=0 ...
-[APE-OUTCOME] step=42 decision_source=LLM new_state=true target_state=S7 activity_changed=true activity_has_mop=1
-```
+- **INV-ARCH-09**: A `StepRecord`'s `out` section SHALL describe the transition of the action recorded in that same record's `dec` section (enforced by the reference-equality buffer guard), and at most one `out` SHALL ever be attached per record. A record MAY be closed without an `out` member — when the selected action produced no recorded transition (restart, refinement discard, non-model action, run end) — which is a legitimate, informative absence, not an error; it is distinct from the teardown flush encoding `out:{"resolved":false}`.
 
-- **INV-ARCH-08**: The `[APE-OUTCOME]` line SHALL be gated by `stepTelemetryEnabled` exactly as the `[APE-STEP]` line is. With `ape.stepTelemetryEnabled=false` — which an arm now states directly, the `apePureMode` switch that used to force it having been retired with its registry (INV-ARCH-06 dissolved; substitute `run-spec` INV-RUN-05) — zero `[APE-OUTCOME]` lines SHALL be emitted.
-- **INV-ARCH-09**: The `step` on an `[APE-OUTCOME]` line SHALL equal the `step` on the `[APE-STEP]` line of the action whose transition it reports. Every emitted `[APE-OUTCOME]` line SHALL have a matching `[APE-STEP]` line with the same `step`, and at most one `[APE-OUTCOME]` line SHALL be emitted per `step` value. An `[APE-STEP]` line MAY have no matching `[APE-OUTCOME]` line — when the selected action produced no recorded transition (restart, refinement discard, run end) — which is a legitimate, informative absence, not an error.
+**Where the outcome line's two dropped fields went.** Two scenarios below keep their pre-change
+header over a body this change contradicts:
+
+| Scenario header | What it asserted | Where the claim is now |
+|---|---|---|
+| `outcome on a non-MOP screen` | `activity_has_mop=0\|1` on the outcome line, the landing half of the evidential link | `out.target` → that `STATE` entry's `act` → that `ACT` entry's `mop`. The bit is recorded once per activity, never per step, on either the selection or the landing side (`action-selection`, `event-sink :: Dictionary Events and Run-Local IDs`). The link is unchanged; it is one dereference away instead of inline |
+| `Outcome line suppressed under pure mode` | zero outcome lines when the arm sets the telemetry gate | **nothing, deliberately** — the gate is deleted with its key, so no arm can suppress attribution. What protects the control arm's integrity is now a property that can be checked instead of a switch that must be trusted: sink neutrality (`event-sink` INV-SNK-07), asserted by a permanent test |
 
 #### Scenario: LLM decision attributed to a new-state discovery on a MOP screen
 
-- **WHEN** an action with `decision_source=LLM` selected at step 42 executes, the resulting transition reaches a first-visit state, and the target activity is in the MOP-activity set
-- **THEN** an `[APE-OUTCOME] step=42 decision_source=LLM new_state=true target_state=<key> activity_changed=<bool> activity_has_mop=1` line SHALL be emitted
-- **AND** it SHALL be joinable to the `[APE-STEP] step=42` line by the shared `step=42`
+- **WHEN** an action with `decision_source=LLM` selected at step 42 executes, the resulting transition reaches a state visited for the first time, and the target activity is in the MOP-activity set
+- **THEN** the `s:42` record SHALL be closed with `out` carrying `new_state:true` and the target state's dictionary ID
+- **AND** the landing activity's MOP status SHALL be recoverable as `out.target` → `STATE.act` → `ACT.mop:1`
+- **AND** the LLM call's sub-event, the decision, and the outcome SHALL all be members of that single record — no join key exists or is needed
 
 #### Scenario: outcome on a non-MOP screen
 
 - **WHEN** the recorded transition's target activity is not in the MOP-activity set (or `MopData` is null)
-- **THEN** the `[APE-OUTCOME]` line SHALL carry `activity_has_mop=0`
+- **THEN** the dereference `out.target` → `STATE.act` → `ACT.mop` SHALL yield `0`
+- **AND** the record SHALL carry no MOP-screen field of its own — the outcome half of the evidential link is preserved as a lookup, not as a per-step copy of a per-activity constant
 
 #### Scenario: Outcome line suppressed under pure mode
 
-- **WHEN** an arm states `ape.stepTelemetryEnabled=false` (the `ape_pure` arm does; the retired `apePureMode` key can no longer force it)
-- **THEN** zero `[APE-OUTCOME]` lines SHALL be emitted for the run
-- **AND** zero `[APE-STEP]` lines SHALL be emitted
+- **WHEN** an arm sets `ape.stepTelemetryEnabled=false`
+- **THEN** plan resolution SHALL abort with an unknown-key diagnostic and no run SHALL start — there is no suppressed mode, in the `ape_pure` arm or any other
+- **AND** the control arm's integrity SHALL rest on the neutrality gate (INV-SNK-07) rather than on the absence of records
+
+#### Scenario: Attribution identical in every arm
+
+- **WHEN** the minimal control preset runs the same APK and seed as the full MOP+LLM preset
+- **THEN** both runs SHALL attach `out` sections under identical rules (no gate, no arm-level suppression)
+- **AND** the neutrality gate (INV-SNK-07) — not telemetry absence — is what protects the control arm's integrity
 
 #### Scenario: Selected action with no recorded transition
 
-- **WHEN** an action is selected and emits an `[APE-STEP] step=50` line but the step ends in a restart before any transition is recorded (or it is the run's first step, where `addTransition` returns null)
-- **THEN** no `[APE-OUTCOME] step=50` line SHALL be emitted
-- **AND** this absence SHALL NOT be treated as an error by offline analysis
+- **WHEN** an action is selected at step 50 but the step ends in a restart before any transition is recorded (or it is the run's first step, where `addTransition` returns null)
+- **THEN** the `s:50` record SHALL be closed without an `out` member
+- **AND** this absence SHALL NOT be treated as an error by offline analysis ("selected, no clean transition")
 
 #### Scenario: BadStateException retry emits a single outcome
 
 - **WHEN** the transition for the action selected at step 60 is recorded, and action selection then throws `BadStateException`, causing the update to re-run `Model.addTransition` within the same step
-- **THEN** exactly one `[APE-OUTCOME] step=60` line SHALL be emitted (the buffer was consumed by the first emission)
+- **THEN** the `s:60` record SHALL be closed exactly once with exactly one `out` (the buffer was consumed by the first closure)
 
 #### Scenario: Refinement step still attributed
 
 - **WHEN** the action selected at step 70 executes, and model refinement replaces `currentAction` with the rebuilt model's action object before `updateGraph()` runs
 - **THEN** the buffered action SHALL be remapped alongside `currentAction`
-- **AND** an `[APE-OUTCOME] step=70` line SHALL be emitted for the recorded transition
+- **AND** the `s:70` record SHALL be closed with its `out` for the recorded transition
 
 ## Invariants
 

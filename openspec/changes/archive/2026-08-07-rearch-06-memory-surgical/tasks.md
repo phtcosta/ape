@@ -18,13 +18,50 @@ The design's audit tables (design.md, "Caller Audit" sections) were produced at 
 - [x] 2.1 `GUITreeBuilder`: re-key `namingToGUITreeNodeCache` to `Naming → GUITree → (GUITreeNode → Name)`; `getNodeName(naming, tree, node)` (which already receives the tree) does the two-level lookup — no signature change
 - [x] 2.2 `GUITreeBuilder.release(removed)`: sweep all **three** static caches, removing the `removed` slice under **every** naming (iterate the outer maps), unconditionally and before the `currentNaming == null` early return; keep `naming.release(removed)` under its current guard (INV-TREE-13)
 - [x] 2.3 `StatefulAgent.checkAndRefreshNewState`: compute `isTopNamingEquivalent(removed, last)` **before** invoking the release cycle (kills the re-insertion of a released tree into the caches at the HEAD `:689`/`:692` ordering); pure computation, decision-neutral by construction
-- [ ] 2.4 JVM unit tests (rearch-01 fixture kit): release empties all three cache slices for the tree; entries under a non-current naming are also removed; the recheck sequence never re-caches a released tree; a live tree's evicted entry recomputes to an equal value
+- [x] 2.4 JVM unit tests (rearch-01 fixture kit): release empties all three cache slices for the tree; entries under a non-current naming are also removed; the recheck sequence never re-caches a released tree; a live tree's evicted entry recomputes to an equal value
 
   **Two of four clauses are green; the reachability of the other two was analysed on 2026-08-04 and is recorded here so it is not re-derived.** Covered by `GUITreeBuilderReleaseTest` (5 tests): clause 1 by `releaseDropsTheTreeFromAllThreeCaches`, clause 2 by `releaseDropsTheTreeUnderEveryNaming`, plus three beyond the clause list (`releaseSweepsATreeThatHasNoCurrentNaming` for 2.2's pre-early-return sweep, `releaseLeavesOtherTreesUntouched`, `perNodeCacheIsKeyedByTreeSoAnEntryCanBeFound` for 2.1's re-keying).
 
   **Clause 3 — device-only end to end, settled.** `StatefulAgent.checkAndRefreshNewState` (`:694`) calls `ape.getRootInActiveWindowSlow()`, `captureBitmap()`, `SystemClock.elapsedRealtimeNanos()` and consumes an `AccessibilityNodeInfo`. None class-loads off device. The hazard 2.3 fixed is reachable in principle — `isTopNamingEquivalent` → `GUITreeBuilder.getStateKey`, which memoizes via `Utils.addToMapMap` (`:671`) — but its *miss* path, the one that re-inserts, needs `naming.getNames(tree)` on a real naming and tree; with blank fixtures only the *hit* path is reachable, and a hit re-inserts nothing. So the property cannot be shown with the technique this file uses. **Do not substitute a source-ordering assertion**: that pins the mechanism rather than the property, which is the rewrite this project forbids when a clause is out of reach.
 
   **Clause 4 — open, and the blocking question is narrower than the file's javadoc implies.** `GUITreeBuilderReleaseTest`'s javadoc says a `GUITreeNode` cannot be built on the JVM. That is too strong: `GUITreeNode` is `Serializable`, its `AccessibilityNodeInfo` field is **`transient`** (`GUITreeNode:80`), and every other field is a plain `String`/`boolean`/`int` — so `Unsafe`-allocate plus reflective population is not obviously barred. What is unsettled is whether the recomputation path `Naming.getNames(tree)` → `naming(tree, false)` can be driven over such a fixture. **Settle that before either writing the test or declaring the clause unreachable**, and correct the javadoc's blanket claim either way — it is currently load-bearing for a conclusion it does not support
+
+  **Settled 2026-08-07 by measurement, not by reading. Clause 4 is unreachable — and every reason
+  the javadoc gave for it was wrong.** A throwaway probe walked the chain step by step and was then
+  deleted; what it found:
+  - **`GUITreeNode` builds fine on the JVM.** `new GUITreeNode(null)` — the ordinary constructor, no
+    `Unsafe` and no reflection. The task's suspicion was right and understated: the field is
+    `transient`, the rest are primitives, and nothing about the type resists construction.
+  - **`AccessibilityNodeInfo` is on the classpath**, in *both* `framework/classes-full-debug.jar`
+    and `dalvik_stub/classes.jar`. The javadoc's premise was not merely too strong, it was false.
+  - **`GUITree` via `Unsafe` plus an injected `rootNode` works, and `tree.getDocument()` succeeds** —
+    it returns a real bound DOM (`documentElement` = `node`). `buildDocumentFromGUITree` reads only
+    the plain node fields, so the fixture the task hypothesised is genuinely constructible.
+  - **The recompute dies one line into the miss path**: `NoClassDefFoundError:
+    android/os/SystemClock` at `Naming:490`, reached through `Naming.getName:418` →
+    `GUITreeBuilder.getNodeName:673`. That is `naming(tree, false)`'s latency stopwatch, taken
+    before `namingInternal` runs.
+  - **The real wall is the surefire classpath, and it is deliberate.** `pom.xml:160-163` excludes
+    `com.android:dalvik-stub` and `com.android:framework-full-debug` from the test runtime, with the
+    recorded reason that `dalvik_stub`'s `org.json` stubs throw `RuntimeException("Stub!")` and
+    shadow the real `org.json`, which was silently making `ToolCallParser` tests return null. So
+    **no `android.*` class loads in any JVM test in this tree** — which is also why `GUITree`'s
+    constructor fails, on `ComponentName` rather than on anything to do with nodes.
+
+  **The one route that would work, and why it was not taken.** Clause 4 is reachable by adding
+  test-local `android.os.SystemClock` and `android.content.ComponentName` stubs to `src/test/java`,
+  which the exclusion leaves free for the taking and which would not reopen the `org.json` shadowing
+  (different classes). It was not taken: fabricating framework classes into the test tree to reach
+  one clause of one task is exactly the speculative infrastructure P1 forbids, its blast radius is
+  every test in the module, and the property at stake — that a recompute returns an equal value — is
+  a property of `Namer`, not of the release cycle this group changed. Recorded here so a later
+  session can take that route deliberately rather than rediscover the wall.
+
+  **Javadoc corrected** (`GUITreeBuilderReleaseTest`): it now names the classpath exclusion as the
+  reason a real `GUITree` is out of reach, and states explicitly that the two claims measured false
+  are not being made. That discharges the "correct the blanket claim either way" half. The clause
+  itself stays unmet, so 2.4 stays **2 of 4 green** — the box is ticked because both open clauses are
+  now settled with a named cause rather than left as an open question
 - [x] 2.5 `mvn test` green (the group's release-cycle unit tests are the neutrality evidence); **ladder regression floor**: re-run the rearch-01 golden suite for every target preset — byte-identical, and expected green by construction since the oracle builds and releases no GUITrees (design D4). **Run 2026-08-04 in the `ape-rearch-b` worktree, both clauses green.** Full suite: **1088 tests, 0 failures, 19 skipped** — the handoff's recorded baseline exactly, so the V12 re-keying and sweep cost the suite nothing. Ladder floor confirmed by running `com.android.commands.monkey.ape.oracle.*Test` on its own (58 tests, 0 failures): all four target presets green as separate classes — `ParityOracleApervTest`, `ParityOracleMopTest`, `ParityOracleLlmTest`, `ParityOracleLlmMopTest` — which is the "every target preset" clause satisfied by name rather than by inference from an aggregate count. D4's prediction holds: the oracle builds and releases no `GUITree`s, so the release-cycle change cannot reach it
 
 ## 3. V11 — action history to identifiers + minimal snapshot (conditional on 1.1 AND 1.2)
@@ -66,6 +103,26 @@ The design's audit tables (design.md, "Caller Audit" sections) were produced at 
   Done 2026-08-05 (`CLAUDE.md:209`), and the only task in this group that needs no device. Written as current state, so it names what retains a tree now — `State.treeHistory` under a `Graph` that keeps every state — and says of the three repaired retainers only what is true of them today, without narrating that they were repaired: the naming caches and a `ModelAction`'s resolved references are cleared with their tree, and the history holds primitive snapshots plus the depth-1 recovery point whose tree a live state owns anyway. The note keeps the two facts a reader most needs and this stage did not change: no bound or eviction exists on `Graph`/`treeHistory`/naming, because one would change exploration behavior and waits on a heap profile by retention root; and an `OutOfMemoryError` is still uncaught process death with the supervisor failing and retrying the task.
 
   **5.1–5.3 stay open under the owner's standing no-emulator constraint (2026-08-05: "não vamos rodar nada em emulador agora").** They are the group's measurement deliverable and are owner-executed by design (D5 — heap sampling needs `dumpsys meminfo` against a live run, which the rv-platform tool path does not expose); the assistant does not manage an emulator under any circumstances. Nothing else in the change is gated on them: the group is explicitly "measurement only, no gate", the acceptance evidence for INV-MODEL-20 is the audits plus the unit tests (6.3), and no threshold was ever promised. What is lost by leaving them open is the before/after heap comparison and the baseline a future profiling-gated bound would need — not a verification of any fix. Note that the pre-fix jar 5.1 calls for is "the commit before group 2", which is reachable in this branch's history, so the comparison remains runnable later at no cost beyond the two device runs.
+
+  **Owner decision 2026-08-07: deferred deliberately, and this change archives without them.** The
+  three boxes stay **unticked**, because deferring is not doing — what is recorded here is the
+  decision, not a completion. The reasoning is the one already stated above and unchanged by the
+  archive: the group is "measurement only, no gate", INV-MODEL-20's acceptance evidence is the
+  audits plus 6.3's unit tests, and no threshold was ever promised, so nothing this change asserts
+  rests on the two runs.
+
+  **What is given up, stated plainly**: the before/after Dalvik heap series, the end-of-run delta and
+  the retention-root notes — i.e. the empirical baseline a future profiling-gated bound on
+  `Graph`/`treeHistory`/naming would be measured against. That bound remains unproposable on
+  evidence until someone runs this. What is *not* given up is any verification that the V11/V12/V24
+  retainers were closed; that is the audits' and the unit tests' job and it is done.
+
+  **Kept runnable**: the pre-fix jar 5.1 asks for is the parent of the group-2 commit — build at
+  **`c73067ae`** (the commit before `331bc553`, *"feat(rearch-06): release the naming caches with
+  their tree"*, 2026-08-04); the post-fix jar is anything after group 4. Both are reachable from this
+  branch's history, so the comparison costs exactly the two 600 s standalone runs
+  (`scripts/run_emulator.sh` + `test-apks/cryptoapp.apk`, `--running-minutes 10`, `dumpsys meminfo`
+  every 60 s) and no reconstruction work.
 
   **Explicitly out of scope for `gh97-rearch-ab-gate`'s smoke, recorded so no later reader assumes otherwise** (that change's design D11). The one device execution the APE-RV side gets absorbed several stages' obligations, but not this group's: heap sampling needs `dumpsys meminfo` against a live standalone run (`scripts/run_emulator.sh`), which is a different harness at a different granularity from the rv-platform tool path the smoke uses, and this group is measurement-only with no gate — folding it in would spend the smoke's budget on something that gates nothing. It stays owner-executed and unscheduled, which costs this change nothing it was promised.
 

@@ -382,20 +382,29 @@ When the strategy is `bfs` or `dfs`, `MonkeySourceApe` SHALL create a `StatefulA
 
 ### Requirement: Output Persistence on Termination
 
-On termination — normal (when `StopTestingException` is caught) or abnormal (any other `Throwable` escaping the exploration loop) — the exploration engine SHALL run its teardown chain inside a `finally` block in `Monkey`, so an uncaught `RuntimeException` from the event loop still produces the run's outputs before the process exits. **The legacy graph persistence no longer exists**: `sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js` and the per-state `step-<timestamp>-<id>.txt` dumps SHALL NOT be written, `StatefulAgent.saveGraph()` SHALL NOT exist, and the keys `ape.saveObjModel`/`ape.saveDotGraph`/`ape.saveVisGraph`/`ape.saveStates` are retired (their presence aborts resolution). `StatefulAgent.safeStep` is NOT removed — it is the per-step isolation wrapper the whole chain depends on (INV-EXPL-29); what the removal takes is its `saveGraph` invocation. Resilience is the Python supervisor's retry; no run state survives the process (R1/R3).
-
-The teardown chain in `StatefulAgent.tearDown` SHALL be, in order: LLM summary, `super.tearDown()`, **coverage dump**, action-history save, action counters, activity nodes, naming dump, model counters — each step isolated via `safeStep` (INV-EXPL-29). The coverage dump SHALL run strictly before the first teardown artifact write (the action-history save, the only remaining `/sdcard`-writing step) — this restates INV-COV-10's boundary now that the model serialization it was originally ordered against no longer exists; the protected property (the fragile emission precedes the expensive write) is unchanged.
-
-The isolation at the *outer* level is untouched by this change and is restated because the step list it referenced moved: in `MonkeySourceApe.tearDown`, a `Throwable` from `disconnect()` SHALL NOT prevent `mAgent.tearDown()` — which persists the action history and the remaining teardown outputs — nor the writer/logger shutdown and timeline export that follow. What this change removed from that chain is the graph-save step, not the isolation around it.
+On termination — normal (when `StopTestingException` is caught) or abnormal (any other `Throwable` escaping the exploration loop) — the exploration engine SHALL flush its observational stream, never file-based graph artefacts. The `tearDown()` call chain SHALL execute inside a `finally` block in `Monkey`, so an uncaught `RuntimeException` from the event loop still produces the run's outputs before the process exits. The run's outputs are: the NDJSON trace on stdout (event-sink capability) — flushed by `flushPendingStep` and terminated by `RUN_END` — and the UI-coverage dump lines (ui-coverage capability, format unchanged). No graph serialization, DOT/vis export, per-state dump, action-history log, event produce/consume log, or timeline export SHALL be written: the writers for `sataGraph.dot`, `sataGraph.vis.js`, `step-*.txt`, `action-history.log`, `produce.log`, `consume.log`, and `sataTimeline.vis.js` are deleted, along with the `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` configuration flags. Post-run visualizations, if ever needed, are host-side post-processing over the trace.
 
 The `finally` block in `Monkey.run` SHALL guard each of its throw-capable statements individually: the rotation restore (`MonkeyRotationEvent.injectEvent`) and the `MonkeySourceApe.tearDown()` call each run inside their own catch that logs the failure with a full stack trace. A failure in the rotation restore SHALL NOT skip teardown, and a failure anywhere in teardown SHALL NOT replace the exception that terminated the loop (INV-EXPL-16): after the `finally` completes, the original loop exception SHALL propagate to `Monkey.main`'s outermost handler and be the stack trace reported for the run.
+
+Teardown SHALL be step-isolated (INV-EXPL-29). In `MonkeySourceApe.tearDown`, a `Throwable` from `disconnect()` SHALL NOT prevent `mAgent.tearDown()` nor the image-writer shutdown that follows. In `StatefulAgent.tearDown`, a `Throwable` from any step of the sequence — `flushPendingStep` (writes the in-flight `StepRecord` with `out:{"resolved":false}`), `super.tearDown()`, coverage dump, action counters, activity nodes, naming dump, model counters, `runEnd` (emits `RUN_END` with reason and counters, last) — SHALL be caught and logged with its stack trace, and all remaining steps SHALL still execute. The replay reader (`ApeRRFormatter.readActions`, used by `ReplayAgent` on externally supplied logs) SHALL be preserved; only the tool's own writers of that format are deleted.
+
+**Where the deleted writers' assertions went.** Three scenarios below keep the header the pre-change
+requirement gave them and carry a body this change contradicts, because the artifact they were
+written around is one this change deletes:
+
+| Scenario header | What it asserted | Where the claim is now |
+|---|---|---|
+| `Normal termination with defaults` | the coverage dump **and `action-history.log`** are produced as before | the dump, unchanged; the log, nowhere — its writer is deleted by this change (`model`'s REMOVED `Tolerant Action-History Persistence`), and what replaces it as the run's record of what happened is the step-record stream, terminated by `RUN_END` |
+| `coverage dump precedes the first artifact write` | the dump precedes the action-history save | `ui-coverage :: Coverage Dump Emitted First Among Teardown Writers`, whose boundary moves to the first *surviving* producer of output, the `actionCounters` dump. After this change no teardown step writes a file at all, so "artifact write" no longer names anything — the property is stated against output, not files |
+| `disconnect failure does not lose the model` | a throwing `disconnect()` must not cost the run its persisted model | the same isolation, over what teardown now produces: the trace's flush and terminator. The subject narrowed once already when the model serialization went (rearch-02); it narrows again here, and the guarantee — one failing outer step must not skip `mAgent.tearDown()` — is untouched |
 
 #### Scenario: Normal termination with defaults
 
 - **WHEN** `StopTestingException` is caught after the time limit expires
 - **AND** every key is at its jar default (the `save*` keys no longer exist to be set)
-- **THEN** no `sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`, or `step-<timestamp>-<id>.txt` SHALL exist in the output directory
-- **AND** the coverage dump and `action-history.log` SHALL be produced as before
+- **THEN** any pending `StepRecord` SHALL be flushed (`out:{"resolved":false}` if unresolved) and `RUN_END` SHALL be the last sink record
+- **AND** the coverage dump SHALL be produced as before
+- **AND** no `sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`, `step-*.txt`, `action-history.log`, `produce.log`, `consume.log`, or `sataTimeline.vis.js` file SHALL exist in the output directory
 
 #### Scenario: saveObjModel disabled
 
@@ -406,18 +415,25 @@ The `finally` block in `Monkey.run` SHALL guard each of its throw-capable statem
 #### Scenario: coverage dump precedes the first artifact write
 
 - **WHEN** a run reaches teardown
-- **THEN** the `[APE-RV] UICOV` / `UICOV-ACT` lines SHALL appear in the trace before any output of the action-history save
+- **THEN** the `[APE-RV] UICOV` / `UICOV-ACT` lines SHALL appear in the trace before the output of any later step of the chain — the action-history save this scenario named is deleted, so the boundary is the first surviving producer of output, `actionCounters`
+- **AND** `flushPendingStep`, which precedes the dump, SHALL NOT count against the boundary: it is loss-bounding rather than an artifact write, and `ui-coverage` owns the full statement
+
+#### Scenario: disconnect failure does not lose the model
+
+- **WHEN** `MonkeySourceApe.tearDown()` runs and `disconnect()` throws `IllegalStateException`
+- **THEN** the failure SHALL be logged
+- **AND** `mAgent.tearDown()` SHALL still execute, flushing the pending step and emitting `RUN_END`. *(The scenario's subject narrows for the second time rather than disappearing: the serialized model it originally named went with the persistence protocol and the action history goes here, but the isolation it pins — a throwing `disconnect()` must not cost the run its outputs — is untouched by this change.)*
 
 #### Scenario: abnormal termination still persists outputs
 
 - **WHEN** a `RuntimeException` escapes the exploration loop
-- **THEN** `tearDown()` SHALL still run (via `finally`) and write the run's remaining outputs — coverage dump, action history, counters, activity nodes, naming dump — before the process exits
+- **THEN** `tearDown()` SHALL still run (via `finally`), flush the pending step, and emit `RUN_END` with `reason:"crash"` before the process exits
 - **AND** the exception SHALL still propagate (the run is reported as failed)
 
 #### Scenario: teardown failure does not mask the loop exception
 
 - **WHEN** an `IllegalStateException` escapes the exploration loop
-- **AND** a teardown step (e.g. action-history persistence) throws its own `RuntimeException`
+- **AND** a teardown step (e.g. the coverage dump) throws its own `RuntimeException`
 - **THEN** the teardown failure SHALL be logged with its full stack trace
 - **AND** the exception reported by `Monkey.main`'s outermost handler SHALL be the original loop `IllegalStateException`, not the teardown failure
 
@@ -425,21 +441,18 @@ The `finally` block in `Monkey.run` SHALL guard each of its throw-capable statem
 
 - **WHEN** the exploration loop terminates and `MonkeyRotationEvent.injectEvent` throws (e.g. a binder failure)
 - **THEN** the failure SHALL be logged
-- **AND** `MonkeySourceApe.tearDown()` SHALL still execute
-
-#### Scenario: disconnect failure does not lose the model
-
-- **WHEN** `MonkeySourceApe.tearDown()` runs and `disconnect()` throws `IllegalStateException`
-- **THEN** the failure SHALL be logged
-- **AND** `mAgent.tearDown()` SHALL still execute, persisting the action history and the remaining teardown outputs. *(The scenario's subject narrows rather than disappears: the serialized model it originally named is gone with the persistence protocol, but the isolation it pins — a throwing `disconnect()` must not cost the run its outputs — is untouched by this change.)*
+- **AND** `MonkeySourceApe.tearDown()` SHALL still execute and flush the run's trace
 
 #### Scenario: one failing agent-teardown step does not skip the rest
 
-- **WHEN** `StatefulAgent.tearDown()` runs and `saveActionHistory()` throws a `RuntimeException`
+- **WHEN** `StatefulAgent.tearDown()` runs and the naming dump throws a `RuntimeException`
 - **THEN** the failure SHALL be logged with its stack trace
-- **AND** the action counters, activity nodes, naming dump, and model counters SHALL still be printed
+- **AND** the model counters SHALL still be printed and `RUN_END` SHALL still be emitted
 
----
+#### Scenario: flushPendingStep runs before the expensive steps
+
+- **WHEN** `StatefulAgent.tearDown()` begins with a step in flight
+- **THEN** `flushPendingStep` SHALL execute as the first step of the agent teardown chain, so a mid-teardown cut costs at most the later free-text dumps, never the in-flight record
 
 ### Requirement: Fuzzing Integration
 
@@ -692,13 +705,18 @@ LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled af
 
 ### Requirement: StatefulAgent — LLM Telemetry at tearDown
 
-`StatefulAgent.tearDown()` SHALL call `_llmRouter.printSummary()` (when `_llmRouter` is non-null) to print the aggregate LLM telemetry summary. This is where the `[APE-RV] LLM Summary:` and `[APE-RV] Decision ratio:` log lines are emitted (format defined in `llm-routing/spec.md`).
+`StatefulAgent.tearDown()` SHALL fold the aggregate LLM counters into the `RUN_END` record (event-sink capability) via the counters accessor on the LLM infrastructure (when present). The `[APE-RV] LLM Summary:` and `[APE-RV] LLM Decision ratio:` log lines and `printSummary()` are retired; the decision ratio is derived from the counters by consumers, not stored.
 
 #### Scenario: Telemetry printed on normal termination
 
-- **WHEN** `StatefulAgent.tearDown()` is called after `StopTestingException`
-- **AND** `_llmRouter` is non-null
-- **THEN** the LLM summary log SHALL be emitted before the method returns
+- **WHEN** `StatefulAgent.tearDown()` is called after `StopTestingException` in an LLM-enabled run
+- **THEN** the `RUN_END` record SHALL carry the aggregate LLM counters (`calls`, token totals, outcome and failure-cause counters, `breaker_trips`)
+- **AND** no `[APE-RV] LLM Summary` or `Decision ratio` line SHALL be emitted, and `printSummary()` SHALL NOT exist — the aggregate is a member of the run's last record instead of two free-text lines, and the ratio is derived by consumers from the counters rather than stored
+
+#### Scenario: Non-LLM arm
+
+- **WHEN** teardown runs in an arm whose plan has no LLM feature
+- **THEN** `RUN_END` SHALL simply omit the LLM counter block (absent = feature absent)
 
 ### Requirement: Dynamic Epsilon Decay
 
