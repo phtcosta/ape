@@ -15,7 +15,6 @@
  */
 package com.android.commands.monkey.ape.model;
 
-import java.io.PrintWriter;
 import java.io.Serializable;
 import java.util.Arrays;
 
@@ -100,12 +99,6 @@ public class StateKey implements Serializable {
     public void dumpState() {
         for (int i = 0; i < widgets.length; i++) {
             Logger.format("%3d %s", i, widgets[i]);
-        }
-    }
-
-    public void saveState(PrintWriter pw) {
-        for (int i = 0; i < widgets.length; i++) {
-            pw.format("%3d %s\n", i, widgets[i]);
         }
     }
 

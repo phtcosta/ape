@@ -8,22 +8,26 @@ import com.android.commands.monkey.ape.model.State;
  *
  * <p>The RV scoring path used to be a wall of inline {@code if}-blocks in
  * {@code StatefulAgent.adjustActionsByGUITree()}. Each block is now one {@code ScoringPass}, assembled
- * in fixed order by {@link ScoringPipeline#fromConfig}. A pass reads every collaborator (MopData,
+ * in fixed order by {@link ScoringPipeline#fromParams}. A pass reads every collaborator (MopData,
  * coverage tracker, graph, per-run pick eligibility) through the {@link ScoringContext} handed to
  * {@link #apply}; it holds no run-mutable field of its own, so it stays unit-testable with a stub
  * context and all cross-step state lives on the agent reached through the context.
  *
- * <p>{@link #isEnabled()} is decided once, in the constructor, from {@code Config} (and the run-fixed
- * {@code MopData}); it is never re-evaluated per {@code apply}. A disabled pass is not added to the
+ * <p>{@link #isEnabled()} is decided once, in the constructor, from the injected
+ * {@link ScoringParams} (and the run-fixed {@code MopData}); it is never re-evaluated per
+ * {@code apply}. A disabled pass is not added to the
  * assembled pipeline and is therefore a strict no-op for the run — zero priority mutations, zero
  * provenance writes, zero log lines.
  */
 public interface ScoringPass {
 
-    /** Stable identifier for the {@code [APE-ARCH] passes=[...]} assembly log and for tests. */
+    /** Stable identifier for the {@code PIPELINE} record's passes/candidates lists and for tests. */
     String name();
 
-    /** Decided in the constructor from {@code Config}; not re-evaluated per {@link #apply} call. */
+    /**
+     * Decided in the constructor from the injected {@link ScoringParams}; not re-evaluated per
+     * {@link #apply} call.
+     */
     boolean isEnabled();
 
     /**

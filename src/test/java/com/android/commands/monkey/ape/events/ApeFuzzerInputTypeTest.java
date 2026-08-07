@@ -1,8 +1,11 @@
 package com.android.commands.monkey.ape.events;
 
-import com.android.commands.monkey.ape.utils.Config;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.utils.TypedInputGenerator;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Random;
@@ -15,6 +18,17 @@ import static org.junit.Assert.*;
 public class ApeFuzzerInputTypeTest {
 
     private final Random rnd = new Random(42);
+
+    /** The typed path is plan-controlled, and the generator reads the plan in effect. */
+    @Before
+    public void installDefaultPlan() {
+        TestRunSpecs.install();
+    }
+
+    @After
+    public void clearPlan() {
+        RunContext.resetForTest();
+    }
 
     @Test // 18.1
     public void testPasswordInputTypeProducesMixedClass() {
@@ -59,16 +73,11 @@ public class ApeFuzzerInputTypeTest {
 
     @Test // 18.7 — rollback guard (INV-MOP-16)
     public void testFuzzInputTypedFlagBypassesTypedPath() {
-        boolean prev = Config.fuzzInputTyped;
-        Config.fuzzInputTyped = false;
-        try {
-            String out = TypedInputGenerator.generateForType("textPassword", "Your password", rnd);
-            assertFalse("must NOT be password shape when disabled",
-                    out.matches(".*[0-9].*") && out.matches(".*[!@#$%&*?].*"));
-            assertTrue("legacy lowercase shape", out.matches("^[a-z]+$"));
-        } finally {
-            Config.fuzzInputTyped = prev;
-        }
+        TestRunSpecs.install("ape.fuzzInputTyped", "false");
+        String out = TypedInputGenerator.generateForType("textPassword", "Your password", rnd);
+        assertFalse("must NOT be password shape when disabled",
+                out.matches(".*[0-9].*") && out.matches(".*[!@#$%&*?].*"));
+        assertTrue("legacy lowercase shape", out.matches("^[a-z]+$"));
     }
 
     @Test // 18.8

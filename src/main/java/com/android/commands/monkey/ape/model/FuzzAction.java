@@ -68,16 +68,6 @@ public class FuzzAction extends Action {
         return events;
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jAction = super.toJSONObject();
-        JSONArray jEvents = new JSONArray();
-        for (ApeEvent event : events) {
-            jEvents.put(event.toJSONObject());
-        }
-        jAction.put("events", jEvents);
-        return jAction;
-    }
-
     public static Action fromJSON(JSONObject jAction) throws JSONException {
         JSONArray jEvents = jAction.getJSONArray("events");
         int length = jEvents.length();

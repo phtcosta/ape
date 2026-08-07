@@ -16,9 +16,11 @@ import com.android.commands.monkey.ape.utils.MopScorer;
 public final class MenuGatewayPass implements ScoringPass {
 
     private final boolean enabled;
+    private final int weightOpenMenu;
 
-    public MenuGatewayPass(ScoringContext ctx) {
+    public MenuGatewayPass(ScoringContext ctx, ScoringParams params) {
         this.enabled = ctx.getMopData() != null;
+        this.weightOpenMenu = params.mopWeightOpenMenu();
     }
 
     @Override
@@ -37,7 +39,8 @@ public final class MenuGatewayPass implements ScoringPass {
         // back-menu-pick-cap: gate the +menuBoost by menuPickEligible so a MENU whose (activity,
         // MODEL_MENU) key is capped stops re-dominating the roulette. No setPriority/setMenuBoost
         // when the gate is closed.
-        int menuBoost = ctx.menuPickEligible(activity) ? MopScorer.scoreOpenMenu(activity, ctx.getMopData()) : 0;
+        int menuBoost = ctx.menuPickEligible(activity)
+                ? MopScorer.scoreOpenMenu(activity, ctx.getMopData(), weightOpenMenu) : 0;
         if (menuBoost > 0) {
             for (ModelAction action : actions) {
                 if (action.getType() == ActionType.MODEL_MENU) {

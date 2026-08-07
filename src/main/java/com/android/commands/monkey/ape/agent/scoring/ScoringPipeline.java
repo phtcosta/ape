@@ -2,61 +2,83 @@ package com.android.commands.monkey.ape.agent.scoring;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.utils.Config;
-import com.android.commands.monkey.ape.utils.Logger;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 
 /**
  * rv-scoring-pipeline (INV-ARCH-03/04/05). The single assembly point and runner for the RV scoring
- * passes. {@link #fromConfig} constructs the six passes in fixed order, keeps only the enabled ones,
- * and logs the assembly once as {@code [APE-ARCH] passes=[...]}; nothing else builds a pipeline.
- * {@link #apply} is the one RV addition to {@code StatefulAgent.adjustActionsByGUITree()} after the
- * (byte-identical upstream) base-priority loop.
+ * passes. {@link #fromParams} constructs the seven passes in the fixed order
+ *
+ * <pre>MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion</pre>
+ *
+ * and keeps only the enabled ones; nothing else builds a pipeline. The assembly is recorded once by
+ * the caller, which is where the decision stages' roster is also in scope and the {@code PIPELINE}
+ * record wants both. Seven are constructed, and a default plan keeps six of them: the
+ * MOP-frontier weight is zero unless a plan states otherwise, which is a gate being shut and not a
+ * pass being missing — {@link #candidates} is what says so in the trace.
+ *
+ * <p>{@link #apply} is the one RV addition to {@code StatefulAgent.adjustActionsByGUITree()} after
+ * the (byte-identical upstream) base-priority loop.
  */
 public final class ScoringPipeline {
 
     private final List<ScoringPass> passes;
+    private final Map<String, Boolean> candidates;
 
     /**
-     * Keeps the enabled passes, in the given order, and logs the assembly once. Package-private: the
-     * only public entry is {@link #fromConfig} (INV-ARCH-04). Tests in this package construct a
-     * pipeline directly from stub passes.
+     * Keeps the enabled passes, in the given order, and records the census of every candidate.
+     * Package-private: the only public entry is {@link #fromParams} (INV-ARCH-04). Tests in this
+     * package construct a pipeline directly from stub passes.
+     *
+     * <p>The census is taken here because here is the last moment the disabled passes exist: the
+     * pipeline drops them and keeps no handle on them, and holding them in a field just to be able
+     * to enumerate them later would keep objects alive for telemetry's sake. Recording their names
+     * and their verdict costs nothing and outlives them.
      */
     ScoringPipeline(List<ScoringPass> candidatePasses) {
         List<ScoringPass> enabled = new ArrayList<>();
+        Map<String, Boolean> census = new LinkedHashMap<>();
         for (ScoringPass p : candidatePasses) {
+            census.put(p.name(), p.isEnabled());
             if (p.isEnabled()) {
                 enabled.add(p);
             }
         }
         this.passes = enabled;
-        Logger.iformat("[APE-ARCH] passes=[%s]", String.join(", ", passNames()));
+        this.candidates = Collections.unmodifiableMap(census);
     }
 
     /**
-     * Builds the pipeline from configuration. Constructs the passes in the fixed order
-     * {@code MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion}
-     * (INV-ARCH-03; the frontier family stays contiguous) and retains only those whose
-     * {@code isEnabled()} is true. The six original passes are the exact order of the pre-refactor
-     * inline blocks; {@code MopFrontierPass} (Lever B) is additive, disabled unless
-     * {@code mopFrontierWeight > 0}. Each pass decides {@code isEnabled()} from {@link Config}'s gates
-     * and the run-fixed {@link ScoringContext#getMopData()} at construction.
+     * Builds the pipeline from the run's scoring parameters. Constructs the seven passes in the
+     * fixed order {@code MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage →
+     * FormCompletion} (INV-ARCH-03; the frontier family stays contiguous) and retains only those
+     * whose {@code isEnabled()} is true. The first six are the exact order of the pre-refactor
+     * inline blocks; {@code MopFrontierPass} (Lever B) is additive, disabled unless its weight is
+     * positive — which it is not by default, so a default plan assembles six passes, not seven.
      *
-     * @param cfg present for signature fidelity with the spec; the pass gates read {@code Config}'s
-     *            {@code public static final} fields directly.
+     * <p>Each pass decides {@code isEnabled()} once, here, from the weights it is handed and the
+     * run-fixed {@link ScoringContext#getMopData()}. This is the only place a scoring parameter is
+     * read: below it, a pass is a function of the numbers it was constructed with, which is what
+     * lets a test state a weight instead of arranging for a global to hold it (INV-ARCH-11).
+     *
+     * @param sink handed to the one pass that records something of its own — the MOP exposure pair,
+     *        which is computed here and nowhere else
      */
-    public static ScoringPipeline fromConfig(Config cfg, ScoringContext ctx) {
+    public static ScoringPipeline fromParams(ScoringParams params, ScoringContext ctx,
+            EventSink sink) {
         List<ScoringPass> candidates = new ArrayList<>();
-        candidates.add(new MopWidgetPass(ctx));
-        candidates.add(new MenuGatewayPass(ctx));
-        candidates.add(new WtgPass(ctx));
-        candidates.add(new FrontierPass(ctx));
-        candidates.add(new MopFrontierPass(ctx));
-        candidates.add(new CoveragePass(ctx));
-        candidates.add(new FormCompletionPass(ctx));
+        candidates.add(new MopWidgetPass(ctx, params, sink));
+        candidates.add(new MenuGatewayPass(ctx, params));
+        candidates.add(new WtgPass(ctx, params));
+        candidates.add(new FrontierPass(ctx, params));
+        candidates.add(new MopFrontierPass(ctx, params));
+        candidates.add(new CoveragePass(ctx, params));
+        candidates.add(new FormCompletionPass(ctx, params));
         return new ScoringPipeline(candidates);
     }
 
@@ -80,7 +102,31 @@ public final class ScoringPipeline {
         }
     }
 
-    /** The enabled passes' names, in pipeline order — the content of the {@code [APE-ARCH]} line. */
+    /**
+     * Every candidate pass in declaration order, mapped to whether it was constructed — the
+     * {@code PIPELINE.candidates} member of the run's trace.
+     *
+     * <p>It is a <b>sibling</b> of {@link #passNames()}, never a widening of it (INV-ARCH-04): a
+     * consumer reading {@code passes} still sees exactly the constructed passes. What it adds is
+     * that the pass list becomes readable as a data-dependent outcome rather than a configuration
+     * echo. Across the decisive campaign's
+     * 360 runs that line took three values, split the same way in every arm, because the whole
+     * frontier family is never constructed in 25 of the 40 applications — and the only evidence of
+     * that in the trace was three names missing from a list every analyst read as configuration.
+     *
+     * <p>No {@code reason} accompanies an entry, and there is no {@code disabledReason()} on
+     * {@link ScoringPass}. Each gate is a conjunction of {@code mopData != null},
+     * {@code hasWtgData()} and a weight, and all three conjuncts are already recorded elsewhere in
+     * the same trace ({@code MOP_DATA.status}, {@code MOP_DATA.wtgEdges}, {@code RUN_START.params}),
+     * so the reason is a lookup rather than a field. It would also be unreliable: the passes do not
+     * evaluate their conjuncts in one order, so a "first failing conjunct" would report source
+     * order rather than cause, and two passes absent for the same reason could disagree about it.
+     */
+    public Map<String, Boolean> candidates() {
+        return candidates;
+    }
+
+    /** The enabled passes' names, in pipeline order — the {@code PIPELINE.passes} member. */
     public List<String> passNames() {
         List<String> names = new ArrayList<>(passes.size());
         for (ScoringPass p : passes) {

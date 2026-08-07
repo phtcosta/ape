@@ -15,7 +15,6 @@
  */
 package com.android.commands.monkey.ape.model;
 
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -67,6 +66,14 @@ public class State extends GraphElement {
         // action is not in upstream APE. The field is always constructed (getMenuAction() stays
         // non-null) but it joins the selectable `actions` set only when the gate is on; with it off
         // the state's action set matches upstream and the agent can never select MODEL_MENU.
+        //
+        // This is the one Config read the decision path keeps (design D9, INV-DP-12's recorded
+        // residue), and it is a decision rather than a deferral. It is not a decision-time read at
+        // all: it gates which actions a State is *built* with, during model construction, from a
+        // value the plan freezes at load. Threading plan state through Model/State/naming
+        // construction to reach it would be a model-layer change with no decision-path payoff, and
+        // StaticConfigReadGuardTest pins it at exactly one occurrence so it cannot quietly grow a
+        // sibling.
         menuAction = new ModelAction(this, ActionType.MODEL_MENU);
         if (Config.modelMenuEnabled) {
             c.add(menuAction);
@@ -128,17 +135,28 @@ public class State extends GraphElement {
         return totalPriority;
     }
 
-    public ModelAction greedyPickLeastVisited(ActionFilter filter) {
-        return greedyPickLeastVisited(filter, null);
+    /**
+     * The action with the lowest visit count, with ties broken by {@code priorityTiebreak}.
+     *
+     * <p>The flag is an argument rather than a field read because this is the seam where every
+     * priority boost — MOP, WTG, coverage — becomes a chosen action, and the greedy path takes
+     * 85-98% of decisions. A residual static read here would keep the old behaviour while the
+     * injected value travelled unused, and nothing else in the run would report differently: the
+     * same stages assemble, the same rungs fire, the same lines are emitted. Only the picks change.
+     * The argument comes from the resolved plan at the SataChain call site (INV-DP-12).
+     */
+    public ModelAction greedyPickLeastVisited(ActionFilter filter, boolean priorityTiebreak) {
+        return greedyPickLeastVisited(filter, null, priorityTiebreak);
     }
 
     /**
-     * As {@link #greedyPickLeastVisited(ActionFilter)}, but skips {@code excluded} when non-null —
-     * the form-submit guard (extended INV-FORM-06): the submit must not be picked by visit count
-     * while the form has unfilled EditTexts, since least-visited ignores the priority that steers
-     * fields ahead of the submit.
+     * As {@link #greedyPickLeastVisited(ActionFilter, boolean)}, but skips {@code excluded} when
+     * non-null — the form-submit guard (extended INV-FORM-06): the submit must not be picked by
+     * visit count while the form has unfilled EditTexts, since least-visited ignores the priority
+     * that steers fields ahead of the submit.
      */
-    public ModelAction greedyPickLeastVisited(ActionFilter filter, ModelAction excluded) {
+    public ModelAction greedyPickLeastVisited(ActionFilter filter, ModelAction excluded,
+            boolean priorityTiebreak) {
         ModelAction minAction = null;
         int minValue = Integer.MAX_VALUE;
         int maxPriority = Integer.MIN_VALUE;
@@ -148,7 +166,7 @@ public class State extends GraphElement {
             }
             int vc = action.getVisitedCount();
             if (beatsLeastVisited(vc, action.getPriority(), minValue, maxPriority,
-                    Config.leastVisitedPriorityTiebreak)) {
+                    priorityTiebreak)) {
                 minValue = vc;
                 maxPriority = action.getPriority();
                 minAction = action;
@@ -317,14 +335,6 @@ public class State extends GraphElement {
     public void dumpState() {
         Logger.format("Dumpping state %s", this);
         stateKey.dumpState();
-    }
-
-    public void saveState(PrintWriter pw) {
-        stateKey.saveState(pw);
-        pw.println();
-        for (int i = 0; i < actions.length; i++) {
-            pw.format("%3d %s\n", i, actions[i]);
-        }
     }
 
     public ModelAction firstEnabledUnvisitedValidAction() {

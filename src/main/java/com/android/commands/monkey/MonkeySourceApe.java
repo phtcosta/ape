@@ -27,11 +27,7 @@ import static com.android.commands.monkey.ape.utils.Config.refectchInfoWaitingIn
 import static com.android.commands.monkey.ape.utils.Config.swipeDuration;
 import static com.android.commands.monkey.ape.utils.Config.treePackageGuard;
 
-import java.io.BufferedWriter;
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -56,13 +52,14 @@ import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StartAction;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.RandomHelper;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.ActivityManager.RunningAppProcessInfo;
-import android.app.ActivityManager.RunningTaskInfo;
 import android.app.UiAutomation;
 import android.app.UiAutomationConnection;
 import android.content.ComponentName;
@@ -122,10 +119,6 @@ public class MonkeySourceApe implements MonkeyEventSource {
     private int mEventId = 0;
     private int statusBarHeight = -1;
     private File mOutputDirectory;
-    private PrintWriter mEventProduceLogger;
-    private PrintWriter mEventConsumeLogger;
-    private File mEventProduceLoggerFile;
-    private File mEventConsumeLoggerFile;
     private ImageWriterQueue[] mImageWriters;
 
     // Counter
@@ -240,17 +233,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 writer.tearDown();
             }
         });
-        safeStep("eventProduceLogger", () -> this.mEventProduceLogger.close());
-        safeStep("eventConsumeLogger", () -> this.mEventConsumeLogger.close());
-        safeStep("visTimeline", () -> {
-            File visOutput = new File(getOutputDirectory(), "sataTimeline.vis.js");
-            ApeRRFormatter.toVisTimeline(mEventProduceLoggerFile, visOutput);
-        });
     }
 
     public MonkeySourceApe(Random random,
             List<ComponentName> MainApps, long throttle, boolean randomizeThrottle, boolean permissionTargetSystem,
-            File outputDirectory) {
+            File outputDirectory, RunSpec runSpec) {
         mRandom = random;
         mMainApps = MainApps;
         packagePermissions = new HashMap<>();
@@ -267,24 +254,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
         mPermissionUtil.setTargetSystemPackages(permissionTargetSystem);
         // mPermissionUtil.populatePermissionsMapping();
         mOutputDirectory = outputDirectory;
-        mEventProduceLoggerFile = new File(mOutputDirectory, "produce.log");
-        mEventProduceLogger = openWriter(mEventProduceLoggerFile);
-        mEventConsumeLoggerFile = new File(mOutputDirectory, "consume.log");
-        mEventConsumeLogger = openWriter(mEventConsumeLoggerFile);
-
-        mAgent = ApeAgent.createAgent(this);
+        mAgent = ApeAgent.createAgent(this, runSpec);
         connect();
-    }
-
-    static PrintWriter openWriter(File logFile) {
-        try {
-            return new PrintWriter(new BufferedWriter(new FileWriter(logFile)));
-        } catch (IOException e) {
-            e.printStackTrace();
-            Logger.wprintln("Cannot open " + logFile);
-            System.exit(1);
-        }
-        return null;
     }
 
     public Agent getAgent() {
@@ -701,13 +672,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
     private final void addEvent(MonkeyEvent event) {
         mQ.addLast(event);
         event.setEventId(mEventId++);
-        ApeRRFormatter.logProduce(mEventProduceLogger, event);
     }
 
     private final void clearEvent() {
         while (!mQ.isEmpty()) {
-            MonkeyEvent e = mQ.removeFirst();
-            ApeRRFormatter.logDrop(mEventConsumeLogger, e);
+            mQ.removeFirst();
         }
     }
 
@@ -844,7 +813,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 // checkAppActivity and this fresh topComp fetch (launcher/installer leak)
                 // is deflected with one raw BACK and never modeled — closing the TOCTOU
                 // window at the modeling boundary (INV-EXPL-20). Whitelist packages and a
-                // null topComp bypass the guard. The BACK is raw (not an [APE-STEP]): it is
+                // null topComp bypass the guard. The BACK is raw (no step record): it is
                 // not counted as a step and is invisible to the BACK/MENU pick cap.
                 if (foreignActivityGuard && topComp != null) {
                     String pkg = topComp.getPackageName();
@@ -1000,11 +969,15 @@ public class MonkeySourceApe implements MonkeyEventSource {
         } else {
             intent.setComponent(new ComponentName(action.getPackageName(), action.getClassName()));
         }
-        boolean ok = AndroidDevice.startActivity(intent);
-        if (!ok) {
+        AndroidDevice.LaunchResult launch = AndroidDevice.startActivity(intent);
+        if (!launch.dispatched()) {
             Logger.wformat("[APE-RV] Triggering activity failed: %s/%s",
                     action.getPackageName(), action.getClassName());
         }
+        // Onto the step's record, which is still open: it closes at N+1, comfortably after this
+        // dispatch. The retired per-action line was written before the dispatch and could not have
+        // carried the answer at all.
+        RunContext.current().sink().componentLaunch(launch.code, launch.error);
     }
 
     private void generateFuzzingEvents(FuzzAction action) {
@@ -1028,12 +1001,10 @@ public class MonkeySourceApe implements MonkeyEventSource {
 
     private void generateEventsForAction(Action action) {
         long clockTimestamp = System.currentTimeMillis();
-        startLogAction(clockTimestamp, action);
         mAgent.appendToActionHistory(clockTimestamp, action);
         generateEventsForActionInternal(action);
         long throttle = mThrottle + action.getThrottle();
         generateThrottleEvent(throttle);
-        endLogAction(action);
     }
 
     public void clearPackage(String packageName) {
@@ -1208,14 +1179,6 @@ public class MonkeySourceApe implements MonkeyEventSource {
             generateKeyBackEvent();
         }
         generateThrottleEvent(mThrottle);
-    }
-
-    private void startLogAction(long clockTimestamp, Action action) {
-        ApeRRFormatter.startLogAction(mEventProduceLogger, action, clockTimestamp, mAgent.getTimestamp());
-    }
-
-    private void endLogAction(Action action) {
-        ApeRRFormatter.endLogAction(mEventProduceLogger, action, mAgent.getTimestamp());
     }
 
     protected void generateThrottleEvent(long base) {
@@ -1428,13 +1391,16 @@ public class MonkeySourceApe implements MonkeyEventSource {
             try {
                 generateEvents();
             } catch (StopTestingException e) {
+                // The agent asked to stop, which ends the run as orderly as the budget expiring
+                // does — the cycle loop sees a null event and breaks. Recorded here because the
+                // loop cannot tell this break from any other.
+                RunContext.current().terminated(RunContext.REASON_TIMEOUT, null);
                 clearEvent();
                 return null;
             }
         }
         mEventCount++;
         MonkeyEvent e = popEvent();
-        ApeRRFormatter.logConsume(mEventConsumeLogger, e);
         return e;
     }
 

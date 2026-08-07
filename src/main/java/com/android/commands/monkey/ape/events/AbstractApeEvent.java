@@ -15,8 +15,6 @@
  */
 package com.android.commands.monkey.ape.events;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import android.graphics.PointF;
 
@@ -26,12 +24,6 @@ public abstract class AbstractApeEvent implements ApeEvent {
      * 
      */
     private static final long serialVersionUID = 1L;
-
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jEvent = new JSONObject();
-        jEvent.put("type", getClass().getSimpleName());
-        return jEvent;
-    }
 
     static float[] fromPointsArray(PointF[] points) {
         float[] results = new float[points.length << 1];

@@ -23,7 +23,7 @@ import android.graphics.Rect;
  * on an element that is absent from the {@code GUITree} (game canvas, {@code SurfaceView},
  * Compose-without-semantics, custom-drawn keyboard), where coordinate matching found no widget.
  *
- * <p>Constructed only by {@code LlmRouter} for the off-tree case and returned directly to the
+ * <p>Constructed only by {@code CoordinateMapper} for the off-tree case and returned directly to the
  * agent; it is <b>not</b> a member of any {@code State.actions} array. The tap target is the raw
  * pixel {@code (pixelX, pixelY)} rather than a resolved {@code GUITreeNode}, so {@code target} is
  * null and {@code requireTarget()} is false — mirroring {@code MODEL_MENU} / {@code MODEL_BACK}.

@@ -45,12 +45,6 @@ public class ApeKeyEvent extends AbstractApeEvent {
         return Arrays.asList(down, up);
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jEvent = super.toJSONObject();
-        jEvent.put("key", keyCode);
-        return jEvent;
-    }
-
     public static ApeEvent fromJSONObject(JSONObject jEvent) throws JSONException {
         int key = jEvent.getInt("key");
         return new ApeKeyEvent(key);

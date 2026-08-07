@@ -15,14 +15,10 @@
  */
 package com.android.commands.monkey.ape.utils;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
 
 import static com.android.commands.monkey.ape.utils.Config.truncateTextLength;
 
@@ -68,23 +64,13 @@ public class StringCache {
         return cacheString(val, addToList);
     }
 
-    static final int maxStringListSize;
-
-    static {
-        File stringFiles = new File("/sdcard/ape.strings");
-        if (stringFiles.exists()) {
-            try (BufferedReader br = new BufferedReader(new FileReader(stringFiles))) {
-                String line = null;
-                while ((line = br.readLine()) != null) {
-                    stringList.add(line);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException("Fail to load the strings file at " + stringFiles);
-            }
-        }
-        maxStringListSize = stringList.size() + Config.maxStringListSize;
-    }
+    /**
+     * The cap on the cache, which is populated exclusively from text observed on screen during the
+     * run ({@code cacheString(s, true)} call sites). There is no file-derived contribution: the jar
+     * reads no behavioral input from {@code /sdcard} other than {@code ape.properties}
+     * (INV-RUN-06).
+     */
+    static final int maxStringListSize = Config.maxStringListSize;
 
     public static String removeQuotes(CharSequence input) {
         if (input == null) {
@@ -106,16 +92,19 @@ public class StringCache {
 
     public static String nextString() {
         // INV-INP-06: check for an empty cache BEFORE drawing an index. On a
-        // text-sparse screen (typical login form, where /sdcard/ape.strings is not
-        // pushed and no on-screen text has been captured) the list is genuinely
-        // empty; nextInt(0) would throw IllegalArgumentException.
+        // text-sparse screen (typical login form) no on-screen text has been captured
+        // and the list is genuinely empty; nextInt(0) would throw
+        // IllegalArgumentException.
         if (stringList.isEmpty()) {
             String string = RandomHelper.nextFormattedString();
             Logger.iformat("Use random string %s", string);
             return string;
         }
 
-        int i = ThreadLocalRandom.current().nextInt(stringList.size());
+        // INV-INP-07 / INV-RUN-08: the index comes from the run's seeded stream, so the same seed
+        // over the same cache contents yields the same strings. This was the last decision source
+        // outside that stream.
+        int i = RandomHelper.nextInt(stringList.size());
         String string = stringList.get(i);
         Logger.iformat("Select [%s] %d/%d from string list", string, i, stringList.size());
 

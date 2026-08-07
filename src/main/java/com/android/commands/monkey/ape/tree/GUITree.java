@@ -242,6 +242,11 @@ public class GUITree implements Serializable {
         return this.timestamp;
     }
 
+    /** The allocation-order id this tree prints as {@code GUITree[id@timestamp]}. */
+    public int getId() {
+        return this.id;
+    }
+
     public void setCurrentNaming(Naming current, Name[] currentWidgets, Object[] currentNodes) {
         this.currentNaming = current;
         this.currentNames = currentWidgets;

@@ -69,14 +69,6 @@ public class ApeClickEvent extends AbstractApeEvent {
         return Arrays.asList(down, wait, up);
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jEvent = super.toJSONObject();
-        jEvent.put("longClick", String.valueOf(longClick));
-        jEvent.put("x", String.valueOf(x));
-        jEvent.put("y", String.valueOf(y));
-        return jEvent;
-    }
-
     public static ApeEvent fromJSONObject(JSONObject jEvent) throws JSONException {
         boolean longClick = jEvent.getBoolean("longClick");
         float x = (float) jEvent.getDouble("x");

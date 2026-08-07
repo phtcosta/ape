@@ -21,7 +21,7 @@ import static org.junit.Assert.*;
  * verify the result falls within the original widget bounds.
  *
  * Also tests boundary rejection logic (status bar / navigation bar zones) that mirrors
- * LlmRouter.mapToModelAction().
+ * CoordinateMapper.map().
  *
  * No APE/Android runtime required: all parsing uses javax.xml and CoordinateNormalizer only.
  */
@@ -31,7 +31,7 @@ public class CoordinateMapIntegrationTest {
     private static final int DEVICE_WIDTH  = 1080;
     private static final int DEVICE_HEIGHT = 1920;
 
-    // Boundary thresholds from LlmRouter (5% top, 6% bottom = 94% max)
+    // Boundary thresholds from CoordinateMapper (5% top, 6% bottom = 94% max)
     private static final double STATUS_BAR_RATIO = 0.05;
     private static final double NAV_BAR_RATIO    = 0.94;
 
@@ -284,7 +284,7 @@ public class CoordinateMapIntegrationTest {
         double statusBarThreshold = DEVICE_HEIGHT * STATUS_BAR_RATIO; // 96
         assertTrue("status-bar Y pixel must be < threshold (96)",
                 px[1] < statusBarThreshold);
-        // Verify that LlmRouter's rejection condition would fire
+        // Verify that CoordinateMapper's rejection condition would fire
         assertTrue("status bar pixelY=" + px[1] + " must trigger boundary rejection (< " + (int)statusBarThreshold + ")",
                 px[1] < DEVICE_HEIGHT * STATUS_BAR_RATIO);
     }

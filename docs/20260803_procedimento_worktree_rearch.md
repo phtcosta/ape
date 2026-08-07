@@ -35,6 +35,62 @@ O `mvn package` inicial não é cerimônia: ele é o que separa "a worktree est�
 1 quebrou o build", e essas duas falhas são indistinguíveis se a primeira compilação da worktree só
 acontecer depois da primeira edição.
 
+O `d8` precisa estar no `PATH`: a execução `d8-dex` do `pom.xml` (`:143`) invoca o executável pelo nome
+simples, e o SDK não põe `build-tools/` no `PATH` por conta própria — só `platform-tools`, `emulator` e
+`cmdline-tools`. Num shell que não seja o interativo do dono, prefixar:
+`PATH="$ANDROID_HOME/build-tools/35.0.1:$PATH" mvn package` (35.0.1 é a versão da imagem
+`rvandroid_tools:0.9.1`). Sem isso o build morre na fase `package`, *depois* de compilar — o que se
+parece com uma falha de código e não é.
+
+**O carimbo de proveniência mente dentro da worktree.** A partir do grupo 2 do estágio 2 o `pom.xml`
+grava `BuildInfo.GIT_SHA` via `git-commit-id-maven-plugin`, e numa worktree vinculada o `.git` é um
+*arquivo* (`gitdir: <main>/.git/worktrees/ape-rearch`). O plugin normaliza esse ponteiro para o
+diretório comum do repositório principal e carimba o HEAD do **`master`**, não o da `rearch`: um build
+feito em `61274ba` sai marcado `b7baa68`. Verificado nas versões 9.0.1 e 10.0.0 do plugin, e também com
+`useNativeGit=true` — não é questão de versão nem de backend, e por isso nenhuma opção foi acrescentada
+ao pom para contorná-la. Num clone normal (`.git` diretório) o carimbo está correto, confirmado por
+build de controle. Consequência prática: **o `GIT_SHA` de um jar construído na worktree não serve para
+identificar o que ele contém** — enquanto os sete estágios estiverem em voo, use o sha do commit da
+`rearch` que você mesmo construiu.
+
+**Emenda de 2026-08-05 — a contenção acabou, e acabou antes do que se previa.** Este parágrafo
+fechava dizendo que, como nenhum jar de worktree era deployado (o `mvn install` que copia para o
+`aperv-tool` não é rodado daqui), nenhum jar entregue carregava o carimbo errado. Isso deixou de
+ser verdade. O `gh97-rearch-ab-gate` D10 antecipou que a sua tarefa 6.2 seria o primeiro deploy de
+um jar de worktree e que caberia a ela emendar esta frase; na prática **a premissa já estava falsa
+quando a 6.2 rodou**. O jar encontrado em
+`modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar` às 13:49 daquele dia — sha256
+`605b4174…`, build de estágio 4 — carrega `GIT_SHA = c638142`, que é o HEAD do **`master`**,
+exatamente o defeito descrito acima. Ele foi preservado em
+`rv-android/backup/gh97-6.2-superseded/` como o contra-exemplo físico.
+
+A partir daqui, portanto: **jars de worktree são deployados, e um jar deployado sem os flags abaixo
+carrega o carimbo do `master`.** A regra que substitui a contenção é a do próprio D10 — quem
+constrói fornece o carimbo, e o plugin sai da frente:
+
+```bash
+mvn -o package -Dmaven.gitcommitid.skip=true \
+    -Dgit.commit.id.abbrev=$(git rev-parse --short HEAD) \
+    -Dgit.build.time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+```
+
+As duas propriedades andam juntas: omitir `git.build.time` deixa `JAR_BUILT` em `unknown`.
+Verificado em 2026-08-05 na `gh97` 6.2 — build em `9e948102` saiu carimbado `9e948102`, e não
+`c638142` como sairia sem os flags.
+
+Por que isso importa mais do que um campo cosmético: o `Dockerfile` do rv-android clona
+`phtcosta/ape` sem pin, isto é, o **`master`**. Um jar `rearch` carimbado com a revisão do `master`
+fica indistinguível do jar da própria imagem justamente pelo campo que existe para distingui-los, e
+a verificação 3 do pré-voo passaria verde e cega — o modo de falha da gh71. Nada medido até aqui foi
+afetado: a `rearch-04` 9.1a estabeleceu a identidade dos jars por sha256 recomputado antes de cada
+lançamento, e diz isso explicitamente (*"never by `build.sha`"*).
+
+**Execução de 2026-08-03**: worktree criada em `b7baa68`, `mvn package` e `mvn test` verdes antes de
+qualquer edição. Dois números que valem como linha de base: o `target/ape-rv.jar` da worktree saiu
+sha256 `386ce08d…`, **byte-idêntico ao jar medido na corrida decisiva E3** — o que confirma de uma vez
+que a worktree está completa e que a `rearch` parte exatamente do commit medido; e a suíte pré-mudança
+roda **785 testes, 0 falhas, 19 skipped**. É contra esses dois valores que o estágio 1 se compara.
+
 ## 3. O que a worktree herda, e o que não herda
 
 **Herda** (tudo versionado, nada a copiar):

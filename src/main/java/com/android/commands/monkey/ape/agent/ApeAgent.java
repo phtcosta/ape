@@ -35,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import com.android.commands.monkey.MonkeySourceApe;
 import com.android.commands.monkey.MonkeyUtils;
 import com.android.commands.monkey.ape.Agent;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.events.ApeEvent;
@@ -47,6 +48,7 @@ import com.android.commands.monkey.ape.model.CrashAction;
 import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -60,24 +62,25 @@ import com.android.commands.monkey.ape.utils.Utils;
 
 import android.content.ComponentName;
 import android.content.Intent;
-import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 public abstract class ApeAgent implements Agent {
 
-    public static ApeAgent createAgent(MonkeySourceApe ape) {
-        String type = Config.get("ape.agentType");
-        String modelFile = Config.get("ape.modelFile");
-        Graph graph = null;
-        if (modelFile == null) {
-            graph = new Graph();
-        } else {
-            Logger.format("Loading graph model from %s", modelFile);
-            graph = Graph.readGraph(modelFile);
-        }
-        if (type == null) {
-            return new SataAgent(ape, graph);
-        }
+    /**
+     * Build the agent the resolved plan asks for.
+     *
+     * <p>The agent type and the replay log arrive already validated, so this method has no default
+     * branch and no error path: an unrecognized type aborted the run at resolution, and a replay
+     * run without a log did too. What it replaced was a chain that fell through to
+     * {@code SataAgent} for a null or unknown type — the shape that let {@code --ape bfs} run a
+     * full campaign as SATA while the operator believed otherwise — and a {@code System.exit(1)}
+     * inside a constructor path for the missing replay log.
+     *
+     * <p>The graph always starts empty. There is no model file to load from.
+     */
+    public static ApeAgent createAgent(MonkeySourceApe ape, RunSpec spec) {
+        Graph graph = new Graph();
+        String type = spec.agentType();
         if (type.equals("sata")) {
             return new SataAgent(ape, graph);
         }
@@ -85,14 +88,11 @@ public abstract class ApeAgent implements Agent {
             return new RandomAgent(ape, graph);
         }
         if (type.equals("replay")) {
-            String replayLog = Config.get("ape.replayLog");
-            if (replayLog == null) {
-                Logger.wformat("Replay agent requires a replay log.");
-                System.exit(1);
-            }
-            return new ReplayAgent(ape, graph, replayLog);
+            return new ReplayAgent(ape, graph, spec.replayLog());
         }
-        return new SataAgent(ape, graph);
+        // Unreachable through RunSpec, and it fails loudly rather than defaulting: a type that
+        // escaped validation must not quietly become the agent whose behavior everyone assumes.
+        throw new IllegalStateException("Unvalidated agent type: " + type);
     }
 
 
@@ -193,9 +193,9 @@ public abstract class ApeAgent implements Agent {
                 // gets text; otherwise keep the legacy probabilistic gate for non-form screens
                 // (INV-FORM-03 / INV-INP-04). The toss is short-circuited when in context.
                 // An LLM decision on an input-capable widget also fills deterministically: it is
-                // the *what* half of fixTextEdit (B6(iv)), where the router already decided the
-                // decision is a text entry rather than a bare press. The generator is the same one
-                // a SATA-selected input action uses — the LLM is never asked for the text.
+                // the *what* half of fixTextEdit (B6(iv)), where CoordinateMapper already decided
+                // the decision is a text entry rather than a bare press. The generator is the
+                // same one a SATA-selected input action uses — the LLM is never asked for the text.
                 if (llmTextEntry || inFormCompletionContext() || RandomHelper.toss(inputRate)) {
                     node.setInputText(generateInputText(node));
                 }
@@ -230,10 +230,10 @@ public abstract class ApeAgent implements Agent {
      * Generate input text for an EditText node. gh13 T1.3: when static-analysis MOP data is
      * available and carries a non-empty inputType/hint for the widget, use the type-aware
      * generator; otherwise fall back to the legacy heuristic / random generator (no regression
-     * on non-instrumented apps). Bypassed entirely when Config.fuzzInputTyped is false.
+     * on non-instrumented apps). Bypassed entirely when the plan's fuzzInputTyped is false.
      */
     protected String generateInputText(GUITreeNode node) {
-        if (Config.fuzzInputTyped) {
+        if (RunContext.current().spec().exploration().fuzzInputTyped()) {
             MopData md = getMopData();
             if (md != null) {
                 String activity = ape.getTopActivityClassName();

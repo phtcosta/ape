@@ -4,6 +4,7 @@ import android.content.ComponentName;
 
 import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.model.Action;
+import com.android.commands.monkey.ape.model.ActionCounters;
 import com.android.commands.monkey.ape.model.State;
 
 import org.junit.After;
@@ -17,33 +18,48 @@ import java.lang.reflect.Field;
 import static org.junit.Assert.*;
 
 /**
- * A10 (ui-coverage INV-COV-10): the coverage dump is emitted before the model serialization.
+ * A10 (ui-coverage INV-COV-10): the coverage dump is emitted before the first teardown step that
+ * produces output — {@code actionCounters}, now that no teardown step writes a file at all.
  *
- * <p>That boundary is the mechanism, not a preference. The dump used to be the last instruction of
- * the whole teardown, and 338 of the 800 calibration runs (42.3%) lost it — 330 of them cut on the
- * line {@code saveGraph} prints while writing to {@code /sdcard}. Emitting before that write
- * recovers 333. The assertion below is exactly that ordering; it is deliberately not "the dump runs
- * first", which the chain does not do (it lands third, after two steps that write nothing).
+ * <p>That boundary is the mechanism, not a preference. Across 800 calibration runs the dump was the
+ * last instruction of the whole teardown, behind the {@code /sdcard} writes, and 338 of them
+ * (42.3%) lost it — 330 cut mid-write. Emitting ahead of the writes recovers 333. The assertion
+ * below is exactly that ordering; it is deliberately not "the dump runs first", which the chain
+ * does not do (it lands third, after two steps that write nothing).
+ *
+ * <p><b>The boundary has moved twice and the property has not.</b> It was the model serialization
+ * (deleted by {@code rearch-02-runspec}), then the action-history save (deleted here), and is now
+ * the first free-text dump. {@code flushPendingStep} precedes the coverage dump and is deliberately
+ * not the boundary: it writes one already-serialized {@code StepRecord} and is loss-bounding by the
+ * same logic that puts the dump early, so ordering the two against each other would protect nothing.
  *
  * <p>Built with the {@code sun.misc.Unsafe} idiom of {@link StatefulAgentTearDownTest}: no
  * constructor runs, the steps needing collaborators fail into their own isolated {@code safeStep},
- * and the two steps under test print markers of their own.
+ * and the two steps under test print markers of their own. The {@code actionCounters} marker is
+ * injected as a counters object whose {@code print()} is the marker, because that step is a field
+ * call rather than an overridable method — the alternative, keying on its {@code safeStep} failure
+ * line, would assert the ordering of an error rather than of the output the requirement is about.
  */
 public class StatefulAgentCoverageDumpOrderTest {
 
     private static final String DUMP_MARKER = "[TEST] coverage dump";
-    private static final String SAVE_MARKER = "Save graph data to /sdcard/sata-test";
+    private static final String COUNTERS_MARKER = "[TEST] action-counters dump";
 
-    /** A StatefulAgent whose model serialization is observable, without a dump of its own. */
+    /** The first output-producing teardown step, made observable without changing the chain. */
+    public static class MarkingCounters extends ActionCounters {
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public void print() {
+            System.out.println(COUNTERS_MARKER);
+        }
+    }
+
+    /** A StatefulAgent with no dump of its own; its first output step is made observable below. */
     public static class NoDumpAgent extends StatefulAgent {
         /** Never invoked — the instance is Unsafe-allocated; declared only to satisfy javac. */
         public NoDumpAgent() {
             super(null, null);
-        }
-
-        @Override
-        protected void saveGraph() {
-            System.out.println(SAVE_MARKER);
         }
 
         @Override
@@ -115,24 +131,33 @@ public class StatefulAgentCoverageDumpOrderTest {
         return (T) unsafeClass.getMethod("allocateInstance", Class.class).invoke(unsafe, clazz);
     }
 
+    /** Unsafe-allocated instances skip field initializers, so the counters must be installed. */
+    private static void installMarkingCounters(StatefulAgent agent) throws Exception {
+        Field f = StatefulAgent.class.getDeclaredField("actionCounters");
+        f.setAccessible(true);
+        f.set(agent, new MarkingCounters());
+    }
+
     @Test
-    public void dumpPrecedesTheModelSerialization() throws Exception {
+    public void dumpPrecedesTheFirstTeardownStepThatProducesOutput() throws Exception {
         DumpingAgent agent = allocateInstance(DumpingAgent.class);
+        installMarkingCounters(agent);
 
         agent.tearDown();
 
         String log = captured.toString();
         int dumpAt = log.indexOf(DUMP_MARKER);
-        int saveAt = log.indexOf(SAVE_MARKER);
+        int countersAt = log.indexOf(COUNTERS_MARKER);
         assertTrue("the dump must be emitted: " + log, dumpAt >= 0);
-        assertTrue("the model serialization must be reached: " + log, saveAt >= 0);
-        assertTrue("the dump must precede the /sdcard write that swallows lossy runs: " + log,
-                dumpAt < saveAt);
+        assertTrue("the first output-producing step must be reached: " + log, countersAt >= 0);
+        assertTrue("the dump must precede the first step whose output a lossy run swallows: " + log,
+                dumpAt < countersAt);
     }
 
     @Test
     public void aSubclassThatDoesNotOverrideEmitsNothingAndTheChainCompletes() throws Exception {
         NoDumpAgent agent = allocateInstance(NoDumpAgent.class);
+        installMarkingCounters(agent);
 
         agent.tearDown();   // must not throw
 
@@ -141,6 +166,6 @@ public class StatefulAgentCoverageDumpOrderTest {
         assertTrue("the default step is a no-op, not a failure: " + log,
                 !log.contains("tearDown step failed: coverageDump"));
         assertTrue("and the chain still reaches its later steps: " + log,
-                log.contains(SAVE_MARKER));
+                log.contains(COUNTERS_MARKER));
     }
 }

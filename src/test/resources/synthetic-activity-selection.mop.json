@@ -1,0 +1,17 @@
+{
+  "formatVersion": 1,
+  "package": "p",
+  "mainActivity": "p.A",
+  "widgets": {},
+  "mopActivities": ["A"],
+  "mopActivitiesAugmented": ["A", "B"],
+  "optionsMenus": [
+    {"activity": "G", "hasFlaggedWidget": false},
+    {"activity": "H", "hasFlaggedWidget": true}
+  ],
+  "wtg": {
+    "G": [{"widget": "w", "target": "B"}]
+  },
+  "components": {},
+  "stats": {}
+}

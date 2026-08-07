@@ -66,22 +66,6 @@ public class ApeTrackballEvent extends AbstractApeEvent {
         return events;
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jEvent = super.toJSONObject();
-        JSONArray jDeltaX = new JSONArray();
-        for (int x : deltaX) {
-            jDeltaX.put(x);
-        }
-        JSONArray jDeltaY = new JSONArray();
-        for (int y : deltaY) {
-            jDeltaY.put(y);
-        }
-        jEvent.put("click", doClick);
-        jEvent.put("deltaX", jDeltaX);
-        jEvent.put("deltaY", jDeltaY);
-        return jEvent;
-    }
-
     public static ApeEvent fromJSONObject(JSONObject jEvent) throws JSONException {
         boolean click = jEvent.getBoolean("click");
         JSONArray jDeltaX = jEvent.getJSONArray("deltaX");

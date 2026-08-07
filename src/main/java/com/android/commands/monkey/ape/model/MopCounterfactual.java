@@ -2,7 +2,6 @@ package com.android.commands.monkey.ape.model;
 
 import java.util.List;
 
-import com.android.commands.monkey.ape.utils.Config;
 
 /**
  * A3 per-step counterfactual (action-selection INV-SEL-08/09): what each MOP-sensitive pick site
@@ -75,9 +74,13 @@ public final class MopCounterfactual {
      * The least-visited pick with MOP weights zeroed — the counterfactual of the unvisited-MOP
      * short-circuit, which pre-empts exactly this branch of the epsilon-greedy fall-through. Same
      * rule as {@code State.greedyPickLeastVisited}: fewer visits always wins, a tie is broken by
-     * higher priority when the tiebreak is on, otherwise by candidate order.
+     * higher priority when {@code priorityTiebreak} is on, otherwise by candidate order. The flag
+     * is an argument for the same reason it is one there — a counterfactual that read the gate off
+     * a static while the factual pick took it as a parameter could disagree with the branch it is
+     * supposed to be the counterfactual of.
      */
-    public static ModelAction leastVisitedWithoutMopWeights(List<ModelAction> candidates) {
+    public static ModelAction leastVisitedWithoutMopWeights(List<ModelAction> candidates,
+            boolean priorityTiebreak) {
         if (candidates == null) {
             return null;
         }
@@ -87,7 +90,7 @@ public final class MopCounterfactual {
         for (ModelAction candidate : candidates) {
             int priority = priorityWithoutMopWeights(candidate);
             if (State.beatsLeastVisited(candidate.getVisitedCount(), priority, minVisits, maxPriority,
-                    Config.leastVisitedPriorityTiebreak)) {
+                    priorityTiebreak)) {
                 minVisits = candidate.getVisitedCount();
                 maxPriority = priority;
                 best = candidate;

@@ -7,7 +7,6 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
 
 import java.util.ArrayList;
@@ -30,8 +29,8 @@ public class ApePromptBuilder {
     /**
      * The canonical "input-capable" widget set. One definition serves every consumer of the
      * notion: whether the system message offers {@code type_text}, the {@code type_text} filter in
-     * the router's coordinate mapping, the fixTextEdit conversion of a click on such a widget, and
-     * the dead-pair ban's exemption (llm-routing INV-RTR-15). Kept in one place so that if the
+     * CoordinateMapper, the fixTextEdit conversion of a click on such a widget, and the dead-pair
+     * ban's exemption (llm-routing INV-RTR-15). Kept in one place so that if the
      * notion of "input-capable" is ever wrong, it is wrong once — a second, independently
      * maintained list would let the prompt, the mapping and the ban drift apart.
      */
@@ -58,8 +57,16 @@ public class ApePromptBuilder {
     static final String VARIANT_V17 = "v17";
     static final String VARIANT_VISUAL_ONLY = "visual_only";
 
-    static String getPromptVariant() {
-        return Config.llmPromptVariant;
+    /**
+     * The prompt variant this builder writes, injected at construction from the resolved plan
+     * (INV-DP-12). The variant is run-frozen, so taking it once is the same value the read site
+     * used to fetch on every prompt — by a route that a test can state and a run cannot change
+     * midway.
+     */
+    private final String promptVariant;
+
+    public ApePromptBuilder(String promptVariant) {
+        this.promptVariant = promptVariant;
     }
 
     // -------------------------------------------------------------------------
@@ -140,7 +147,7 @@ public class ApePromptBuilder {
         boolean includeTypeText = hasInputField(actions);
 
         // --- Dispatch by variant ---
-        String variant = getPromptVariant();
+        String variant = promptVariant;
         String systemText = buildSystemMessageForVariant(variant, includeTypeText);
         String userText;
         switch (variant) {
@@ -779,8 +786,8 @@ public class ApePromptBuilder {
      * Returns true if any action in the list targets an input-type widget.
      *
      * <p>One predicate decides both halves of the same offer: whether the system message lists
-     * {@code type_text}, and whether the wire schema the router sends carries it. Static so the
-     * router can ask it without a builder instance — prompt and wire can then never disagree.
+     * {@code type_text}, and whether the wire schema LlmClient sends carries it. Static so both
+     * can ask it without a builder instance — prompt and wire can then never disagree.
      */
     static boolean hasInputField(List<ModelAction> actions) {
         if (actions == null) return false;
@@ -793,8 +800,8 @@ public class ApePromptBuilder {
     }
 
     /**
-     * The canonical input-capable predicate, read by the prompt builder, the router's coordinate
-     * mapping and the dead-pair ban. Static so every consumer reaches the same set
+     * The canonical input-capable predicate, read by the prompt builder, CoordinateMapper and the
+     * dead-pair ban. Static so every consumer reaches the same set
      * ({@link #INPUT_CLASS_NAMES}) without holding a builder instance.
      */
     public static boolean isInputClass(GUITreeNode node) {
@@ -864,7 +871,7 @@ public class ApePromptBuilder {
 
     /**
      * Widget text with {@code \n}/{@code \r} replaced by spaces, so one element occupies one line
-     * of the element list and of the {@code [APE-LLM-PROMPT] user_text=} dump (INV-PRM-05). The
+     * of the element list and of the LLM sub-event's {@code user} dump field (INV-PRM-05). The
      * metadata suffix already does this via {@code capMeta}; the identifier is the other half. The
      * prompt's own multi-line structure is intentional and untouched — only widget-derived text is
      * flattened.

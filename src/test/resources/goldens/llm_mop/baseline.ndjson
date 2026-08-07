@@ -1,0 +1,5 @@
+{"kind":"header","preset":"llm_mop","scenario":"baseline","seed":7070,"fixture":"cryptoapp.apk.mop.json","capturedAt":"58d0b40a98cb301ab5576db9b3a1f2207bbef58a"}
+{"step":0,"actionType":"MODEL_CLICK","target":"//*[@resource-id='h0']","decisionSource":"LLM","pickChannel":"llm","llm":"accepted"}
+{"step":1,"actionType":"MODEL_CLICK","target":"//*[@resource-id='m_boost']","decisionSource":"MOP","pickChannel":"short_circuit_unvisited","llm":"declined"}
+{"step":2,"actionType":"EVENT_TRIGGER_ACTIVITY","target":"br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity","llm":"not_routed"}
+{"step":3,"actionType":"MODEL_CLICK","target":"//*[@resource-id='m_boost']","decisionSource":"SATA","pickChannel":"sata_other","llm":"timeout"}

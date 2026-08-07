@@ -5,6 +5,7 @@ import android.graphics.Rect;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 
 import org.junit.Test;
@@ -12,9 +13,10 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 /**
- * O4 (INV-SEL-10), emission half: the `[APE-STEP]` line carries `patched=0|1` for an action with a
- * resolved target and omits the field entirely for a targetless one — the same rule the line's
- * other target-derived fields follow.
+ * O4 (INV-SEL-10), emission half: the step record carries {@code dec.patched} as 0 or 1 for an
+ * action with a resolved target and reports it absent for a targetless one — the same rule the
+ * record's other target-derived fields follow. The absence is a third state and not a default,
+ * which is why it is exempt from the record's defaults-omitted rule.
  */
 public class PatchedFieldTest {
 
@@ -30,24 +32,28 @@ public class PatchedFieldTest {
 
     @Test
     public void aClickOnAPatchFabricatedWidgetReportsOne() {
-        assertEquals(" patched=1", StatefulAgent.patchedField(clickOn(true)));
+        assertEquals(1, StatefulAgent.patchedValue(clickOn(true)));
     }
 
     @Test
     public void aClickOnANativelyClickableWidgetReportsZero() {
-        assertEquals(" patched=0", StatefulAgent.patchedField(clickOn(false)));
+        assertEquals(0, StatefulAgent.patchedValue(clickOn(false)));
     }
 
     @Test
     public void targetlessActionsOmitTheField() {
-        assertEquals("", StatefulAgent.patchedField(new ModelAction(null, ActionType.MODEL_BACK)));
-        assertEquals("", StatefulAgent.patchedField(new ModelAction(null, ActionType.MODEL_MENU)));
+        assertEquals(EventSink.ABSENT,
+                StatefulAgent.patchedValue(new ModelAction(null, ActionType.MODEL_BACK)));
+        assertEquals(EventSink.ABSENT,
+                StatefulAgent.patchedValue(new ModelAction(null, ActionType.MODEL_MENU)));
         assertEquals("the off-tree tap has a coordinate, not a node",
-                "", StatefulAgent.patchedField(new LlmTapAction(null, 500, 900, false)));
+                EventSink.ABSENT,
+                StatefulAgent.patchedValue(new LlmTapAction(null, 500, 900, false)));
     }
 
     @Test
     public void anUnresolvedTargetActionOmitsTheField() {
-        assertEquals("", StatefulAgent.patchedField(new ModelAction(null, ActionType.MODEL_CLICK)));
+        assertEquals(EventSink.ABSENT,
+                StatefulAgent.patchedValue(new ModelAction(null, ActionType.MODEL_CLICK)));
     }
 }

@@ -24,7 +24,7 @@ public class ScreenshotCapture {
 
     // The stage that failed on the most recent capture() call, or null when it succeeded. Same seam
     // pattern as SglangClient.getLastErrorCause (INV-LLM-12): reset at the start of every
-    // invocation, so a stale stage can never be attributed to a later call, and read by the router
+    // invocation, so a stale stage can never be attributed to a later call, and read by LlmEngine
     // between the null return and the next call.
     private String lastFailureStage;
 
@@ -54,8 +54,9 @@ public class ScreenshotCapture {
      *
      * <p>Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unavailability
      * and permission denial without distinguishing them, so this names the failing <b>stage</b>,
-     * not the OS-level reason. Joining the stage and the foreground activity — which the router's
-     * {@code [APE-LLM-ERROR] cause=screenshot} line carries — with the known FLAG_SECURE APK list
+     * not the OS-level reason. Joining the stage and the foreground activity — which LlmTelemetry's
+     * surviving {@code [APE-RV] LLM screenshot capture failed} free-text line carries — with the
+     * known FLAG_SECURE APK list
      * is an offline step. {@code OutOfMemoryError} is an {@code Error} and escapes the
      * {@code catch (Exception)} blocks below: it is not folded into the null return, and this seam
      * makes no claim about it.

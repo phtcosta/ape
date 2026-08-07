@@ -20,7 +20,10 @@ package com.android.commands.monkey;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -30,12 +33,19 @@ import java.io.Writer;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 
 import com.android.commands.monkey.ape.Agent;
 import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.runtime.RunSpecEcho;
+import com.android.commands.monkey.ape.runtime.RunSpecException;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 
@@ -250,6 +260,7 @@ public class Monkey {
     private boolean mUseApe;
     private boolean mApeCleanApp;
     private String mApeAgent;
+    private String mApeReplayLog;
     private File mOutputDirectory;
     private HashSet<Integer> mUids = new HashSet<Integer>();
     private long mRunningMillis = -1;
@@ -723,14 +734,36 @@ public class Monkey {
             }
             mCount = Integer.MAX_VALUE;
         } else if (mUseApe) {
+            // INV-RUN-01: the run plan is resolved exactly once, here, and every rejection lands
+            // before the first line of device interaction below. A plan that cannot be resolved
+            // must cost nothing — no agent, no device state touched, no step 1 — so that the
+            // supervisor sees a failed task instead of a run that silently explored under a
+            // different configuration than the one it was asked for.
+            RunSpec runSpec;
+            try {
+                runSpec = resolveRunSpec();
+            } catch (RunSpecException e) {
+                // stdout because the trace is host-captured stdout; stderr for interactive use.
+                String abort = "[APE-RUNSPEC-ABORT] " + e.toDiagnostic();
+                System.err.println(abort);
+                System.out.println(abort);
+                return -6;
+            }
+            // The context is established from the plan and the seed, and establishing it is what
+            // seeds APE's RandomHelper with the same value mRandom was built from (INV-EXPL-14) —
+            // one seeding point rather than a call sitting loose in this method. mSeed is in scope
+            // here and not in the MonkeySourceApe constructor, which receives the already-built
+            // Random and cannot recover the seed from it.
+            RunContext.initialize(runSpec, mSeed);
+            // INV-RUN-03: the run's provenance goes out before anything can fail. Emitting here
+            // rather than after the device calls below means a run that dies bringing the device
+            // up still leaves a trace that says what it was going to be.
+            RunSpecEcho.emit(RunContext.current(), System.out);
+
             AndroidDevice.initializeAndroidDevice(mAm, mWm, mPm);
             AndroidDevice.checkInteractive();
-            // INV-EXPL-14: seed APE's RandomHelper with the same seed as mRandom so a run is
-            // reproducible. mSeed is only in scope here, not in the MonkeySourceApe constructor
-            // (which receives the already-constructed Random, from which the seed is unrecoverable).
-            com.android.commands.monkey.ape.utils.RandomHelper.seed(mSeed);
             mEventSource = new MonkeySourceApe(mRandom, mMainApps, mThrottle,
-                    mRandomizeThrottle, mPermissionTargetSystem, mOutputDirectory);
+                    mRandomizeThrottle, mPermissionTargetSystem, mOutputDirectory, runSpec);
             mEventSource.setVerbose(mVerbose);
             if (mApeCleanApp) {
                 for (ComponentName cn : mMainApps) {
@@ -774,6 +807,18 @@ public class Monkey {
         int crashedAtCycle = 0;
         try {
             crashedAtCycle = runMonkeyCycles();
+        } catch (Throwable t) {
+            // What ended the run is known here and nowhere later: the finally below cannot see the
+            // exception, and by teardown it has already been rethrown past everything that could
+            // name it. The class name travels because "crash" alone does not distinguish a device
+            // going away from a defect in the agent.
+            try {
+                recordTermination(RunContext.REASON_CRASH, t.getClass().getName());
+            } catch (Throwable ignored) {
+                // INV-EXPL-16 reaches here too: recording how the run ended must never replace the
+                // exception that ended it. Losing the reason costs one field of one record.
+            }
+            throw t;
         } finally {
             // INV-EXPL-16: nothing in this finally may throw. A throw here would replace the
             // exception that ended runMonkeyCycles, destroying the identity of the real failure,
@@ -881,6 +926,64 @@ public class Monkey {
     }
 
     /**
+     * Resolve the run plan from the two properties files and the command line.
+     *
+     * <p>The files are read as raw bytes rather than through {@link Config}: the digest that
+     * proves <em>which</em> file this run saw is taken over the bytes, and a parsed map is blind to
+     * the comments, ordering and whitespace that difference turns on. Only keys actually present in
+     * a file are handed to the resolver — the ambient system properties {@code Config} layers
+     * underneath its own load are not part of the plan.
+     *
+     * @throws RunSpecException if the plan is not resolvable; the caller aborts the run
+     */
+    private RunSpec resolveRunSpec() {
+        byte[] dataLocalTmp = readPropertiesFile("/data/local/tmp/ape.properties");
+        byte[] sdcard = readPropertiesFile("/sdcard/ape.properties");
+        Map<String, String> entries = new LinkedHashMap<String, String>();
+        // Load order, later file wins — the same precedence Config applies.
+        mergeProperties(entries, dataLocalTmp);
+        mergeProperties(entries, sdcard);
+        RunSpec.CliValues cli = RunSpec.CliValues.of(mApeAgent, mSeed, mApeReplayLog);
+        return RunSpec.resolve(entries, cli, RunSpec.digestProperties(dataLocalTmp, sdcard));
+    }
+
+    /** The file's bytes, or null when it is absent — which the digest keeps distinct from empty. */
+    private static byte[] readPropertiesFile(String path) {
+        File file = new File(path);
+        if (!file.exists()) {
+            return null;
+        }
+        try (FileInputStream in = new FileInputStream(file)) {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] chunk = new byte[4096];
+            int read;
+            while ((read = in.read(chunk)) != -1) {
+                buffer.write(chunk, 0, read);
+            }
+            return buffer.toByteArray();
+        } catch (IOException e) {
+            // A properties file that exists and cannot be read is not a plan we can resolve, and
+            // guessing past it is how a run ends up exploring under a configuration nobody chose.
+            throw new RuntimeException("Fail to read the configuration file at " + path, e);
+        }
+    }
+
+    private static void mergeProperties(Map<String, String> into, byte[] raw) {
+        if (raw == null) {
+            return;
+        }
+        Properties parsed = new Properties();
+        try {
+            parsed.load(new ByteArrayInputStream(raw));
+        } catch (IOException e) {
+            throw new RuntimeException("Fail to parse a configuration file", e);
+        }
+        for (String name : parsed.stringPropertyNames()) {
+            into.put(name, parsed.getProperty(name));
+        }
+    }
+
+    /**
      * Process the command-line options
      *
      * @return Returns true if options were parsed with no apparent errors.
@@ -920,14 +1023,12 @@ public class Monkey {
                     mGenerateHprof = true;
                 } else if (opt.equals("--ape")) {
                     mUseApe = true;
+                    // Held raw for the resolver. Validating here would put a second authority on
+                    // the agent type, and an unrecognized value has to abort the run rather than
+                    // fall through to a default.
                     mApeAgent = nextOptionData();
-                    Config.set("ape.agentType", mApeAgent);
-                } else if (opt.equals("--ape-model")) {
-                    String modelFile = nextOptionData();
-                    Config.set("ape.modelFile", modelFile);
                 } else if (opt.equals("--ape-replay")) {
-                    String logFile = nextOptionData();
-                    Config.set("ape.replayLog", logFile);
+                    mApeReplayLog = nextOptionData();
                 } else if (opt.equals("--ape-clean")) {
                     mApeCleanApp = true;
                 } else if (opt.equals("--running-minutes")) {
@@ -1268,6 +1369,21 @@ public class Monkey {
      * @return Returns the last cycle which executed. If the value == mCount, no
      *         errors detected.
      */
+    /**
+     * Records how the run ended, when this run has a context to record it in.
+     *
+     * <p>The guard is not defensive: the random event source is a Monkey mode with no plan, no
+     * context and no trace, so there is nothing for a termination reason to be written on.
+     *
+     * @param reason one of {@code RunContext}'s reason constants
+     * @param detail the crash's exception class name, or null
+     */
+    private void recordTermination(String reason, String detail) {
+        if (mEventSource instanceof MonkeySourceApe) {
+            RunContext.current().terminated(reason, detail);
+        }
+    }
+
     private int runMonkeyCycles() {
         int eventCounter = 0;
         int cycleCounter = 0;
@@ -1297,6 +1413,10 @@ public class Monkey {
             } else {
                 currentTime = SystemClock.elapsedRealtime();
                 if (currentTime > mEndTime) {
+                    // The ordinary end of a campaign run: the wall-clock budget is what every
+                    // measured arm runs against, so this branch — not the count above — is what
+                    // "timeout" names in RUN_END.
+                    recordTermination(RunContext.REASON_TIMEOUT, null);
                     break;
                 }
             }

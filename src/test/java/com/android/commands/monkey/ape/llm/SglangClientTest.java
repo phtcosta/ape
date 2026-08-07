@@ -2,7 +2,6 @@ package com.android.commands.monkey.ape.llm;
 
 import org.junit.Test;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -130,7 +129,7 @@ public class SglangClientTest {
         List<SglangClient.Message> messages = Collections.singletonList(
                 new SglangClient.Message("user", "hello"));
 
-        String body = client.buildRequestBody(messages, LlmRouter.buildToolsSchema(true));
+        String body = client.buildRequestBody(messages, LlmClient.buildToolsSchema(true, ApePromptBuilder.VARIANT_APE_CURRENT));
 
         assertNotNull(body);
         assertTrue("body must contain model field",       body.contains("\"model\""));
@@ -145,7 +144,7 @@ public class SglangClientTest {
         List<SglangClient.Message> messages = Collections.singletonList(
                 new SglangClient.Message("system", "You are a test agent."));
 
-        String body = client.buildRequestBody(messages, LlmRouter.buildToolsSchema(true));
+        String body = client.buildRequestBody(messages, LlmClient.buildToolsSchema(true, ApePromptBuilder.VARIANT_APE_CURRENT));
 
         assertTrue("system role must appear in body",     body.contains("\"system\""));
         assertTrue("message text must appear in body",    body.contains("You are a test agent."));
@@ -161,7 +160,7 @@ public class SglangClientTest {
         List<SglangClient.Message> messages = Collections.singletonList(
                 new SglangClient.Message("user", parts));
 
-        String body = client.buildRequestBody(messages, LlmRouter.buildToolsSchema(true));
+        String body = client.buildRequestBody(messages, LlmClient.buildToolsSchema(true, ApePromptBuilder.VARIANT_APE_CURRENT));
 
         assertTrue("body must contain image_url type",   body.contains("\"image_url\""));
         assertTrue("body must contain image data",       body.contains("abc"));

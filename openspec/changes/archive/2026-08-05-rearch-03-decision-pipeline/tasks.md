@@ -1,0 +1,222 @@
+# Tasks — rearch-03-decision-pipeline
+
+**Worktree** (decided 2026-08-03): all 7 stages are implemented in a single git worktree on branch `rearch` (`git worktree add ../ape-rearch -b rearch`), merged into `master` only after stage 7. Setup, what the worktree inherits, and the `mvn install` caveat: `docs/20260803_procedimento_worktree_rearch.md`. The goldens this change gates on are the ones committed by `rearch-01` on that branch, and they are never regenerated here (procedure doc §5).
+
+> **Standing gate.** This change PRESUPPOSES `rearch-02-runspec` is applied (`RunSpec`/`RunContext`/`Feature` exist, `Config` is demoted, silent fallbacks and `/sdcard` readers are gone) and `rearch-01-parity-oracle` is green. **After every extraction task group below, the full per-preset golden suite (`aperv`, `mop`, `llm`, `llm_mop`) MUST pass before the next group begins** — the oracle is the merge gate, not a final check (INV-DP-09). Semantic preservation is the whole game: no task changes what any step decides.
+>
+> Line anchors reference HEAD `5dcf225` and will shift as extraction proceeds — treat `:NNN` as "find this block".
+
+## 1. StageResult + DecisionStage + pipeline skeleton
+
+- [x] 1.1 Create `StageResult` (single final class, private ctor, `Kind` enum `SELECT|CONTINUE|SIDE_EFFECT`, static factories `select(Action, String)`/`continueChain()` singleton/`sideEffect(String)`, wrong-variant accessors throw `IllegalStateException`) — design D1
+- [x] 1.2 Create `DecisionStage` interface (`name()`, `decide(StepContext)`, default no-op `onStateTransition(StateTransition)`) and `StepContext` (read surface per design; single write method `resetGraphStableCounter()`) — design D2
+- [x] 1.3 Create `DecisionPipeline` (`fromSpec(RunSpec, RunContext)` assembly + `[APE-ARCH] stages=[...]` echo; `decide(StepContext)` loop: first `SELECT` wins, `SIDE_EFFECT` recorded and continues, terminal stage never `CONTINUE`s) — INV-DP-01/02/05/06
+- [x] 1.4 Unit tests: `StageResult` totality and accessor contract; pipeline loop preemption/side-effect/terminal semantics with stub stages; assembly echo content
+- [x] 1.5 Run `/sdd-doc-code` on the three new files
+- [x] 1.6 Run `/sdd-test-run` (new tests green; suite untouched otherwise)
+
+## 2. Extract the stages one by one (goldens after EACH task)
+
+> Wire the pipeline into `selectNewActionNonnull()` incrementally: extracted blocks become stages, and the blocks not yet extracted stay inline on the agent, reached through the roster's terminal stage (`InlineLadderStage`, design D14) so that every interim roster still decides every step through `decide()`. The logging prologue (`:450-462`) stays in the method. Every predicate moves **verbatim** (conjunct order, short-circuits, conditional RNG draws — INV-DP-10).
+
+- [x] 2.1 `BudgetStage` — extract `:468-477`; Select trivial (`DecisionSource.Budget`, `PickChannel.SATA_OTHER`, the `:474` return) or Continue (null-trivial and non-exhausted paths); assembled only when the plan carries the activity-budget feature. Unit test both paths; **goldens green**
+- [x] 2.2 `LlmGate` shared precondition helper (buffer-empty ∧ actions > 2) + `LlmNewState` stage — extract `:480-487`, accept step from `acceptLlmResult` (`:425-432`, incl. the `MODEL_LLM_TAP` resolution guard). Unit test precondition/trigger/accept/decline; **goldens green** (stubbed LLM scripts)
+- [x] 2.3 `LlmStagnation` stage — extract `:493-506`; move `stagnationHookFired` from `StatefulAgent:128` into the stage; wire the agent's `onVisitStateTransition` to forward edges to `stage.onStateTransition` (re-arm at the former `:1436` site, which is deleted); counter reset on accepted escape via `StepContext` (`:503` parity). Unit tests: burn-on-fire (null and non-null), re-arm-on-new-edge, `>=` midpoint, no re-arm on escape reset; **goldens green**
+- [x] 2.4 `LlmRandom` stage — extract `:508-515`; coin drawn only after `LlmGate`, before breaker, seeded RNG from `RunContext`. Unit test draw ordering; **goldens green**
+- [x] 2.5 `MopLauncherStage` — extract `:522-545`; move `_stepsSinceLauncherFiring`/`_triggerRoundRobinIndex`/`_activityTriggerLaunchCount` (`SataAgent:756-768`) into the stage; `shouldFireLauncher`/`selectTriggerCandidate` pure seams move along, fed injected cadence/cap params (the 3 `Config` reads at `:523-525` die). Unit tests: cadence equality + reset, budget consumed only on launch (INV-CT-12), round-robin persistence; **goldens green**
+- [x] 2.6 `ComponentTriggerStage` — extract `:547-551` returning `SideEffect`; move the component round-robin cursor from `StatefulAgent`; `triggerMopComponent()` dispatch helpers stay put and are called by the stage. Unit test coin/guard/side-effect-continues; **goldens green**
+- [x] 2.7 `SataChainStage` — extract `:552-588` as the terminal stage; collapse the 7× copied `resolved`/`if`/`return` pattern into an ordered rung table (supplier + `SataEventType`) walked by one loop (design D12); same order, logging, provenance stamping, `BadStateException` at exhaustion. Unit tests: rung order, exhaustion throw; **goldens green**
+- [x] 2.8 Delete the now-empty inline ladder: `selectNewActionNonnull()` = prologue + `pipeline.decide(stepContext)`; verify the method body carries no residual guard or counter. **Full golden suite green per preset**
+- [x] 2.9 Run `/sdd-doc-code` on the stage classes; run `/sdd-test-run`
+
+## 3. Permanent architectural tests (promoted from rearch-01 fixtures)
+
+- [x] 3.1 Permanent preemption golden (report Sec. 9.4): synthetic step qualifying LLM + launcher-firing-point + component-coin + SATA simultaneously ⇒ order confirmed (`LLM` wins; no trigger; no rung)
+- [x] 3.2 Permanent 3.3-1 pin (INV-DP-08): LLM-preempted step leaves the launcher cadence counter unchanged; next fall-through step advances it by exactly 1
+- [x] 3.3 Permanent structural-fallback test (report Sec. 9.5): decline/timeout/breaker-open ⇒ step decided by the configured remainder with correct non-`LLM` `decision_source`; breaker-open line once per episode. **Split across two seams, because the oracle cannot carry all three conditions**: `ScriptedLlmRouter` overrides the routing predicates outright, so no override reaches the breaker and no script can model a breaker-open episode — that override is what satisfies INV-ORA-03, and INV-ORA-07 freezes the goldens depending on it. Decline and timeout are already pinned there (`goldens/llm/baseline.ndjson` steps 1–2, both falling through to `decisionSource=SATA`). What this task adds is (i) the composition over an assembled pipeline, on two plans so that "the configured remainder" is `SataChain`/`SATA` in one and `MopLauncher`/`Component` in the other, and (ii) the breaker-open latch, which had no test at all, asserted where the latch lives
+- [x] 3.4 Feature-absent = stage-absent assembly matrix per preset (INV-DP-03), asserted against the rosters the shipped presets actually produce: `aperv` ⇒ `[Budget, SataChain]`; `mop` ⇒ `[Budget, SataChain]` — its four keys are *scoring* weights, it inherits `ape.activityTriggerEnabled=false`, and no preset states `ape.componentPercentage`, so the substrate is present and no MOP stage is assembled; `llm` and `llm_mop` ⇒ `[Budget, LlmNewState, LlmStagnation, LlmRandom, SataChain]` — including the random stage neither preset mentions, because `ape.llmPercentage` resolves to its jar default of `0.02` (`KeyOwnership.java:216`) and `Feature`'s `"0"` is the neutral value, not the default; echo line asserted
+
+## 4. LlmRouter decomposition (design D7)
+
+- [x] 4.1 `LlmClient` — compose `SglangClient` + `LlmCircuitBreaker`; move `breakerAllows()` (`LlmRouter:292-302`) as `allows()` with the open-episode latch; move the `[APE-LLM-CONFIG]` manifest emission and tools-schema constants; construct from `LlmParams` in `RunContext`
+- [x] 4.2 `ScreenshotStep` — device-dimension probing (`:337-353`) + capture (`:362-385`) + encode (`:388-395`), failure-stage seam intact
+- [x] 4.3 `CoordinateMapper` — `CoordinateNormalizer` wrap, boundary bands, `mapToModelAction` + `fixTextEdit`, dead-pair ban (`banKey`/`isDeadPair`/strikes/`recordLlmOutcome`), nearest-widget calc; snap/boundary params injected (`llmSnapTolerancePx`, `llmBoundaryTopPct/BottomPct`)
+- [x] 4.4 `LlmTelemetry` — all counters/latches (`LlmRouter:68-112`), `[APE-LLM-TEL]`/`[APE-LLM-ERROR]`/`[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]`/ACK, `printSummary`; the unit is built beside `LlmRouter` and nothing constructs it yet — its teardown call site moves at 4.6, with the rest of the wiring
+- [x] 4.5 `LlmEngine` — the thin 9-step orchestration replacing `selectAction` (`:327-612`): never-throws + finally-nulling preserved (INV-RTR-02/06); repair pipeline untouched (INV-LLM-10/INV-RTR-14 — native `tool_calls` malformations still flow `rawArguments` → `ToolCallParser` Level 1 → shared `parseJsonString`, surfacing as `repair=`)
+- [x] 4.6 Point the three LLM stages at `LlmEngine`, **move the trigger predicates into them** (design D7 row 1; the `New-State`/`Stagnation`/`Probabilistic` requirements), and route the `[APE-OUTCOME]`-site dead-pair feedback to `CoordinateMapper` via `RunContext` — the `recordLlmOutcome(currentAction, _isNewState)` call guarded by the buffered-decision discipline in `StatefulAgent.updateStateInternal`, with the teardown `printSummary` call and the `_llmRouter == null` guard above it moving to their new owners. Each stage evaluates its own agent-side conjunct — `ctx.isNewState()`, the pure `stagnationMidpointReached`, the coin — followed by the `LlmClient.allows()` breaker gate, in that order, so the short-circuit and the draw position are unchanged (INV-DP-10). Three sub-decisions this task owns:
+  - **The redundant mode conjunct is deleted, not carried.** `Config.llmOnNewState`, `Config.llmOnStagnation` and `llmPercentage > 0` are each the assembly condition of the stage that would test them (D3, INV-DP-03: feature absent = stage absent), so inside the stage each is necessarily true. Deleting them is behavior-neutral *because of assembly* and for no other reason — including for the coin, whose rate check was already the predicate's first conjunct, so a zero rate drew nothing then and assembles nothing now.
+  - **The coin keeps drawing from the agent's stream.** It draws from `ape.getRandom()` (Monkey's `mRandom`), reached through the stage's collaborator, **not** from `RunContext.rng()` — see the corrected `Probabilistic LLM Routing` requirement for why the two are different streams.
+  - **The oracle seam moves with the predicates, and the harness sees less because of it.** The scripted LLM (`ScriptedLlmRouter`, renamed `ScriptedLlm` since it no longer extends the thing it replaced) can no longer script a hook by substituting one collaborator, because the per-hook verdict has to survive agent-side conjuncts the scripts do not satisfy. `OracleScaffold` substitutes three things on the LLM stages instead: **the breaker gate**, a `BooleanSupplier` the script answers per hook — which is where the verdict became hook-aware, rather than in the engine; **one shared scripted `LlmEngine`**, reachable only by the hook whose gate answered true, so the `mode` argument already names which one did; and, on the probabilistic stage alone, **the `Random` the coin draws from**, because an overridden verdict still consumes a draw and a consumed draw shifts every later draw of a seeded run. It also states the plan values (`ape.graphStableRestartThreshold=10`, `ape.llmPercentage=1.0`) that let a scripted hook through — the injection-profile adaptation INV-ORA-07 permits. **No golden and no scenario script changes.** What does change is what the harness can observe: a hook reaches the script only after its own conjunct held, so `PreemptionGoldenTest`'s hook-order recorder records a smaller population — `consultedAt(2)` and `consultedAt(3)` fall from all three hooks to the probabilistic one alone, on steps that already rendered `not_routed` + `SATA` — and the script's "declared but never consulted" check moves from per-hook to per-block. That reformulation loses no protection: the bug it was written for is the shared precondition short-circuiting, which blocks all three at once, and the per-hook form never caught "declared but agent-conjunct false" anyway, because the old stub's own predicates ANDed with the same arguments and returned false without complaint.
+- [x] 4.7 **Delete `LlmRouter`** (P3 — no facade). By the time this task runs, only two test files still name the class, holding **36** `@Test` between them: 4.3 migrated `LlmRouterDeadPairTest`/`LlmRouterCoordinateMappingTest`/`LlmRouterMappingTest` into the `CoordinateMapper*` files, 4.4 migrated `LlmRouterTelemetryTest`, and 4.6 rewrote the eleven trigger tests into the three stages. So this task **deletes far more than it moves** — and the map below says which and why, so no test is dropped for having no obvious home:
+
+  | Test file | `@Test` | Disposition |
+  |---|---:|---|
+  | `LlmRouterTest` | 32 | **3 move** to `CoordinateMapperMappingTest` (the null-actionType / empty-list / null-list guards of `map`); **1 is retargeted** (INV-RTR-09, below); **3 merge** as one assertion group into `LlmTelemetryTest.summaryExposesLlmTapField`, which already captures a fresh summary — the seven cause fields at zero and the absence of the retired aggregate ` null=` field; **11** are already covered by the three stage tests 4.6 wrote; **4** by `LlmClientTest`, `ToolCallParserTest`, `CoordinateMapperOffTreeTapTest` and `ConfigTest`; **6** are vacuous; **2** are dropped deliberately and **2** are trivial |
+  | `LlmRouterToolSchemaTest` | 4 | **deleted outright** — all four exist verbatim in `LlmClientTest`, ported to the two-argument `LlmClient.buildToolsSchema(boolean, String)` |
+  | `SglangClientTest` | — | keeps its three `buildToolsSchema(true)` calls, retargeted at `LlmClient` with `ApePromptBuilder.VARIANT_APE_CURRENT` as the second argument |
+  | `CoordinateMapIntegrationTest`, `CoordinateMapperOffTreeTapTest` | — | comment/javadoc references only; retarget at `CoordinateMapper` |
+
+  - **Three of the 32 fail at runtime, not at compile time**, because they read `LlmRouter.java` off disk as a string — `mvn compile` cannot surface them. `mapToModelAction_useSites_readConfigNotLiterals` asserts the source *contains* four `Config.` reads, which contradicts what this change is for (6.5's grep-guard asserts zero), and constructor injection realizes its intent structurally: it is deleted. `repairTelemetryEmitter_isNativeFedAndUnchanged` is deleted in favour of the behavioural `LlmTelemetryTest.theRepairOverlayIsCountedOnlyWhenTheLineCarriesIt`, which pins the same contract by running it rather than by grepping for it. `llmPercentageNoSubstrate_isExposedButNotConsumedByRouting` must survive: INV-RTR-09 says the key is loaded and exposed and consumed by no routing decision, and after 4.6 the routing decision lives in `agent/pipeline/Llm*Stage.java`. It is retargeted at the decision path as a whole rather than at one file — a directory sweep survives the next relocation, which the per-file form did not.
+  - **Six boundary tests are vacuous, and the top band is genuinely uncovered.** They pass an *empty* actions list, so `map` returns null at the no-candidates branch whatever the boundary branch would have decided; they prove only that nothing matched. `CoordinateMapperOffTreeTapTest.boundaryRejectSynthesizesNoTap` is the honest form and covers the bottom band. Its top-band counterpart is written here — one test to add, not six to move.
+  - **`LlmRouterToolSchemaTest`'s deletion costs no coverage, including the prompt-variant default.** `ape.llmPromptVariant` is a registered plan key defaulting to `ape_current` (`Feature.java:166`, `KeyOwnership.java:208`), and two live tests pin that default flowing through a plan that does not state it: `LlmClientTest.manifestReportsTheValuesTheRequestsWillCarry` asserts `prompt_variant=ape_current` on the manifest, and `LlmTelemetryTest` asserts ` variant=ape_current` on the decision line. The deleted file pinned the default only as a side effect of the router resolving the variant implicitly; `LlmClient` takes it as an argument, and where that argument comes from is exactly what those two now pin.
+- [x] 4.8 Run `/sdd-doc-code` on the new llm units; run `/sdd-test-run`; **goldens green** (LLM presets, stubbed)
+
+## 5. ScoringPipeline real injection (V10 + finding 3.3-3)
+
+- [x] 5.1 Create `ScoringParams` (RunSpec-derived: `coverageBoostWeight`, `formCompletionEnabled`, `frontierBoostWeight`, `mopFrontierWeight`, `mopWeightWtg`, `mopWeightDirect`, `mopWeightTransitive`, `mopWeightOpenMenu`)
+- [x] 5.1a `ScoringParamsDefaultsTest`: assert the eight fields of a default-plan-derived `ScoringParams` against the jar defaults, as literals in the test. This is the **only** drift guard for scoring defaults in the whole rearch set — the goldens never execute scoring (`StatefulAgent.java:1537-1538`: `resolveNewAction()` runs `adjustActionsByGUITree()` and only then the oracle's entry point `selectNewActionNonnull()`), the pass unit tests supply their own params by INV-ARCH-11, the `RUN_START` echo is write-only (D1), and `rearch-01`'s per-preset `Config` guard covers only the values the ladder reads
+- [x] 5.2 Replace `ScoringPipeline.fromConfig(Config, ScoringContext)` with `fromParams(ScoringParams, ScoringContext)` (P3 — the decorative `cfg` path is deleted); update the production caller (`StatefulAgent:198`) to pass real params. The entry point has **five** call sites, not one, and two of them are named by no other task and are therefore this one's to carry: `BasePriorityCharacterizationTest.java:91` and — the one to think about before writing any code — `OracleScaffold.java:553`, **the parity gate's own harness**, so deleting `fromConfig` breaks the merge gate's compilation. The scaffold already resolves the plan it installs (`RunSpec spec`, at the same assembly site) and already carries this exact adaptation for `DecisionPipeline.fromSpec(spec, agent)`, so the repair is to derive the params from that spec: an injection-profile adaptation, the one INV-ORA-07 permits while the extraction is in flight, recorded here rather than discovered at `mvn test`. No golden and no scenario script moves. (The remaining three sites are covered: `PipelineParityTest` `:129`/`:165` by 5.5a, `ScoringPipelineTest` `:137`/`:152`/`:161` by 5.5.)
+- [x] 5.2a Record the candidate census inside `fromParams`, where the full candidate list is still in scope: `{name, enabled}` per candidate pass, handed to the sink as `PIPELINE.candidates` (stage 4). The consumer already exists in this worktree since the `rearch-b` merge — `EventSink.pipeline(List stages, List passes, Map<String, Boolean> candidates)`, pinned by `NdjsonSinkTest.theLoadCensusCarriesTheNumberTheFrontierPassesGateOn` — and has no producer in `src/main`, so this task supplies the map in declaration order and stage 4 wires the emission; the shape is given, not chosen. `passes` keeps exactly today's content — the census is a sibling member, never a widening of that list (INV-ARCH-04). **No `disabledReason()` on the `ScoringPass` interface**: the three gate conjuncts are already in the trace (`MOP_DATA.status`, `MOP_DATA.wtgEdges`, `RUN_START.params`), and the three passes do not order their conjuncts uniformly, so a "first failing conjunct" would record source order rather than cause. On the stage side, the decision pipeline's candidate list is a static declaration of names — never a constructed no-op stage (INV-DP-03)
+- [x] 5.3 Parameterize the passes (ctor injection; `isEnabled()` logic unchanged) and `MopScorer` (weights as parameters; static `Config` reads deleted). The census at HEAD is **six** static reads in the scoring package (`FrontierPass` 2, `CoveragePass` 2, `WtgPass` 1, `FormCompletionPass` 1) and **four** in `MopScorer` (`mopWeightDirect:45`, `mopWeightTransitive:48`, `mopWeightWtg:111`/`:120`), which lives in `ape/utils` — outside the package 6.5's grep-guard is worded against, noted for 6.5 and not fixed here. Two of the eight keys have **no static read left to delete**: `mopWeightOpenMenu` and `mopFrontierWeight` already reach the plan through an ambient `RunContext.current().spec().mop()` read (`MopScorer:101`, `MopFrontierPass:43`), so for those two this task replaces an ambient global read with constructor injection — the same INV-ARCH-11 end from a different starting point, and the harder half, since an ambient read compiles and passes while doing exactly what the invariant forbids. It is also what makes a pass constructible with no run context installed: `BasePriorityCharacterizationTest` errors 3/3 in isolation today (`IllegalStateException: no run context`) and is green in the full suite only because another class leaves a context behind
+- [x] 5.4 Fix the class javadoc: seven-pass roster (`MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion`), "six passes" wording removed (finding 3.3-3); P4 current-state comments
+- [x] 5.5 Migrate pass/scorer unit tests to explicit params (no `Config` mutation in tests); injection-contrast test (same context, two params ⇒ different assembly); **goldens green**
+- [x] 5.5a Migrate `PipelineParityTest` (`src/test/java/.../agent/PipelineParityTest.java`, 5 tests) — it builds the pipeline through `ScoringPipeline.fromConfig(null, ctx)` at `:129` and `:165`, the entry point task 5.2 deletes, so this change breaks its compilation and no other task in any of the seven changes names the file. It is also the file `rearch-01` delegates scoring parity to ("`adjustActionsByGUITree()` scoring parity is already locked by `PipelineParityTest` and stays where it is"), which makes deleting it the wrong reflex. Rebuild both call sites on `fromParams(ScoringParams, ctx)` with explicit params, and while there replace the tautological weight assertion at `:196-:200` with the literal `ScoringParamsDefaultsTest` pins: it reads `RunContext.current().spec().mop().weightOpenMenu()` into a local and asserts the boost equals it, which compares the plan to itself and passes under any weight — the `Config.mopWeightOpenMenu` form the design recorded was already migrated to this plan-read form, same tautology through a newer source. Two residues in the same file fall out of the rebuild rather than being tidied into it: the `Config` import at `:14` is already unused, and the `:219` comment justifies constructing an empty pipeline by hand with a "static-final wall" and the retired `apePureMode` key — a claim this task's own injection makes false, since an all-off `ScoringParams` is now constructible directly
+
+## 6. Static-Config-read sweep (design D9, INV-DP-12)
+
+- [x] 6.1 `SataAgent`: replace **all 16 `Config` reads over 11 keys** — 10 qualified plus 6 reached through `import static`, the form a `Config.` grep passes over (design D9's re-measured row has the per-key sites) — with params injected at assembly: the epsilon family, `backMenuPickCap`, `mopTargetPickCap`, `trivialActivityRankThreshold`, `doBackToTrivialActivity`, `useActionDiffer`, `fillTransitionsByHistory`, `fallbackToGraphTransition`. The count in this task's earlier wording (25) and D9's original row both predate groups 1–4, which already moved the launcher pair, `componentPercentage`, `llmPercentage`, `activityBudgetEnabled` and `graphStableRestartThreshold` into the stages. The sweep is **total over the class** — 6.5's guard asserts zero, so a read left behind fails the build rather than surviving quietly. `SataAgent:22`'s `import static ...graphStableRestartThreshold` is dead (the import line is its only occurrence) and is removed here, with the sweep that owns the class
+- [x] 6.2 `StatefulAgent`: **all 26 `Config` reads over 20 keys** — 10 qualified plus 16 through `import static`, which is the majority form here (design D9's re-measured row). Decision-relevant ones (restart thresholds, budget params, `evolveModel`, throttles) → `ExplorationParams`, held as a field assigned in the constructor, which is the assembly moment `scoringPipeline` already uses — not an ambient `RunContext.current()` read at the decision site, which INV-DP-12 forbids in the same breath as the static read. `stepTelemetryEnabled` → `TelemetryParams`, which is null when the `STEP_TELEMETRY` feature is absent, so the field reads false there. **Four keys the earlier wording left unclassified are swept too**, because 6.5's guard asserts zero over the class and an unclassified read is just a read: `mopDataPath`(2) → `MopParams.dataPath()`, null exactly when the MOP feature is absent (the feature is *derived* from that key's presence, so the equivalence is definitional) — note D9's claim that rearch-02 had already replaced these was wrong, both are live at `:178`/`:179`; `maxIdleTimeoutMs`(2), `fuzzingActivityVisitThreshold` and `maxExtraPriorityAliasedActions` → `ExplorationParams`. The save/screenshot flags are base keys and travel with the exploration params rather than needing a telemetry scope
+- [x] 6.3 `State.greedyPickLeastVisited`: take the tiebreak flag as a parameter from the SataChain call site; document the `modelMenuEnabled` structural residue at its read site (design D9 — the one accepted exception, with rationale comment). **Add the paired test this seam has never had**: same action set, same visit counts, differing priorities, called once with `true` and once with `false` — the two calls SHALL pick different actions. This is where priority boosts turn into chosen actions (`SataAgent.java:670`; `action-selection`: "This makes all priority boosts (MOP, WTG, coverage) influence the greedy path"), so an argument wired wrong here degrades MOP guidance while every stage still reports the same structure
+- [x] 6.4 `ApePromptBuilder` variant → `LlmParams`
+- [x] 6.5 Structural guard test over the swept scope. **A `Config.` grep is not the guard** — it misses the three forms design D9 enumerates, and the natural narrow pattern is exactly what would certify a false claim here. The guard SHALL assert, over `agent/pipeline/**`, `agent/scoring/**`, `llm/**`, `utils/MopScorer.java` (which lives outside every package the earlier wording named) and the three classes 6.1–6.3 sweep (`SataAgent`, `StatefulAgent`, `State`): (a) **zero `Config` reads in either form** — qualified `Config.<field>` and bare identifiers behind `import static ...Config.<field>`, so the guard resolves each file's static imports and then looks for their bare use; (b) **zero ambient `RunContext.current()`** in the injection-constructed units (`agent/pipeline/**`, `agent/scoring/**`, `llm/**`, `MopScorer`), the third form, which group 5 found twice sitting behind a clean `Config` grep; (c) **zero `Config.leastVisitedPriorityTiebreak` anywhere in `src/main`** after 6.3 — a leftover static read would silently keep the old behavior while the injected parameter travels unused; (d) `Config.modelMenuEnabled` in `State` is the one allowed remaining read (design D9 residue), asserted to be **exactly one** occurrence. The guard SHALL fail loudly rather than silently when a guarded file moves: it resolves its scopes and asserts each resolved to a non-empty file set. **It SHALL be shown able to fail** (the 5.1a discipline — an unfalsified guard is decoration): drift one read back into a guarded file, watch it go red, revert. State in the test's own javadoc what it deliberately does not cover — `RunContext.current()` in `SataAgent`/`StatefulAgent`, which is legitimate at assembly and for fetching LLM collaborators and which the guard does not try to tell apart from a decision-time read; and any parameter reached through a helper in a file outside the scope, which no source scan can see
+- [x] 6.6 Run `/sdd-qa-lint-fix` over the touched modules; **goldens green**
+
+## 7. Wiring completion and cleanup
+
+- [x] 7.1 Wiring completion, as three claims to verify rather than one move — the earlier wording ("`RunContext` owns the assembled `DecisionPipeline` and the LLM units") was half already true and half contradicted by the code, and design **D15** now records why:
+  - **The LLM units are on `RunContext`, and were since 4.1–4.6.** `llmClient`, `coordinateMapper`, `llmTelemetry` and `llmEngine` are final fields built in its constructor, all four null together on a plan with no LLM feature. This half is an audit, not a move
+  - **The assembled pipeline stays owned by `SataAgent`.** `fromSpec` binds ~12 method references to the agent's action producers (D14) and `RunContext` is established *before* any agent exists — which is what makes `RunContext.current().spec()` readable in the agent's constructor at all. Moving it would need a two-phase `installPipeline(...)` (a mutable field with a null window, in the one class whose contract is a context established once) or an inverted initialization order, bought for no consumer: the only production reader is the agent, and stage 4's `PIPELINE` census is `DecisionPipeline.assembledCandidates(RunSpec)` plus `Candidate.values()` — a pure function of the plan. A `RunContext.current().decisionPipeline()` path would be a new ambient read of exactly the kind INV-DP-12 forbids and 6.5's guard bans in `agent/pipeline/**`
+  - **Transition-event forwarding, exactly once per visited edge, agent counters first and then stages** (INV-DP-07) — the one part of this task that is neither done nor covered, and it needs a unit assertion because **no golden can see it**: `OracleScaffold` `Unsafe`-allocates its agent, so `StatefulAgent`'s `graph.addListener(this)` never runs and the harness's agent is not a `GraphListener` at all. A hook that stopped being called, or that ran before the agent's own counter bookkeeping, would leave the parity gate 14/14. Also correct `DecisionPipeline.fromSpec`'s javadoc, which still forward-references the move as this task's (P4)
+- [x] 7.2 Verify `StageResult.select` labels equal stamped `ModelAction` provenance on every stage (unit assertion per stage; INV-DP-04) — the stage-4 telemetry handle
+- [x] 7.3 Delete dead residue: former inline-block comments, the triplicated precondition text, unused imports; P4 pass over touched files (no migration-history comments)
+- [x] 7.4 Run `/sdd-verify` on the module
+
+## 8. Verification
+
+- [x] 8.1 Full suite: `mvn test` — 0 failures/errors; migrated LLM/scoring tests green with unchanged assertion content
+- [x] 8.2 Full per-preset golden suite green (`aperv`, `mop`, `llm`, `llm_mop`) — INV-DP-09, the acceptance gate
+- [x] 8.3 Permanent tests (3.1–3.4) in the default `mvn test` run, not a separate profile
+- [x] 8.4 `mvn package` green → `target/ape-rv.jar`; on-device smoke via rv-platform at the next scheduled rebuild (no manual emulator management). **That rebuild is `gh97-rearch-ab-gate` 6.2, and the smoke is its 7.1/7.3** (owner decision 2026-08-05: the APE-RV side executes once, there). This box was ticked for the build, which is what this change controls; the smoke half is discharged by three arms completing with coverage > 0 and no `VerifyError`, and needs no assertion specific to this stage — its decision pipeline is already pinned by the per-preset goldens of 8.2, which is stronger evidence than a run could give
+- [x] 8.5 `openspec validate rearch-03-decision-pipeline --strict`
+- [x] 8.6 Cross-change check, whose condition is already settled the other way round: `telemetry-proof-llm-efficacy` **archived first**, on 2026-08-02 (`openspec/changes/archive/2026-08-02-telemetry-proof-llm-efficacy`), so its deltas are already in the main specs and **this** change archives second — its deltas are what overwrite them. The check is therefore specific rather than conditional: verify that no requirement text that change contributed is lost when this one syncs. Three requirements, two shapes. The two **MODIFIED** bodies — `Stagnation LLM Mode` (`llm-routing`) and `Per-action decision-source telemetry` (`action-selection`) — against the main-spec bodies they replace; and the **REMOVED** `LlmRouter Lifecycle`, whose still-applicable obligations must live on in this change's ADDED `LLM Unit Lifecycle and Ownership`, since the removal is deliberate (4.7 deletes the class) and must not carry the surviving lifecycle content out with it. **This is not a formality**: measured 2026-08-04, the telemetry requirement's delta body is ~350 words shorter than the main spec's (1504 vs 1854), and the lines absent from it include the `decision_source` enum, `activity_has_mop` and `pick_channel`. Each must be confirmed as restated — the delta legitimately rewrites `Config.X` reads as plan values and `LlmRouter` as the stages, so a literal-line diff over-reports — or repaired as a real loss
+- [x] 8.7 Run `/sdd-qa-lint-fix` → `/sdd-verify` → `/sdd-code-reviewer` (final gate)
+- [x] 8.8 Final confirmation that three independent artifacts agree, read off 8.1–8.4's output rather than by re-running them: the per-preset goldens unmodified (`git status --short src/test/resources/goldens` prints nothing), the permanent tests 3.1–3.4 present in the default `mvn test` run, and the build output existing (`target/ape-rv.jar`, from 8.4). The earlier wording delegated this to `superpowers:verification-before-completion`, **which is not a skill this repo or this session has** — unlike the `sdd-*` family there is no `SKILL.md` for it on disk, so it cannot even be followed by hand — hence the check is stated here rather than pointing at a tool that cannot be invoked. All three are required to claim behavior preservation, because each covers what the others cannot: the goldens pin what every step decides, the permanent tests pin the cross-feature interactions no golden spans (INV-DP-08, and the transition forwarding whose probe left the gate at 14/14), and the jar proves the tree those two verified is the tree that ships
+
+## 9. Archive blocker: the scenario sets the deltas would drop (found 2026-08-05)
+
+**Status: this change cannot be archived until this group is closed.** `openspec archive` aborts
+rather than syncing, and it is right to. Attempted on 2026-08-05 and refused twice — first on
+`action-selection`, then on `component-triggering` — with the same class of message: *"current spec
+contains scenario(s) not present in the modified block … Refresh the change spec before archiving to
+avoid dropping scenarios."*
+
+The first sweep of the seven deltas against the main specs put the number at 16; the complete
+set-diff below puts it at **19**. They are not one thing, and the disposition differs per case:
+
+- **Renames** — the majority, and legitimate: this change re-anchors a mechanism and the scenario
+  header follows it. `"LLM enabled via Config"` → `"LLM enabled via the plan"`, `"launcher disabled"`
+  → `"launcher absent from the plan"`, `"invalid values clamped at load"` → `"…at plan resolution"`,
+  `"empty pipeline under the pure arm"` → `"…under an empty scoring plan"`, and so on. The tool
+  cannot tell a rename from a deletion, because OpenSpec has `RENAMED` for *requirements* and no
+  equivalent for scenarios.
+- **Deliberate replacement** — at least one, and dropping it is correct: `exploration ::
+  "Stagnation hook fires only once per phase"` pins the exact-equality semantics at `threshold/2`,
+  which this change deliberately replaces with `"single-shot at or past midpoint"`. The old scenario
+  contradicts the new behavior and must not survive.
+- **No counterpart found** — two, and these are why the group exists rather than being waved through:
+  - `component-triggering :: Cadence-Based MOP Activity Launch :: "arm contrast is the launched set"`
+    — the control census (`ape.mopActivitySourceComponents=false`) is `{A}` against the treatment's
+    `{A, B, C}`, and the control launcher only ever launches `A`. None of the three added scenarios
+    covers it. This is the campaign's arm contrast, not an implementation detail.
+  - `llm-routing :: Probabilistic LLM Routing :: "High percentage (70%)"` — `shouldRouteRandom()`
+    returns true ~70 % of the time at `llmPercentage=0.7`. The delta adds `"draw order preserved
+    under the same seed"`, which asserts something else; the rate itself is not restated.
+
+**Why it was parked rather than pushed through** (owner-decided 2026-08-05): `rearch-06-memory-surgical`
+does not depend on this archive — the stack lives in the worktree and archiving only syncs specs — so
+nothing is gained by bypassing a guard that has already produced one real finding. `--no-validate` was
+not used: the two uncovered scenarios are exactly what it would have silently discarded.
+
+### The pairwise classification (9.1, closed 2026-08-05)
+
+**The count is 19, not 16.** The earlier figure came from the two capabilities the archive aborted on
+plus a partial sweep; a set-diff of every `MODIFIED` block against its main-spec requirement finds
+three more, all in `llm-routing`. The disposition:
+
+| # | Capability :: Requirement | Main-spec scenario | Disposition |
+|---|---|---|---|
+| 1-3 | action-selection :: greedyPickLeastVisited | `Tie broken by priority (flag on)`, `All actions have same visitedCount (flag on)`, `Tie broken by array order when the flag is off` | rename (`flag` → `argument`) |
+| 4 | component-triggering :: Probabilistic | `Component trigger fires` | rename (`… as a side effect`) |
+| 5 | component-triggering :: Probabilistic | `No mopDataPath set` | rename. Its second claim — `mopDataPath` null ⇒ `componentPercentage` defaults to `0.0` — survives untouched in `Config — componentPercentage`, which this change does not modify |
+| 6-7 | component-triggering :: Cadence | `invalid values clamped at load`, `launcher disabled` | rename (`at plan resolution`, `absent from the plan`) |
+| 8 | component-triggering :: Cadence | `arm contrast is the launched set` | **genuine loss — restated** |
+| 9 | exploration :: LLM Router Integration | `LLM enabled via Config` | rename (`via the plan`) |
+| 10 | exploration :: New-State Hook | `LLM returns null, SATA takes over` | rename (`remainder takes over`). Its `[APE-RV] … falling back to SATA` warning is deliberately dropped: the string no longer exists in `src/main/java` (verified) — the fall-through is structural now |
+| 11 | exploration :: New-State Hook | `LLM disabled, zero overhead` | rename (`LLM absent`) |
+| 12 | exploration :: Stagnation Hook | `LLM breaks stagnation (single-shot at midpoint)` | rename (`at or past midpoint`) |
+| 13 | exploration :: Stagnation Hook | `Stagnation hook fires only once per phase` | **deliberate replacement** — see below |
+| 14 | llm-routing :: Stagnation LLM Mode | `new edge re-arms the episode` | rename (`via the transition hook`) |
+| 15 | llm-routing :: Probabilistic LLM Routing | `High percentage (70%)` | **genuine loss — restated** |
+| 16 | llm-routing :: Action Selection Pipeline | `banned result is refused at step 10, not failed` | rename (`Banned answer leaves through the no_match path`) |
+| 17 | llm-routing :: Action Selection Pipeline | `Off-tree element becomes a coordinate tap` | **restated.** The unit-level rule survives in the unmodified `Coordinate-to-ModelAction Mapping :: "Off-tree click builds an LlmTapAction"`; the end-to-end claim through `selectAction()` did not, and restating costs four lines |
+| 18 | llm-routing :: Action Selection Pipeline | `no_match reason is always one of three` | **restated.** The three-reason closure survives as *prose* in `LLM Telemetry Logging`'s field table, but no scenario asserted it; prose is not a gate |
+| 19 | scoring-pipeline :: Assembly | `empty pipeline under the pure arm` | rename (`under an empty scoring plan`) |
+
+**On 13, the one deliberate replacement.** Task 9.3 as written ("keep the removal") cannot be
+executed: the archive matcher is keyed on the scenario *name*, so a removal aborts exactly like a
+rename. It does not have to be — the name asserts *once per episode*, which this change preserves and
+in fact strengthens (a burned flag, not an equality test). Only the **body** was contradicted, so the
+scenario is restated under its own header with the new mechanism, and `exploration`'s requirement
+prose states which claim was replaced and where the counter-jump case now lives. Nothing is
+smuggled: the old exact-equality assertion is gone and said to be gone.
+
+**Renaming a scenario is not expressible in OpenSpec, and this was verified rather than assumed.**
+`specs-apply.js` matches by scenario name inside the `MODIFIED` block, and the two apparent escapes
+are both closed: `REMOVED` + `ADDED` of one requirement is rejected outright (*"Requirement present
+in both ADDED and REMOVED"*, reproduced in a sandbox), and `RENAMED` only rewrites a requirement's
+header line before running the same scenario check. So every renamed scenario keeps the main spec's
+header, and the change's vocabulary lives in the body — the cost being headers like `"LLM enabled via
+Config"` on a body that reads the plan. That cost is the tool's, not this change's.
+
+- [x] 9.1 Classify all 16 pairwise: rename / deliberate replacement / genuine loss — **19, tabled above**
+- [x] 9.2 For renames, restate the scenario under the **main spec's** header so the archive's matcher
+      pairs them; the body stays as this change wrote it. (Three were realigned this way on
+      2026-08-05 in `action-selection` and then reverted, so the sweep lands as one consistent edit
+      rather than in fragments) — 14 renames, landed as one sweep
+- [x] 9.3 For deliberate replacements, keep the removal and state the reason in the delta's prose —
+      the reader needs to know the old scenario is contradicted, not forgotten — **amended**: the
+      removal cannot be kept (the matcher aborts on it); the header survives, the body is replaced,
+      and the reason is in `exploration`'s requirement prose
+- [x] 9.4 For genuine losses, restate the scenario in the delta. `"arm contrast is the launched set"`
+      and `"High percentage (70%)"` are the two known ones — restated, plus the two `llm-routing`
+      cases (17, 18) the earlier sweep had not reached
+- [x] 9.5 `openspec archive rearch-03-decision-pipeline --yes` completes without aborting — **run
+      2026-08-05**: `+ 11, ~ 16, - 1`, seven capabilities updated, `decision-pipeline` created. The
+      five restated scenarios were confirmed present in the main specs afterwards, carrying this
+      change's bodies
+
+**The order it was run in was chosen on a measurement, not on convenience.** This change shares
+modified requirements with two open ones — four with `rearch-04` (`Per-action decision-source
+telemetry`, `Cadence-Based MOP Activity Launch`, `Action Selection Pipeline`, `Scoring Pipeline
+Assembly from Config`) and one with `rearch-07` (the cadence launcher) — and because a MODIFIED
+block *replaces* the requirement, whichever change archives second must carry the winner's
+scenarios. The order is therefore not free, and it is asymmetric:
+
+| Order | Marginal cost | Paid by |
+|---|---|---|
+| this change first | **+3** on `rearch-04`, **+0** on `rearch-07` | `rearch-04` |
+| `rearch-04` first | **+9** on this change | this change, reopened after closing |
+| `rearch-07` first | **+4** on this change | this change, reopened after closing |
+
+The three `rearch-04` owes are `Stage-stamped provenance equals the StageResult label`, `Budget stage
+early-return attributed` and `Launcher step attributed Component` — the scenarios this change adds to
+`action-selection :: Per-action decision-source telemetry`, recorded as an obligation in that
+change's own group 9.
+
+**Marginal, not gross, and the distinction decided this.** The gross difference between this
+change's blocks and `rearch-04`'s is 23 scenarios, and 3 with `rearch-07`. Twenty of the first and
+all three of the second were already owed to the *pre-archive* main spec — they sit inside the 48
+and 27 unpaired scenarios those changes carried independently of this one, measured before this
+group's edits. So this archive adds three items to a bill of 48 and nothing to a bill of 27: the
+group-9 sweep is work each of them already faced, not a debt this change created.
+

@@ -15,14 +15,6 @@
  */
 package com.android.commands.monkey.ape.agent;
 
-import static com.android.commands.monkey.ape.utils.Config.defaultEpsilon;
-import static com.android.commands.monkey.ape.utils.Config.doBackToTrivialActivity;
-import static com.android.commands.monkey.ape.utils.Config.fallbackToGraphTransition;
-import static com.android.commands.monkey.ape.utils.Config.fillTransitionsByHistory;
-import static com.android.commands.monkey.ape.utils.Config.graphStableRestartThreshold;
-import static com.android.commands.monkey.ape.utils.Config.trivialActivityRankThreshold;
-import static com.android.commands.monkey.ape.utils.Config.useActionDiffer;
-
 import java.util.ArrayList;
 import java.util.function.Supplier;
 import java.util.Arrays;
@@ -42,13 +34,17 @@ import com.android.commands.monkey.ape.AndroidDevice;
 import com.android.commands.monkey.ape.AndroidDevice.Activity;
 import com.android.commands.monkey.ape.AndroidDevice.Stack;
 import com.android.commands.monkey.ape.AndroidDevice.Task;
-import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.BaseActionFilter;
 import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.SubsequenceFilter;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
+import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
-import com.android.commands.monkey.ape.model.ActivityTriggerAction;
+import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.MopCounterfactual;
@@ -57,17 +53,15 @@ import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.model.ActionType;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.RandomHelper;
-import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import android.content.ComponentName;
 
-public class SataAgent extends StatefulAgent {
+public class SataAgent extends StatefulAgent implements StageCollaborators {
 
 
     SubsequenceFilter unsaturatedActionsFilter = new SubsequenceFilter() {
@@ -186,7 +180,7 @@ public class SataAgent extends StatefulAgent {
         }
     };
 
-    static enum SataEventType {
+    public static enum SataEventType {
         TRIVIAL_ACTIVITY,
         SATURATED_STATE, USE_BUFFER, EARLY_STAGE,
         EPSILON_GREEDY, RANDOM, NULL, BUFFER_LOSS, FILL_BUFFER, BAD_STATE;
@@ -202,16 +196,43 @@ public class SataAgent extends StatefulAgent {
     private int[] actionCounters;
     private ActivityNode backToActivity;
 
+    /**
+     * The run's decision policy, assembled once from the plan (INV-DP-01).
+     *
+     * <p>The oracle harness allocates its agent without running a constructor, so this field is one
+     * of the ones it injects; {@code OracleScaffold.newAgent} assembles it from the same
+     * {@code fromSpec} against the preset's plan.
+     */
+    private final DecisionPipeline decisionPipeline;
+
+    /**
+     * The MOP target re-pick cap, resolved here rather than read through {@link #exploration}
+     * because it belongs to {@code MopParams}, which does not exist on a plan without MOP. Zero
+     * disables the cap, which is what a run with no MOP targets to cap means.
+     */
+    private final int mopTargetPickCap;
+
     public SataAgent(MonkeySourceApe ape, Graph graph) {
-        this(ape, graph, defaultEpsilon);
+        this(ape, graph, RunContext.current().spec().exploration().defaultEpsilon());
     }
 
     public SataAgent(MonkeySourceApe ape, Graph graph, double epsilon) {
         super(ape, graph);
         this.epsilon = epsilon;
 
+        RunSpec spec = RunContext.current().spec();
+        this.mopTargetPickCap = spec.has(Feature.MOP) ? spec.mop().targetPickCap() : 0;
 
         this.actionCounters = new int[SataEventType.values().length];
+        // Assembly is here rather than in StatefulAgent because the stages bind this class's action
+        // producers, and it is safe at this point for the same reason the scoring pipeline's is: the
+        // bindings are method references, so nothing is invoked before the constructor finishes.
+        //
+        // It is also why the pipeline is the agent's and not the run context's (design D15): binding
+        // those producers needs an agent, and the context is established before one exists — which is
+        // what makes the spec read above possible at all. The context owns the LLM units instead,
+        // which have no agent in them.
+        this.decisionPipeline = DecisionPipeline.fromSpec(spec, this);
     }
 
     @Override
@@ -223,7 +244,8 @@ public class SataAgent extends StatefulAgent {
         return this.getGraph().isEntryState(state);
     }
 
-    protected void logActionSelected(Action action, SataEventType type) {
+    @Override
+    public void logActionSelected(Action action, SataEventType type) {
         Logger.iformat("Select action %s by strategy %s", action, type);
         // Decision-source attribution is set at the priority-consuming PICK SITES
         // (the roulettes and the MOP short-circuits inside EARLY_STAGE/EPSILON_GREEDY),
@@ -231,7 +253,7 @@ public class SataAgent extends StatefulAgent {
         // branch selects for reasons other than priority, so its action is attributed
         // SATA here — a fresh write that also clears any stale source carried over from
         // a previous step. INV-SEL-04: this only changes which enum value is carried,
-        // never the number of [APE-STEP] lines and never a boost field.
+        // never the number of step records and never a boost field.
         if (action != null && action.isModelAction()
                 && type != SataEventType.EARLY_STAGE && type != SataEventType.EPSILON_GREEDY) {
             ((ModelAction) action).setDecisionSource(ModelAction.DecisionSource.SATA);
@@ -334,8 +356,9 @@ public class SataAgent extends StatefulAgent {
     }
 
     /**
-     * Per-state UI-coverage dump (read-only), emitted at the pre-{@code saveGraph} step of the
-     * teardown chain (INV-COV-10). {@code mopReach} is computed here because the tracker holds no
+     * Per-state UI-coverage dump (read-only), emitted strictly before {@code actionCounters} —
+     * the first teardown step that produces output (INV-COV-10). {@code mopReach} is computed
+     * here because the tracker holds no
      * MopData reference (D4): a state's Activity gates a MOP target iff
      * {@code _mopData != null && activityHasMop(activity)} — which is why the hoist is an
      * overridable step rather than a line moved up into a class that cannot see the predicate.
@@ -408,42 +431,61 @@ public class SataAgent extends StatefulAgent {
         return hasGreedyActionForward(state);
     }
 
-    /**
-     * Accept an LLM-routed action from any of the three LLM hooks (new-state / stagnation / random).
-     *
-     * <p>Labels the action {@code DecisionSource.LLM} and, for a synthesized off-tree
-     * {@link ActionType#MODEL_LLM_TAP} tap, resolves it against {@code newState} before returning it
-     * (llm-coordinate-tap, D7). The tap is {@code isModelAction()==true} but — unlike a matched
-     * widget action — is not a member of {@code newState.getActions()}, so it never passed through the
-     * per-state resolution pass; {@link #resolveNewAction()} would then read a null
-     * {@code GUITreeAction} and {@code assertNotNull} would throw. Resolving here via the targetless
-     * branch of {@link State#resolveAction} populates its {@code GUITreeAction} exactly as
-     * {@code MODEL_MENU} / {@code MODEL_BACK} are resolved. The {@code MODEL_LLM_TAP} guard is
-     * required: a matched widget action is already resolved and MUST NOT be re-resolved (re-resolution
-     * would re-pick its node).
-     */
-    private ModelAction acceptLlmResult(ModelAction result) {
-        result.setDecisionSource(ModelAction.DecisionSource.LLM);
-        result.setPickChannel(ModelAction.PickChannel.LLM);
-        if (requiresSynthesizedResolution(result)) {
-            newState.resolveAction(this, result, getThrottleForNewAction(newState, result));
-        }
-        return result;
+    @Override
+    public LlmEngine llmEngine() {
+        return RunContext.current().llmEngine();
     }
 
     /**
-     * True when an LLM-routed action must be resolved against the current state before dispatch
-     * (llm-coordinate-tap, D7). Only the synthesized off-tree tap ({@link ActionType#MODEL_LLM_TAP})
-     * needs it: the tap is {@code isModelAction()==true} yet absent from {@code State.actions}, so it
-     * never passed the per-state resolution pass and its {@code GUITreeAction} is null — which
-     * {@link #resolveNewAction()} would {@code assertNotNull} on. A matched widget action returned on
-     * the same path is already resolved and MUST NOT be re-resolved (that would re-pick its node), so
-     * this returns {@code false} for every widget/targetless type other than the synthesized tap. Pure
-     * static so the guard decision is unit-testable without a live State/graph (device-gated resolution
-     * is exercised by the tasks.md 6.3 smoke).
+     * {@inheritDoc}
+     *
+     * <p>Reached only from an LLM stage, which exists only on a plan that built the client, so the
+     * dereference is safe by assembly rather than by a guard.
      */
-    static boolean requiresSynthesizedResolution(ModelAction result) {
-        return result.getType() == ActionType.MODEL_LLM_TAP;
+    @Override
+    public boolean llmBreakerAllows() {
+        return RunContext.current().llmClient().allows();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The agent's own stream, which is what {@code ApeAgent.getRandom()} exposes and what the
+     * probabilistic hook has always drawn from.
+     */
+    @Override
+    public java.util.Random agentRandom() {
+        return getRandom();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Forwards the edge to the stages after the agent's own bookkeeping has run, which is the
+     * order the episode state depends on: the stagnation stage re-arms on exactly the transitions
+     * that reset the stability counter it reads, so re-arming before the reset would show it the
+     * previous step's counter.
+     */
+    @Override
+    public void onVisitStateTransition(StateTransition edge) {
+        super.onVisitStateTransition(edge);
+        decisionPipeline.onStateTransition(edge);
+    }
+
+    /**
+     * Resolves a synthesized off-tree tap against {@code newState} so it carries a
+     * {@code GUITreeAction} before dispatch (llm-coordinate-tap, D7).
+     *
+     * <p>Agent-side because the throttle it resolves with is computed from the state's history. The
+     * targetless branch of {@link State#resolveAction} populates the action exactly as
+     * {@code MODEL_MENU} / {@code MODEL_BACK} are populated; without it {@link #resolveNewAction()}
+     * would read a null {@code GUITreeAction} and {@code assertNotNull} would throw.
+     *
+     * @param tap the synthesized tap, already screened by the LLM stages' resolution guard
+     */
+    @Override
+    public void resolveSynthesizedTap(ModelAction tap) {
+        newState.resolveAction(this, tap, getThrottleForNewAction(newState, tap));
     }
 
     protected Action selectNewActionNonnull() {
@@ -460,135 +502,11 @@ public class SataAgent extends StatefulAgent {
                 }
             }
         }
-        // gh9: budget exhaustion check — before LLM hooks
-        // Soft constraint: when exhausted, try trivial activity navigation.
-        // If unavailable, fall through to normal SATA chain (no BACK, no RESTART).
-        // EVENT_RESTART caused restart loops; MODEL_BACK caused stuck loops.
-        // Fallthrough is the correct behavior — lets SATA chain handle exploration.
-        if (Config.activityBudgetEnabled && getBudgetTracker().isBudgetExhausted(newState.getActivity())) {
-            ModelAction trivial = selectNewActionForTrivialActivity();
-            if (trivial != null) {
-                Logger.iformat("[APE-RV] Budget exhausted for %s, navigating to trivial activity", newState.getActivity());
-                trivial.setDecisionSource(ModelAction.DecisionSource.Budget);
-                trivial.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
-                return trivial;
-            }
-            // Fall through to normal SATA chain — budget is advisory, not blocking
-        }
-
-        // LLM new-state hook
-        if (actionBufferSize() == 0 && newState.getActions().size() > 2
-                && _llmRouter != null && _llmRouter.shouldRouteNewState(_isNewState)) {
-            ModelAction result = _llmRouter.selectAction(newGUITree, newState,
-                    newState.getActions(), getMopData(), _actionHistory, "new-state", getTimestamp());
-            if (result != null) {
-                return acceptLlmResult(result);
-            }
-        }
-        // LLM stagnation hook (single-shot at midpoint). Keeps its own fixed
-        // graphStableRestartThreshold / 2 point on purpose: mop-census-launcher moved the LAUNCHER
-        // off graphStableCounter entirely (it now fires on a dedicated cadence counter), so the two
-        // mechanisms no longer share any firing point. cmpft5 runs the LLM OFF, so there is no
-        // interaction; an enabled LLM hook here still runs before the launcher block below.
-        if (actionBufferSize() == 0 && newState.getActions().size() > 2
-                && _llmRouter != null
-                && _llmRouter.shouldRouteStagnation(graphStableCounter, stagnationHookFired)) {
-            // The episode's single shot is spent here, whatever the LLM answers: a null result is a
-            // failed attempt, not an unused one, and the restart at the full threshold is what
-            // follows if the stagnation persists.
-            stagnationHookFired = true;
-            ModelAction result = _llmRouter.selectAction(newGUITree, newState,
-                    newState.getActions(), getMopData(), _actionHistory, "stagnation", getTimestamp());
-            if (result != null) {
-                graphStableCounter = 0;
-                return acceptLlmResult(result);
-            }
-        }
-        // LLM random hook (probabilistic, fires with Config.llmPercentage probability)
-        if (actionBufferSize() == 0 && newState.getActions().size() > 2
-                && _llmRouter != null && _llmRouter.shouldRouteRandom()) {
-            ModelAction result = _llmRouter.selectAction(newGUITree, newState,
-                    newState.getActions(), getMopData(), _actionHistory, "random", getTimestamp());
-            if (result != null) {
-                return acceptLlmResult(result);
-            }
-        }
-        // mop-census-launcher (Lever B): cadence-based MOP-activity launcher. Fires every
-        // Config.activityTriggerStagnationStep passes through this block (a dedicated per-pass
-        // counter, decoupled from graphStableCounter), launching the next unvisited activity from
-        // the arm's MOP census. A first-class EVENT_TRIGGER_ACTIVITY step — model-visible,
-        // attributed Component in resolveNewAction, no graph edge (INV-CT-05/06/07). Evaluated after
-        // the LLM hooks, so an enabled LLM hook at a shared step takes precedence.
-        _stepsSinceLauncherFiring++;
-        if (shouldFireLauncher(Config.activityTriggerEnabled, getMopData() != null,
-                _stepsSinceLauncherFiring, Config.activityTriggerStagnationStep,
-                _activityTriggerLaunchCount, Config.activityTriggerMaxPerRun)) {
-            // Reset at the firing point regardless of candidate outcome (keeps firing periodic and
-            // avoids per-step rescans once the census is exhausted). The launch BUDGET, in contrast,
-            // is consumed only on an actual launch below (INV-CT-12).
-            _stepsSinceLauncherFiring = 0;
-            Set<String> visited = new HashSet<>();
-            for (ActivityNode an : getGraph().getActivityNodes()) {
-                visited.add(an.activity);
-            }
-            ComponentInfo candidate = selectTriggerCandidate(getMopData().getActivities(),
-                    visited, getMopData().getMainActivity(), _triggerRoundRobinIndex,
-                    getMopData().getMopActivities());
-            _triggerRoundRobinIndex++;
-            if (candidate != null) {
-                _activityTriggerLaunchCount++; // budget consumed only on an actual launch (INV-CT-12)
-                Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);
-                // Package captured from MopData (never from the class name — INV-CT-04).
-                return new ActivityTriggerAction(getMopData().getPackageName(),
-                        candidate.className, buildDeepLinkUri(candidate));
-            }
-        }
-        // gh11: component triggering (probabilistic, fires with Config.componentPercentage)
-        if (Config.componentPercentage > 0 && getMopData() != null && getMopData().hasComponents()
-                && getRandom().nextDouble() < Config.componentPercentage) {
-            triggerMopComponent();
-            // No return — trigger is a side-effect, continue with normal SATA selection
-        }
-        Action resolved = null;
-        resolved = selectNewActionFromBuffer();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.USE_BUFFER);
-            return resolved;
-        }
-        resolved = selectNewActionBackToActivity();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.TRIVIAL_ACTIVITY);
-            return resolved;
-        }
-        resolved = selectNewActionEarlyStageForward();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.EARLY_STAGE);
-            return resolved;
-        }
-        resolved = selectNewActionForTrivialActivity();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.TRIVIAL_ACTIVITY);
-            return resolved;
-        }
-        resolved = selectNewActionEarlyStageBackward();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.EARLY_STAGE);
-            return resolved;
-        }
-        resolved = selectNewActionEpsilonGreedyRandomly();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.EPSILON_GREEDY);
-            return resolved;
-        }
-        resolved = handleNullAction();
-        if (resolved != null) {
-            logActionSelected(resolved, SataEventType.NULL);
-            return resolved;
-        }
-        throw new BadStateException("No available action on the current state");
+        return decisionPipeline.decide(this);
     }
 
-    protected ModelAction selectNewActionEarlyStageBackward() {
+    @Override
+    public ModelAction selectNewActionEarlyStageBackward() {
         return selectNewActionEarlyStageBackwardGreedy();
     }
 
@@ -596,14 +514,15 @@ public class SataAgent extends StatefulAgent {
         logEvent(SataEventType.BUFFER_LOSS);
     }
 
-    protected ModelAction selectNewActionEpsilonGreedyRandomly() {
+    @Override
+    public ModelAction selectNewActionEpsilonGreedyRandomly() {
         // back-menu-pick-cap: bound discretionary BACK/MENU re-picks per (activity, type) across
         // NamingFactory-minted sibling states (INV-SEL-NAV-01). Only the discretionary channels
         // here are capped — the short-circuits, the least-visited pick, and the roulette. The
         // navigation-essential BACK sites (selectNewActionBackToActivity, backToTrivialActivity,
         // checkBackTrack, handleNullAction) never consult backMenuPicks (INV-SEL-NAV-03).
         String activity = newState.getActivity();
-        int cap = Config.backMenuPickCap;
+        int cap = exploration.backMenuPickCap();
         String backKey = backMenuPickKey(ActionType.MODEL_BACK, activity);
         String menuKey = backMenuPickKey(ActionType.MODEL_MENU, activity);
         ModelAction back = newState.getBackAction();
@@ -660,14 +579,16 @@ public class SataAgent extends StatefulAgent {
             // the fall-through it pre-empted — the least-visited pick with MOP weights zeroed.
             final ModelAction excluded = submitExcluded;
             mopTarget.setCounterfactualPick(counterfactual(() -> MopCounterfactual
-                    .leastVisitedWithoutMopWeights(candidatesOf(newState, cappedFilter, excluded))));
+                    .leastVisitedWithoutMopWeights(candidatesOf(newState, cappedFilter, excluded),
+                            exploration.leastVisitedPriorityTiebreak())));
             return mopTarget;
         }
         if (egreedy()) { // TODO: this is different from Sarsa.
             Logger.iformat("Try to select the least visited action.");
             // Least-visited pick: priority (and any boost) is only a tie-break, not the
             // reason for selection — SATA.
-            ModelAction leastVisited = newState.greedyPickLeastVisited(cappedFilter, submitExcluded);
+            ModelAction leastVisited = newState.greedyPickLeastVisited(cappedFilter, submitExcluded,
+                    exploration.leastVisitedPriorityTiebreak());
             if (leastVisited != null) {
                 leastVisited.setDecisionSource(ModelAction.DecisionSource.SATA);
                 leastVisited.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
@@ -753,85 +674,6 @@ public class SataAgent extends StatefulAgent {
 
     // activity-frontier (Lever B): round-robin cursor over the manifest activity list, persisted
     // across stagnation episodes so repeated launches walk the frontier (INV-CT-06).
-    private int _triggerRoundRobinIndex = 0;
-
-    // mop-census-launcher: count of EVENT_TRIGGER_ACTIVITY actions actually returned this run.
-    // Feeds the shouldFireLauncher per-run cap (Config.activityTriggerMaxPerRun). Incremented ONLY
-    // where the ActivityTriggerAction is returned (candidate != null branch) — a firing whose
-    // candidate scan comes up empty consumes no budget (INV-CT-12).
-    private int _activityTriggerLaunchCount = 0;
-
-    // mop-census-launcher: dedicated per-pass launcher step counter, incremented once each time
-    // selectNewActionNonnull reaches the launcher block and reset to 0 at every firing point
-    // (regardless of candidate outcome). Decoupled from graphStableCounter, so firing is periodic in
-    // selection steps and does not depend on graph growth (INV-CT-05).
-    private int _stepsSinceLauncherFiring = 0;
-
-    /**
-     * mop-census-launcher cadence gate seam (pure, INV-CT-05/08/12). The launcher fires only when it
-     * is enabled, MopData is loaded, the dedicated per-pass counter is exactly at the configured
-     * {@code cadence} (equality, not {@code >=}: the caller resets the counter to 0 at each firing
-     * point, so it never overshoots while firing is active), and the per-run launch budget is not
-     * exhausted ({@code maxPerRun == 0} means unlimited, else fire only while
-     * {@code launchesSoFar < maxPerRun}). Decoupled from {@code graphStableCounter} — periodic in
-     * selection steps, independent of graph growth. Off entirely when disabled or no MopData.
-     */
-    static boolean shouldFireLauncher(boolean enabled, boolean hasMopData,
-            int stepsSinceFiring, int cadence, int launchesSoFar, int maxPerRun) {
-        return enabled && hasMopData && stepsSinceFiring == cadence
-                && (maxPerRun == 0 || launchesSoFar < maxPerRun);
-    }
-
-    /**
-     * mop-census-launcher candidate seam (pure, INV-CT-06/10). Round-robin walk over
-     * {@code activities} from {@code rrIndex} (wrapping once), returning the first that satisfies, at
-     * call time, ALL of: a member of the arm's MOP census ({@code className} in {@code mopActivities}),
-     * not framework/tooling-namespaced, no permission gate ({@code permission == null}), not the main
-     * activity (by {@code isMain} flag or by name equal to {@code mainActivity}), and currently
-     * unvisited ({@code className} not in {@code visitedActivities}). Exported status is NOT consulted
-     * — the dispatch path ({@code IActivityManager.startActivity} from uid 2000) launches non-exported
-     * activities. There is no non-census fallback: a null/empty census, or no eligible census member,
-     * yields null. The census is the reachability-augmented {@code MopData.activityHasMop} truth
-     * (INV-MOP-27), NOT the component-level {@code ComponentInfo.reachesTarget} field, which
-     * false-negatives lambda-triggered activities. The caller owns the index increment.
-     */
-    static ComponentInfo selectTriggerCandidate(List<? extends ComponentInfo> activities,
-            Set<String> visitedActivities, String mainActivity, int rrIndex, Set<String> mopActivities) {
-        if (activities == null || activities.isEmpty() || mopActivities == null) {
-            return null;
-        }
-        int n = activities.size();
-        for (int i = 0; i < n; i++) {
-            int idx = (((rrIndex + i) % n) + n) % n; // safe modulo for any rrIndex
-            ComponentInfo c = activities.get(idx);
-            if (!mopActivities.contains(c.className)) {
-                continue; // census-only: never launch outside the arm's MOP census (no fallback)
-            }
-            if (isFrameworkActivity(c.className)) {
-                continue;
-            }
-            if (c.permission == null && !c.isMain
-                    && !c.className.equals(mainActivity)
-                    && !visitedActivities.contains(c.className)) {
-                return c;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Framework/tooling class-name prefixes that are never genuine app screens (Compose preview,
-     * abstract framework activities, leakcanary, test scaffolds). Debug-build manifest merging pulls
-     * these into the app package and over-approximated reachability can pull them into the MOP
-     * census, so they otherwise pass the eligibility conjunction; the class namespace is the
-     * discriminator (app code is never authored here). A fixed correctness filter, not a tunable —
-     * no Config flag (INV-CT-10). cmpft4: 76% of 114 launches hit these.
-     */
-    private static final String[] FRAMEWORK_ACTIVITY_PREFIXES = {
-            "android.", "androidx.", "com.google.android.", "kotlin.", "kotlinx.",
-            "junit.", "org.junit.", "leakcanary.",
-    };
-
     /**
      * INV-MOP-33: the Nav MOP-tiebreak decision line, or {@code null} when density did not decide
      * (all-equal random fallback). Emitted only from the path-selection site; never alters which
@@ -845,45 +687,6 @@ public class SataAgent extends StatefulAgent {
                 winningDensity, pathCount);
     }
 
-    /** Whether {@code className} starts with any {@link #FRAMEWORK_ACTIVITY_PREFIXES} entry
-     * (prefix match, never substring). */
-    private static boolean isFrameworkActivity(String className) {
-        if (className == null) {
-            return false;
-        }
-        for (String prefix : FRAMEWORK_ACTIVITY_PREFIXES) {
-            if (className.startsWith(prefix)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-
-    /**
-     * activity-frontier deep-link seam (pure). Returns {@code scheme + "://" + host + path} built
-     * from the first intent-filter that declares {@code ACTION_VIEW} and a non-empty scheme list
-     * (host/path default to empty when absent); null when no such filter exists (explicit-component
-     * fallback). Best-effort URI from the parsed manifest parts (INV-CT-07 dispatch precondition).
-     */
-    static String buildDeepLinkUri(ComponentInfo activity) {
-        if (activity == null) {
-            return null;
-        }
-        for (ComponentInfo.IntentFilter f : activity.intentFilters) {
-            if (!f.actions.contains("android.intent.action.VIEW")) {
-                continue;
-            }
-            if (f.data.schemes.isEmpty()) {
-                continue;
-            }
-            String scheme = f.data.schemes.get(0);
-            String host = f.data.hosts.isEmpty() ? "" : f.data.hosts.get(0);
-            String path = f.data.paths.isEmpty() ? "" : f.data.paths.get(0);
-            return scheme + "://" + host + path;
-        }
-        return null;
-    }
 
     /**
      * Physical-widget identity for the pick cap: {@code target.toXPath() + "|" + actionType + "|" +
@@ -985,7 +788,7 @@ public class SataAgent extends StatefulAgent {
      * null, or the cap is disabled. Instance method — mutates only {@code backMenuPicks}.
      */
     private void recordBackMenuPick(ActionType type, String activity) {
-        int cap = Config.backMenuPickCap;
+        int cap = exploration.backMenuPickCap();
         String key = backMenuPickKey(type, activity);
         if (recordMopPick(backMenuPicks, key, cap)) {
             Logger.iformat("[APE-RV] BACK/MENU capped: activity=%s type=%s picks=%d",
@@ -1001,7 +804,7 @@ public class SataAgent extends StatefulAgent {
     @Override
     protected boolean menuPickEligible(String activity) {
         return eligibleForMopPick(backMenuPicks,
-                backMenuPickKey(ActionType.MODEL_MENU, activity), Config.backMenuPickCap);
+                backMenuPickKey(ActionType.MODEL_MENU, activity), exploration.backMenuPickCap());
     }
 
     /**
@@ -1010,7 +813,7 @@ public class SataAgent extends StatefulAgent {
      * disabled. Read-only — never mutates the actions or {@code backMenuPicks}.
      */
     private List<ModelAction> dropCappedBackMenu(List<ModelAction> candidates, String activity) {
-        int cap = Config.backMenuPickCap;
+        int cap = exploration.backMenuPickCap();
         if (cap <= 0) {
             return candidates;
         }
@@ -1032,7 +835,7 @@ public class SataAgent extends StatefulAgent {
      */
     private ModelAction pickCappedMopTarget(Iterable<ModelAction> candidates, ModelAction excluded,
             String activity) {
-        int cap = Config.mopTargetPickCap;
+        int cap = mopTargetPickCap;
         Iterable<ModelAction> eligible = candidates;
         if (cap > 0) {
             List<ModelAction> filtered = new ArrayList<>();
@@ -1059,7 +862,8 @@ public class SataAgent extends StatefulAgent {
     }
 
     protected ModelAction fillTransition(State[] states) {
-        return fillTransition(states, fillTransitionsByHistory, fallbackToGraphTransition);
+        return fillTransition(states, exploration.fillTransitionsByHistory(),
+                exploration.fallbackToGraphTransition());
     }
 
     protected ModelAction fillTransition(State[] states, boolean byHistory, boolean fallback) {
@@ -1148,7 +952,7 @@ public class SataAgent extends StatefulAgent {
      * @return
      */
     protected List<ModelAction> getGreedyActions(State from, State to) {
-        if (useActionDiffer) {
+        if (exploration.useActionDiffer()) {
             return this.actionDiffer.getUnsaturated(from, to);
         }
         return to.collectActions(new BaseActionFilter() {
@@ -1263,7 +1067,8 @@ public class SataAgent extends StatefulAgent {
         return action;
     }
 
-    protected ModelAction selectNewActionBackToActivity() {
+    @Override
+    public ModelAction selectNewActionBackToActivity() {
         if (this.backToActivity == null) {
             return null;
         }
@@ -1327,7 +1132,12 @@ public class SataAgent extends StatefulAgent {
 
     protected boolean egreedy() {
         double effectiveEpsilon = computeDynamicEpsilon();
-        double v = ape.getRandom().nextDouble();
+        // The agent's RNG is reached through getRandom() (ApeAgent:322, `return ape.getRandom()`),
+        // the same accessor the roulette (:681), the component trigger (:548) and handleNullAction
+        // already use. Identical stream, and it is what lets a test subclass pin this coin flip:
+        // the harness has no MonkeySourceApe to put in `ape`, so reading the field directly closed
+        // both legs of this rung to the parity oracle (rearch-01, INV-ORA-01).
+        double v = getRandom().nextDouble();
         Logger.iformat("EGreedy value=%f, epsilon=%f.", v, effectiveEpsilon);
         if (v < effectiveEpsilon) {
             return false;
@@ -1336,7 +1146,7 @@ public class SataAgent extends StatefulAgent {
     }
 
     protected double computeDynamicEpsilon() {
-        if (!Config.dynamicEpsilon) {
+        if (!exploration.dynamicEpsilon()) {
             return epsilon;
         }
         UICoverageTracker tracker = getCoverageTracker();
@@ -1344,10 +1154,12 @@ public class SataAgent extends StatefulAgent {
             return epsilon;
         }
         float coverageGap = tracker.getCoverageGap(newState);
-        return Config.minEpsilon + (Config.maxEpsilon - Config.minEpsilon) * coverageGap;
+        return exploration.minEpsilon()
+                + (exploration.maxEpsilon() - exploration.minEpsilon()) * coverageGap;
     }
 
-    protected ModelAction selectNewActionEarlyStageForward() {
+    @Override
+    public ModelAction selectNewActionEarlyStageForward() {
         // A simple Depth First
         ModelAction action = selectNewActionEarlyStageForABA();
         if (action != null) {
@@ -1358,7 +1170,7 @@ public class SataAgent extends StatefulAgent {
 
     protected Set<ActivityNode> collectTrivialActivities() {
         ActivityNode[] activities = getGraph().getActivityNodes();
-        if (activities.length <= trivialActivityRankThreshold) {
+        if (activities.length <= exploration.trivialActivityRankThreshold()) {
             return Collections.emptySet();
         }
         Arrays.sort(activities, new Comparator<ActivityNode>() {
@@ -1421,7 +1233,8 @@ public class SataAgent extends StatefulAgent {
         }
     }
 
-    protected ModelAction selectNewActionForTrivialActivity() {
+    @Override
+    public ModelAction selectNewActionForTrivialActivity() {
         final Set<ActivityNode> trivialActivities = collectTrivialActivities();
         if (trivialActivities.isEmpty()) {
             return null;
@@ -1500,7 +1313,7 @@ public class SataAgent extends StatefulAgent {
                 return refillBuffer(path);
             }
         }
-        if (doBackToTrivialActivity) {
+        if (exploration.doBackToTrivialActivity()) {
             return backToTrivialActivity(trivialActivities);
         }
         return null;
@@ -1710,7 +1523,7 @@ public class SataAgent extends StatefulAgent {
         if (ActionFilter.ENABLED_VALID_UNVISITED.include(next.getBackAction())
                 && eligibleForMopPick(backMenuPicks,
                         backMenuPickKey(ActionType.MODEL_BACK, next.getActivity()),
-                        Config.backMenuPickCap)) {
+                        exploration.backMenuPickCap())) {
             Logger.iprintln("Find a greedy (unvisited) back action.");
             // Chosen because Back is unvisited, not because of any boost — SATA.
             ModelAction backAction = next.getBackAction();

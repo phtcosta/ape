@@ -15,12 +15,8 @@
  */
 package com.android.commands.monkey.ape.model;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 
-import com.android.commands.monkey.ApeRRFormatter;
 import com.android.commands.monkey.ape.naming.Name;
-import com.android.commands.monkey.ape.naming.NamerFactory;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -35,7 +31,7 @@ public class ModelAction extends Action {
 
     /**
      * The mechanism that selected this action, attributed at selection time for
-     * the per-action {@code [APE-STEP]} telemetry (A-5, INV-SEL-04). The SATA chain
+     * the per-action step record (A-5, INV-SEL-04). The SATA chain
      * sets {@code SATA} via {@code logActionSelected}; the LLM hooks and the
      * budget-exhausted early-return set their own source explicitly.
      */
@@ -45,7 +41,7 @@ public class ModelAction extends Action {
 
     /**
      * The selection channel that picked this action, for the {@code pick_channel} field of
-     * {@code [APE-STEP]} (A-5, INV-SEL-05). Independent of {@link DecisionSource}: the source names
+     * the step record (A-5, INV-SEL-05). Independent of {@link DecisionSource}: the source names
      * the mechanism whose boost was largest, the channel names the code path that consumed it.
      * Measured motivation — the unvisited-MOP short-circuit yields 15.1% new states while the
      * MOP-boosted roulette yields 1.4%, and aggregating them under {@code decision_source=MOP}
@@ -86,7 +82,7 @@ public class ModelAction extends Action {
     private float resolvedSaturation;
     private GUITree resolvedTree;
 
-    // A-5 [APE-STEP] telemetry: decision source + per-mechanism boosts applied in
+    // A-5 step-record telemetry: decision source + per-mechanism boosts applied in
     // the most recent adjustActionsByGUITree pass. Boosts are reset each pass.
     private DecisionSource decisionSource = DecisionSource.SATA;
     private PickChannel pickChannel = PickChannel.SATA_OTHER;
@@ -97,6 +93,17 @@ public class ModelAction extends Action {
     private transient ModelAction counterfactualPick;
     private int mopBoost;
     private int wtgBoost;
+    /**
+     * Which pass wrote {@link #wtgBoost} — {@code wtg}, {@code frontier}, or {@code both} when they
+     * stacked. Null while the boost is zero.
+     *
+     * <p>The summed field alone cannot answer it. {@code WtgPass} overwrites the boost and
+     * {@code FrontierPass} adds to it, and the campaign configured both at weight 200: of the steps
+     * that carry a boost, 10,231 sit at 200 — either producer, indistinguishably — and only 91 sit
+     * at 400 and so prove both fired. The stamp costs one string reference at each of the two write
+     * sites and leaves the accumulated value exactly as it was.
+     */
+    private String wtgSource;
     // The MOP-frontier contribution, kept apart from wtgBoost (INV-ARCH-10). Three passes used to
     // accumulate into wtgBoost — WtgPass, the generic FrontierPass and MopFrontierPass — so
     // decision_source=WTG conflated a MOP mechanism with generic WTG navigation and the corpus's
@@ -189,7 +196,7 @@ public class ModelAction extends Action {
 
     /**
      * Widget text with {@code \n}/{@code \r} replaced by spaces (INV-SEL-07). This string is
-     * interpolated into the action's {@code toString()}, which every {@code [APE-STEP]} emitter
+     * interpolated into the action's {@code toString()}, which the step record's {@code dec.a}
      * prints, so a multi-line label used to split the line in two: 752 of 166,359 lines in the
      * calibration corpus, distributed unevenly across arms (32–116 each), which biased every
      * {@code decision_source} count by 0.45%. Flattening here fixes all emitters at once.
@@ -248,6 +255,38 @@ public class ModelAction extends Action {
         return;
     }
 
+    /**
+     * Drops the references into {@code released}, iff this action was last resolved against it.
+     *
+     * <p>Resolution overwrites, it never clears, so an action last resolved against a tree the
+     * model later releases kept that tree — and its whole node subtree — reachable after it had
+     * left {@code State.treeHistory} (V24). This is the clearing half, invoked from
+     * {@code Model.release} in the same cycle as the {@code GUITreeBuilder} cache sweep.
+     *
+     * <p>The comparison is reference identity: an action resolved against a different, live tree is
+     * left alone, and a re-resolve after this call restores everything.
+     *
+     * <p>What is deliberately <em>not</em> touched is {@code resolvedSaturation}. It is the one
+     * cross-step semantic output of a resolve — {@code isSaturated()} feeds the action filters and
+     * the SATA ladder on later steps — so clearing it would turn a retention fix into a decision
+     * change (audit row B4, INV-MODEL-19). Priority, the boost fields and the telemetry provenance
+     * are left alone for the same reason.
+     *
+     * <p>The timestamp goes back to {@code -1}, which is the field's own initial value: after this
+     * call the action is in exactly the state it was in before its first resolve, rather than in a
+     * new third state that readers would have to know about.
+     */
+    public void releaseResolved(GUITree released) {
+        if (this.resolvedTree != released) {
+            return;
+        }
+        this.resovledTimestamp = -1;
+        this.resolvedTree = null;
+        this.resolvedGUITreeAction = null;
+        this.resolvedNode = null;
+        this.resolvedNodes = null;
+    }
+
     public DecisionSource getDecisionSource() {
         return this.decisionSource;
     }
@@ -285,6 +324,7 @@ public class ModelAction extends Action {
     public void resetBoosts() {
         this.mopBoost = 0;
         this.wtgBoost = 0;
+        this.wtgSource = null;
         this.mopFrontierBoost = 0;
         this.coverageBoost = 0;
         this.menuBoost = 0;
@@ -298,6 +338,27 @@ public class ModelAction extends Action {
     public int getWtgBoost() { return this.wtgBoost; }
 
     public void setWtgBoost(int wtgBoost) { this.wtgBoost = wtgBoost; }
+
+    /** The WTG-boost source labels, which are also the values the step record's {@code wtgsrc} takes. */
+    public static final String WTG_SOURCE_WTG = "wtg";
+    public static final String WTG_SOURCE_FRONTIER = "frontier";
+    public static final String WTG_SOURCE_BOTH = "both";
+
+    /** Which pass wrote the WTG boost, or null while it is zero. */
+    public String getWtgSource() { return this.wtgSource; }
+
+    /**
+     * Records that {@code source} contributed to the WTG boost, promoting to {@code both} when the
+     * other producer has already contributed on this pass.
+     *
+     * @param source {@link #WTG_SOURCE_WTG} or {@link #WTG_SOURCE_FRONTIER} — a constant named at
+     *        the write site, so the two producers cannot be told apart by anything but the site
+     *        that wrote them
+     */
+    public void markWtgSource(String source) {
+        this.wtgSource = this.wtgSource == null || this.wtgSource.equals(source)
+                ? source : WTG_SOURCE_BOTH;
+    }
 
     public int getMopFrontierBoost() { return this.mopFrontierBoost; }
 
@@ -330,27 +391,4 @@ public class ModelAction extends Action {
         return Math.min(Math.max(0, this.resolvedSaturation), 1.0F);
     }
 
-    public JSONObject toJSONObject() throws JSONException {
-        JSONObject jAction = super.toJSONObject();
-        if (requireTarget()) {
-            String xpath = getTarget().toXPath();
-            jAction.put("target", xpath);
-        }
-        GUITreeNode node = getResolvedNode();
-        if (node != null) {
-            Name full = NamerFactory.fullNamer().naming(node);
-            jAction.put("full", full.toXPath());
-            Rect bounds = node.getBoundsInScreen();
-            jAction.put("bounds", ApeRRFormatter.formatRect(bounds));
-            String inputText = node.getInputText();
-            if (inputText != null) {
-                jAction.put("inputText", inputText);
-            }
-        }
-        GUITreeAction guiAction = this.resolvedGUITreeAction;
-        if (guiAction != null) {
-
-        }
-        return jAction;
-    }
 }

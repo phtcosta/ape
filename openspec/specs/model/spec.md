@@ -23,9 +23,6 @@ The model enables three agent capabilities: (1) exhaustive coverage — the agen
 
 - `State` — the abstract state assigned to the current `GUITree`; returned by `Model.getState(GUITree)`
 - `StateTransition` — the recorded edge; returned by `Model.addTransition(source, action, target, ...)`
-- `sataModel.obj` — Java-serialized `Model` object written to `graphOutputDir` on normal termination when `Config.saveObjModel = true`
-- `sataGraph.dot` — Graphviz DOT representation of the exploration graph written on termination when `Config.saveDotGraph = true`
-- `sataGraph.vis.js` — vis.js JSON representation for browser visualization written on termination when `Config.saveVisGraph = true`
 
 ### Side-Effects
 
@@ -33,7 +30,7 @@ The model enables three agent capabilities: (1) exhaustive coverage — the agen
 - **[Graph mutation]**: `Graph.addTransition(source, action, target, ...)` inserts a new `StateTransition` or updates the `visitedCount` of an existing one.
 - **[Graph mutation]**: `Model.rebuild()` removes stale `State`s and `StateTransition`s from the graph and re-inserts them under the updated `Naming`, incrementing `Model.version`.
 - **[Graph listener]**: `Graph` fires `GraphListener` callbacks when states or transitions are added or removed; `SataAgent` subscribes to maintain its own priority queues.
-- **[Filesystem]**: `StatefulAgent.tearDown()` writes serialized model artifacts (`sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`) under `graphOutputDir` using `ObjectOutputStream` and `PrintWriter`.
+- **[Filesystem]**: none. `StatefulAgent.tearDown()` writes no model artifact: the serialization protocol (`sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`) is deleted, and the model exists only for the lifetime of the process (R1/R3 — clean runs, no read-back).
 
 ### Error
 
@@ -78,9 +75,7 @@ The model enables three agent capabilities: (1) exhaustive coverage — the agen
 - **INV-MODEL-16**: The ephemeral-action quarantine SHALL survive a model rebuild. An ephemeral edge (a `StateTransition` whose action `isEphemeral()`) SHALL NOT be replayed by `Model.rebuild`: it is observational and does not survive the refinement that removed its states — its `GUITreeTransition`s are dropped from the replay set **and** from the graph's tree-transition history (so `rebuildHistory` cannot resurrect a dangling edge). A post-refinement re-anchor of an agent action reference (`Model.update(ModelAction, GUITreeAction)`) SHALL return an ephemeral action unchanged — its identity is its payload (INV-MODEL-13), not `State.getActions()` membership, so a membership lookup is a category error, not a recoverable miss. Neither path SHALL throw for an ephemeral action; non-ephemeral behavior is unchanged.
 
 - **INV-MODEL-17**: `Graph.addTransition` SHALL NOT construct a `StateTransition` for an ephemeral action whose `getState()` differs from the transition source (a stale anchor left by a rebuild). It SHALL log one `[APE-RV] stale ephemeral edge dropped` line and return `null`; it SHALL NOT throw. Behavior for non-ephemeral actions is unchanged (a mismatch still throws `IllegalStateException`).
-
 ## Requirements
-
 ### Requirement: State Creation on Novel Abstract State
 
 When the model encounters a `GUITree` whose `StateKey` has not been seen before, it MUST allocate a new `State`, populate its action set from the `StateKey.widgets`, add the `MODEL_BACK` action unconditionally, and register the state in the `Graph`.
@@ -177,64 +172,6 @@ Every `State` MUST have a designated back action of type `MODEL_BACK` with no wi
 - **WHEN** `State.resolveAction(agent, backAction, throttle)` is called with `action = state.getBackAction()`
 - **THEN** `action.requireTarget()` MUST return `false`
 - **AND** `action.resolveAt(timestamp, throttle, tree, null, null)` MUST complete without throwing an exception
-
----
-
-### Requirement: Model Serialization on Normal Termination
-
-On normal process termination, the `Model` object MUST be serialized to the filesystem when `Config.saveObjModel = true`, preserving the full exploration graph for offline analysis and replay.
-
-#### Scenario: serialization on graceful shutdown
-- **WHEN** `StatefulAgent.tearDown()` is called during normal termination and `Config.saveObjModel = true`
-- **THEN** `StatefulAgent` MUST write the `Model` object to a file named `sataModel.obj` under `graphOutputDir` using `java.io.ObjectOutputStream`
-- **AND** the file MUST be written before the method returns
-- **AND** the serialized bytes MUST be deserializable back into a `Model` instance via `java.io.ObjectInputStream`
-
-#### Scenario: visualization output on graceful shutdown
-- **WHEN** `StatefulAgent.tearDown()` is called and `Config.saveDotGraph = true`
-- **THEN** `StatefulAgent` MUST write a Graphviz DOT file named `sataGraph.dot` under `graphOutputDir`
-
-#### Scenario: no serialization on disabled flag
-- **WHEN** `StatefulAgent.tearDown()` is called and `Config.saveObjModel = false`
-- **THEN** no `sataModel.obj` file MUST be written
-
----
-
-### Requirement: Tolerant Action-History Persistence
-
-`Model.saveActionHistory` SHALL resolve and write each `ActionRecord` inside a per-record guard.
-When `ActionRecord.resolveModelAction()` throws (stale pre-refinement descriptor failing
-`GUITree.pickNodes`, or a record whose `guiAction` is null), the record SHALL be skipped: the
-failure is logged as a warning containing the action's descriptor and the exception message (no
-process abort, no partial file), and a skipped-record counter increments. After the iteration the
-method SHALL log a summary line under an `[APE-RV]` tag reporting `total=<records>
-skipped=<failures>`, so experiment tooling can quantify how much history was lost to refinements.
-Records that resolve normally SHALL be written exactly as before (`ApeRRFormatter.startLogAction` /
-`endLogAction`), preserving the replay-log format consumed by `ReplayAgent`.
-
-I/O failures keep their existing contract: an `IOException` opening or writing the file is caught,
-logged, and never propagated.
-
-#### Scenario: stale record is skipped, file still written
-
-- **WHEN** teardown runs `saveActionHistory` over a history of 60 records
-- **AND** record 60 was taken under a naming that was later refined, so its descriptor no longer resolves in its `GUITree` (`Cannot find widget`)
-- **THEN** records 1–59 SHALL be written to `action-history.log` in order
-- **AND** record 60 SHALL be skipped with a warning naming its action descriptor
-- **AND** the summary line SHALL report `total=60 skipped=1`
-- **AND** no exception SHALL propagate out of `saveActionHistory`
-
-#### Scenario: fully resolvable history is written unchanged
-
-- **WHEN** teardown runs `saveActionHistory` and every record resolves
-- **THEN** the produced `action-history.log` SHALL be byte-identical to the pre-change format
-- **AND** the summary line SHALL report `skipped=0`
-
-#### Scenario: null guiAction is a skipped record, not an abort
-
-- **WHEN** a model-action record carries `guiAction == null`
-- **THEN** that record SHALL be skipped with a warning
-- **AND** all remaining records SHALL still be processed
 
 ---
 
@@ -426,3 +363,130 @@ mismatched source keeps the existing throwing behavior.
 #### Scenario: state saturation
 - **WHEN** every `ModelAction` in `State.actions` that passes `ActionFilter.ENABLED_VALID` has `action.isSaturated() = true`
 - **THEN** `State.isSaturated()` MUST return `true`
+
+### Requirement: No Model Deserialization and No XPath Action Injection
+
+The model layer SHALL have no deserialization entry point and no external action-injection channel:
+
+1. `Graph.readGraph` SHALL NOT exist; no code path SHALL construct a `Graph` or `Model` from a serialized artifact. Every run starts from an empty graph (R1: no operational state survives a session; R3: no artifact is read back).
+2. The XPath action-injection channel SHALL NOT exist: the `ape.model.xpathaction` package (`XPathActionController`, `XPathAction`, `XPathActionSequence`, `XPathActionReader`, and helpers), its static-initializer read of `/sdcard/ape.xpath.actions`, the consuming branch in `StatefulAgent` (`enableXPathAction` gate), and the `ape.enableXPathAction` key are all deleted (owner decision D6: no arm uses the channel and `tool.py` never pushes the file). Action selection is exclusively the agent's decision over the model's own actions.
+
+#### Scenario: no run reads a previous run's model
+
+- **WHEN** a run terminates and a subsequent run starts on the same device
+- **THEN** the second run SHALL construct an empty `Graph`
+- **AND** no file produced by the first run SHALL be opened by the second run's explorer
+
+#### Scenario: xpath action file has no effect
+
+- **WHEN** a legacy `/sdcard/ape.xpath.actions` file exists on the device
+- **THEN** no code SHALL read it and no injected action SHALL enter selection
+- **AND** setting `ape.enableXPathAction=true` in `ape.properties` SHALL abort resolution as a retired key
+
+### Requirement: Diagnostic Action History Holds Snapshots, Not Trees
+
+`Model.actionHistory` is a diagnostic record of every executed action, appended once per action (`MonkeySourceApe.generateEventsForAction`) and once per crash (`ApeAgent.appCrashed`). At HEAD each `ActionRecord` held an `Action` plus a `GUITreeAction`, and through it a `GUITree` and its entire `GUITreeNode` subtree — one full GUI tree pinned per step for the whole run, the retainer the code itself marks `TODO: may be the cause of OOM` (V11, report Sec. 3.1).
+
+After this change, `ActionRecord` SHALL hold only identifiers and a minimal snapshot — primitives and strings captured at append time, when the action's resolved objects are still valid: clock timestamp, agent timestamp, action type name, state identifier (null for non-model actions), target `Name` as XPath string (null for targetless actions), GUI tree id and tree timestamp, and throttle. An `ActionRecord` SHALL NOT hold a reference to any `Action`, `GUITreeAction`, `GUITree`, or `GUITreeNode`.
+
+This shape is conditional on the caller audit recorded in this change's `design.md`: at stage 6 (after `rearch-02-runspec` removed model serialization and `rearch-04-step-ndjson-telemetry` removed `action-history.log`), the deep history has zero rich-object consumers — the single semantic consumer, `StatefulAgent.recoverCurrentState`, needs only the most recent model-action record and is served by the recovery point below. The teardown re-resolution (`ActionRecord.resolveModelAction`) is deleted with its last consumer. The post-rebuild remap loop over the history (`StatefulAgent.updateModel`) and `Model.updateActionHistory` are deleted (P3): snapshot records hold no model references, so nothing in them can go stale.
+
+The host-side crash minimizer `reducer/ape/Reducer.java` also read rich records, but it is outside the Maven build (never part of `target/ape-rv.jar`) and its input artifact `sataModel.obj` is removed by `rearch-02-runspec`; it is dead tooling at this stage and is not a consumer this requirement must serve.
+
+#### Scenario: appending a model action retains no tree
+
+- **WHEN** a resolved model action is executed and appended to the action history
+- **THEN** the appended record SHALL contain the snapshot fields (timestamps, action type, state id, target XPath, tree id/timestamp, throttle)
+- **AND** the record SHALL hold no reference to the action object, the `GUITreeAction`, the `GUITree`, or any `GUITreeNode`
+
+#### Scenario: appending a non-model action
+
+- **WHEN** a non-model action (fuzz event, crash record, lifecycle event) is appended
+- **THEN** the record SHALL carry its timestamps and action type with null state/target identifiers, exactly as the rich record carried a null `guiAction` at HEAD
+
+#### Scenario: model rebuild leaves the history untouched
+
+- **WHEN** a naming refinement rebuilds the model
+- **THEN** no history record SHALL require remapping (there is no per-record remap loop)
+- **AND** no history record SHALL keep any pre-rebuild model object reachable
+
+### Requirement: Current-State Recovery Point
+
+`StatefulAgent.recoverCurrentState` restores `currentState`/`currentAction`/`currentGUITree`/`currentGUITreeAction` when the current state was lost. At HEAD it scanned the rich history backwards: return without recovery if a `canStartApp()` record is found first; otherwise recover from the most recent model-action record. Snapshot records cannot serve this path, so the `Model` SHALL maintain a dedicated **recovery point** of depth 1: the rich `(ModelAction, GUITreeAction)` pair of the most recent model action, plus a blocked flag, updated on every append by three rules evaluated in the scan's precedence (`canStartApp` checked before `isModelAction`):
+
+1. appended action `canStartApp()` → blocked;
+2. else if model action → recovery point set to the rich pair, unblocked;
+3. else → no change.
+
+Recovery SHALL occur iff the point exists and is not blocked, and SHALL restore exactly what the HEAD scan restored. After a model rebuild, the recovery point's action reference SHALL be remapped through `Model.update(ModelAction, GUITreeAction)` in `StatefulAgent.updateModel` — **iff the action satisfies `requireTarget()`**, which is the condition the deleted remap loop applied (`StatefulAgent.java:308`). A targetless model action (`MODEL_BACK`, `MODEL_MENU`) held as the recovery point SHALL therefore keep referring to the pre-rebuild object, exactly as at HEAD, and a recovery from it SHALL restore that object. Remapping it unconditionally would be a behavior change — plausibly an improvement, since it would remove a stale-recovery path, but not a neutral one, and this change carries no evidence able to evaluate it (INV-MODEL-20). It is left to a change that measures exploration, not to this one. The recovery point is the **only** rich retention in the history subsystem, and it retains at most one tree — one that the owning state's `treeHistory` retains anyway.
+
+#### Scenario: recovery from the most recent model action
+
+- **WHEN** the append sequence ends `…, model action M, fuzz` and the current state is lost
+- **THEN** `recoverCurrentState` SHALL recover state, action, tree, and tree-action from M's rich pair — the same outcome as the HEAD backward scan
+
+#### Scenario: a start action blocks recovery
+
+- **WHEN** the append sequence ends `…, model action M, start action, fuzz` and the current state is lost
+- **THEN** `recoverCurrentState` SHALL NOT recover (the start action is more recent than M), matching the HEAD scan's early return
+
+#### Scenario: a targeted recovery point is remapped across a rebuild
+
+- **WHEN** a naming refinement rebuilds the model while the recovery point holds a model action satisfying `requireTarget()` (a widget click, say)
+- **THEN** the recovery point's model action SHALL be remapped to the rebuilt model's corresponding action
+- **AND** a subsequent recovery SHALL restore non-stale objects
+
+#### Scenario: a targetless recovery point is not remapped, matching HEAD
+
+- **WHEN** a naming refinement rebuilds the model while the recovery point holds `MODEL_BACK` (targetless, so `requireTarget()` is false)
+- **THEN** the recovery point SHALL NOT be remapped
+- **AND** a subsequent recovery SHALL restore the pre-rebuild object — the same stale object the HEAD implementation restores, since its remap loop skipped targetless records while its recovery scan accepted them
+- **AND** this pair of scenarios SHALL exist as a contrast test, so that changing the guard later is a visible, deliberate edit rather than a silent one
+
+### Requirement: ModelAction Resolved-Object Lifetime
+
+A `ModelAction`'s resolved references (`resolvedTree`, `resolvedGUITreeAction`, `resolvedNode`, `resolvedNodes`) are written at each resolve (`State.resolveAction`; every action of the current state is re-resolved each step via `validateAllNewActions`) and consumed only within the resolving step — scoring, selection, refinement, and event generation all read them before the step completes, and the step-N+1 outcome path uses the agent's own field snapshots. Overwrite-on-re-resolve already bounds the fields to the **last** resolve; what was unbounded at HEAD (V24, report Sec. 3.1) is the referenced tree's lifetime: an action resolved against a tree the model later releases kept that tree reachable after it left `State.treeHistory`.
+
+After this change: when a `GUITree` is released, `Model.release(removed)` SHALL invoke `releaseResolved(removed)` on every action of the tree's owning state, in the same release cycle as the `GUITreeBuilder` cache sweep. `ModelAction.releaseResolved(released)` SHALL, iff `resolvedTree == released` (reference identity): null the four resolved reference fields and invalidate the resolve timestamp so `isResolvedAt` returns false for every timestamp; and SHALL NOT modify `resolvedSaturation` (the one cross-step semantic scalar — `isSaturated()` feeds SATA decisions and action filters across steps), nor priority, boost, or provenance fields. For an action resolved against a different (live) tree, the call SHALL be a no-op.
+
+The resulting lifetime rule: resolved references live exactly as long as both (a) no newer resolve has replaced them and (b) their tree is still owned by its state. While (b) holds, the references retain nothing that `treeHistory` does not already retain — no per-step clearing is performed.
+
+#### Scenario: tree release clears the resolved references that point into it
+
+- **WHEN** a tree is released via the recheck path (`removeLastLastGUITree` → `GUITreeBuilder.release` → `Model.release`) and an action of the owning state was last resolved against that tree
+- **THEN** that action's `resolvedTree`, `resolvedGUITreeAction`, `resolvedNode`, and `resolvedNodes` SHALL be null
+- **AND** `isResolvedAt(t)` SHALL be false for every timestamp `t`
+- **AND** the released tree SHALL NOT be reachable from any action of the state
+
+#### Scenario: saturation survives the release
+
+- **WHEN** an action with `resolvedSaturation = 1.0` has its resolved references released
+- **THEN** `isSaturated()` SHALL still report the saturation computed at the last resolve — release changes retention, never a decision input
+
+#### Scenario: actions resolved against a live tree are untouched
+
+- **WHEN** a tree is released and another action of the same state was last resolved against the state's surviving latest tree
+- **THEN** that action's resolved references SHALL be unchanged
+
+#### Scenario: a guarded reader after release behaves as with any stale resolve
+
+- **WHEN** a scoring pass or `adjustActionsByGUITree` encounters an action whose references were released
+- **THEN** the `isResolvedAt(timestamp)` guard SHALL skip it, exactly as it skips any action not resolved at the current step at HEAD
+
+### Requirement: Retention Fixes Are Decision-Neutral
+
+The stage-6 memory fixes (cache release, snapshot history, resolved-object release) are retention changes, not behavior changes. Each SHALL be observationally neutral: under the same seed and the same inputs, the explored action sequence — every selected action, in order — SHALL be identical before and after the fix. Neutrality SHALL be evidenced by the caller audits recorded in this change's `design.md` together with unit tests that execute the changed paths — the release cycles, the history append, recovery, and the rebuild remap — because that is where the decisions are made (report Sec. 9 test 10: memory-semantics changes pass action-sequence parity plus refinement invariants). The `rearch-01-parity-oracle` golden suite SHALL additionally be re-run after each fix lands and its per-preset decision sequences SHALL compare identical, as a regression floor on the decision ladder; it SHALL NOT be cited as evidence of retention neutrality, since its harness executes none of the paths these fixes change (INV-MODEL-20). The fixes are unconditional defect repairs: no configuration flag guards them and no kill-switch registry entry is added for them.
+
+Anything beyond these fixes — bounds or eviction on `Graph` collections, `State.treeHistory`, or naming/refinement structures — is explicitly out of scope until a heap profile by retention root on 600 s runs proves it necessary (report Sec. 6.7, Sec. 7). `OutOfMemoryError` handling is unchanged: process death, task FAILED in the supervisor, retry at the task level — no catch, no serialization on a dying heap.
+
+#### Scenario: parity after each fix
+
+- **WHEN** a fix group (V12, V11, or V24) is applied and the parity oracle's golden suite is re-run for each target preset under the captured seeds
+- **THEN** every golden decision sequence SHALL compare identical
+
+#### Scenario: no new configuration surface
+
+- **WHEN** the stage-6 fixes are applied
+- **THEN** no new `ape.properties` key SHALL exist for enabling or disabling them
+- **AND** the kill-switch registries SHALL be unchanged
+

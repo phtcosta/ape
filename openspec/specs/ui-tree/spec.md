@@ -83,7 +83,7 @@ When `treeEnhancementsEnabled` is `true` (default), `GUITreeNode.getScrollType()
 
 `RecyclerView` (`androidx.recyclerview.widget.RecyclerView`) SHALL NOT be added to any explicit horizontal-class list. RecyclerView's scroll orientation is set programmatically via `LayoutManager` and cannot be inferred from class name.
 
-When `treeEnhancementsEnabled` is `false` (the `ape_pure` arm), `getScrollType()` SHALL reproduce upstream APE's recognition set, which does not include the AndroidX ViewPager variants. INV-TREE-02 and INV-TREE-03 describe the default (flag-on) behavior.
+When `treeEnhancementsEnabled` is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05), `getScrollType()` SHALL reproduce upstream APE's recognition set, which does not include the AndroidX ViewPager variants. INV-TREE-02 and INV-TREE-03 describe the default (flag-on) behavior.
 
 #### Scenario: Legacy support ViewPager node is recognized as horizontal
 - **WHEN** a `GUITreeNode` has `className` equal to `"android.support.v4.view.ViewPager"` and `isScrollable()` returns `true`
@@ -105,8 +105,6 @@ When `treeEnhancementsEnabled` is `false` (the `ape_pure` arm), `getScrollType()
 - **WHEN** a `GUITreeNode` has `className` equal to `"androidx.recyclerview.widget.RecyclerView"` and `isScrollable()` returns `true`
 - **THEN** `getScrollType()` MUST NOT return `"horizontal"` based solely on the class name
 - **AND** the actual return value MUST reflect the runtime-set scroll direction (vertical by default, or as encoded in the scrollable field)
-
----
 
 ### Requirement: Action Assignment to Widget Nodes
 
@@ -191,13 +189,13 @@ The following types also remain on the blocklist: `EVENT_START`, `EVENT_RESTART`
 
 ### Requirement: WebView Pruning Correctness
 
-The WebView-pruning **actionable-descendant threshold** (point 3 below) is gated by `Config.treeEnhancementsEnabled` (declared by the `scoring-pipeline` capability; default `true`). The `clearChildren` correctness and DOMException-safety fixes (points 1–2, INV-TREE-10/INV-TREE-12) are **always-on** — a crash/correctness fix, not a perception enhancement — so the `ape_pure` arm keeps them. WebView pruning SHALL be structurally correct on both of its halves, and its DOM half SHALL be exception-safe:
+The WebView-pruning **actionable-descendant threshold** (point 3 below) is gated by `Config.treeEnhancementsEnabled` (declared by the `scoring-pipeline` capability; default `true`). The `clearChildren` correctness and DOMException-safety fixes (points 1–2, INV-TREE-10/INV-TREE-12) are **always-on** — a crash/correctness fix, not a perception enhancement — so they hold regardless of the plan. WebView pruning SHALL be structurally correct on both of its halves, and its DOM half SHALL be exception-safe:
 
 1. `GUITreeNode.clearChildren` SHALL remove **all** DOM children in the normal case, iterating until the element is empty. The in-memory prune (`childCount = 0`, `children = null`) SHALL be applied unconditionally, before any DOM mutation.
 2. If the DOM element rejects a removal with `org.w3c.dom.DOMException`, `clearChildren` SHALL stop the DOM removal loop, log one line — `[APE-RV] clearChildren DOM prune aborted: <exception message>` — and return normally. The exception SHALL NOT propagate to the caller (INV-TREE-12).
 3. `GUITreeBuilder.checkAndRemoveWebView` SHALL compare the `ape.ignoreWebViewThreshold` (default 64) against the count of **actionable** descendants only (as its inline comment always stated), not the total descendant count.
 
-When `treeEnhancementsEnabled` is `false` (the `ape_pure` arm), the threshold (point 3) SHALL be compared against the total descendant count (the upstream over-prune). Points 1–2 (the `clearChildren` in-memory prune and DOMException safety, INV-TREE-10/INV-TREE-12) remain active regardless of the flag. INV-TREE-11 describes the flag-gated threshold; INV-TREE-12 is flag-independent (always-on).
+When `treeEnhancementsEnabled` is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05), the threshold (point 3) SHALL be compared against the total descendant count (the upstream over-prune). Points 1–2 (the `clearChildren` in-memory prune and DOMException safety, INV-TREE-10/INV-TREE-12) remain active regardless of the flag. INV-TREE-11 describes the flag-gated threshold; INV-TREE-12 is flag-independent (always-on).
 
 #### Scenario: clearChildren empties the DOM (flag on)
 - **WHEN** `Config.treeEnhancementsEnabled` is `true` and `clearChildren` is called on a node with 10 DOM children
@@ -220,4 +218,54 @@ When `treeEnhancementsEnabled` is `false` (the `ape_pure` arm), the threshold (p
 #### Scenario: upstream over-prune reproduced when the flag is off
 - **WHEN** `Config.treeEnhancementsEnabled` is `false` and a WebView subtree has 100 non-actionable descendants and 10 actionable ones, with `ape.ignoreWebViewThreshold=64`
 - **THEN** the threshold SHALL be compared against the total descendant count (110 > 64), reproducing upstream APE's over-prune (the WebView is pruned)
+
+### Requirement: No XPathlet Overlay Input
+
+`GUITreeBuilder` SHALL build GUI trees exclusively from the live accessibility snapshot (plus the flag-gated perception enhancements specified elsewhere in this capability). The user-configurable XPathlet overlay — the static-initializer read of `/sdcard/ape.xpath` into a `List<XPathlet>` and every use of that list — SHALL NOT exist (owner decision D6: no arm uses it, the aperv deployment never pushes the file, and an undeclared device file silently reshaping tree construction is exactly the class of unecho'd behavioral input the run-spec capability eliminates; the main specification never covered the mechanism — this requirement records its removal explicitly). Behavior is byte-identical to the only condition ever deployed: overlay absent, empty rule list.
+
+Note: this removes only the `/sdcard` *overlay* reader. The naming lattice's own XPath machinery (`Namelet` selectors, `Name.toXPath()`) is unrelated and untouched.
+
+#### Scenario: legacy overlay file has no effect
+
+- **WHEN** a legacy `/sdcard/ape.xpath` file exists on the device
+- **THEN** `GUITreeBuilder` class initialization SHALL NOT open it
+- **AND** tree construction SHALL be identical to a device with no such file
+
+#### Scenario: tree construction reads only the accessibility snapshot
+
+- **WHEN** a GUI tree is built during a run
+- **THEN** its structure SHALL derive solely from the `AccessibilityNodeInfo` hierarchy and the in-jar perception logic
+- **AND** no filesystem input SHALL participate in tree construction
+
+### Requirement: GUITree Release Clears Static Naming Caches
+
+`GUITreeBuilder` maintains three static memoization caches over immutable snapshot data: `namingToGUITreeCache` (`Naming → GUITree → StateKey`), `namingToGUITreeNodesCache` (`Naming → GUITree → Object[]`), and the per-node cache `namingToGUITreeNodeCache` (after this change keyed `Naming → GUITree → (GUITreeNode → Name)`). All three memoize pure functions — `State.buildStateKey` and `Naming.getName` are deterministic over a frozen tree — so cache eviction can only cause recomputation of identical values, never a different answer.
+
+`GUITreeBuilder.release(GUITree removed)` SHALL remove, in the same release cycle, every entry of all three caches that is keyed by the released tree — under **every** `Naming`, not only `removed.getCurrentNaming()`. At HEAD, `release()` cleared only the two per-tree caches and only under the current naming, and never touched the per-node cache at all (V12, report `docs/analise_fable-selecao.md` Sec. 3.1): every `(naming, node, Name)` entry, and every per-tree entry created under a refinement-probe naming, lived for the whole run.
+
+The static-cache sweep SHALL run unconditionally, before the existing `currentNaming == null` early return; `naming.release(removed)` keeps its current guard (naming-internal structures are out of this change's scope — report Sec. 6.7 defers them behind profiling).
+
+Release SHALL be the last operation of the release cycle that touches the removed tree: no caller may query `getStateKey`/`getNodeName` for a tree after releasing it, because that re-inserts cache entries for a dead tree. The one existing violator — `checkAndRefreshNewState` computing `isTopNamingEquivalent(removed, last)` after the release (`StatefulAgent.java:689` then `:692`) — computes the equivalence before invoking the release cycle. The computation is pure, so the reorder is decision-neutral.
+
+#### Scenario: release clears the per-node naming cache with its tree
+
+- **WHEN** a `GUITree` with cached `getNodeName` entries (for one or more of its `GUITreeNode`s, under the current naming) is released via `GUITreeBuilder.release`
+- **THEN** the per-node cache SHALL contain no entry for any node of that tree
+- **AND** the two per-tree caches SHALL contain no entry for that tree
+
+#### Scenario: release clears entries created under a non-current naming
+
+- **WHEN** refinement probing has populated cache entries for a tree under a candidate `Naming` different from `tree.getCurrentNaming()`, and the tree is then released
+- **THEN** those entries SHALL also be removed — the sweep covers every naming key present in the caches
+
+#### Scenario: a released tree is never re-cached
+
+- **WHEN** the instability recheck (`checkAndRefreshNewState`) removes a duplicate tree, needs its top-naming state key for the equivalence check, and releases it
+- **THEN** the equivalence SHALL be computed before the release cycle runs
+- **AND** after `release` returns, no subsequent operation of that cycle SHALL insert a cache entry keyed by the released tree
+
+#### Scenario: cache eviction is recomputation-only
+
+- **WHEN** a cache entry for a **live** tree is absent (never cached, or hypothetically evicted) and `getNodeName`/`getStateKey` is queried again
+- **THEN** the recomputed value SHALL be equal to the previously cached value — the caches memoize deterministic functions of frozen snapshot data, so no decision can depend on an entry's presence
 

@@ -1,6 +1,7 @@
 package com.android.commands.monkey.ape.agent;
 
 import com.android.commands.monkey.ape.StopTestingException;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.MopData;
 
@@ -35,10 +36,10 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.1
     public void testTriggerSkipsNonReachableComponents() {
-        ComponentInfo.ReceiverInfo reaches = new ComponentInfo.ReceiverInfo("p.R1", false, true,
+        ComponentInfo.ReceiverInfo reaches = new ComponentInfo.ReceiverInfo("p.R1", false,
                 Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
                 true, Collections.<String>emptyList());
-        ComponentInfo.ReceiverInfo noReach = new ComponentInfo.ReceiverInfo("p.R2", false, true,
+        ComponentInfo.ReceiverInfo noReach = new ComponentInfo.ReceiverInfo("p.R2", false,
                 Arrays.asList(filter(Arrays.asList("b"), Collections.<String>emptyList())),
                 false, Collections.<String>emptyList());
         MopData d = data(Arrays.asList(reaches, noReach), null, null, null);
@@ -53,10 +54,10 @@ public class StatefulAgentTriggerTest {
     // exported or not — the old activityTriggerEnabled branch is deleted; activities are launched
     // only by the stagnation launcher (EVENT_TRIGGER_ACTIVITY).
     public void testTriggerNeverIncludesActivities() {
-        ComponentInfo.ActivityInfo exported = new ComponentInfo.ActivityInfo("p.Exported", false, true,
+        ComponentInfo.ActivityInfo exported = new ComponentInfo.ActivityInfo("p.Exported", false,
                 Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
                 true, Collections.<String>emptyList());
-        ComponentInfo.ActivityInfo nonExported = new ComponentInfo.ActivityInfo("p.Hidden", false, false,
+        ComponentInfo.ActivityInfo nonExported = new ComponentInfo.ActivityInfo("p.Hidden", false,
                 Arrays.asList(filter(Arrays.asList("b"), Collections.<String>emptyList())),
                 true, Collections.<String>emptyList());
         MopData d = data(null, null, Arrays.asList(exported, nonExported), null);
@@ -65,7 +66,7 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.3
     public void testTriggerRoundRobinsAllIntentFilterActions() {
-        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false, true,
+        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false,
                 Arrays.asList(filter(Arrays.asList("action1", "action2"), Collections.<String>emptyList())),
                 true, Collections.<String>emptyList());
         List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(data(
@@ -79,7 +80,7 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.4
     public void testTriggerProviderRoundRobinsOperations() {
-        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.Prov", false, false,
+        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.Prov", false,
                 Collections.<ComponentInfo.IntentFilter>emptyList(), true,
                 Collections.<String>emptyList(), "p.auth");
         List<StatefulAgent.ProviderTuple> tuples = StatefulAgent.buildProviderTuples(data(
@@ -92,7 +93,7 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.5
     public void testTriggerLogsContainExpectedFields() {
-        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false, true,
+        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false,
                 Arrays.asList(filter(Arrays.asList("a1"), Arrays.asList("c1", "c2"))),
                 true, Collections.<String>emptyList());
         StatefulAgent.TriggerTuple t = StatefulAgent.buildTriggerTuples(data(
@@ -108,10 +109,10 @@ public class StatefulAgentTriggerTest {
     // unconditionally — Config.activityTriggerEnabled now gates ONLY the stagnation launcher, not
     // buildTriggerTuples. Only the receiver survives; the activity never appears regardless of flag.
     public void testActivityExcludedFromTupleListUnconditionally() {
-        ComponentInfo.ActivityInfo act = new ComponentInfo.ActivityInfo("p.A", false, true,
+        ComponentInfo.ActivityInfo act = new ComponentInfo.ActivityInfo("p.A", false,
                 Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
                 true, Collections.<String>emptyList());
-        ComponentInfo.ReceiverInfo rec = new ComponentInfo.ReceiverInfo("p.R", false, true,
+        ComponentInfo.ReceiverInfo rec = new ComponentInfo.ReceiverInfo("p.R", false,
                 Arrays.asList(filter(Arrays.asList("b"), Collections.<String>emptyList())),
                 true, Collections.<String>emptyList());
         MopData d = data(Arrays.asList(rec), null, Arrays.asList(act), null);
@@ -124,9 +125,9 @@ public class StatefulAgentTriggerTest {
     @Test // 19.7
     public void testTriggerReturnsFalseOnEmptyComponentList() {
         // cryptoapp-like: all components reachesTarget=false ⇒ no tuples ⇒ triggerMopComponent no-op.
-        ComponentInfo.ActivityInfo a = new ComponentInfo.ActivityInfo("p.A", true, true,
+        ComponentInfo.ActivityInfo a = new ComponentInfo.ActivityInfo("p.A", true,
                 Collections.<ComponentInfo.IntentFilter>emptyList(), false, Collections.<String>emptyList());
-        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.P", false, false,
+        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.P", false,
                 Collections.<ComponentInfo.IntentFilter>emptyList(), false,
                 Collections.<String>emptyList(), "p.auth");
         MopData d = data(null, null, Arrays.asList(a), Arrays.asList(p));
@@ -136,7 +137,7 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.8 (D15)
     public void testTriggerEmitsComponentNameOnlyTupleWhenFiltersEmpty() {
-        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false, true,
+        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false,
                 Collections.<ComponentInfo.IntentFilter>emptyList(), true,
                 Arrays.asList("<p.R: void onReceive()>"));
         List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(data(
@@ -148,7 +149,7 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.9
     public void testProviderContentCommandShape() {
-        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.Prov", false, false,
+        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.Prov", false,
                 Collections.<ComponentInfo.IntentFilter>emptyList(), true,
                 Collections.<String>emptyList(), "p.auth");
         List<StatefulAgent.ProviderTuple> tuples = StatefulAgent.buildProviderTuples(data(
@@ -181,5 +182,35 @@ public class StatefulAgentTriggerTest {
     public void testRequireMopArmNoThrowWhenPathUnset() {
         // mopDataPath unset → MOP disabled, null is a valid outcome (SATA as today)
         assertNull(StatefulAgent.requireMopArm(null, null));
+    }
+
+    /**
+     * The version-skew drill, end to end at JVM level: a pre-change full static-analysis JSON
+     * reaching the post-change jar.
+     *
+     * <p>The two halves are asserted separately elsewhere — the loader's rejection in
+     * {@code MopDataTest}, the abort in the three tests above — and separately they leave the
+     * question the drill actually asks unanswered, because it is a question about the join: does
+     * the null a rejected artifact produces reach the code that aborts on it? A deployment where
+     * the wrong document was pushed either stops loudly here or explores as pure SATA while
+     * reporting itself a MOP arm, which is the silent-degradation class this composition exists to
+     * close. What no JVM test can attest is that the <em>deployed</em> pair behaves this way; that
+     * half is the counterpart campaign's pre-flight.
+     */
+    @Test
+    public void testLegacyJsonRejectionAbortsTheMopArm() {
+        java.net.URL fixture = StatefulAgentTriggerTest.class
+                .getResource("/cryptoapp.apk.gh60-fresh.json");
+        assertNotNull("legacy full-JSON fixture not on classpath", fixture);
+        String path = new java.io.File(fixture.getFile()).getAbsolutePath();
+
+        MopData loaded = MopData.load(path, null, null, new NoopSink());
+        assertNull("a full static-analysis JSON carries no formatVersion (INV-MOP-34)", loaded);
+        try {
+            StatefulAgent.requireMopArm(loaded, path);
+            fail("expected StopTestingException rather than a silent SATA run");
+        } catch (StopTestingException expected) {
+            // ok
+        }
     }
 }

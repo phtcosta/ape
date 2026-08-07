@@ -1,7 +1,10 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -88,7 +91,13 @@ public class BasePriorityCharacterizationTest {
             @Override public boolean menuPickEligible(String activity) { return true; }
         };
         setField(agent, "scoringContext", ctx);
-        setField(agent, "scoringPipeline", ScoringPipeline.fromConfig(null, ctx));
+        // A sata arm: no MOP feature, so every MOP weight is zero and the pipeline is
+        // [CoveragePass, FormCompletionPass], both inert on the non-target actions below. The plan
+        // is a value here and nothing is installed process-wide — before the weights were injected
+        // this line needed a run context it never established, and passed only when another test
+        // class happened to leave one behind.
+        setField(agent, "scoringPipeline", ScoringPipeline.fromParams(
+                ScoringParams.fromSpec(TestRunSpecs.spec()), ctx, new NoopSink()));
         return agent;
     }
 

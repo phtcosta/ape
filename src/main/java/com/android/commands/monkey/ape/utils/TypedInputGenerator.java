@@ -2,6 +2,8 @@ package com.android.commands.monkey.ape.utils;
 
 import java.util.Random;
 
+import com.android.commands.monkey.ape.runtime.RunContext;
+
 /**
  * gh13 T1.3: type-aware input generation for EditText fuzzing.
  *
@@ -9,7 +11,7 @@ import java.util.Random;
  * {@code ApeFuzzer}, whose static initializer references {@code android.view.KeyEvent}.
  * Callers (see {@code ApeAgent.generateInputText}) consult the static-analysis
  * {@code inputType}/{@code hint} and delegate here; the rollback knob
- * {@code Config.fuzzInputTyped=false} restores the legacy random-string generator.
+ * {@code ape.fuzzInputTyped=false} restores the legacy random-string generator.
  */
 public final class TypedInputGenerator {
 
@@ -23,11 +25,11 @@ public final class TypedInputGenerator {
     /**
      * Generate a domain-correct random string for the given Android {@code inputType}
      * (INV-MOP-16). Falls back to hint-based heuristics when {@code inputType} is empty, and to
-     * a legacy random string for anything unrecognized. When {@code Config.fuzzInputTyped} is
+     * a legacy random string for anything unrecognized. When the plan's {@code fuzzInputTyped} is
      * false the typed path is bypassed entirely (rollback knob).
      */
     public static String generateForType(String inputType, String hint, Random rnd) {
-        if (!Config.fuzzInputTyped) {
+        if (!RunContext.current().spec().exploration().fuzzInputTyped()) {
             return legacyString(rnd);
         }
         String it = inputType == null ? "" : inputType;

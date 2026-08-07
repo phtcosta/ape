@@ -23,9 +23,6 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 
 ### Output
 
-- `sataModel.obj: file` — Java-serialised `Model` object written to the output directory on normal termination (when `ape.saveObjModel=true`, default `true`)
-- `sataGraph.dot: file` — Graphviz DOT representation of the exploration graph written on normal termination (when `ape.saveDotGraph=true`, default `false`)
-- `sataGraph.vis.js: file` — vis.js JSON visualisation of the exploration graph written on normal termination (when `ape.saveVisGraph=true`, default `true`)
 - `*.png screenshots: files` — per-step or per-new-state PNG screenshots written to the output directory (when `ape.takeScreenshot=true`, default `true`)
 - `*.xml GUITree files: files` — XML serialisation of the accessibility tree at each step (when `ape.saveGUITreeToXmlEveryStep=true`, default `true`)
 - `ape_log: logcat entries` — structured log lines emitted via `Logger` for every action selected, strategy event type, and state transition
@@ -49,7 +46,6 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 
 - **INV-EXPL-01**: The exploration loop SHALL continue dispatching actions until either `StopTestingException` is thrown (time/step limit reached) or the process is killed externally. No other condition MAY cause silent loop exit.
 - **INV-EXPL-02**: `ActionType.MODEL_BACK.requireTarget()` and `ActionType.MODEL_MENU.requireTarget()` SHALL both return `false`. Neither `MODEL_BACK` nor `MODEL_MENU` requires a widget target; both map directly to Android key events.
-- **INV-EXPL-03**: The serialised exploration graph file (`sataModel.obj`) MUST contain a Java-serialised `Model` object, not a bare `Graph`. `StatefulAgent.saveGraph()` writes `oos.writeObject(model)`, where `model` is the `Model` instance (which in turn owns the `Graph`).
 - **INV-EXPL-04**: `ActionType.MODEL_CLICK.requireTarget()`, `MODEL_LONG_CLICK.requireTarget()`, `MODEL_SCROLL_BOTTOM_UP.requireTarget()`, `MODEL_SCROLL_TOP_DOWN.requireTarget()`, `MODEL_SCROLL_LEFT_RIGHT.requireTarget()`, and `MODEL_SCROLL_RIGHT_LEFT.requireTarget()` SHALL each return `true`.
 - **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_MENU`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`, `EVENT_TRIGGER_ACTIVITY`).
 - **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point. (Unchanged by `rv-scoring-pipeline`: `Config.modelMenuEnabled` gates only whether the `menuAction` is added to the State's action *set* — the field itself stays non-null in every arm, including `ape_pure`, so this invariant holds verbatim.)
@@ -61,7 +57,7 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-14**: Given identical `-s` seed, APK, and configuration, the sequence of `RandomHelper` draws SHALL be identical across runs.
 - **INV-EXPL-15**: No run SHALL spend more than 101 consecutive `checkAppActivity` iterations waiting for a foreground package without triggering a relaunch.
 - **INV-EXPL-16**: `tearDown()` SHALL run on every termination path of the exploration loop, normal or abnormal, **and SHALL NOT replace the in-flight exception**: a `Throwable` thrown by any teardown step SHALL be caught and logged with its full stack trace inside the teardown chain, never propagated out of the `finally` block in `Monkey.run`.
-- **INV-EXPL-29**: Teardown SHALL be step-isolated: a `Throwable` thrown by one teardown step (rotation restore, `disconnect()`, LLM summary, graph save, action-history save, counters, activity nodes, naming dump) SHALL NOT prevent any subsequent teardown step from executing.
+- **INV-EXPL-29**: Teardown SHALL be step-isolated: a `Throwable` thrown by one teardown step (rotation restore, `disconnect()`, LLM summary, `super.tearDown()`, coverage dump, action-history save, action counters, activity nodes, naming dump, model counters — the graph-save step no longer exists) SHALL NOT prevent any subsequent teardown step from executing.
 - **INV-EXPL-17**: Per-step debug artifacts (PNG/XML) SHALL be written only when explicitly enabled via `ape.properties`.
 - **INV-EXPL-18**: Every fuzz gesture branch SHALL emit exactly one event per invocation.
 - **INV-EXPL-19**: No touch event SHALL ever be delivered to coordinates derived from bounds other than the resolved node's own bounds — or, for coordinate-carrying actions without a node (`MODEL_LLM_TAP`), other than the action's own decided coordinate.
@@ -69,7 +65,9 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 ## Requirements
 ### Requirement: Strategy Selection
 
-The exploration strategy MUST be selected at process startup via the `--ape <strategy>` command-line argument passed to `Monkey`. The argument value is a case-sensitive string. The five legal values are `sata` (creates `SataAgent`), `ape` (creates `ApeAgent`), `bfs` (creates `StatefulAgent` with BFS queue discipline), `dfs` (creates `StatefulAgent` with DFS stack discipline), and `random` (creates `RandomAgent`). If the argument is absent or does not match any legal value, the implementation SHALL default to `sata`. The strategy object is constructed once and shared for the entire session; it MUST NOT be replaced or re-instantiated during a running session.
+The exploration strategy MUST be selected at process startup via the `--ape <strategy>` command-line argument passed to `Monkey`, and the agent type is **validated plan data**: it is carried by the resolved `RunSpec` (`run-spec` capability), not by a mutable property. The argument value is a case-sensitive string. The three legal values are `sata` (creates `SataAgent`), `random` (creates `RandomAgent`), and `replay` (creates `ReplayAgent`; requires `--ape-replay <log>`). If the argument is absent, the strategy SHALL default to `sata` (a documented default; the aperv deployment always passes the flag). If the argument does not match a legal value — including `bfs`, `dfs`, and `ape`, which previously fell through silently to `SataAgent` — the process SHALL abort with a diagnostic naming the valid set, before step 1. `ApeAgent.createAgent` SHALL contain no fallback arm.
+
+The agent type SHALL NOT be settable from a properties file: `ape.agentType` (and `ape.replayLog`) appearing in `/data/local/tmp/ape.properties` or `/sdcard/ape.properties` is a retired-key abort — a stray device file can no longer swap the agent of a run. The strategy object is constructed once and shared for the entire session; it MUST NOT be replaced or re-instantiated during a running session.
 
 #### Scenario: Valid strategy argument provided
 
@@ -81,12 +79,23 @@ The exploration strategy MUST be selected at process startup via the `--ape <str
 
 - **WHEN** the process is launched with `--ape random`
 - **THEN** a `RandomAgent` instance SHALL be created
-- **AND** `RandomAgent.selectNewActionNonnull()` SHALL be called at each exploration step instead of any `SataAgent` or `ApeAgent` method
+- **AND** `RandomAgent.selectNewActionNonnull()` SHALL be called at each exploration step instead of any `SataAgent` method
 
 #### Scenario: Strategy argument is absent
 
 - **WHEN** the process is launched without an `--ape` argument
 - **THEN** the strategy SHALL default to `sata` and a `SataAgent` SHALL be created
+
+#### Scenario: Unknown strategy aborts instead of falling back
+
+- **WHEN** the process is launched with `--ape bfs`
+- **THEN** the process SHALL exit nonzero with a diagnostic naming the valid set `{sata, random, replay}`
+- **AND** no agent SHALL be constructed
+
+#### Scenario: Properties file cannot swap the agent
+
+- **WHEN** `/sdcard/ape.properties` contains `ape.agentType=random` and the process is launched with `--ape sata`
+- **THEN** the process SHALL abort with a retired-key diagnostic (`ape.agentType` is CLI-only)
 
 ---
 
@@ -98,7 +107,7 @@ The exploration loop inside `MonkeySourceApe.nextEventImpl()` SHALL run continuo
 
 - **WHEN** `--running-minutes 30` is specified and 30 minutes of wall-clock time have elapsed since the session started
 - **THEN** the agent SHALL throw `StopTestingException`
-- **AND** `MonkeySourceApe` SHALL catch the exception and proceed to the teardown phase (saving `sataModel.obj` and `sataGraph.vis.js`)
+- **AND** `MonkeySourceApe` SHALL catch the exception and proceed to the teardown phase (the teardown chain; **no** `sataModel.obj` or `sataGraph.vis.js` is written — the persistence protocol and the graph dumps are deleted by this change)
 
 #### Scenario: App crash does not stop exploration
 
@@ -107,8 +116,6 @@ The exploration loop inside `MonkeySourceApe.nextEventImpl()` SHALL run continuo
 - **THEN** `Agent.appCrashed()` SHALL be called and the crash SHALL be logged
 - **AND** the agent SHALL initiate an app restart via an `EVENT_RESTART` action
 - **AND** the exploration loop SHALL continue from the restarted app state
-
----
 
 ### Requirement: GUITree Capture and State Abstraction
 
@@ -181,7 +188,7 @@ Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT
 
 Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, ActionType.MODEL_MENU)`, initialised in the `State` constructor immediately after `backAction`. The field SHALL be exposed via `State.getMenuAction()` and SHALL be non-null for the life of the state. This mirrors the `backAction` / `getBackAction()` pattern exactly.
 
-Inclusion of the `menuAction` in the state's **selectable** action set is gated by `Config.modelMenuEnabled` (declared by the `scoring-pipeline` capability; default `true`). When `modelMenuEnabled` is `true` (default), the `menuAction` SHALL be included in the array returned by `State.getActions()`, exactly as before this change. When `modelMenuEnabled` is `false` (the `ape_pure` arm), the `menuAction` SHALL NOT be included in `State.getActions()` and the agent SHALL never select `MODEL_MENU`; the field SHALL still be constructed and returned by `State.getMenuAction()` (so `INV-EXPL-06` holds). This reproduces upstream APE, which has no model-level options-menu action.
+Inclusion of the `menuAction` in the state's **selectable** action set is gated by `Config.modelMenuEnabled` (declared by the `scoring-pipeline` capability; default `true`). When `modelMenuEnabled` is `true` (default), the `menuAction` SHALL be included in the array returned by `State.getActions()`, exactly as before this change. When `modelMenuEnabled` is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05), the `menuAction` SHALL NOT be included in `State.getActions()` and the agent SHALL never select `MODEL_MENU`; the field SHALL still be constructed and returned by `State.getMenuAction()` (so `INV-EXPL-06` holds). This reproduces upstream APE, which has no model-level options-menu action.
 
 `MonkeySourceApe.generateEventsForActionInternal()` SHALL handle `MODEL_MENU` in its switch statement by calling `generateKeyMenuEvent()`. No target widget node is required or inspected.
 
@@ -375,38 +382,58 @@ When the strategy is `bfs` or `dfs`, `MonkeySourceApe` SHALL create a `StatefulA
 
 ### Requirement: Output Persistence on Termination
 
-On termination — normal (when `StopTestingException` is caught) or abnormal (any other `Throwable` escaping the exploration loop) — the exploration engine SHALL save graph artefacts to the output directory. The `tearDown()` call chain (agent teardown, model serialisation, coverage dump, timeline) SHALL execute inside a `finally` block in `Monkey`, so an uncaught `RuntimeException` from the event loop still produces the run's outputs before the process exits. The serialised graph (`sataModel.obj`) is written by `ObjectOutputStream` and contains the full in-memory `Graph` object. The Graphviz file (`sataGraph.dot`) is a DOT representation of every state and transition. The visualisation file (`sataGraph.vis.js`) is a vis.js JSON representation. All writes MUST complete before the process exits. If `ape.saveObjModel=false`, the `sataModel.obj` file SHALL NOT be written (default `true`). If `ape.saveDotGraph=false`, the `sataGraph.dot` file SHALL NOT be written (default `false`). If `ape.saveVisGraph=false`, the `sataGraph.vis.js` file SHALL NOT be written (default `true`).
+On termination — normal (when `StopTestingException` is caught) or abnormal (any other `Throwable` escaping the exploration loop) — the exploration engine SHALL flush its observational stream, never file-based graph artefacts. The `tearDown()` call chain SHALL execute inside a `finally` block in `Monkey`, so an uncaught `RuntimeException` from the event loop still produces the run's outputs before the process exits. The run's outputs are: the NDJSON trace on stdout (event-sink capability) — flushed by `flushPendingStep` and terminated by `RUN_END` — and the UI-coverage dump lines (ui-coverage capability, format unchanged). No graph serialization, DOT/vis export, per-state dump, action-history log, event produce/consume log, or timeline export SHALL be written: the writers for `sataGraph.dot`, `sataGraph.vis.js`, `step-*.txt`, `action-history.log`, `produce.log`, `consume.log`, and `sataTimeline.vis.js` are deleted, along with the `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` configuration flags. Post-run visualizations, if ever needed, are host-side post-processing over the trace.
 
 The `finally` block in `Monkey.run` SHALL guard each of its throw-capable statements individually: the rotation restore (`MonkeyRotationEvent.injectEvent`) and the `MonkeySourceApe.tearDown()` call each run inside their own catch that logs the failure with a full stack trace. A failure in the rotation restore SHALL NOT skip teardown, and a failure anywhere in teardown SHALL NOT replace the exception that terminated the loop (INV-EXPL-16): after the `finally` completes, the original loop exception SHALL propagate to `Monkey.main`'s outermost handler and be the stack trace reported for the run.
 
-Teardown SHALL be step-isolated (INV-EXPL-29). In `MonkeySourceApe.tearDown`, a `Throwable` from `disconnect()` SHALL NOT prevent `mAgent.tearDown()` (which persists the model and action history) nor the writer/logger shutdown and timeline export that follow. In `StatefulAgent.tearDown`, a `Throwable` from any step of the sequence (LLM summary, `super.tearDown()`, `saveGraph()`, `saveActionHistory()`, action counters, activity nodes, naming dump, model counters) SHALL be caught and logged with its stack trace, and all remaining steps SHALL still execute.
+Teardown SHALL be step-isolated (INV-EXPL-29). In `MonkeySourceApe.tearDown`, a `Throwable` from `disconnect()` SHALL NOT prevent `mAgent.tearDown()` nor the image-writer shutdown that follows. In `StatefulAgent.tearDown`, a `Throwable` from any step of the sequence — `flushPendingStep` (writes the in-flight `StepRecord` with `out:{"resolved":false}`), `super.tearDown()`, coverage dump, action counters, activity nodes, naming dump, model counters, `runEnd` (emits `RUN_END` with reason and counters, last) — SHALL be caught and logged with its stack trace, and all remaining steps SHALL still execute. The replay reader (`ApeRRFormatter.readActions`, used by `ReplayAgent` on externally supplied logs) SHALL be preserved; only the tool's own writers of that format are deleted.
+
+**Where the deleted writers' assertions went.** Three scenarios below keep the header the pre-change
+requirement gave them and carry a body this change contradicts, because the artifact they were
+written around is one this change deletes:
+
+| Scenario header | What it asserted | Where the claim is now |
+|---|---|---|
+| `Normal termination with defaults` | the coverage dump **and `action-history.log`** are produced as before | the dump, unchanged; the log, nowhere — its writer is deleted by this change (`model`'s REMOVED `Tolerant Action-History Persistence`), and what replaces it as the run's record of what happened is the step-record stream, terminated by `RUN_END` |
+| `coverage dump precedes the first artifact write` | the dump precedes the action-history save | `ui-coverage :: Coverage Dump Emitted First Among Teardown Writers`, whose boundary moves to the first *surviving* producer of output, the `actionCounters` dump. After this change no teardown step writes a file at all, so "artifact write" no longer names anything — the property is stated against output, not files |
+| `disconnect failure does not lose the model` | a throwing `disconnect()` must not cost the run its persisted model | the same isolation, over what teardown now produces: the trace's flush and terminator. The subject narrowed once already when the model serialization went (rearch-02); it narrows again here, and the guarantee — one failing outer step must not skip `mAgent.tearDown()` — is untouched |
 
 #### Scenario: Normal termination with defaults
 
 - **WHEN** `StopTestingException` is caught after the time limit expires
-- **AND** `ape.saveObjModel` and `ape.saveVisGraph` are both at their defaults (`true`), and `ape.saveDotGraph` is at its default (`false`)
-- **THEN** `sataModel.obj` SHALL be written to the output directory via Java object serialisation
-- **AND** `sataGraph.vis.js` SHALL be written to the output directory as a vis.js JSON file
-- **AND** `sataGraph.dot` SHALL NOT be written (disabled by default)
-- **AND** all writes SHALL complete before the process returns
+- **AND** every key is at its jar default (the `save*` keys no longer exist to be set)
+- **THEN** any pending `StepRecord` SHALL be flushed (`out:{"resolved":false}` if unresolved) and `RUN_END` SHALL be the last sink record
+- **AND** the coverage dump SHALL be produced as before
+- **AND** no `sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`, `step-*.txt`, `action-history.log`, `produce.log`, `consume.log`, or `sataTimeline.vis.js` file SHALL exist in the output directory
 
 #### Scenario: saveObjModel disabled
 
-- **WHEN** `ape.saveObjModel=false` is set in `ape.properties`
-- **AND** the session terminates normally
-- **THEN** `sataModel.obj` SHALL NOT be created or overwritten
-- **AND** `sataGraph.vis.js` SHALL still be written (independent flag)
+- **WHEN** `ape.properties` contains `ape.saveObjModel=false`
+- **THEN** resolution SHALL abort with a retired-key diagnostic before step 1, and no run SHALL start — the flag no longer selects between writing and not writing a file, because the file and its writer no longer exist
+- **AND** the same SHALL hold for `ape.saveDotGraph`, `ape.saveVisGraph` and `ape.saveStates`
+
+#### Scenario: coverage dump precedes the first artifact write
+
+- **WHEN** a run reaches teardown
+- **THEN** the `[APE-RV] UICOV` / `UICOV-ACT` lines SHALL appear in the trace before the output of any later step of the chain — the action-history save this scenario named is deleted, so the boundary is the first surviving producer of output, `actionCounters`
+- **AND** `flushPendingStep`, which precedes the dump, SHALL NOT count against the boundary: it is loss-bounding rather than an artifact write, and `ui-coverage` owns the full statement
+
+#### Scenario: disconnect failure does not lose the model
+
+- **WHEN** `MonkeySourceApe.tearDown()` runs and `disconnect()` throws `IllegalStateException`
+- **THEN** the failure SHALL be logged
+- **AND** `mAgent.tearDown()` SHALL still execute, flushing the pending step and emitting `RUN_END`. *(The scenario's subject narrows for the second time rather than disappearing: the serialized model it originally named went with the persistence protocol and the action history goes here, but the isolation it pins — a throwing `disconnect()` must not cost the run its outputs — is untouched by this change.)*
 
 #### Scenario: abnormal termination still persists outputs
 
 - **WHEN** a `RuntimeException` escapes the exploration loop
-- **THEN** `tearDown()` SHALL still run (via `finally`) and write the enabled artefacts before the process exits
+- **THEN** `tearDown()` SHALL still run (via `finally`), flush the pending step, and emit `RUN_END` with `reason:"crash"` before the process exits
 - **AND** the exception SHALL still propagate (the run is reported as failed)
 
 #### Scenario: teardown failure does not mask the loop exception
 
 - **WHEN** an `IllegalStateException` escapes the exploration loop
-- **AND** a teardown step (e.g. action-history persistence) throws its own `RuntimeException`
+- **AND** a teardown step (e.g. the coverage dump) throws its own `RuntimeException`
 - **THEN** the teardown failure SHALL be logged with its full stack trace
 - **AND** the exception reported by `Monkey.main`'s outermost handler SHALL be the original loop `IllegalStateException`, not the teardown failure
 
@@ -414,21 +441,18 @@ Teardown SHALL be step-isolated (INV-EXPL-29). In `MonkeySourceApe.tearDown`, a 
 
 - **WHEN** the exploration loop terminates and `MonkeyRotationEvent.injectEvent` throws (e.g. a binder failure)
 - **THEN** the failure SHALL be logged
-- **AND** `MonkeySourceApe.tearDown()` SHALL still execute and persist the run's artefacts
-
-#### Scenario: disconnect failure does not lose the model
-
-- **WHEN** `MonkeySourceApe.tearDown()` runs and `disconnect()` throws `IllegalStateException`
-- **THEN** the failure SHALL be logged
-- **AND** `mAgent.tearDown()` SHALL still execute, persisting `sataModel.obj` and the action history
+- **AND** `MonkeySourceApe.tearDown()` SHALL still execute and flush the run's trace
 
 #### Scenario: one failing agent-teardown step does not skip the rest
 
-- **WHEN** `StatefulAgent.tearDown()` runs and `saveActionHistory()` throws a `RuntimeException`
+- **WHEN** `StatefulAgent.tearDown()` runs and the naming dump throws a `RuntimeException`
 - **THEN** the failure SHALL be logged with its stack trace
-- **AND** the action counters, activity nodes, naming dump, and model counters SHALL still be printed
+- **AND** the model counters SHALL still be printed and `RUN_END` SHALL still be emitted
 
----
+#### Scenario: flushPendingStep runs before the expensive steps
+
+- **WHEN** `StatefulAgent.tearDown()` begins with a step in flight
+- **THEN** `flushPendingStep` SHALL execute as the first step of the agent teardown chain, so a mid-teardown cut costs at most the later free-text dumps, never the in-flight record
 
 ### Requirement: Fuzzing Integration
 
@@ -451,25 +475,26 @@ When `ape.doFuzzing=false`, the fuzzing path is disabled and the agent never inj
 
 ### Requirement: Configuration Loading
 
-All numeric and boolean tuning parameters MUST be loaded from `ape.properties` at process startup. The `Config` class in `com.android.commands.monkey.ape.utils.Config` loads properties from `/data/local/tmp/ape.properties` first, then overlays `/sdcard/ape.properties` if present. System properties (set via `-D` on the command line) are also honoured. All `Config` fields are `public static final` and are resolved once at class-loading time; they MUST NOT change for the lifetime of the process. The table below lists the configuration keys relevant to the exploration engine with their types and defaults:
+All tuning parameters MUST be loaded from `ape.properties` at process startup — `/data/local/tmp/ape.properties` first, then `/sdcard/ape.properties` (later wins) — and the loaded entries SHALL be **validated in full by `RunSpec.resolve`** (`run-spec` capability) before any component consumes them: unknown keys, foreign keys, retired keys, type-invalid values, missing feature dependencies, and invalid combinations abort the process before step 1. JVM system properties are not a configuration channel for `ape.*` behavior. All surviving `Config` fields are `public static final`, resolved once at class-loading time, and MUST NOT change for the lifetime of the process; the five formerly non-final test knobs no longer exist (tests construct `RunSpec` values instead). `Config` is a loading detail; the resolved `RunSpec` is the behavioral authority.
+
+The table below lists the configuration keys relevant to the exploration engine with their types and defaults (unchanged values):
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `ape.graphStableRestartThreshold` | int | 100 | Steps without graph growth before forced restart |
 | `ape.stateStableRestartThreshold` | int | 50 | Steps in same state before forced restart |
-| `ape.activityStableRestartThreshold` | int | `Integer.MAX_VALUE` | Steps in same activity before forced restart |
+| `ape.activityStableRestartThreshold` | int | 200 | Steps in same activity before forced restart |
 | `ape.evolveModel` | boolean | true | Enable CEGAR naming refinement |
 | `ape.doFuzzing` | boolean | true | Enable random fuzzing injection |
 | `ape.fuzzingRate` | double | 0.02 | Probability of fuzzing per step |
 | `ape.fuzzingActivityVisitThreshold` | int | 10 | Minimum activity visits before fuzzing activates |
 | `ape.defaultEpsilon` | double | 0.05 | Epsilon for SataAgent epsilon-greedy |
-| `ape.saveObjModel` | boolean | true | Save serialised graph on termination |
-| `ape.saveDotGraph` | boolean | false | Save Graphviz DOT graph on termination |
-| `ape.saveVisGraph` | boolean | true | Save vis.js JSON visualisation on termination |
 | `ape.takeScreenshot` | boolean | true | Save screenshots |
-| `ape.saveGUITreeToXmlEveryStep` | boolean | false | Save GUITree XML per step (default flipped to `false` by this change — see "Per-Step Debug Artifact Defaults" / INV-EXPL-17) |
+| `ape.saveGUITreeToXmlEveryStep` | boolean | false | Save GUITree XML per step (see "Per-Step Debug Artifact Defaults" / INV-EXPL-17) |
 | `ape.defaultGUIThrottle` | long (ms) | 200 | Delay between injected events |
 | `ape.trivialActivityRankThreshold` | int | 3 | Minimum activity count before trivial-activity logic activates |
+
+The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present.
 
 #### Scenario: Property file present on device
 
@@ -480,35 +505,44 @@ All numeric and boolean tuning parameters MUST be loaded from `ape.properties` a
 #### Scenario: No property file present
 
 - **WHEN** neither `/data/local/tmp/ape.properties` nor `/sdcard/ape.properties` exists
-- **THEN** all `Config` fields SHALL take their hardcoded default values as listed above
+- **THEN** all `Config` fields SHALL take their hardcoded default values
+- **AND** resolution SHALL succeed (an absent file is valid; an invalid entry is not)
 
----
+#### Scenario: Typo aborts instead of defaulting
+
+- **WHEN** `/data/local/tmp/ape.properties` contains `ape.fuzzingRate=O.02` (letter O)
+- **THEN** the process SHALL abort with an invalid-type diagnostic before step 1
 
 ### Requirement: StatefulAgent — LLM Router Integration
 
-`StatefulAgent` SHALL declare the following new fields for LLM integration:
+`StatefulAgent` SHALL integrate the LLM through the `RunContext`-owned LLM units and the decision pipeline's LLM stages — not through a router field of its own. The fields:
 
-| Field | Type | Initialized | Description |
-|-------|------|-------------|-------------|
-| `_llmRouter` | `LlmRouter` | Constructor: `new LlmRouter()` when `Config.llmUrl != null`, else `null` | Orchestrates all LLM infrastructure; null disables all LLM features |
-| `_isNewState` | `boolean` | `updateStateInternal()`: set before `markVisited()` | True when current state has never been visited |
-| `_actionHistory` | `List<ActionHistoryEntry>` (ring buffer, max 5) | Constructor: empty list | Last 3-5 executed actions with results, fed to prompt builder |
-| `_lastState` | `State` | `updateStateInternal()`: set to previous state before update | Previous state, used for action history result determination |
-| `_stateBeforeLast` | `State` | `updateStateInternal()`: set to previous `_lastState` | State two steps ago, used for "previous screen" detection |
+| Field | Owner after this change | Description |
+|-------|------------------------|-------------|
+| LLM units (`LlmClient`, `LlmEngine`, `ScreenshotStep`, `CoordinateMapper`, `LlmTelemetry`, `ApePromptBuilder`, `ToolCallParser`) | `RunContext` (constructed once at bootstrap when the plan carries the LLM feature) | replace the former `_llmRouter` reference; see `llm-routing` "LLM Unit Lifecycle and Ownership" |
+| `_isNewState` | `StatefulAgent` (unchanged) | captured in `updateStateInternal()` **before** `markVisited()` (unchanged capture requirement) |
+| `_actionHistory` (ring buffer, max 5) | `StatefulAgent` (unchanged) | last executed actions with results, fed to the prompt builder |
+| `_lastState` / `_stateBeforeLast` | `StatefulAgent` (unchanged) | history for action-result determination |
+| Stagnation single-shot flag | **`LlmStagnation` stage** (moved out of `StatefulAgent`) | see "SataAgent — LLM Stagnation Hook" |
 
-When `Config.llmUrl` is null, `_llmRouter` SHALL be null and no LLM-related objects SHALL be created. This satisfies INV-RTR-01 (defined in `llm-routing/spec.md`).
+When the plan does not carry the LLM feature, no LLM unit SHALL be constructed and no LLM stage SHALL be assembled (feature absent = stage absent — replaces the null-`_llmRouter` convention). The agent SHALL forward each visited `StateTransition` once to every assembled stage's `onStateTransition` hook, immediately after its own stability-counter bookkeeping in `onVisitStateTransition` — this is the sole reset channel for stage-owned episode state.
 
 #### Scenario: LLM enabled via Config
 
-- **WHEN** `Config.llmUrl` equals `"http://10.0.2.2:30000/v1"`
-- **THEN** `StatefulAgent` constructor SHALL create a `LlmRouter` instance
-- **AND** `_llmRouter` SHALL be non-null for the entire session
+- **WHEN** the resolved plan carries the LLM feature
+- **THEN** `RunContext` SHALL hold the LLM units for the entire session
+- **AND** the pipeline SHALL contain the enabled LLM stages
 
 #### Scenario: LLM disabled (default)
 
-- **WHEN** `Config.llmUrl` is null
-- **THEN** `_llmRouter` SHALL be null
-- **AND** no `SglangClient`, `ScreenshotCapture`, or other LLM infrastructure objects SHALL be instantiated
+- **WHEN** the resolved plan does not carry the LLM feature
+- **THEN** no LLM infrastructure object SHALL be instantiated
+- **AND** no LLM stage SHALL exist in the pipeline
+
+#### Scenario: transition events reach the stages
+
+- **WHEN** `onVisitStateTransition` records an edge
+- **THEN** every assembled stage's `onStateTransition(edge)` SHALL be invoked exactly once, after the agent's own counter bookkeeping
 
 ---
 
@@ -588,152 +622,101 @@ The buffer is passed to `ApePromptBuilder.build()` via `LlmRouter.selectAction()
 
 ### Requirement: SataAgent — LLM New-State Hook
 
-The `SataAgent.selectNewActionNonnull()` method SHALL check for LLM routing **at the top**, before any existing SATA strategy logic (buffer check, ABA navigation, trivial activity, unvisited priority, epsilon-greedy).
+LLM new-state routing SHALL be the `LlmNewState` decision stage — the second stage of the pipeline (after `Budget`), assembled only when the plan enables the LLM new-state mode. `SataAgent.selectNewActionNonnull()` SHALL contain no inline LLM block: it delegates to `DecisionPipeline.decide()`, and the stage occupies the ladder position the inline block occupied (before stagnation/random/launcher/trigger/SATA — behavior parity gated by the per-preset goldens).
 
-The check has two guards: the action buffer must be empty (to not interrupt multi-step navigation), and the state must have more than 2 actions (to skip trivial states like permission dialogs).
+The stage's guards are unchanged in content: the shared LLM precondition — action buffer empty (to not interrupt multi-step navigation) AND the state has more than 2 actions (to skip trivial states like permission dialogs) — evaluated through the single `LlmGate` helper shared by the three LLM stages (the former verbatim triplication of this precondition is deleted); then the new-state trigger (`_isNewState`) and the breaker gate. On a non-null engine result the stage returns `Select` (stamping `DecisionSource.LLM`/`PickChannel.LLM`, and resolving a synthesized `MODEL_LLM_TAP` against the state — unchanged accept semantics); on null it returns `Continue` and the remaining pipeline decides (structural fallback).
 
-The check is:
-```
-if (actionBuffer.isEmpty()
-    && actions.size() > 2
-    && _llmRouter != null
-    && _llmRouter.shouldRouteNewState(_isNewState)) {
-    ModelAction result = _llmRouter.selectAction(tree, state, actions, _mopData, _actionHistory);
-    if (result != null) {
-        return result;
-    }
-    // null → fall through to SATA chain
-}
-```
-
-When `_llmRouter` is null (LLM disabled), the check is a single null comparison and has zero cost.
-
-**Updated SataAgent Action Selection Flow**:
-
-```mermaid
-flowchart TD
-    START([selectNewAction called]) --> BUF_GUARD{actionBuffer empty\nAND actions > 2?}
-    BUF_GUARD -->|no| BUFFER
-    BUF_GUARD -->|yes| LLM_NEW{_llmRouter != null\nAND isNewState?}
-    LLM_NEW -->|yes| LLM_CALL1[LlmRouter.selectAction]
-    LLM_CALL1 -->|non-null| LLM_RET[return LLM action]
-    LLM_CALL1 -->|null| LLM_STAG
-    LLM_NEW -->|no| LLM_STAG{graphStableCounter\n== threshold/2?}
-    LLM_STAG -->|yes| LLM_CALL2[LlmRouter.selectAction]
-    LLM_CALL2 -->|non-null| LLM_STAG_RET[reset counter\nreturn LLM action]
-    LLM_CALL2 -->|null| BUFFER
-    LLM_STAG -->|no| BUFFER{actionBuffer\nnon-empty?}
-    BUFFER -->|yes| BUFFERED[return next buffered action\nclear if last]
-    BUFFER -->|no| TRIVIAL[selectNewActionForTrivialActivity]
-    TRIVIAL -->|path found| PATH[return first step\nstore rest in buffer]
-    TRIVIAL -->|null| ABA[selectNewActionEarlyStageForABA]
-    ABA -->|path found| PATH
-    ABA -->|null| UNVISITED{current state has\nunvisited actions?}
-    UNVISITED -->|yes| BACK{backAction\nunvisited?}
-    BACK -->|yes| RET_BACK[return backAction]
-    BACK -->|no| MENU{menuAction\nunvisited?}
-    MENU -->|yes| RET_MENU[return menuAction]
-    MENU -->|no| WIDGET[return least-visited\nwidget action]
-    UNVISITED -->|no| GREEDY[epsilon-greedy over\nall valid actions\n95% least-visited\n5% random]
-```
+When the plan has no LLM feature, the stage does not exist and selection cost is zero.
 
 #### Scenario: LLM provides action on new state
 
-- **WHEN** `selectNewActionNonnull()` is called
-- **AND** `actionBuffer` is empty
-- **AND** `actions.size() > 2`
-- **AND** `_isNewState` is `true`
-- **AND** `_llmRouter.shouldRouteNewState(true)` returns `true`
-- **AND** `_llmRouter.selectAction(...)` returns a non-null `ModelAction`
-- **THEN** the ModelAction SHALL be returned immediately
-- **AND** the SATA chain (buffer, ABA, trivial, greedy) SHALL NOT execute
+- **WHEN** the pipeline reaches `LlmNewState` with the buffer empty, `actions.size() > 2`, `_isNewState` true, breaker allowing
+- **AND** the engine returns a non-null `ModelAction`
+- **THEN** the action SHALL decide the step (hard preemption — no later stage evaluated)
 
 #### Scenario: LLM returns null, SATA takes over
 
-- **WHEN** `_llmRouter.selectAction(...)` returns `null`
-- **THEN** execution SHALL fall through to the existing SATA chain starting at the buffer check
-- **AND** a warning SHALL be logged: `[APE-RV] LLM new-state returned null, falling back to SATA`
+- **WHEN** the engine returns `null`
+- **THEN** the stage SHALL return `Continue`
+- **AND** the launcher/trigger/SATA stages SHALL evaluate normally
 
 #### Scenario: LLM skipped — buffer has pending navigation
 
-- **WHEN** `actionBuffer` is non-empty (multi-step navigation in progress)
-- **THEN** the LLM new-state check SHALL be skipped entirely
-- **AND** the buffered action SHALL be returned (existing behavior)
+- **WHEN** the action buffer is non-empty (multi-step navigation in progress)
+- **THEN** the shared precondition SHALL fail and all three LLM stages SHALL return `Continue`
+- **AND** the buffered action SHALL be returned by the `SataChain` buffer rung (existing behavior)
 
 #### Scenario: LLM skipped — trivial state
 
-- **WHEN** `actions.size() <= 2` (e.g., permission dialog with only BACK + Allow)
-- **THEN** the LLM new-state check SHALL be skipped
-- **AND** SATA SHALL handle the trivial state directly
+- **WHEN** `actions.size() <= 2` (e.g., permission dialog)
+- **THEN** the LLM stages SHALL return `Continue` and the pipeline SHALL handle the state directly
 
 #### Scenario: LLM disabled, zero overhead
 
-- **WHEN** `_llmRouter` is `null`
-- **THEN** the `if (_llmRouter != null ...)` check SHALL evaluate to `false`
-- **AND** no LLM-related method SHALL be called
-- **AND** the existing SATA chain SHALL execute identically to pre-gh6 behavior
+- **WHEN** the plan carries no LLM feature
+- **THEN** no LLM stage SHALL exist and the pipeline SHALL be structurally identical to the non-LLM preset's
+- **AND** the decision sequence SHALL equal the non-LLM golden under the same seed
 
 ---
 
 ### Requirement: SataAgent — LLM Stagnation Hook
 
-The `SataAgent.selectNewActionNonnull()` method SHALL include an LLM stagnation check **after** the new-state check and **before** the SATA chain, guarded by `graphStableCounter == graphStableRestartThreshold / 2` (equality, not greater-than). This ensures the LLM is consulted **exactly once** per stagnation phase — when the counter reaches the midpoint. The same buffer-empty and trivial-state guards from the new-state hook apply.
+LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled after `LlmNewState` and before `LlmRandom` when the plan enables the stagnation mode. The trigger is at-or-past the midpoint with the episode's single shot unspent: `graphStableCounter >= graphStableRestartThreshold / 2` AND the stage's per-episode fired flag is armed. The same shared precondition (`LlmGate`) applies.
 
-The `graphStableCounter` is a `protected` field in `StatefulAgent`, accessible from `SataAgent`. It increments by 1 each step via `checkStable()` and resets to 0 when a new state is discovered. Since the counter increments by 1, equality is always hit. Note: `StatefulAgent.onGraphStable()` still handles the existing restart logic at `counter > threshold` — this hook does NOT modify the restart mechanism.
+**Episode-state ownership (moved out of `StatefulAgent`):** the fired flag SHALL be a private field of the `LlmStagnation` stage. It is burned inside `decide()` whenever the trigger fires — whatever the LLM answers (a null result is a failed attempt, not an unused one; the restart at the full threshold is what follows if the stagnation persists) — and re-armed by the stage's `onStateTransition` hook on `NEW_ACTION`/`NEW_ACTION_TARGET` edges (a new edge ends the episode). The stage's own reset of `graphStableCounter` after a successful escape does not re-arm the flag: no new edge was observed, so it is the same episode.
 
-```
-// In SataAgent.selectNewActionNonnull(), after new-state check:
-if (actionBuffer.isEmpty()
-    && actions.size() > 2
-    && graphStableCounter == graphStableRestartThreshold / 2
-    && _llmRouter != null
-    && _llmRouter.shouldRouteStagnation(graphStableCounter)) {
-    ModelAction result = _llmRouter.selectAction(...);
-    if (result != null) {
-        graphStableCounter = 0;  // unblock exploration
-        return result;
-    }
-    // null → fall through to SATA chain
-}
-```
+**One scenario below is a replacement, not a carry-forward.** `"Stagnation hook fires only once per phase"` asserted in the main spec that the hook fires *only* at `graphStableCounter == threshold/2` exactly — 49 and 51 both declined by the equality check. This change replaces that trigger with at-or-past the midpoint guarded by the episode flag, so the old body is contradicted rather than forgotten: 51 with the flag armed now fires. What the scenario's name asserts — one firing per episode — is what survives, and it survives structurally (the flag is burned in `decide()`, not re-derived from the counter), so the scenario is restated under its own header with the new mechanism as its body. The counter-jump case the old equality check would have missed is covered by `llm-routing :: Stagnation LLM Mode :: "midpoint skipped by a counter jump still fires"`.
+
+`graphStableCounter` remains a `StatefulAgent`/`RunContext` field — it is shared exploration state consumed by the forced-restart mechanism (`onGraphStable` at `counter > threshold`), which this stage does not modify. On an accepted escape the stage SHALL reset the counter to 0 through the `StepContext`'s single declared write method (unblocking exploration, unchanged semantics).
 
 #### Scenario: LLM breaks stagnation (single-shot at midpoint)
 
-- **WHEN** `graphStableCounter` equals `50` (and `graphStableRestartThreshold` is `100`, so `threshold/2 = 50`)
-- **AND** `actionBuffer` is empty and `actions.size() > 2`
-- **AND** `_llmRouter.shouldRouteStagnation(50)` returns `true`
-- **AND** `_llmRouter.selectAction(...)` returns a non-null ModelAction
-- **THEN** the action SHALL be used
-- **AND** `graphStableCounter` SHALL be reset to `0`
+- **WHEN** `graphStableCounter` reaches `graphStableRestartThreshold / 2` with the episode flag armed, the shared precondition holds, and the breaker allows
+- **AND** the engine returns a non-null `ModelAction`
+- **THEN** the action SHALL decide the step, the flag SHALL be burned, `graphStableCounter` SHALL be reset to `0`
 - **AND** `requestRestart()` SHALL NOT be called
-
-#### Scenario: LLM fails at midpoint, stagnation continues to restart
-
-- **WHEN** `graphStableCounter` equals `50`
-- **AND** LLM returns `null` (or is disabled)
-- **THEN** counter continues incrementing (51, 52, ...)
-- **AND** the stagnation hook SHALL NOT fire again (equality no longer holds)
-- **AND** if `graphStableCounter` eventually reaches `100`, `requestRestart()` SHALL be called (existing behavior per INV-EXPL-09)
 
 #### Scenario: Stagnation hook fires only once per phase
 
-- **WHEN** `graphStableCounter` equals `49` (below threshold/2 = 50)
-- **THEN** the equality check is false — LLM stagnation check SHALL NOT execute
-- **WHEN** `graphStableCounter` equals `51` (above threshold/2 = 50)
-- **THEN** the equality check is false — LLM stagnation check SHALL NOT execute
-- **AND** only at exactly `50` does the hook fire
+- **WHEN** `graphStableCounter` is `49` with `graphStableRestartThreshold=100` (below the midpoint) and the episode flag is armed
+- **THEN** the stage SHALL NOT fire
+- **WHEN** the counter then reaches `50` and the stage fires, burning the flag
+- **THEN** every later step of the same episode — `51`, `52`, and every counter value up to the restart threshold — SHALL NOT fire again, whatever the counter reads
+- **AND** the single shot SHALL be spent by the firing itself, not by the counter leaving the midpoint (the pre-change equality check declined `51` because `51 != 50`; the flag declines it because the episode is over)
 
----
+#### Scenario: LLM fails at midpoint, stagnation continues to restart
+
+- **WHEN** the trigger fires and the engine returns `null`
+- **THEN** the flag SHALL be burned and the stage SHALL return `Continue`
+- **AND** the counter SHALL continue incrementing and the stage SHALL NOT fire again this episode
+- **AND** if `graphStableCounter` eventually exceeds `graphStableRestartThreshold`, `requestRestart()` SHALL be called (existing behavior per INV-EXPL-09)
+
+#### Scenario: new edge re-arms the episode through the stage hook
+
+- **WHEN** the flag is burned and a later transition records a `NEW_ACTION` edge
+- **THEN** `onStateTransition` SHALL re-arm the flag inside the stage
+- **AND** a later stagnation reaching the midpoint SHALL fire again
+
+#### Scenario: no stagnation state remains in StatefulAgent
+
+- **WHEN** the change is complete
+- **THEN** `StatefulAgent` SHALL declare no LLM-stagnation fired flag
+- **AND** the only stagnation-episode state SHALL live in the `LlmStagnation` stage
 
 ### Requirement: StatefulAgent — LLM Telemetry at tearDown
 
-`StatefulAgent.tearDown()` SHALL call `_llmRouter.printSummary()` (when `_llmRouter` is non-null) to print the aggregate LLM telemetry summary. This is where the `[APE-RV] LLM Summary:` and `[APE-RV] Decision ratio:` log lines are emitted (format defined in `llm-routing/spec.md`).
+`StatefulAgent.tearDown()` SHALL fold the aggregate LLM counters into the `RUN_END` record (event-sink capability) via the counters accessor on the LLM infrastructure (when present). The `[APE-RV] LLM Summary:` and `[APE-RV] LLM Decision ratio:` log lines and `printSummary()` are retired; the decision ratio is derived from the counters by consumers, not stored.
 
 #### Scenario: Telemetry printed on normal termination
 
-- **WHEN** `StatefulAgent.tearDown()` is called after `StopTestingException`
-- **AND** `_llmRouter` is non-null
-- **THEN** the LLM summary log SHALL be emitted before the method returns
+- **WHEN** `StatefulAgent.tearDown()` is called after `StopTestingException` in an LLM-enabled run
+- **THEN** the `RUN_END` record SHALL carry the aggregate LLM counters (`calls`, token totals, outcome and failure-cause counters, `breaker_trips`)
+- **AND** no `[APE-RV] LLM Summary` or `Decision ratio` line SHALL be emitted, and `printSummary()` SHALL NOT exist — the aggregate is a member of the run's last record instead of two free-text lines, and the ratio is derived by consumers from the counters rather than stored
+
+#### Scenario: Non-LLM arm
+
+- **WHEN** teardown runs in an arm whose plan has no LLM feature
+- **THEN** `RUN_END` SHALL simply omit the LLM counter block (absent = feature absent)
 
 ### Requirement: Dynamic Epsilon Decay
 
@@ -779,7 +762,7 @@ When `Config.dynamicEpsilon` is `false`, the existing behavior SHALL be preserve
 
 ### Requirement: Seeded Agent Decision Reproducibility
 
-All agent-decision randomness routed through `RandomHelper` (priority roulettes such as `randomPickWithPriority`, uniform picks, `toss`, and `ApeFuzzer` gesture generation) SHALL be driven by a `java.util.Random` seeded from the Monkey `-s` seed. `MonkeySourceApe` SHALL call `RandomHelper.seed(seed)` exactly once during construction, with the same seed value that initializes `Monkey.mRandom`. Two runs launched with the same `-s`, the same APK, and the same configuration SHALL produce the same sequence of `RandomHelper` draws. (Previously `RandomHelper` used `ThreadLocalRandom.current()`, which cannot be seeded; the `-s` flag governed only the small subset of decisions using `mRandom`, so no run was reproducible.)
+All agent-decision randomness routed through `RandomHelper` (priority roulettes such as `randomPickWithPriority`, uniform picks, `toss`, and `ApeFuzzer` gesture generation) SHALL be driven by a `java.util.Random` seeded from the Monkey `-s` seed. The seeded `java.util.Random` is owned by the `RunContext` (`run-spec` capability), constructed once at bootstrap from the plan's seed — the same value that initializes `Monkey.mRandom` — and reached through the context, never through static state. Input-string generation SHALL draw from this same stream: the `StringCache` `ThreadLocalRandom` path (V23) and the `/sdcard/ape.strings` reader are deleted by this change (owner decision D6), so no agent-decision or input randomness remains outside the seeded stream. Two runs launched with the same `-s`, the same APK, and the same configuration SHALL produce the same sequence of `RandomHelper` draws. (Historically `RandomHelper` used `ThreadLocalRandom.current()`, which cannot be seeded, and a residual `ThreadLocalRandom` survived in `StringCache.nextString()` — verified V23 — leaving input generation unseeded even after `RandomHelper` was fixed. Both are gone at this stage.)
 
 #### Scenario: identical seeds produce identical draw sequences
 - **WHEN** `RandomHelper.seed(42)` is called and a sequence of `randomPick`/`toss`/`nextInt` draws is recorded, then `RandomHelper.seed(42)` is called again
@@ -788,8 +771,6 @@ All agent-decision randomness routed through `RandomHelper` (priority roulettes 
 #### Scenario: seed comes from the Monkey -s flag
 - **WHEN** the Monkey is launched with `-s 12345`
 - **THEN** `RandomHelper` SHALL be seeded with `12345` before the first agent decision
-
----
 
 ### Requirement: Bounded Foreground Wait
 
@@ -1012,6 +993,21 @@ The "window stuck animating" break threshold of **both** slow-capture retry loop
 #### Scenario: lowered ceiling caps the wait and capture still proceeds
 - **WHEN** `ape.maxIdleTimeoutMs` is lowered (e.g. to `2000`) and a screen has not gone idle within that window
 - **THEN** the idle wait SHALL return after at most `2000` ms, `getRootInActiveWindow()` SHALL still be called and its tree returned (no capture is skipped), and both retry-loop breaks SHALL fire at `>= 2` seconds
+
+### Requirement: Run Lifecycle Opens with RUN_START
+
+The exploration run lifecycle SHALL begin with plan resolution and the `RUN_START` echo (specified by the `run-spec` capability): `RunSpec.resolve` runs in `Monkey.run` before `MonkeySourceApe` is constructed, an invalid plan aborts the process before step 1, and a valid plan is echoed as a single JSON object line before any exploration output. The exploration engine SHALL NOT begin capturing GUI trees, constructing agents, or injecting events until the plan is resolved and echoed.
+
+#### Scenario: no exploration before a valid plan
+
+- **WHEN** the process starts with an invalid `ape.properties` (e.g., an unknown key)
+- **THEN** the process SHALL exit nonzero with the `[APE-RUNSPEC-ABORT]` diagnostic
+- **AND** zero GUI trees SHALL have been captured and zero events injected
+
+#### Scenario: echo precedes the first step
+
+- **WHEN** the process starts with a valid plan
+- **THEN** `RUN_START` SHALL appear in the trace before the first step's output
 
 ## Invariants (Dynamic Epsilon)
 

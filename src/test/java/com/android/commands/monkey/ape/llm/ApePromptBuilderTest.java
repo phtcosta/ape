@@ -91,7 +91,7 @@ public class ApePromptBuilderTest {
 
     @Test
     public void build_withAllNulls_returnsExactlyTwoMessages() {
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
                 builder.build(null, null, null, null, null, null);
 
@@ -101,7 +101,7 @@ public class ApePromptBuilderTest {
 
     @Test
     public void build_withAllNulls_firstMessageIsSystem() {
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
                 builder.build(null, null, null, null, null, null);
 
@@ -114,7 +114,7 @@ public class ApePromptBuilderTest {
 
     @Test
     public void build_withAllNulls_secondMessageIsUser() {
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
                 builder.build(null, null, null, null, null, null);
 
@@ -127,7 +127,7 @@ public class ApePromptBuilderTest {
 
     @Test
     public void build_userMessage_imagePartFirst_textPartSecond() {
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
                 builder.build(null, null, null, null, null, null);
 
@@ -138,7 +138,7 @@ public class ApePromptBuilderTest {
 
     @Test
     public void build_withNullBase64Image_imageUrlStillEmitsPrefix() {
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
                 builder.build(null, null, null, null, null, null);
 
@@ -150,7 +150,7 @@ public class ApePromptBuilderTest {
 
     @Test
     public void build_withBase64Image_imageUrlContainsData() {
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         String fakeBase64 = "abc123";
         List<SglangClient.Message> messages =
                 builder.build(null, null, null, null, fakeBase64, null);
@@ -167,7 +167,7 @@ public class ApePromptBuilderTest {
     @Test
     public void systemMessage_withoutTypeText_doesNotMentionTypeText() {
         // build() with null actions → hasInputField returns false → type_text omitted
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
                 builder.build(null, null, null, null, null, null);
 
@@ -178,7 +178,7 @@ public class ApePromptBuilderTest {
 
     @Test
     public void systemMessage_alwaysContainsCoreTools() {
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
                 builder.build(null, null, null, null, null, null);
 
@@ -193,7 +193,7 @@ public class ApePromptBuilderTest {
 
     @Test
     public void build_withRecentActions_includesRecentSectionInUserText() {
-        ApePromptBuilder builder = new ApePromptBuilder();
+        ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         ApePromptBuilder.ActionHistoryEntry histEntry =
                 new ApePromptBuilder.ActionHistoryEntry("click", "Button", "Login",
                         500, 600, null, "ok");
@@ -271,7 +271,6 @@ public class ApePromptBuilderTest {
     @Test // 20.6
     public void testInputTypeAndHintAppearInPrompt() {
         MopData.Widget w = new MopData.Widget();
-        w.type = "android.widget.EditText";
         w.inputType = "textPassword";
         w.hint = "Your password";
         String m = ApePromptBuilder.widgetMetadata(w);

@@ -1,11 +1,14 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.pipeline.MopLauncherStage;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.ComponentInfo.ActivityInfo;
-import com.android.commands.monkey.ape.utils.ComponentInfo.DataSpec;
 import com.android.commands.monkey.ape.utils.ComponentInfo.IntentFilter;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.utils.MopData;
 
 import org.junit.Test;
@@ -24,9 +27,11 @@ import static org.junit.Assert.*;
  *
  * Lever A: {@link StatefulAgent#frontierBoost} (WTG-frontier decision) and the
  * {@code ActionType} predicates for the {@code EVENT_TRIGGER_ACTIVITY} constant.
- * Lever B: {@link SataAgent#shouldFireLauncher} (cadence gate), {@link SataAgent#selectTriggerCandidate}
- * (census-only candidate walk + round-robin) and {@link SataAgent#buildDeepLinkUri} (URI building),
+ * Lever B: {@link MopLauncherStage#shouldFire} (cadence gate) and
+ * {@link MopLauncherStage#selectTriggerCandidate} (census-only candidate walk + round-robin),
  * plus {@link StatefulAgent#nonModelDecisionSource} (the INV-CT-07 attribution).
+ * URI building is no longer a seam here — the string arrives on the wire; see the comment at the
+ * former Lever B deep-link block for where its assertions went.
  *
  * The dedicated launcher step counter, the counter reset, the dispatch intent, and the WTG pass
  * wiring require the Android runtime / an agent instance and are covered by the deferred device
@@ -56,7 +61,8 @@ public class ActivityFrontierTest {
     // ---- Lever A: frontierBoost (INV-WTG-06/07) ------------------------------
 
     private static MopData.WtgTransition wtg(String widget, String target) {
-        return new MopData.WtgTransition(widget, "android.widget.Button", target);
+        return new MopData.WtgTransition(widget,
+                target);
     }
 
     @Test
@@ -120,46 +126,53 @@ public class ActivityFrontierTest {
     }
 
     // ---- Lever B: cadence firing predicate (mop-census-launcher, INV-CT-05/12) ----
-    // shouldFireLauncher(enabled, hasMopData, stepsSinceFiring, cadence, launchesSoFar, maxPerRun).
-    // Fires iff enabled && hasMopData && stepsSinceFiring == cadence && (maxPerRun == 0 ||
-    // launchesSoFar < maxPerRun). The call site resets the dedicated per-pass counter at every
+    // shouldFire(stepsSinceFiring, cadence, launchesSoFar, maxPerRun).
+    // Fires iff stepsSinceFiring == cadence && (maxPerRun == 0 || launchesSoFar < maxPerRun); being
+    // enabled and having MOP data are assembly conditions, so a stage that exists has both. The call site resets the dedicated per-pass counter at every
     // firing point, so equality (not >=) never overshoots while firing is active. Decoupled from
     // graphStableCounter: firing is periodic in selection steps, independent of graph growth.
 
     @Test
     public void testLauncherFiresOnlyAtCadencePoint() {
-        assertTrue(SataAgent.shouldFireLauncher(true, true, 10, 10, 0, 0));
-        assertFalse("below cadence", SataAgent.shouldFireLauncher(true, true, 9, 10, 0, 0));
-        assertFalse("above cadence", SataAgent.shouldFireLauncher(true, true, 11, 10, 0, 0));
+        assertTrue(MopLauncherStage.shouldFire(10, 10, 0, 0));
+        assertFalse("below cadence", MopLauncherStage.shouldFire(9, 10, 0, 0));
+        assertFalse("above cadence", MopLauncherStage.shouldFire(11, 10, 0, 0));
         // same shape at the default cadence 50
-        assertTrue(SataAgent.shouldFireLauncher(true, true, 50, 50, 0, 0));
-        assertFalse(SataAgent.shouldFireLauncher(true, true, 49, 50, 0, 0));
+        assertTrue(MopLauncherStage.shouldFire(50, 50, 0, 0));
+        assertFalse(MopLauncherStage.shouldFire(49, 50, 0, 0));
     }
 
     @Test
     public void testLauncherClosedWhenDisabledOrNoMopData() {
-        assertFalse("disabled flag → never",
-                SataAgent.shouldFireLauncher(false, true, 50, 50, 0, 0));
-        assertFalse("no MopData → never",
-                SataAgent.shouldFireLauncher(true, false, 50, 50, 0, 0));
+        // The two conjuncts this used to assert on the predicate are now assembly conditions: a plan
+        // without the launcher feature, and a plan without MOP at all, have no launcher stage to
+        // fire (INV-DP-03). Asserted where they now live rather than dropped.
+        assertFalse("disabled flag → no stage",
+                DecisionPipeline.assembledCandidates(TestRunSpecs.spec(
+                        "ape.mopDataPath", TestRunSpecs.MOP_PATH,
+                        "ape.activityTriggerEnabled", "false"))
+                        .contains(DecisionPipeline.Candidate.MOP_LAUNCHER));
+        assertFalse("no MopData → no stage",
+                DecisionPipeline.assembledCandidates(TestRunSpecs.spec())
+                        .contains(DecisionPipeline.Candidate.MOP_LAUNCHER));
     }
 
     @Test
     public void testCapBlocksAfterBudgetExhausted() {
         // INV-CT-12: cap=2 fires while launchesSoFar < 2, blocked at >= 2 (the 3rd fire)
-        assertTrue("0 launches", SataAgent.shouldFireLauncher(true, true, 10, 10, 0, 2));
-        assertTrue("1 launch", SataAgent.shouldFireLauncher(true, true, 10, 10, 1, 2));
+        assertTrue("0 launches", MopLauncherStage.shouldFire(10, 10, 0, 2));
+        assertTrue("1 launch", MopLauncherStage.shouldFire(10, 10, 1, 2));
         assertFalse("2 launches — budget exhausted",
-                SataAgent.shouldFireLauncher(true, true, 10, 10, 2, 2));
+                MopLauncherStage.shouldFire(10, 10, 2, 2));
         assertFalse("3 launches — still blocked",
-                SataAgent.shouldFireLauncher(true, true, 10, 10, 3, 2));
+                MopLauncherStage.shouldFire(10, 10, 3, 2));
     }
 
     @Test
     public void testCapZeroMeansUnlimited() {
         // INV-CT-12: cap=0 (default) → never blocks, however many launches have occurred
-        assertTrue(SataAgent.shouldFireLauncher(true, true, 10, 10, 10, 0));
-        assertTrue(SataAgent.shouldFireLauncher(true, true, 10, 10, 999, 0));
+        assertTrue(MopLauncherStage.shouldFire(10, 10, 10, 0));
+        assertTrue(MopLauncherStage.shouldFire(10, 10, 999, 0));
     }
 
     // ---- Lever B: census-only candidate selection (mop-census-launcher, INV-CT-06/10) ----
@@ -170,8 +183,14 @@ public class ActivityFrontierTest {
     // as a Set<String> — NOT ComponentInfo.reachesTarget, which false-negatives lambda-triggered
     // activities (cryptoapp: all reachesTarget=false yet Cipher/MessageDigest genuinely reach MOP).
 
-    private static ActivityInfo activity(String className, boolean exported, boolean isMain, String permission) {
-        return new ActivityInfo(className, isMain, exported, Collections.<IntentFilter>emptyList(),
+    /**
+     * A census-eligible activity. There is no {@code exported} parameter to pass, and that is the
+     * point: the walk cannot consult a field the artifact does not carry, so "exported status is
+     * not consulted" stopped being a rule these fixtures had to vary and became a property of the
+     * type (INV-CT-10).
+     */
+    private static ActivityInfo activity(String className, boolean isMain, String permission) {
+        return new ActivityInfo(className, isMain, Collections.<IntentFilter>emptyList(),
                 true, Collections.<String>emptyList(), permission);
     }
 
@@ -182,20 +201,31 @@ public class ActivityFrontierTest {
     @Test
     public void testCandidatePicksEligibleCensusMember() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.Settings", true, false, null)));
-        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                activity("com.x.Settings", false, null)));
+        ComponentInfo c = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0, mopSet("com.x.Settings"));
         assertNotNull(c);
         assertEquals("com.x.Settings", c.className);
     }
 
+    /**
+     * A non-exported census activity is a valid launch target — the dispatch path (uid-2000
+     * {@code IActivityManager}) needs no export.
+     *
+     * <p>This used to be asserted by varying an {@code exported} fixture and checking that the
+     * result did not move. It no longer can be: the artifact carries no such field, so the
+     * assertion becomes the absence itself. That is a stronger claim than the old one, which only
+     * showed the current walk ignoring the flag while leaving a future walk free to consult it.
+     */
     @Test
-    public void testNonExportedCensusMemberIsLaunched() {
-        // exported term deleted: a non-exported census activity is a valid launch target — the
-        // dispatch path (uid-2000 IActivityManager) needs no export. Gate 0 v3 structural-null fix.
+    public void testNoExportedFieldExistsForTheWalkToConsult() {
+        for (java.lang.reflect.Field f : ComponentInfo.class.getFields()) {
+            assertNotEquals("eligibility must have no exported field to test (INV-CT-10)",
+                    "exported", f.getName());
+        }
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.CryptoActivity", false, false, null)));
-        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                activity("com.x.CryptoActivity", false, null)));
+        ComponentInfo c = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0, mopSet("com.x.CryptoActivity"));
         assertNotNull(c);
         assertEquals("com.x.CryptoActivity", c.className);
@@ -207,49 +237,49 @@ public class ActivityFrontierTest {
         // returns null even though it is the only otherwise-eligible activity, with either an
         // empty census or a non-empty census that does not contain it.
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.AboutActivity", true, false, null)));
-        assertNull("empty census, no fallback", SataAgent.selectTriggerCandidate(
+                activity("com.x.AboutActivity", false, null)));
+        assertNull("empty census, no fallback", MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0, mopSet()));
-        assertNull("census present but excludes it", SataAgent.selectTriggerCandidate(
+        assertNull("census present but excludes it", MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0, mopSet("com.x.Other")));
     }
 
     @Test
     public void testCandidateSkipsPermissionGated() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.Guarded", false, false, "android.permission.FOO")));
-        assertNull(SataAgent.selectTriggerCandidate(
+                activity("com.x.Guarded", false, "android.permission.FOO")));
+        assertNull(MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0, mopSet("com.x.Guarded")));
     }
 
     @Test
     public void testCandidateSkipsMainByFlagAndByName() {
         List<ComponentInfo> byFlag = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.Launcher", true, true, null)));
-        assertNull(SataAgent.selectTriggerCandidate(
+                activity("com.x.Launcher", true, null)));
+        assertNull(MopLauncherStage.selectTriggerCandidate(
                 byFlag, new HashSet<String>(), "com.x.Other", 0, mopSet("com.x.Launcher")));
         List<ComponentInfo> byName = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.Main", false, false, null)));
-        assertNull(SataAgent.selectTriggerCandidate(
+                activity("com.x.Main", false, null)));
+        assertNull(MopLauncherStage.selectTriggerCandidate(
                 byName, new HashSet<String>(), "com.x.Main", 0, mopSet("com.x.Main")));
     }
 
     @Test
     public void testCandidateSkipsVisitedAtFireTime() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.Seen", false, false, null)));
+                activity("com.x.Seen", false, null)));
         Set<String> visited = new HashSet<>(Arrays.asList("com.x.Seen"));
-        assertNull(SataAgent.selectTriggerCandidate(
+        assertNull(MopLauncherStage.selectTriggerCandidate(
                 acts, visited, "com.x.Main", 0, mopSet("com.x.Seen")));
     }
 
     @Test
     public void testCandidateNullWhenEmptyOrAllVisited() {
-        assertNull(SataAgent.selectTriggerCandidate(
+        assertNull(MopLauncherStage.selectTriggerCandidate(
                 new ArrayList<ComponentInfo>(), new HashSet<String>(), "com.x.Main", 0, mopSet("com.x.A")));
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.A", false, false, null)));
-        assertNull(SataAgent.selectTriggerCandidate(
+                activity("com.x.A", false, null)));
+        assertNull(MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<>(Arrays.asList("com.x.A")), "com.x.Main", 0, mopSet("com.x.A")));
     }
 
@@ -258,8 +288,8 @@ public class ActivityFrontierTest {
         // No MopData / null census → nothing launched (defensive; the call site always passes the
         // census, so this is the belt-and-braces path, never the two-group flag-off of old E-mín).
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.A", true, false, null)));
-        assertNull(SataAgent.selectTriggerCandidate(
+                activity("com.x.A", false, null)));
+        assertNull(MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0, null));
     }
 
@@ -268,14 +298,14 @@ public class ActivityFrontierTest {
         // Two eligible census members — the walk advances round-robin by rrIndex, skipping the
         // non-census activity between them.
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.Crypto1", false, false, null),
-                activity("com.x.Plain", true, false, null),    // not in census → skip
-                activity("com.x.Crypto2", false, false, null)));
+                activity("com.x.Crypto1", false, null),
+                activity("com.x.Plain", false, null),    // not in census → skip
+                activity("com.x.Crypto2", false, null)));
         Set<String> census = mopSet("com.x.Crypto1", "com.x.Crypto2");
-        ComponentInfo c0 = SataAgent.selectTriggerCandidate(
+        ComponentInfo c0 = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0, census);
         assertEquals("com.x.Crypto1", c0.className);
-        ComponentInfo c1 = SataAgent.selectTriggerCandidate(
+        ComponentInfo c1 = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 1, census);
         assertEquals("com.x.Crypto2", c1.className);
     }
@@ -284,14 +314,14 @@ public class ActivityFrontierTest {
     public void testCandidateRoundRobinWraps() {
         // Only index 2 is an eligible census member; starting rrIndex at 1 must wrap to find it.
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.x.Main", true, true, null),      // main → skip
-                activity("com.x.Plain", true, false, null),    // not in census → skip
-                activity("com.x.Deep", false, false, null)));  // census, eligible
+                activity("com.x.Main", true, null),      // main → skip
+                activity("com.x.Plain", false, null),    // not in census → skip
+                activity("com.x.Deep", false, null)));  // census, eligible
         Set<String> census = mopSet("com.x.Deep");
-        ComponentInfo c0 = SataAgent.selectTriggerCandidate(
+        ComponentInfo c0 = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0, census);
         assertEquals("com.x.Deep", c0.className);
-        ComponentInfo c1 = SataAgent.selectTriggerCandidate(
+        ComponentInfo c1 = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 1, census);
         assertEquals("com.x.Deep", c1.className);
     }
@@ -304,9 +334,9 @@ public class ActivityFrontierTest {
     @Test
     public void testCandidateSkipsComposePreviewTooling() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("androidx.compose.ui.tooling.PreviewActivity", false, false, null),
-                activity("com.x.HistoryActivity", false, false, null)));
-        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                activity("androidx.compose.ui.tooling.PreviewActivity", false, null),
+                activity("com.x.HistoryActivity", false, null)));
+        ComponentInfo c = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0,
                 mopSet("androidx.compose.ui.tooling.PreviewActivity", "com.x.HistoryActivity"));
         assertNotNull(c);
@@ -316,9 +346,9 @@ public class ActivityFrontierTest {
     @Test
     public void testCandidateSkipsAbstractComponentActivity() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("androidx.activity.ComponentActivity", false, false, null),
-                activity("com.x.RealActivity", false, false, null)));
-        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                activity("androidx.activity.ComponentActivity", false, null),
+                activity("com.x.RealActivity", false, null)));
+        ComponentInfo c = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0,
                 mopSet("androidx.activity.ComponentActivity", "com.x.RealActivity"));
         assertNotNull(c);
@@ -328,9 +358,9 @@ public class ActivityFrontierTest {
     @Test
     public void testCandidateAllDenylistedReturnsNull() {
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("androidx.activity.ComponentActivity", false, false, null),
-                activity("leakcanary.internal.activity.LeakActivity", false, false, null)));
-        assertNull(SataAgent.selectTriggerCandidate(
+                activity("androidx.activity.ComponentActivity", false, null),
+                activity("leakcanary.internal.activity.LeakActivity", false, null)));
+        assertNull(MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0,
                 mopSet("androidx.activity.ComponentActivity", "leakcanary.internal.activity.LeakActivity")));
     }
@@ -339,8 +369,8 @@ public class ActivityFrontierTest {
     public void testCandidatePrefixNotSubstring() {
         // prefix match, not substring — an app class whose package merely contains "androidx" stays eligible
         List<ComponentInfo> acts = new ArrayList<ComponentInfo>(Arrays.asList(
-                activity("com.foo.androidxutils.MainActivity", false, false, null)));
-        ComponentInfo c = SataAgent.selectTriggerCandidate(
+                activity("com.foo.androidxutils.MainActivity", false, null)));
+        ComponentInfo c = MopLauncherStage.selectTriggerCandidate(
                 acts, new HashSet<String>(), "com.x.Main", 0,
                 mopSet("com.foo.androidxutils.MainActivity"));
         assertNotNull(c);
@@ -364,54 +394,60 @@ public class ActivityFrontierTest {
         assertNull(SataAgent.navMopTiebreakLog(0, 3, false));
     }
 
-    // ---- Lever B: buildDeepLinkUri (INV-CT-07 dispatch precondition) ----------
+    // ---- Lever B: what the launcher does with the URI (INV-CT-13) -------------
+    //
+    // The six assertions that used to live here drove MopLauncherStage.buildDeepLinkUri over an
+    // intent-filter <data> structure. That rule is INV-DRV-07 and it now runs in the generator, on
+    // the side that computes it: its permanent home is the named tests of `gh96` task 2.7
+    // (test_deep_link_from_first_action_view, _absent_without_scheme, _absent_without_action_view,
+    // _absent_without_filters, _empty_host_and_path). Deleting them here rather than migrating
+    // them would have left a schema omission free to degrade the activity frontier in silence.
+    //
+    // What survives on this side is the pair that is genuinely the jar's: a candidate carrying a
+    // deep link is dispatched by URI, one carrying null by explicit component. The dispatch itself
+    // is MonkeySourceApe's and will not class-load off-device, so what is asserted is the value
+    // the stage hands to the action — which is the whole of the jar's contribution now.
 
-    private static DataSpec data(List<String> schemes, List<String> hosts, List<String> paths) {
-        return new DataSpec(schemes, hosts, null, paths, null, null, null);
+    private static ActivityInfo deepLinked(String uri) {
+        return new ActivityInfo("com.x.Deep", false, Collections.<IntentFilter>emptyList(),
+                true, Collections.<String>emptyList(), null, uri);
     }
 
-    private static ActivityInfo activityWithFilters(List<IntentFilter> filters) {
-        return new ActivityInfo("com.x.Deep", false, true, filters, true, Collections.<String>emptyList());
-    }
-
+    /**
+     * A census entry carrying a deep link hands that URI to the trigger action verbatim, and one
+     * carrying null hands null — which is what {@code MonkeySourceApe} reads as "launch the
+     * explicit component instead" (INV-CT-13).
+     *
+     * <p>Verbatim is the assertion that matters. The jar no longer assembles anything: if it
+     * rebuilt, normalized or defaulted the string in any way it would be a second implementation of
+     * INV-DRV-07, diverging from the generator's the first time either changed.
+     */
     @Test
-    public void testDeepLinkSchemeOnly() {
-        IntentFilter f = new IntentFilter(Arrays.asList("android.intent.action.VIEW"),
-                Collections.<String>emptyList(), data(Arrays.asList("myapp"), null, null));
-        assertEquals("myapp://", SataAgent.buildDeepLinkUri(activityWithFilters(Arrays.asList(f))));
+    public void testTriggerActionCarriesTheWireDeepLinkOrNull() {
+        ActivityTriggerAction withUri = new ActivityTriggerAction(
+                "com.x", "com.x.Deep", deepLinked("myapp://detail/x").deepLinkUri);
+        assertEquals("myapp://detail/x", withUri.getDeepLinkUri());
+
+        ActivityTriggerAction withoutUri = new ActivityTriggerAction(
+                "com.x", "com.x.Deep", deepLinked(null).deepLinkUri);
+        assertNull("no deep link ⇒ explicit-component dispatch (INV-CT-13)",
+                withoutUri.getDeepLinkUri());
     }
 
+    /**
+     * A non-activity never carries a deep link, whatever the wire says: only activities are
+     * launched by URI, so the field is null on every other component type by construction.
+     */
     @Test
-    public void testDeepLinkSchemeHost() {
-        IntentFilter f = new IntentFilter(Arrays.asList("android.intent.action.VIEW"),
-                Collections.<String>emptyList(), data(Arrays.asList("https"), Arrays.asList("x.com"), null));
-        assertEquals("https://x.com", SataAgent.buildDeepLinkUri(activityWithFilters(Arrays.asList(f))));
-    }
-
-    @Test
-    public void testDeepLinkSchemeHostPath() {
-        IntentFilter f = new IntentFilter(Arrays.asList("android.intent.action.VIEW"),
-                Collections.<String>emptyList(),
-                data(Arrays.asList("https"), Arrays.asList("x.com"), Arrays.asList("/detail")));
-        assertEquals("https://x.com/detail", SataAgent.buildDeepLinkUri(activityWithFilters(Arrays.asList(f))));
-    }
-
-    @Test
-    public void testDeepLinkViewlessFilterReturnsNull() {
-        IntentFilter f = new IntentFilter(Arrays.asList("android.intent.action.MAIN"),
-                Collections.<String>emptyList(), data(Arrays.asList("myapp"), null, null));
-        assertNull(SataAgent.buildDeepLinkUri(activityWithFilters(Arrays.asList(f))));
-    }
-
-    @Test
-    public void testDeepLinkEmptySchemesReturnsNull() {
-        IntentFilter f = new IntentFilter(Arrays.asList("android.intent.action.VIEW"),
-                Collections.<String>emptyList(), DataSpec.EMPTY);
-        assertNull(SataAgent.buildDeepLinkUri(activityWithFilters(Arrays.asList(f))));
-    }
-
-    @Test
-    public void testDeepLinkNoFiltersReturnsNull() {
-        assertNull(SataAgent.buildDeepLinkUri(activityWithFilters(Collections.<IntentFilter>emptyList())));
+    public void testOnlyActivitiesCanCarryADeepLink() {
+        assertNull(new ComponentInfo.ReceiverInfo("com.x.R", false,
+                Collections.<IntentFilter>emptyList(), true,
+                Collections.<String>emptyList()).deepLinkUri);
+        assertNull(new ComponentInfo.ServiceInfo("com.x.S", false,
+                Collections.<IntentFilter>emptyList(), true,
+                Collections.<String>emptyList()).deepLinkUri);
+        assertNull(new ComponentInfo.ProviderInfo("com.x.P", false,
+                Collections.<IntentFilter>emptyList(), true,
+                Collections.<String>emptyList(), "auth").deepLinkUri);
     }
 }

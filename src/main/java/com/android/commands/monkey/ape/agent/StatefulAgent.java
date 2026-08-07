@@ -15,31 +15,8 @@
  */
 package com.android.commands.monkey.ape.agent;
 
-import static com.android.commands.monkey.ape.utils.Config.activityStableRestartThreshold;
-import static com.android.commands.monkey.ape.utils.Config.baseThrottle;
-import static com.android.commands.monkey.ape.utils.Config.enableXPathAction;
-import static com.android.commands.monkey.ape.utils.Config.evolveModel;
-import static com.android.commands.monkey.ape.utils.Config.fuzzingActivityVisitThreshold;
-import static com.android.commands.monkey.ape.utils.Config.graphStableRestartThreshold;
-import static com.android.commands.monkey.ape.utils.Config.maxExtraPriorityAliasedActions;
-import static com.android.commands.monkey.ape.utils.Config.maxThrottle;
-import static com.android.commands.monkey.ape.utils.Config.saveDotGraph;
-import static com.android.commands.monkey.ape.utils.Config.saveGUITreeToXmlEveryStep;
-import static com.android.commands.monkey.ape.utils.Config.saveObjModel;
-import static com.android.commands.monkey.ape.utils.Config.saveStates;
-import static com.android.commands.monkey.ape.utils.Config.saveVisGraph;
-import static com.android.commands.monkey.ape.utils.Config.stateStableRestartThreshold;
-import static com.android.commands.monkey.ape.utils.Config.takeScreenshot;
-import static com.android.commands.monkey.ape.utils.Config.takeScreenshotForEveryStep;
-import static com.android.commands.monkey.ape.utils.Config.takeScreenshotForNewState;
-import static com.android.commands.monkey.ape.utils.Config.throttleForActivityTransition;
-import static com.android.commands.monkey.ape.utils.Config.throttleForUnvisitedAction;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.ObjectOutputStream;
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -47,11 +24,11 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
-import com.android.commands.monkey.ape.llm.LlmRouter;
 
 import com.android.commands.monkey.MonkeySourceApe;
 import com.android.commands.monkey.ape.ActionFilter;
@@ -65,17 +42,23 @@ import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.GraphListener;
 import com.android.commands.monkey.ape.model.Model;
-import com.android.commands.monkey.ape.model.Model.ActionRecord;
-import com.android.commands.monkey.ape.model.xpathaction.XPathActionController;
+import com.android.commands.monkey.ape.model.Model.RecoveryPoint;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
+import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.pipeline.StepContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -84,10 +67,8 @@ import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.AndroidDevice;
 import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
-import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.SystemBroadcastCatalog;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 import com.android.commands.monkey.ape.utils.Utils;
@@ -99,7 +80,7 @@ import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
 
-public abstract class StatefulAgent extends ApeAgent implements GraphListener {
+public abstract class StatefulAgent extends ApeAgent implements GraphListener, StepContext {
 
     private static final boolean debug = false;
 
@@ -114,18 +95,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     protected ModelAction currentAction;
     protected GUITreeAction currentGUITreeAction;
 
-    // Decision join buffer: the selection step and action of the last model-action selection. An
-    // action selected at step N produces its transition only during step N+1's updateGraph(), by
-    // which point getTimestamp() reads N+1 — so the selection step must be buffered to key the
-    // outcome to the [APE-STEP] it belongs to. Two consumers read it at that point: the
-    // [APE-OUTCOME] line and the dead-pair ban's outcome feedback. lastDecisionAction == null means
-    // "no decision buffered".
-    private int lastDecisionStep = -1;
+    // Decision buffer: the action of the last model-action selection. An action selected at step N
+    // produces its transition only during step N+1's updateGraph(), so the decision must be held
+    // across the boundary for its outcome to be attributable to it. Two consumers read it at that
+    // point: the step record's closure and the dead-pair ban's outcome feedback. The step itself is
+    // no longer buffered with it — the record carries its own step number and closes on the object
+    // identity below, so a second copy of the number would only be a chance to disagree.
+    // lastDecisionAction == null means "no decision buffered".
     private ModelAction lastDecisionAction = null;
-
-    // Per-episode single shot of the LLM stagnation hook (INV-RTR-19). Set when the hook fires,
-    // cleared when a new edge resets graphStableCounter to 0.
-    protected boolean stagnationHookFired = false;
 
     protected State newState;
     protected GUITree newGUITree;
@@ -153,13 +130,24 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     private final ActivityBudgetTracker _budgetTracker;
 
     // rv-scoring-pipeline: the RV scoring path, extracted from adjustActionsByGUITree() into an
-    // ordered set of passes assembled once from Config. The context is the seam through which the
+    // ordered set of passes assembled once from the plan. The context is the seam through which the
     // passes read this agent's collaborators (live), so a pass carries no run state (INV-ARCH-02/05).
     private final ScoringContext scoringContext;
     private final ScoringPipeline scoringPipeline;
 
+    /**
+     * The plan's exploration parameters, taken once in the constructor and read as a field at every
+     * site below (INV-DP-12). It sits here rather than on {@link SataAgent} because both classes
+     * read from it, and a second field on the subclass would shadow this one — including for the
+     * oracle harness, whose field injection walks the hierarchy and stops at the first match.
+     *
+     * <p>Reaching the run context is injection at assembly and a violation at decision time; that
+     * this field is assigned in the constructor and only read afterwards is what makes the
+     * distinction structural rather than a convention.
+     */
+    protected final RunSpec.ExplorationParams exploration;
+
     // LLM integration fields
-    protected LlmRouter _llmRouter;
     private final SystemBroadcastCatalog _broadcastCatalog;
     protected boolean _isNewState;
     protected State _lastState;
@@ -182,22 +170,29 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         this.model = new Model(graph);
         this.timestamp = graph.getTimestamp();
         ComponentName mainApp = ape.getMainApp();
+        RunSpec spec = RunContext.current().spec();
+        this.exploration = spec.exploration();
+        // The MOP substrate's path. A plan carries MopParams exactly when it carries the MOP
+        // feature, and that feature is derived from ape.mopDataPath being set — so a null path here
+        // and an absent feature are the same statement, and requireMopArm below reads the null as
+        // "this run declares no MOP arm" exactly as it read an unset Config field.
+        String mopDataPath = spec.has(Feature.MOP) ? spec.mop().dataPath() : null;
         this._mopData = requireMopArm(
-                MopData.load(Config.mopDataPath, mainApp.getPackageName(), mainApp.getClassName()),
-                Config.mopDataPath);
+                MopData.load(mopDataPath, mainApp.getPackageName(), mainApp.getClassName(),
+                        RunContext.current().sink()),
+                mopDataPath);
         this._coverageTracker = new UICoverageTracker();
         // rv-scoring-pipeline (activityBudgetEnabled): the activity budget is a fork addition; upstream
         // has none. Off -> no tracker is built and the budget check is skipped (INV-ARCH-01).
-        this._budgetTracker = Config.activityBudgetEnabled
-                ? new ActivityBudgetTracker(Config.activityBaseBudget, Config.activityBudgetPerWidget)
+        this._budgetTracker = spec.has(Feature.ACTIVITY_BUDGET)
+                ? new ActivityBudgetTracker(exploration.integer("ape.activityBaseBudget"),
+                        exploration.integer("ape.activityBudgetPerWidget"))
                 : null;
-        this._llmRouter = (Config.llmUrl != null) ? new LlmRouter(ape.getRandom()) : null;
         this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
         // and assemble the pipeline once, now that _mopData/_coverageTracker/graph/timestamp are set.
-        // fromConfig emits the [APE-ARCH] passes=[...] startup line. Pass isEnabled() reads only
-        // getMopData() here (run-fixed) — never menuPickEligible — so no subclass field is touched
-        // before the subclass constructor runs.
+        // Pass isEnabled() reads only its injected weight and getMopData() here (run-fixed) — never
+        // menuPickEligible — so no subclass field is touched before the subclass constructor runs.
         this.scoringContext = new ScoringContext() {
             @Override public MopData getMopData() { return StatefulAgent.this.getMopData(); }
             @Override public UICoverageTracker getCoverageTracker() { return StatefulAgent.this.getCoverageTracker(); }
@@ -205,7 +200,24 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             @Override public int getTimestamp() { return StatefulAgent.this.getTimestamp(); }
             @Override public boolean menuPickEligible(String activity) { return StatefulAgent.this.menuPickEligible(activity); }
         };
-        this.scoringPipeline = ScoringPipeline.fromConfig(null, this.scoringContext);
+        this.scoringPipeline = ScoringPipeline.fromParams(
+                ScoringParams.fromSpec(spec), this.scoringContext, RunContext.current().sink());
+        // Assembly provenance, recorded here because this is the one place both rosters are known:
+        // the decision stages the plan assembles (a pure function of the plan — INV-DP-03 leaves
+        // nothing to enumerate at runtime) and the scoring passes with the census of every
+        // candidate. Without the census, "the arm turned the frontier family off" and "this
+        // application's data could not support it" are the same three missing names.
+        RunContext.current().sink().pipeline(stageNames(spec), scoringPipeline.passNames(),
+                scoringPipeline.candidates());
+    }
+
+    /** The names of the decision stages this plan assembles, in the fixed candidate order. */
+    private static List<String> stageNames(RunSpec spec) {
+        List<String> names = new ArrayList<>();
+        for (DecisionPipeline.Candidate candidate : DecisionPipeline.assembledCandidates(spec)) {
+            names.add(candidate.stageName());
+        }
+        return names;
     }
 
     protected MopData getMopData() {
@@ -234,8 +246,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     /**
      * The MOP-screen bit of an activity (INV-SEL-06): 1 when MOP data is loaded and the activity is
      * in its pre-computed MOP set, 0 otherwise — including whenever `MopData` is null, which is how
-     * a MOP-off arm reports. Serialized on `[APE-STEP]` (where the step started) and on
-     * `[APE-OUTCOME]` (where it landed), the two halves of the evidential link that says whether a
+     * a MOP-off arm reports. Recorded on the step record's `dec` (where the step started) and its
+     * `out` (where it landed), the two halves of the evidential link that says whether a
      * decision happened on, or reached, a monitored screen. The lookup is O(1) over a set built at
      * load time.
      */
@@ -261,6 +273,69 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         return _budgetTracker;
     }
 
+    // --- StepContext: what a decision stage may know about the step being decided ----------------
+    //
+    // The agent is the view rather than a snapshot handed to it, for the reason design D13 records:
+    // the stages run in sequence within one step and one of them writes graphStableCounter, so a copy
+    // would be stale before the step ended. Every method below reads live off this object, which also
+    // means the oracle harness needs nothing injected for the context — it allocates the agent, and
+    // the agent is the context.
+
+    @Override
+    public State newState() {
+        return newState;
+    }
+
+    @Override
+    public GUITree newGUITree() {
+        return newGUITree;
+    }
+
+    @Override
+    public boolean isNewState() {
+        return _isNewState;
+    }
+
+    @Override
+    public int graphStableCounter() {
+        return graphStableCounter;
+    }
+
+    @Override
+    public int timestamp() {
+        return getTimestamp();
+    }
+
+    @Override
+    public Random random() {
+        return getRandom();
+    }
+
+    @Override
+    public MopData mopData() {
+        return getMopData();
+    }
+
+    @Override
+    public Graph graph() {
+        return getGraph();
+    }
+
+    @Override
+    public ActivityBudgetTracker budgetTracker() {
+        return getBudgetTracker();
+    }
+
+    @Override
+    public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() {
+        return _actionHistory;
+    }
+
+    @Override
+    public void resetGraphStableCounter() {
+        graphStableCounter = 0;
+    }
+
     public void updateModel(Model newModel) {
         this.model = newModel;
         if (currentState != null) {
@@ -270,7 +345,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             ModelAction prevCurrentAction = currentAction;
             currentAction = model.update(currentAction, currentGUITreeAction);
             // Refinement replaces currentAction with the rebuilt model's object before updateGraph()
-            // runs. Remap the [APE-OUTCOME] buffer through the same mapping, or the reference guard
+            // runs. Remap the outcome buffer through the same mapping, or the reference guard
             // would silently drop the outcome on exactly the non-deterministic (refinement) steps.
             if (lastDecisionAction != null && lastDecisionAction == prevCurrentAction) {
                 lastDecisionAction = currentAction;
@@ -299,20 +374,26 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             }
             actionBuffer = newBuffer;
         }
-        List<ActionRecord> actionHistory = getActionHistory();
-        final int size = actionHistory.size();
-        for (int i = 0; i < size; i++) {
-            ActionRecord actionPair = actionHistory.get(i);
-            Action action = actionPair.modelAction;
-            GUITreeAction guiAction = actionPair.guiAction;
-            if (action.isModelAction() && action.requireTarget()) {
-                if (guiAction == null) {
-                    throw new RuntimeException("Sanity check failed!");
-                }
-                action = newModel.update((ModelAction)action, guiAction);
-                updateActionHistory(i, new ActionRecord(actionPair.clockTimestamp,
-                        actionPair.agentTimestamp, action, guiAction));
+        // The action history needs no remapping: its records are snapshots of primitives and
+        // strings, so nothing in them can go stale (INV-MODEL-18). The depth-1 recovery point does,
+        // being the one rich pair the model keeps — remapped through the same
+        // model.update(action, guiAction) discipline as the agent's own field pairs above.
+        //
+        // The requireTarget() guard makes this asymmetric on purpose: recoverCurrentState accepts
+        // any model action, but only a targeted one is remapped here, so a targetless recovery
+        // point (MODEL_BACK, MODEL_MENU) survives a rebuild still pointing at an object of the old
+        // model and recovers a stale one. Remapping unconditionally would very likely be better —
+        // less stale recovery, fewer spurious restart cycles — but it changes which object a
+        // recovery restores, and that is a decision input this repair may not touch
+        // (INV-MODEL-20). It belongs to a change that can measure exploration; RecoveryPointRemapTest
+        // pins both branches so removing the guard is a visible edit.
+        RecoveryPoint point = newModel.getRecoveryPoint();
+        if (point != null && point.modelAction.requireTarget()) {
+            if (point.guiAction == null) {
+                throw new RuntimeException("Sanity check failed!");
             }
+            ModelAction remapped = newModel.update(point.modelAction, point.guiAction);
+            newModel.setRecoveryPoint(new RecoveryPoint(remapped, point.guiAction));
         }
     }
 
@@ -397,7 +478,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         if (an == null) {
             return action;
         }
-        if (an.getVisitedCount() < fuzzingActivityVisitThreshold) {
+        if (an.getVisitedCount() < exploration.fuzzingActivityVisitThreshold()) {
             this.disableFuzzing = true;
         }
         return action;
@@ -476,13 +557,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
      * 
      * @return
      */
-    protected ModelAction selectNewActionFromBuffer() {
-        if (enableXPathAction) {
-            ModelAction xpathAction = XPathActionController.selectAction(newState, newGUITree);
-            if (xpathAction != null) {
-                return xpathAction;
-            }
-        }
+    public ModelAction selectNewActionFromBuffer() {
         if (actionBuffer.isEmpty()) {
             return null;
         }
@@ -635,7 +710,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             // idle-timeout-cap: break threshold derives from the same flag as the
             // getRootInActiveWindowSlow ceiling (÷1000), so lowering the ceiling keeps
             // this "window stuck animating" break firing (INV-EXPL-25). Default 10s.
-            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= Config.maxIdleTimeoutMs / 1000) {
+            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= exploration.maxIdleTimeoutMs() / 1000) {
                 break;
             }
         }
@@ -686,10 +761,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 if (removed == null) {
                     throw new IllegalStateException("At least two GUI trees.");
                 }
+                GUITree last = newState.getLatestGUITree();
+                // The equivalence is computed before the release cycle, not after it:
+                // isTopNamingEquivalent reaches GUITreeBuilder.getStateKey(topNaming, removed),
+                // which memoizes, so asking afterwards re-inserted a cache entry for the tree
+                // that had just been released and made release() the second-to-last touch
+                // instead of the last (V12). The value is unaffected — a state key is a pure
+                // function of the naming and the tree, and neither is mutated by release.
+                boolean topNamingEquivalent = isTopNamingEquivalent(removed, last);
                 GUITreeBuilder.release(removed);
                 model.release(removed);
-                GUITree last = newState.getLatestGUITree();
-                if (isTopNamingEquivalent(removed, last)) {
+                if (topNamingEquivalent) {
                     Logger.iprintln("Checking trivial new state: top naming equivalent.");
                     retry = Math.min(2, retry); // at most try twice
                 } else {
@@ -700,7 +782,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             // getRootInActiveWindowSlow duration — derived from the same flag (÷1000) so the ceiling
             // and both retry-loop breaks stay coupled (INV-EXPL-25). Default 10s. This loop also has
             // retry/early-exit paths, but the break must not diverge from the ceiling by construction.
-            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= Config.maxIdleTimeoutMs / 1000) {
+            if (TimeUnit.NANOSECONDS.toSeconds(end - begin) >= exploration.maxIdleTimeoutMs() / 1000) {
                 break;
             }
         }
@@ -784,7 +866,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     protected void checkNonDeterministicTransitions() {
-        if (!evolveModel) {
+        if (!exploration.evolveModel()) {
             return;
         }
         if (currentStateTransition == null) {
@@ -838,7 +920,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     protected void preEvolveModel() {
-        if (!evolveModel) {
+        if (!exploration.evolveModel()) {
             return;
         }
         {
@@ -935,7 +1017,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     protected void saveGUI() {
-        if (saveGUITreeToXmlEveryStep) {
+        if (exploration.saveGUITreeToXmlEveryStep()) {
             checkOutputDir();
             File xmlFile = new File(checkOutputDir(), String.format("step-%d.xml", getTimestamp()));
             Logger.iformat("Saving GUI tree to %s at step %d", xmlFile, getTimestamp());
@@ -946,7 +1028,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 Logger.wformat("Fail to save GUI tree to %s at step %d", xmlFile, getTimestamp());
             }
         }
-        if (takeScreenshot && takeScreenshotForEveryStep) {
+        if (exploration.takeScreenshot() && exploration.takeScreenshotForEveryStep()) {
             checkOutputDir();
             File screenshotFile = new File(checkOutputDir(), String.format("step-%d.png", getTimestamp()));
             Logger.iformat("Saving screen shot to %s at step %d", screenshotFile, getTimestamp());
@@ -970,26 +1052,19 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         if (currentState != null) {
             return;
         }
-        List<ActionRecord> history = getActionHistory();
-        if (history.isEmpty()) {
+        // The model maintains the recovery point on every append: the most recent model action,
+        // unless an action that can start the app came after it — which is the blocked case, and
+        // the reason the flag is read separately rather than folded into a null point.
+        if (model.isRecoveryBlocked()) {
+            // do nothing if is start
             return;
         }
-        ActionRecord record = null;
-        for (int index = history.size() - 1; index >= 0; index--) {
-            record = history.get(index);
-            if (record.modelAction.canStartApp()) {
-                // do nothing if is start
-                return;
-            }
-            if (record.modelAction.isModelAction()) {
-                break;
-            }
-        }
-        if (record == null || !record.modelAction.isModelAction()) {
+        RecoveryPoint point = model.getRecoveryPoint();
+        if (point == null) {
             return; // no valid action
         }
-        ModelAction modelAction = (ModelAction) record.modelAction;
-        GUITreeAction guiAction = record.guiAction;
+        ModelAction modelAction = point.modelAction;
+        GUITreeAction guiAction = point.guiAction;
         currentState = modelAction.getState();
         currentAction = modelAction;
         currentGUITree = guiAction.getGUITree();
@@ -1014,32 +1089,29 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
         currentStateTransition = model.addTransition(currentState, currentAction, newState, currentGUITree,
                 currentGUITreeAction, newGUITree);
-        // [APE-OUTCOME] attribution (scoring-pipeline delta, INV-ARCH-08/09): emit here — after
+        // Outcome attribution (scoring-pipeline delta, INV-ARCH-08/09): resolve here — after
         // addTransition, never inside Model/Graph, so the refinement rebuild replay (which re-records
-        // via the Graph.addTransition(GUITreeTransition) overload) cannot emit. Guards: (1) non-null
+        // via the Graph.addTransition(GUITreeTransition) overload) cannot resolve. Guards: (1) non-null
         // transition — addTransition returns null on the run's first step, post-restart, and the
         // stale-ephemeral drop; (2) the buffered decision is reference-equal to currentAction — state
         // recovery / non-model interludes install a foreign action. The buffer is consumed (single-shot)
-        // so the BadStateException selection-retry and recovery re-record cannot duplicate the line.
+        // so the BadStateException selection-retry and recovery re-record cannot close a record twice.
         if (currentStateTransition != null
                 && lastDecisionAction != null && lastDecisionAction == currentAction) {
-            if (Config.stepTelemetryEnabled) {
-                Logger.iformat(
-                        "[APE-OUTCOME] step=%d decision_source=%s new_state=%s target_state=%s"
-                        + " activity_changed=%s activity_has_mop=%d",
-                        lastDecisionStep, currentAction.getDecisionSource().name(), _isNewState,
-                        newState.getStateKey(), !currentStateTransition.isSameActivity(),
-                        activityHasMop(newState.getActivity()));
-            }
-            // B1 outcome feedback (llm-routing INV-RTR-15): the router cannot observe outcomes, so
-            // the agent hands it the executed LLM decision and the new_state bit computed here. Only
-            // LLM-originated decisions feed the ban record — SATA-selected actions are never banned.
-            // The feedback rides the same buffered-decision guards as the line above but not its
-            // telemetry gate: the ban is a selection mechanism, and it must behave identically in an
-            // arm that runs with [APE-STEP] emission turned off.
-            if (_llmRouter != null
+            // Closing the record is what writes it. The target's activity travels with its state key
+            // because the target may be seen here for the first time — that is what a new state is —
+            // and the reader derives the outcome-side MOP flag through the dictionary entry this
+            // call creates (INV-SNK-08).
+            RunContext.current().sink().outcome(_isNewState, newState.getStateKey().toString(),
+                    newState.getActivity(), activityHasMop(newState.getActivity()) == 1,
+                    !currentStateTransition.isSameActivity());
+            // B1 outcome feedback (llm-routing INV-RTR-15): the ban record cannot observe outcomes,
+            // so the agent hands it the executed LLM decision and the new_state bit computed here.
+            // Only LLM-originated decisions feed the record — SATA-selected actions are never
+            // banned. The feedback rides the same buffered-decision guards as the closure above.
+            if (RunContext.current().hasLlm()
                     && currentAction.getDecisionSource() == ModelAction.DecisionSource.LLM) {
-                _llmRouter.recordLlmOutcome(currentAction, _isNewState);
+                RunContext.current().coordinateMapper().recordLlmOutcome(currentAction, _isNewState);
             }
             lastDecisionAction = null;
         }
@@ -1067,7 +1139,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     public boolean onActivityStable(int counter) {
-        if (counter > activityStableRestartThreshold) {
+        if (counter > exploration.activityStableRestartThreshold()) {
             Logger.format("Activity is stable for %d", counter);
             requestRestart();
             return true;
@@ -1077,7 +1149,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     @Override
     public boolean onGraphStable(int counter) {
-        if (counter > graphStableRestartThreshold) {
+        if (counter > exploration.graphStableRestartThreshold()) {
             Logger.format("Graph is stable for %d", counter);
             requestRestart();
             return true;
@@ -1085,8 +1157,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         return false;
     }
 
-    /** Round-robin cursor over the combined (trigger + provider) tuple list (gh11 / gh13 T1.4+T1.5). */
-    private int componentTriggerIndex = 0;
     /** Lazily-built tuple lists, cached for the session. */
     private java.util.List<TriggerTuple> _triggerTuples;
     private java.util.List<ProviderTuple> _providerTuples;
@@ -1135,7 +1205,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     /**
-     * activity-frontier (INV-CT-07): the decision source for a non-model action's {@code [APE-STEP]}
+     * activity-frontier (INV-CT-07): the decision source for a non-model action's step record
      * line. {@code EVENT_TRIGGER_ACTIVITY} (the stagnation launcher) is a {@code Component} decision;
      * every other non-model action stays on the {@code SATA} chain that produced it. Pure.
      */
@@ -1146,36 +1216,36 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     /**
-     * The {@code patched=0|1} field of an `[APE-STEP]` line, or "" for an action with no resolved
-     * target (INV-SEL-10). {@code MODEL_BACK}, {@code MODEL_MENU} and {@code MODEL_LLM_TAP} omit it,
-     * consistently with the line's other target-derived fields.
+     * The {@code dec.patched} bit, or {@link EventSink#ABSENT} for an action with no resolved target
+     * (INV-SEL-10). {@code MODEL_BACK}, {@code MODEL_MENU} and {@code MODEL_LLM_TAP} report absent,
+     * consistently with the record's other target-derived fields.
      *
      * <p>The bit says the node's clickability was written by {@code patchGUITree}. Two boundaries
      * come with it: it is the node's provenance and not the action's causality (a causal reading
      * holds for {@code MODEL_CLICK}, which is derived from {@code clickable || checkable}, and not
      * for a scroll or long-click on the same node), and where a {@code Name} resolves to several
-     * nodes it describes the one this line prints — exact for that node, a sample for its siblings.
+     * nodes it describes the one this record names — exact for that node, a sample for its siblings.
      */
-    static String patchedField(ModelAction action) {
-        if (!action.requireTarget()) return "";
+    static int patchedValue(ModelAction action) {
+        if (!action.requireTarget()) return EventSink.ABSENT;
         GUITreeNode node = action.getResolvedNode();
-        if (node == null) return "";
-        return " patched=" + (node.isPatchedClickable() ? 1 : 0);
+        if (node == null) return EventSink.ABSENT;
+        return node.isPatchedClickable() ? 1 : 0;
     }
 
     /**
-     * The {@code cf_action}/{@code cf_changed} fields of an `[APE-STEP]` line, or "" for a channel
-     * where MOP boosts do not participate in the pick (INV-SEL-08). Only the four MOP-sensitive
-     * channels carry them; the LLM, the launcher, the buffer and every other path carry none.
+     * The {@code dec.cf.changed} bit, or {@link EventSink#ABSENT} for a channel where MOP boosts do
+     * not participate in the pick (INV-SEL-08). Only the four MOP-sensitive channels carry it; the
+     * LLM, the launcher, the buffer and every other path carry none.
      *
-     * <p>A recomputation that failed reports {@code cf_changed=0} with the factual action: the
-     * factual pick was already made, so a failure costs the line its contrast and nothing else.
+     * <p>A recomputation that failed reports {@code 0}: the factual pick was already made, so a
+     * failure costs the record its contrast and nothing else.
      *
      * <p>Reading rule, part of the contract: this is the divergence point of one step, not a
-     * trajectory effect. Summing {@code cf_changed} over a run does not measure what the MOP
-     * guidance achieved — only an arm-level contrast does.
+     * trajectory effect. Summing it over a run does not measure what the MOP guidance achieved —
+     * only an arm-level contrast does.
      */
-    static String counterfactualFields(ModelAction action) {
+    static int counterfactualChanged(ModelAction action) {
         switch (action.getPickChannel()) {
         case SHORT_CIRCUIT_UNVISITED:
         case SHORT_CIRCUIT_0STEP:
@@ -1183,17 +1253,25 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         case ROULETTE_EARLY:
             break;
         default:
-            return "";
+            return EventSink.ABSENT;
         }
         ModelAction counterfactual = action.getCounterfactualPick();
-        if (counterfactual == null) {
-            return " cf_action=" + action + " cf_changed=0";
-        }
-        return " cf_action=" + counterfactual + " cf_changed=" + (counterfactual == action ? 0 : 1);
+        return counterfactual != null && counterfactual != action ? 1 : 0;
     }
 
     /**
-     * The pick channel for a non-model action's {@code [APE-STEP]} line (INV-SEL-05). These actions
+     * The counterfactual action, and only when it diverges from the factual pick.
+     *
+     * <p>Null everywhere else, which includes the unchanged case: the retired line repeated the
+     * factual action there, and the record already carries it as {@code dec.a} — a second copy on
+     * every MOP-sensitive step would be the largest string in the trace written twice for nothing.
+     */
+    static String counterfactualAction(ModelAction action) {
+        return counterfactualChanged(action) == 1 ? action.getCounterfactualPick().toString() : null;
+    }
+
+    /**
+     * The pick channel for a non-model action's step record (INV-SEL-05). These actions
      * carry no provenance field of their own — they are not {@code ModelAction}s — so the channel is
      * read off the type: {@code EVENT_TRIGGER_ACTIVITY} is the stagnation activity launcher, and
      * every other non-model action is outside the four MOP-sensitive channels. Pure.
@@ -1252,26 +1330,38 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     /**
-     * gh13 T1.4+T1.5: trigger one MOP-reachable component per call, round-robining across all
-     * (component × filter × action) and (provider × operation) tuples. Returns true if a trigger
-     * was dispatched. No-op (returns false, cursor unchanged) when no tuples exist.
+     * The size of the MOP-reachable trigger pool: every (component × filter × action) tuple
+     * followed by every (provider × operation) tuple (gh13 T1.4+T1.5). Built on the first ask and
+     * cached for the session, so the count a caller walks over cannot change under it.
+     *
+     * @return the pool size; zero when the census yields no triggerable target
      */
-    protected boolean triggerMopComponent() {
+    public int mopComponentTargetCount() {
         if (!_tuplesBuilt) {
             _triggerTuples = buildTriggerTuples(_mopData);
             _providerTuples = buildProviderTuples(_mopData);
             _tuplesBuilt = true;
         }
-        int total = _triggerTuples.size() + _providerTuples.size();
-        if (total == 0) return false;
+        return _triggerTuples.size() + _providerTuples.size();
+    }
 
-        int idx = componentTriggerIndex % total;
-        componentTriggerIndex++;
-
-        if (idx < _triggerTuples.size()) {
-            return dispatchTrigger(_triggerTuples.get(idx));
+    /**
+     * Fires one target of that pool. The trigger tuples occupy the low indices and the provider
+     * tuples the rest, which is what makes a single cursor walk both kinds.
+     *
+     * <p>Which target is fired is the caller's choice, not this method's: the round-robin cursor is
+     * episode state owned by the component-trigger stage (INV-DP-07), while the intent and
+     * {@code content}-command dispatch below is device-facing machinery that stays with the agent
+     * (design D5).
+     *
+     * @param target an index below {@link #mopComponentTargetCount}
+     */
+    public void triggerMopComponent(int target) {
+        if (target < _triggerTuples.size()) {
+            dispatchTrigger(_triggerTuples.get(target));
+            return;
         }
-        return dispatchProvider(_providerTuples.get(idx - _triggerTuples.size()));
+        dispatchProvider(_providerTuples.get(target - _triggerTuples.size()));
     }
 
     /** Build the per-trigger log line (static for testability). */
@@ -1368,7 +1458,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     @Override
     public boolean onStateStable(int counter) {
-        if (counter > stateStableRestartThreshold) {
+        if (counter > exploration.stateStableRestartThreshold()) {
             Logger.format("State is stable for %d", counter);
             requestRestart();
             return true;
@@ -1414,7 +1504,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
     }
 
     public void onAddNode(State node) {
-        if (takeScreenshot && takeScreenshotForNewState) {
+        if (exploration.takeScreenshot() && exploration.takeScreenshotForNewState()) {
             checkOutputDir();
             String id = node.getGraphId();
             File screenshotFile = new File(checkOutputDir(), String.format("%s.png", id));
@@ -1430,10 +1520,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         case NEW_ACTION:
         case NEW_ACTION_TARGET:
             graphStableCounter = 0;
-            // A new edge ends the stagnation episode, so the LLM stagnation hook re-arms here and
-            // only here (INV-RTR-19). The hook's own reset of the counter after a successful escape
-            // does not re-arm it: no new edge was observed, so it is the same episode.
-            stagnationHookFired = false;
             break;
         case EXISTING:
             graphStableCounter++;
@@ -1474,6 +1560,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
 
     protected Action resolveNewAction() {
         Utils.assertNotNull(newState);
+        // The step's record opens before selection rather than after it, so the LLM attempts and the
+        // MOP exposure pair that happen on the way to a decision land inside the step that made
+        // them. The envelope is everything already known at this point: which step, how far into
+        // the run, and where the agent is standing (INV-SNK-03).
+        RunContext.current().sink().beginStep(getTimestamp(), RunContext.current().elapsedMs(),
+                newState.getActivity(), activityHasMop(newState.getActivity()) == 1,
+                newState.getStateKey().toString());
         adjustActionsByGUITree();
         Action action = selectNewActionNonnull();
         Utils.assertNotNull(action);
@@ -1481,51 +1574,33 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             newAction = (ModelAction) action;
             newGUITreeAction = newAction.getResolvedGUITreeAction();
             Utils.assertNotNull(newGUITreeAction);
-            // A-5: one decision-attribution line per finally-selected action (INV-SEL-04).
-            // clock is the device wall clock (epoch millis) at emission — enables offline
-            // temporal joins with externally collected artifacts without any APE<->logcat
-            // coupling; step is the exploration step counter, a separate quantity.
-            // rv-scoring-pipeline (stepTelemetryEnabled): the [APE-STEP] line is fork telemetry, not
-            // upstream. The decision_source provenance is still set during selection; only the emission
-            // is gated, so the pure arm produces zero [APE-STEP] lines (INV-ARCH-01).
-            if (Config.stepTelemetryEnabled) {
-                Logger.iformat(
-                        "[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s decision_source=%s "
-                        + "priority=%d mop=%d mop_frontier=%d wtg=%d coverage=%d menu=%d form=%d"
-                        + " activity_has_mop=%d pick_channel=%s%s%s",
-                        getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
-                        newState.getStateKey(), newAction,
-                        newAction.getDecisionSource().name(), newAction.getPriority(),
-                        newAction.getMopBoost(), newAction.getMopFrontierBoost(),
-                        newAction.getWtgBoost(),
-                        newAction.getCoverageBoost(), newAction.getMenuBoost(),
-                        newAction.getFormBoost(),
-                        activityHasMop(newState.getActivity()),
-                        newAction.getPickChannel().getLabel(),
-                        patchedField(newAction),
-                        counterfactualFields(newAction));
-            }
-            // Buffer this model decision so its [APE-OUTCOME] can key back to this [APE-STEP], and
-            // so the dead-pair ban receives the decision's outcome. Buffering is not gated by
-            // stepTelemetryEnabled — it writes nothing to the trace, and the ban must work the same
-            // in an arm that emits no [APE-STEP] lines.
-            lastDecisionStep = getTimestamp();
+            // A-5: one decision per finally-selected action (INV-SEL-04), filling the `dec` section
+            // of the record this step opened. The boosts arrive as their raw values and the record
+            // decides what to omit; the two tri-states arrive as themselves, because for them an
+            // absent field is a different statement from a zero.
+            RunContext.current().sink().decision(newAction.toString(),
+                    newAction.getDecisionSource().name(),
+                    newAction.getPickChannel().getLabel(),
+                    newAction.getPriority(),
+                    newAction.getMopBoost(), newAction.getMopFrontierBoost(),
+                    newAction.getWtgBoost(), newAction.getCoverageBoost(),
+                    newAction.getMenuBoost(), newAction.getFormBoost(),
+                    newAction.getWtgSource(),
+                    patchedValue(newAction),
+                    counterfactualChanged(newAction), counterfactualAction(newAction));
+            // Buffer this model decision so the record closes on the outcome that belongs to it, and
+            // so the dead-pair ban receives the decision's outcome. The buffer is the closure guard
+            // as much as the join key: a step whose buffered action is replaced never resolves.
             lastDecisionAction = newAction;
             return newAction;
         } else {
             // Non-model actions (e.g. event-level) carry no per-mechanism boosts. The decision
             // source is derived from the action's type: the stagnation launcher
             // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
-            // action stays on the SATA chain that produced it (INV-SEL-04). clock as above.
-            if (Config.stepTelemetryEnabled) {
-                Logger.iformat("[APE-STEP] step=%d clock=%d activity=%s state=%s action=%s"
-                        + " decision_source=%s activity_has_mop=%d pick_channel=%s",
-                        getTimestamp(), System.currentTimeMillis(), newState.getActivity(),
-                        newState.getStateKey(), action,
-                        nonModelDecisionSource(action.getType()).name(),
-                        activityHasMop(newState.getActivity()),
-                        nonModelPickChannel(action.getType()).getLabel());
-            }
+            // action stays on the SATA chain that produced it (INV-SEL-04).
+            RunContext.current().sink().decisionNonModel(action.toString(),
+                    nonModelDecisionSource(action.getType()).name(),
+                    nonModelPickChannel(action.getType()).getLabel());
             // Non-model actions produce no transition under their own identity; clear the buffer so
             // a stale model decision cannot be resurrected as currentAction by state recovery.
             lastDecisionAction = null;
@@ -1598,7 +1673,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
                 List<GUITreeNode> nodes = newGUITree.getNodes(action.getTarget());
                 int size = nodes.size();
                 if (size > 1) {
-                    priority += Math.min(size, maxExtraPriorityAliasedActions) * getActionBasePriority(action.getType());
+                    priority += Math.min(size, exploration.maxExtraPriorityAliasedActions()) * getActionBasePriority(action.getType());
                 }
             }
             for (StateTransition edge : edges) {
@@ -1625,7 +1700,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             action.setPriority(priority);
         }
         // rv-scoring-pipeline (INV-ARCH-05): every RV scoring term is now a ScoringPass in the
-        // pipeline assembled once from Config (MopWidget → MenuGateway → WTG → Frontier → Coverage →
+        // pipeline assembled once from the plan (MopWidget → MenuGateway → WTG → Frontier → Coverage →
         // FormCompletion). apply() clears provenance then runs the enabled passes; an empty pipeline
         // (pure arm) is a strict no-op, leaving the upstream base priorities above untouched.
         scoringPipeline.apply(newState, newState.getActions().toArray(new ModelAction[0]), scoringContext);
@@ -1654,7 +1729,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         if (state != action.getState()) {
             throw new IllegalStateException("Oops");
         }
-        int throttle = baseThrottle;
+        int throttle = exploration.baseThrottle();
         Collection<StateTransition> edges = getGraph().getOutStateTransitions(action);
         boolean hasActivityTransition = false;
         for (StateTransition edge : edges) {
@@ -1666,14 +1741,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
             }
         }
         if (action.isUnvisited()) {
-            throttle += throttleForUnvisitedAction;
+            throttle += exploration.throttleForUnvisitedAction();
             Logger.dformat("Add throttle for unvisited activity state transition: %d", throttle);
         }
         if (hasActivityTransition) {
-            throttle += throttleForActivityTransition;
+            throttle += exploration.throttleForActivityTransition();
             Logger.dformat("Add throttle for weak activity state transition: %d", throttle);
         }
-        throttle = Math.min(throttle, maxThrottle);
+        throttle = Math.min(throttle, exploration.maxThrottle());
 
         GUITreeNode node = action.getResolvedNode();
         if (node != null) {
@@ -1691,7 +1766,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
      * 
      * @return must return a non-null action
      */
-    protected ModelAction handleNullAction() {
+    public ModelAction handleNullAction() {
         ModelAction action = newState.randomlyPickAction(getRandom(), validatedActionFilter);
         if (action != null) {
             ModelAction resolved = validateNewAction(action);
@@ -1719,7 +1794,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
      * Called after resolveNewAction() when the action is a ModelAction.
      */
     protected void recordActionHistory(ModelAction action) {
-        if (_llmRouter == null) {
+        // The ring buffer feeds the LLM prompt and nothing else, so a run with no LLM would fill it
+        // for a reader that will never come. The test is the plan's, not a unit's nullness: a plan
+        // without the feature builds no units and assembles no LLM stage.
+        if (!RunContext.current().hasLlm()) {
             return;
         }
         try {
@@ -1799,106 +1877,69 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener {
         }
     }
 
+    /**
+     * The teardown chain, whose first and last steps belong to the trace.
+     *
+     * <p><b>{@code flushPendingStep} runs first</b> because it is the step that bounds loss: the
+     * record for the step that was in flight when the run ended is still open, and every moment
+     * between here and its write is a moment a SIGKILL takes it. It is the only teardown step whose
+     * artifact is already half-written, so it goes before the ones that build theirs from scratch.
+     *
+     * <p><b>{@code runEnd} runs last</b> so that {@code RUN_END} is the last sink record of a normal
+     * termination (INV-SNK-09) — a reader that finds it knows nothing else was going to be written.
+     * Later stdout lines from other teardown steps may still follow it; it is the last <em>record</em>,
+     * not the last line, and nothing validates either (owner decision D5).
+     *
+     * <p>Both are ordinary {@code safeStep}s, so a failure in either costs only its own artifact and
+     * the steps after it still run (INV-EXPL-16/29) — including {@code runEnd} itself, which is why
+     * a run whose naming dump throws still ends with a record saying how it ended.
+     */
     public void tearDown() {
-        safeStep("llmSummary", () -> {
-            if (_llmRouter != null) _llmRouter.printSummary();
-        });
+        safeStep("flushPendingStep", () -> RunContext.current().sink().flushPendingStep());
         safeStep("superTearDown", super::tearDown);
         safeStep("coverageDump", this::dumpCoverage);
-        safeStep("saveGraph", this::saveGraph);
-        safeStep("saveActionHistory", this::saveActionHistory);
         safeStep("actionCounters", () -> actionCounters.print());
         safeStep("activityNodes", () -> getGraph().printActivityNodes());
         safeStep("namingDump", () -> model.getNamingManager().dump());
         safeStep("modelCounters", () -> model.printCounters());
+        safeStep("runEnd", () -> {
+            RunContext context = RunContext.current();
+            context.sink().runEnd(context.terminationReason(), context.terminationDetail(),
+                    context.hasLlm() ? context.llmTelemetry().counters() : null);
+        });
     }
 
     /**
-     * The teardown step that emits the UI-coverage dump, run immediately before the model
-     * serialization (INV-COV-10). No-op here: only {@code SataAgent} can supply the dump's
-     * {@code mopReach} predicate, so it overrides this.
+     * The teardown step that emits the UI-coverage dump (INV-COV-10). No-op here: only
+     * {@code SataAgent} can supply the dump's {@code mopReach} predicate, so it overrides this.
      *
-     * <p>Ordering is the whole mechanism. The dump used to be the last instruction of the whole
-     * teardown, after {@code saveGraph} had written the model to {@code /sdcard} — and 338 of the
-     * 800 calibration runs (42.3%) lost it, 330 of them cut on the very line {@code saveGraph}
-     * prints. Emitting before that write recovers 333 of the 338. The remaining 5 never reached
-     * teardown at all, and no teardown-side mechanism can reach them.
+     * <p>Ordering is the whole mechanism, and the boundary is <b>first among the steps that produce
+     * output</b>: this step runs before {@code actionCounters}, the first of the free-text dumps.
+     * No teardown step writes a file any more — the boundary was the model serialization, then the
+     * action-history save, and both are deleted — so the ordering is stated against what remains to
+     * be lost. It lands third in the chain, after {@code flushPendingStep} and {@code superTearDown};
+     * the first of those writes one already-serialized record to the trace and is itself
+     * loss-bounding, which is why it sits outside the boundary rather than violating it. Stating the
+     * boundary on chain position among producers of output rather than on a fixed index is what
+     * keeps it verifiable as later stages add and remove steps.
+     *
+     * <p>The reason the property exists is measured. Across 800 {@code aperv} calibration runs the
+     * dump was the last instruction of the whole teardown, behind the {@code /sdcard} writes, and
+     * 338 of those runs (42.3%) carry no dump — 330 of them cut mid-write. Emitting the dump ahead
+     * of the writes recovers 333 of the 338; the remaining 5 never reached teardown at all, and no
+     * teardown-side mechanism can reach them.
      *
      * <p>A shutdown hook cannot substitute for this: the trace is the host's {@code adb} stdout,
      * which the harness SIGKILLs and closes, so anything the device writes afterwards has nowhere
-     * to land. The boundary that matters is therefore "before the model serialization", not "first
-     * in the chain" — this step lands third, after {@code llmSummary} and {@code superTearDown},
-     * neither of which writes to {@code /sdcard}.
+     * to land.
      */
     protected void dumpCoverage() {
-    }
-
-    public List<ActionRecord> getActionHistory() {
-        return this.model.getActionHistory();
-    }
-
-    public void updateActionHistory(int index, ActionRecord record) {
-        this.model.updateActionHistory(index, record);
     }
 
     public void appendToActionHistory(long clockTimestamp, Action action) {
         int agentTimestamp = getTimestamp();
         this.model.appendToActionHistory(clockTimestamp, action, agentTimestamp);
         //actionCounters.logEvent(action.getType());
-    }
-
-    protected void saveActionHistory() {
-        File actionHistoryFile = new File(checkOutputDir(), "action-history.log");
-        Model.saveActionHistory(actionHistoryFile, getActionHistory());
-    }
-
-    protected void saveGraph() {
-        if (!(saveDotGraph || saveObjModel || saveVisGraph)) {
-            return;
-        }
-        Graph graph = getGraph();
-        File graphOutputDir = checkOutputDir();
-        Logger.println("Save graph data to " + graphOutputDir);
-        File file = null;
-        if (saveObjModel) {
-            file = new File(graphOutputDir, "sataModel.obj");
-            try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(file))) {
-                oos.writeObject(model);
-            } catch (IOException e) {
-                e.printStackTrace();
-                Logger.println("Fail to write model into " + file);
-            }
-        }
-        if (saveDotGraph) {
-            file = new File(graphOutputDir, "sataGraph.dot");
-            try (PrintWriter pw = new PrintWriter(new FileOutputStream(file))) {
-                graph.printDot(pw);
-            } catch (IOException e) {
-                e.printStackTrace();
-                Logger.println("Fail to write dot graph into " + file);
-            }
-        }
-        if (saveVisGraph) {
-            file = new File(graphOutputDir, "sataGraph.vis.js");
-            try (PrintWriter pw = new PrintWriter(new FileOutputStream(file))) {
-                graph.printVis(pw);
-            } catch (IOException e) {
-                e.printStackTrace();
-                Logger.println("Fail to write vis graph into " + file);
-            }
-        }
-        if (saveStates) {
-            for (State state : graph.getStates()) {
-                file = new File(graphOutputDir,
-                        String.format("step-%d-%s.txt", state.getFirstVisitedTimestamp(), state.getGraphId()));
-                try (PrintWriter pw = new PrintWriter(new FileOutputStream(file))) {
-                    state.saveState(pw);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    Logger.println("Fail to write state into " + file);
-                }
-            }
-        }
     }
 
 }

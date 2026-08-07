@@ -1,6 +1,8 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
+import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.Graph;
@@ -8,7 +10,6 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
-import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
@@ -89,6 +90,22 @@ public class PipelineParityTest {
         return state;
     }
 
+    /**
+     * The jar-default MOP arm, stated as values — the literals {@code ScoringParamsDefaultsTest}
+     * pins against a default plan.
+     *
+     * <p>Spelling them out is what makes the boost assertions below mean anything. An expectation
+     * fetched from the same source the production code reads at runtime compares a value to itself
+     * and holds under any value, so the number has to enter this file from somewhere the pipeline
+     * cannot reach. Whether these literals are still the jar's defaults is a different question,
+     * and it has its own test.
+     */
+    private static final int MENU_GATEWAY_BOOST = 250;
+
+    private static ScoringParams defaultMopArm() {
+        return new ScoringParams(500, 300, MENU_GATEWAY_BOOST, 200, 200, 0, 100, true);
+    }
+
     /** A ScoringContext wired the way {@code StatefulAgent}'s constructor wires it. */
     private static ScoringContext ctxFor(final MopData mopData, final UICoverageTracker tracker) {
         return new ScoringContext() {
@@ -109,7 +126,7 @@ public class PipelineParityTest {
         setField(agent, "_coverageTracker", tracker);
         ScoringContext ctx = ctxFor(mopData, tracker);
         setField(agent, "scoringContext", ctx);
-        setField(agent, "scoringPipeline", ScoringPipeline.fromConfig(null, ctx));
+        setField(agent, "scoringPipeline", ScoringPipeline.fromParams(defaultMopArm(), ctx, new NoopSink()));
         return agent;
     }
 
@@ -128,7 +145,7 @@ public class PipelineParityTest {
         return mop;
     }
 
-    /** An empty pipeline via the package-private ctor — the OUTCOME apePureMode produces. */
+    /** An empty pipeline via the package-private ctor: the roster an arm that scores nothing gets. */
     private static ScoringPipeline emptyPipeline() throws Exception {
         java.lang.reflect.Constructor<ScoringPipeline> ctor =
                 ScoringPipeline.class.getDeclaredConstructor(java.util.List.class);
@@ -145,7 +162,7 @@ public class PipelineParityTest {
         ScoringContext ctx = ctxFor(MopData.forTest(null, null, null), new UICoverageTracker());
         assertEquals(Arrays.asList(
                         "MopWidgetPass", "MenuGatewayPass", "CoveragePass", "FormCompletionPass"),
-                ScoringPipeline.fromConfig(null, ctx).passNames());
+                ScoringPipeline.fromParams(defaultMopArm(), ctx, new NoopSink()).passNames());
     }
 
     @Test
@@ -176,10 +193,10 @@ public class PipelineParityTest {
 
         agent.adjustActionsByGUITree();
 
-        assertEquals("menuBoost == MopScorer.scoreOpenMenu for a gateway activity",
-                Config.mopWeightOpenMenu, menu.getMenuBoost());
+        assertEquals("the gateway boost is attributed to menuBoost",
+                MENU_GATEWAY_BOOST, menu.getMenuBoost());
         assertEquals("priority == base(1<<3) + menu-gateway boost",
-                NON_TARGET_BASE + Config.mopWeightOpenMenu, menu.getPriority());
+                NON_TARGET_BASE + MENU_GATEWAY_BOOST, menu.getPriority());
     }
 
     @Test
@@ -198,16 +215,18 @@ public class PipelineParityTest {
 
     @Test
     public void emptyPipelineYieldsUpstreamBasePriorities() throws Exception {
-        // apePureMode forces every gate off, so fromConfig would assemble an empty pipeline. The
-        // static-final wall blocks producing that OFF config in-JVM (tasks 6.3/6.5 defer the wired
-        // apePureMode run to device 7.6), but the OUTCOME — an empty pipeline — is constructible
-        // directly, discharging the scoring-pipeline scenario "empty pipeline yields upstream
-        // priorities": adjustActionsByGUITree == the base loop plus a no-op apply.
+        // An arm that scores nothing states no MOP data path and no weights, and its pipeline is
+        // empty: adjustActionsByGUITree == the base loop plus a no-op apply. That the assembly
+        // reaches the empty roster from such params is ScoringPipelineTest's assertion; what this
+        // one adds is that an empty pipeline leaves the upstream base priorities exactly as the
+        // loop set them, which is the scoring-pipeline scenario "empty pipeline yields upstream
+        // priorities". The pipeline is installed directly because this test is about what apply()
+        // does with no passes, not about how the roster got empty.
         ModelAction backUnvisited = nonTargetAction(ActionType.MODEL_BACK, false);
         ModelAction backVisited = nonTargetAction(ActionType.MODEL_BACK, true);
         SataAgent agent = bareAgent(stateWith("com.x.Main", backUnvisited, backVisited),
                 MopData.forTest(null, null, null));
-        setField(agent, "scoringPipeline", emptyPipeline()); // the pure-arm outcome
+        setField(agent, "scoringPipeline", emptyPipeline());
 
         agent.adjustActionsByGUITree();
 
