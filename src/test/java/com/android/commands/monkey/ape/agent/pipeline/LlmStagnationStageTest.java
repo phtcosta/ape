@@ -94,8 +94,21 @@ public class LlmStagnationStageTest {
     }
 
     private static LlmStagnationStage stageOver(StubEngine engine, Gate gate) {
+        return stageOver(engine, gate, false);
+    }
+
+    private static LlmStagnationStage stageOver(StubEngine engine, Gate gate,
+            boolean opaqueEnabled) {
         return new LlmStagnationStage(engine, gate, RESTART_THRESHOLD,
-                new ArrayList<ModelAction>()::add);
+                new ArrayList<ModelAction>()::add, opaqueEnabled);
+    }
+
+    /** A stagnant step on a game canvas: at the midpoint, on {@code MODEL_BACK, MODEL_MENU}. */
+    private static FakeStepContext opaqueStagnantStep() throws Exception {
+        FakeStepContext ctx = stagnantStep();
+        ctx.newState = FakeStepContext.stateOf(ACTIVITY, ActionType.MODEL_BACK,
+                ActionType.MODEL_MENU);
+        return ctx;
     }
 
     private static StateTransition edgeOfType(StateTransitionVisitType type) throws Exception {
@@ -285,5 +298,44 @@ public class LlmStagnationStageTest {
         assertFalse(LlmStagnationStage.stagnationMidpointReached(100, 200, true));
         assertTrue("a re-armed episode fires again",
                 LlmStagnationStage.stagnationMidpointReached(100, 200, false));
+    }
+
+    // -------------------------------------------------------------------------
+    // Opaque routing — the midpoint of a stagnation episode on a canvas
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void opaqueMidpointOn() throws Exception {
+        StubEngine engine = new StubEngine(new ModelAction(null, ActionType.MODEL_BACK));
+
+        StageResult result = stageOver(engine, new Gate(true), true).decide(opaqueStagnantStep());
+
+        assertEquals(StageResult.Kind.SELECT, result.kind());
+        assertEquals(1, engine.selectCalls);
+        assertEquals("stagnation", engine.modeSeen);
+    }
+
+    @Test
+    public void opaqueMidpointOff() throws Exception {
+        StubEngine engine = new StubEngine(new ModelAction(null, ActionType.MODEL_BACK));
+        Gate gate = new Gate(true);
+
+        StageResult result = stageOver(engine, gate, false).decide(opaqueStagnantStep());
+
+        assertEquals(StageResult.Kind.CONTINUE, result.kind());
+        assertEquals(0, engine.selectCalls);
+        assertEquals(0, gate.calls);
+    }
+
+    @Test
+    public void opaqueBufferedNavigationClosesTheGate() throws Exception {
+        StubEngine engine = new StubEngine(new ModelAction(null, ActionType.MODEL_BACK));
+        FakeStepContext ctx = opaqueStagnantStep();
+        ctx.actionBufferSize = 2;
+
+        StageResult result = stageOver(engine, new Gate(true), true).decide(ctx);
+
+        assertEquals(StageResult.Kind.CONTINUE, result.kind());
+        assertEquals(0, engine.selectCalls);
     }
 }

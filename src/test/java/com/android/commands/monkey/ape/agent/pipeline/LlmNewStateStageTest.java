@@ -91,7 +91,20 @@ public class LlmNewStateStageTest {
 
     private static LlmNewStateStage stageOver(StubEngine engine, Gate gate,
             List<ModelAction> resolved) {
-        return new LlmNewStateStage(engine, gate, resolved::add);
+        return stageOver(engine, gate, resolved, false);
+    }
+
+    private static LlmNewStateStage stageOver(StubEngine engine, Gate gate,
+            List<ModelAction> resolved, boolean opaqueEnabled) {
+        return new LlmNewStateStage(engine, gate, resolved::add, opaqueEnabled);
+    }
+
+    /** A first visit to a game canvas: the state offers {@code MODEL_BACK} and {@code MODEL_MENU}. */
+    private static FakeStepContext opaqueFirstVisit() throws Exception {
+        FakeStepContext ctx = routableStep();
+        ctx.newState = FakeStepContext.stateOf(ACTIVITY, ActionType.MODEL_BACK,
+                ActionType.MODEL_MENU);
+        return ctx;
     }
 
     @Test
@@ -211,13 +224,60 @@ public class LlmNewStateStageTest {
     @Test
     public void testTheGateIsTheSameForEveryLlmStage() throws Exception {
         FakeStepContext ctx = routableStep();
-        assertTrue(LlmGate.allows(ctx));
+        assertTrue(LlmGate.allows(ctx, false));
 
         ctx.actionBufferSize = 1;
-        assertFalse(LlmGate.allows(ctx));
+        assertFalse(LlmGate.allows(ctx, false));
 
         ctx.actionBufferSize = 0;
         ctx.newState = FakeStepContext.stateWith(ACTIVITY, 3);
-        assertTrue("three actions is above the threshold", LlmGate.allows(ctx));
+        assertTrue("three actions is above the threshold", LlmGate.allows(ctx, false));
+    }
+
+    // -------------------------------------------------------------------------
+    // Opaque routing — a first visit to a canvas
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void opaqueFirstVisitOn() throws Exception {
+        LlmTapAction tap = new LlmTapAction(null, 540, 1200, false);
+        StubEngine engine = new StubEngine(tap);
+        List<ModelAction> resolved = new java.util.ArrayList<>();
+
+        StageResult result = stageOver(engine, new Gate(true), resolved, true)
+                .decide(opaqueFirstVisit());
+
+        assertEquals(1, engine.selectCalls);
+        assertEquals("new-state", engine.modeSeen);
+        assertEquals(StageResult.Kind.SELECT, result.kind());
+        assertSame(tap, result.action());
+        assertEquals("the off-tree tap is resolved against the state before it is selected",
+                1, resolved.size());
+    }
+
+    @Test
+    public void opaqueFirstVisitOff() throws Exception {
+        StubEngine engine = new StubEngine(new LlmTapAction(null, 540, 1200, false));
+        Gate gate = new Gate(true);
+
+        StageResult result = stageOver(engine, gate, new java.util.ArrayList<>(), false)
+                .decide(opaqueFirstVisit());
+
+        assertEquals(StageResult.Kind.CONTINUE, result.kind());
+        assertEquals(0, engine.selectCalls);
+        assertEquals("a closed gate reaches no breaker probe", 0, gate.calls);
+    }
+
+    @Test
+    public void opaqueBufferedNavigationClosesTheGate() throws Exception {
+        StubEngine engine = new StubEngine(new LlmTapAction(null, 540, 1200, false));
+        FakeStepContext ctx = opaqueFirstVisit();
+        ctx.actionBufferSize = 2;
+
+        StageResult result = stageOver(engine, new Gate(true), new java.util.ArrayList<>(), true)
+                .decide(ctx);
+
+        assertEquals(StageResult.Kind.CONTINUE, result.kind());
+        assertEquals(0, engine.selectCalls);
     }
 }

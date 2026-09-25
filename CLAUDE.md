@@ -145,9 +145,11 @@ with `out:{"resolved":false}`, which bounds loss on sudden death at one record.
 
 Alongside the step records the same stream carries `RUN_START` (first, from `RunSpecEcho`), the
 `ACT`/`STATE` dictionary entries that give the trace's longest repeated strings run-local integer
-ids, `MOP_DATA`, `PIPELINE`, `LLM_ACK`, and `RUN_END` (reason + counters) last. Volume is managed by
-omitting defaults — an absent boost field means `0` — with two deliberate exemptions, `dec.patched`
-and `dec.cf`, whose absence is itself information.
+ids, `MOP_DATA`, `PIPELINE`, `LLM_ACK`, and `RUN_END` (reason + counters) last. `dec.opaque:1`
+marks a step decided on an opaque state (`LlmGate.isOpaque`, on every arm, omitted when false), and
+`RUN_END.counters.restarts` counts the agent's `requestRestart()` calls, written even when `0`.
+Volume is managed by omitting defaults — an absent boost field means `0` — with two deliberate
+exemptions, `dec.patched` and `dec.cf`, whose absence is itself information.
 
 **Telemetry is always on and identical for every arm.** There is no plan key selecting the sink and
 no flag disabling it: `RunContext` constructs `NdjsonSink` on every production path, and `NoopSink`
@@ -204,13 +206,14 @@ Five keys are owned by the plan rather than by `Config`, and are read through `R
 - `llmModel` / `llmTemperature` / `llmTopP` / `llmTopK` — LLM sampling params
 - `llmTimeoutMs` — HTTP timeout (default: 15000ms)
 - `llmPercentage` — probability of random LLM routing per step (default: 0.02 = 2%; 0.0 disables; 0.7 = rv-agent-like 70%)
+- `ape.llmPercentageNoSubstrate` — **opaque routing**, a sub-parameter of `LLM_RANDOM` (neutral `-1`, so it needs `llmPercentage > 0`; any other value on a plan without `LLM_RANDOM` aborts `missing_dependency`). A step is *opaque* when its state offers actions and none requires a target (`LlmGate.isOpaque` — a game canvas or camera preview, `[MODEL_BACK, MODEL_MENU]`). `-1` = off: gate, draws and plan digest equal jar `e93dea86`. `0` opens the shared LLM gate on opaque steps for the new-state and stagnation stages only; `> 0` also becomes `LlmRandom`'s rate on opaque steps (`llmPercentage` elsewhere). The answer becomes an off-tree `MODEL_LLM_TAP`; the `llmBoundaryTopPct`/`llmBoundaryBottomPct` bands still reject taps there (declared limitation, counted as `reason:"boundary"`)
 - `llmMaxTokens` — `max_tokens` for the chat completion request (default: 1024; J1c expose-only, defaults reproduce the prior hard-coded value; not causal for truncation — `tokens_out` ≈ 25). Shared by the `[APE-LLM-CONFIG]` manifest and the request body
 - `llmSnapTolerancePx` — floor of the euclidean snap tolerance `max(floor, min(w,h)/2)` in `LlmRouter.mapToModelAction` (default: 50; J1b expose-only, lever analyzed and discarded — default not swept)
 - `llmBoundaryTopPct` / `llmBoundaryBottomPct` — top/bottom boundary reject bands as a fraction of screen height (defaults: 0.05 / 0.94; J1b expose-only, policy levers, defaults reproduce the prior hard-coded bands). A coordinate with `pixelY < h*top` or `pixelY > h*bottom` is rejected (status/nav bar) with no off-tree tap synthesized. All four J1b/J1c keys are owned by the LLM feature, so on a plan without it they are inert at their neutral values and are reported in `RUN_START.inert`. Native `tool_calls` malformations now run the same coordinate-repair pipeline as the XML `<tool_call>` path (`SglangClient.ToolCall.rawArguments` → `ToolCallParser` Level 1 → shared `parseJsonString`), surfacing through the existing `repair=` telemetry field (INV-LLM-10, INV-RTR-14)
 
 ## Notes
 
-- Unit + integration test suite: `mvn test` (1123 tests, 19 skipped — 13 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
+- Unit + integration test suite: `mvn test` (1155 tests, 19 skipped — 13 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
 - Known issue: `OutOfMemoryError` is possible on long runs, because every `State` keeps its `GUITree`s in `treeHistory` and the `Graph` keeps every `State` — the heap grows with the number of distinct states a run reaches. That is the only retention by design. The `GUITreeBuilder` naming caches and a `ModelAction`'s resolved references are cleared when their tree is released, and the diagnostic action history holds primitive snapshots plus a single depth-1 recovery point, whose tree a live state owns anyway. Nothing bounds or evicts `Graph`, `treeHistory` or the naming structures: such a bound changes exploration behavior, so it waits on a heap profile by retention root. `OutOfMemoryError` is not caught — the process dies and the supervisor marks the task FAILED and retries it
 - Pre-compiled `ape.jar` is included in repo for convenience

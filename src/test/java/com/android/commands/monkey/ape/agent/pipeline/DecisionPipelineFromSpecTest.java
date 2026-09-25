@@ -5,6 +5,7 @@ import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
@@ -369,5 +370,114 @@ public class DecisionPipelineFromSpecTest {
         assertTrue("the llm_mop arm's substrate must be present", spec.has(Feature.MOP));
         assertAssembles(spec, Arrays.asList(
                 "Budget", "LlmNewState", "LlmStagnation", "LlmRandom", "SataChain"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Opaque routing: the flag and the rate reach the three LLM stages
+    // -------------------------------------------------------------------------
+
+    /** The collaborators an LLM stage reaches once its gate opens, counting the engine's calls. */
+    private static class LlmCollaborators extends FakeCollaborators {
+
+        private final CountingEngine engine = new CountingEngine();
+        private final double draw;
+
+        LlmCollaborators(double draw) {
+            super(null, action());
+            this.draw = draw;
+        }
+
+        @Override
+        public LlmEngine llmEngine() {
+            return engine;
+        }
+
+        @Override
+        public boolean llmBreakerAllows() {
+            return true;
+        }
+
+        /** Every coin comes up {@code draw}, so which rate it was compared with is observable. */
+        @Override
+        public Random agentRandom() {
+            return new Random(0L) {
+                private static final long serialVersionUID = 1L;
+
+                @Override
+                public double nextDouble() {
+                    return draw;
+                }
+            };
+        }
+
+        @Override
+        public void resolveSynthesizedTap(ModelAction tap) {
+        }
+    }
+
+    private static class CountingEngine extends LlmEngine {
+
+        final List<String> modes = new ArrayList<>();
+
+        CountingEngine() {
+            super(null, null, null, null, null, null);
+        }
+
+        @Override
+        public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
+                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+            modes.add(mode);
+            return null;
+        }
+    }
+
+    /**
+     * The engine modes each LLM stage of {@code spec}'s pipeline called on one opaque step that
+     * every LLM trigger would accept: a first visit, past the stagnation midpoint, buffer empty.
+     */
+    private static List<String> modesOnAnOpaqueStep(RunSpec spec, double draw) throws Exception {
+        LlmCollaborators collaborators = new LlmCollaborators(draw);
+        DecisionPipeline pipeline = assemble(spec, collaborators);
+        FakeStepContext ctx = new FakeStepContext();
+        ctx.newState = FakeStepContext.stateOf(ACTIVITY, ActionType.MODEL_BACK,
+                ActionType.MODEL_MENU);
+        ctx.isNewState = true;
+        ctx.graphStableCounter = spec.exploration().graphStableRestartThreshold();
+        for (DecisionStage stage : pipeline.stages()) {
+            if (stage.name().startsWith("Llm")) {
+                stage.decide(ctx);
+            }
+        }
+        return collaborators.engine.modes;
+    }
+
+    @Test
+    public void aPositiveOpaqueRateAssemblesTheSameRosterAsTheSentinel() {
+        RunSpec spec = preset(Presets.LLM, "ape.llmUrl", LLM_URL,
+                "ape.llmPercentageNoSubstrate", "0.5");
+
+        assertAssembles(spec, Arrays.asList(
+                "Budget", "LlmNewState", "LlmStagnation", "LlmRandom", "SataChain"));
+    }
+
+    @Test
+    public void theSentinelHandsNoStageTheOpaqueClause() throws Exception {
+        RunSpec spec = preset(Presets.LLM, "ape.llmUrl", LLM_URL,
+                "ape.llmPercentageNoSubstrate", "-1");
+
+        assertEquals("with opaque routing off no LLM stage consults the engine on a canvas",
+                Collections.emptyList(), modesOnAnOpaqueStep(spec, 0.0));
+    }
+
+    @Test
+    public void aPositiveOpaqueRateHandsEveryStageTheFlagAndLlmRandomTheRate() throws Exception {
+        // The plan rate is 0.3 and the opaque rate 0.5; a coin of 0.4 fires only against the
+        // latter, so LlmRandom calling the engine proves it received the opaque rate.
+        RunSpec spec = preset(Presets.LLM, "ape.llmUrl", LLM_URL,
+                "ape.llmPercentage", "0.3",
+                "ape.llmPercentageNoSubstrate", "0.5");
+
+        assertEquals(Arrays.asList("new-state", "stagnation", "random"),
+                modesOnAnOpaqueStep(spec, 0.4));
     }
 }

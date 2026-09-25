@@ -45,12 +45,22 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * with a zero rate has no stage here. That move is draw-neutral, which is the reason it is safe — the
  * rate was already the predicate's first conjunct, so when it was zero the short-circuit meant no coin
  * was drawn anyway.
+ *
+ * <p><b>Opaque steps may carry their own rate.</b> When the plan turns opaque routing on
+ * ({@code ape.llmPercentageNoSubstrate >= 0}), an {@linkplain LlmGate#isOpaque opaque} step passes the
+ * gate and is flipped against that value instead of the plan's rate (INV-RTR-24). A zero opaque rate
+ * draws no coin at all: it lets the new-state and stagnation hooks consult the model on a canvas
+ * without random routing there, and it does so without consuming a draw. With opaque routing off,
+ * every step that passes the gate is flipped against the positive plan rate, so the {@code rate > 0}
+ * conjunct is always true and the coin falls on exactly the steps it always did (INV-RTR-22).
  */
 public final class LlmRandomStage implements DecisionStage {
 
     private final LlmEngine engine;
     private final BooleanSupplier breakerAllows;
     private final double percentage;
+    private final double opaqueRate;
+    private final boolean opaqueEnabled;
     private final Random random;
     private final Consumer<ModelAction> resolveSynthesizedTap;
 
@@ -59,14 +69,19 @@ public final class LlmRandomStage implements DecisionStage {
      *        carrying a positive rate and such a plan has one
      * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
      * @param percentage the plan's rate; positive, since a zero rate assembles no stage
+     * @param opaqueRate the rate on opaque steps, {@code ape.llmPercentageNoSubstrate}; negative when
+     *        opaque routing is off, which is how the stage knows whether it is on
      * @param random the agent's generator, which is the stream the coin must come from
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      */
     public LlmRandomStage(LlmEngine engine, BooleanSupplier breakerAllows, double percentage,
-                          Random random, Consumer<ModelAction> resolveSynthesizedTap) {
+                          double opaqueRate, Random random,
+                          Consumer<ModelAction> resolveSynthesizedTap) {
         this.engine = engine;
         this.breakerAllows = breakerAllows;
         this.percentage = percentage;
+        this.opaqueRate = opaqueRate;
+        this.opaqueEnabled = opaqueRate >= 0;
         this.random = random;
         this.resolveSynthesizedTap = resolveSynthesizedTap;
     }
@@ -78,8 +93,11 @@ public final class LlmRandomStage implements DecisionStage {
 
     @Override
     public StageResult decide(StepContext ctx) {
-        if (!LlmGate.allows(ctx) || random.nextDouble() >= percentage
-                || !breakerAllows.getAsBoolean()) {
+        if (!LlmGate.allows(ctx, opaqueEnabled)) {
+            return StageResult.continueChain();
+        }
+        double rate = opaqueEnabled && LlmGate.isOpaque(ctx.newState()) ? opaqueRate : percentage;
+        if (rate <= 0 || random.nextDouble() >= rate || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),

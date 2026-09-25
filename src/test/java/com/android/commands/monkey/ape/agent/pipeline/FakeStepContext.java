@@ -87,6 +87,20 @@ class FakeStepContext implements StepContext {
         return state;
     }
 
+    /**
+     * A state on {@code activity} offering exactly {@code types}, in order — how a test states an
+     * opaque screen ({@code MODEL_BACK, MODEL_MENU}) or a one-button dialog next to it.
+     */
+    static State stateOf(String activity, ActionType... types) throws Exception {
+        State state = stateWith(activity, 0);
+        ModelAction[] actions = new ModelAction[types.length];
+        for (int i = 0; i < types.length; i++) {
+            actions[i] = new ModelAction(state, types[i]);
+        }
+        setField(state, "actions", actions);
+        return state;
+    }
+
     static void setField(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);

@@ -58,6 +58,7 @@ public final class LlmStagnationStage implements DecisionStage {
     private final BooleanSupplier breakerAllows;
     private final int restartThreshold;
     private final Consumer<ModelAction> resolveSynthesizedTap;
+    private final boolean opaqueEnabled;
 
     /** Whether this stagnation episode has already spent its one call. */
     private boolean firedThisEpisode;
@@ -69,13 +70,16 @@ public final class LlmStagnationStage implements DecisionStage {
      * @param restartThreshold the agent's forced-restart threshold, whose half is this hook's
      *        firing point
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
+     * @param opaqueEnabled whether the plan turns opaque routing on, so the shared precondition also
+     *        opens on an opaque step ({@link LlmGate#allows})
      */
     public LlmStagnationStage(LlmEngine engine, BooleanSupplier breakerAllows, int restartThreshold,
-                              Consumer<ModelAction> resolveSynthesizedTap) {
+                              Consumer<ModelAction> resolveSynthesizedTap, boolean opaqueEnabled) {
         this.engine = engine;
         this.breakerAllows = breakerAllows;
         this.restartThreshold = restartThreshold;
         this.resolveSynthesizedTap = resolveSynthesizedTap;
+        this.opaqueEnabled = opaqueEnabled;
     }
 
     /**
@@ -101,7 +105,7 @@ public final class LlmStagnationStage implements DecisionStage {
 
     @Override
     public StageResult decide(StepContext ctx) {
-        if (!LlmGate.allows(ctx)
+        if (!LlmGate.allows(ctx, opaqueEnabled)
                 || !stagnationMidpointReached(ctx.graphStableCounter(), restartThreshold,
                         firedThisEpisode)
                 || !breakerAllows.getAsBoolean()) {

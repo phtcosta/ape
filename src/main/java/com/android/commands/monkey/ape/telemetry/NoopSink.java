@@ -39,7 +39,11 @@ public final class NoopSink implements EventSink {
 
     @Override
     public void beginStep(int step, long tRelMs, String activity, boolean activityHasMop,
-            String stateKey) {
+            String stateKey, boolean opaque) {
+    }
+
+    @Override
+    public void restartRequested() {
     }
 
     @Override

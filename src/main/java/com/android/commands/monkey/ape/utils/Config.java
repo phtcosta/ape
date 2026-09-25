@@ -173,16 +173,6 @@ public class Config {
     public static final double llmPercentage =
             Math.max(0.0, Math.min(1.0, Config.getDouble("ape.llmPercentage", 0.02)));
     public static final String llmPromptVariant = Config.get("ape.llmPromptVariant", "ape_current");
-    // mop-reach-strategies F′ (INV-RTR-09): LLM random-routing probability to use when the current
-    // screen is a widgetless substrate — a UI (Compose, canvas) where static analysis found no
-    // addressable widget, so widget-level MOP guidance has nothing to bind to. Default -1 sentinel =
-    // "no override" (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt
-    // from the [0,1] clamp; a >=0 value is clamped to [0,1]; any real negative collapses to the
-    // sentinel. Seam only — no consumer yet, and the predicate a consumer would need does not exist
-    // either: the on-device test used to read the parsed windows[], which the artifact does not
-    // carry. Wiring it means deriving the fact host-side first.
-    public static final double llmPercentageNoSubstrate =
-            clampLlmPercentageNoSubstrate(Config.getDouble("ape.llmPercentageNoSubstrate", -1.0));
     // llm-native-toolcall-repair J1b/J1c: four previously hard-coded LLM values exposed as config keys
     // with defaults reproducing the prior behavior bit-for-bit (INV-RTR-14). No clamping (researcher-
     // facing knobs, like llmTimeoutMs/llmTopK); the B1 arm runs all four at defaults so the experimental
@@ -259,16 +249,6 @@ public class Config {
                 throw new RuntimeException("Fail to load the configuration file at " + configFile);
             }
         }
-    }
-
-    // mop-reach-strategies 1.4 (INV-RTR-09): clamp for llmPercentageNoSubstrate. The -1 sentinel means
-    // "no override"; any real negative collapses to it; a >=0 value is clamped to [0,1] like llmPercentage.
-    // Extracted so ConfigTest can exercise the clamp despite the frozen static-final field.
-    static double clampLlmPercentageNoSubstrate(double raw) {
-        if (raw < 0.0) {
-            return -1.0;
-        }
-        return Math.min(1.0, raw);
     }
 
     // activity-trigger-dose 1.3: clamp for activityTriggerStagnationStep. A value <= 0 would make the

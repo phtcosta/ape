@@ -111,9 +111,15 @@ public class LlmRandomStageTest {
         return stageOver(engine, gate, 1.0, new CountingRandom(42L));
     }
 
+    /** A stage with opaque routing off — the {@code -1} every existing arm states. */
     private static LlmRandomStage stageOver(StubEngine engine, Gate gate, double percentage,
             Random random) {
-        return new LlmRandomStage(engine, gate, percentage, random,
+        return stageOver(engine, gate, percentage, -1, random);
+    }
+
+    private static LlmRandomStage stageOver(StubEngine engine, Gate gate, double percentage,
+            double opaqueRate, Random random) {
+        return new LlmRandomStage(engine, gate, percentage, opaqueRate, random,
                 new ArrayList<ModelAction>()::add);
     }
 
@@ -266,48 +272,165 @@ public class LlmRandomStageTest {
     }
 
     // -------------------------------------------------------------------------
-    // INV-RTR-09 — the no-substrate override is exposed and consumed by nothing
+    // INV-RTR-22 — with opaque routing off, the coin is drawn where it always was
     // -------------------------------------------------------------------------
 
-    /** The two source directories a routing decision is made in, after the predicates moved here. */
-    private static final String[] DECISION_PATH = {
-        "src/main/java/com/android/commands/monkey/ape/agent/pipeline",
-        "src/main/java/com/android/commands/monkey/ape/llm",
-    };
+    /**
+     * One step of the draw-sequence fixture: the state the step is decided on and the buffer
+     * beside it.
+     */
+    private static FakeStepContext fixtureStep(int bufferSize, ActionType... types) throws Exception {
+        FakeStepContext ctx = new FakeStepContext();
+        ctx.newState = FakeStepContext.stateOf(ACTIVITY, types);
+        ctx.actionBufferSize = bufferSize;
+        return ctx;
+    }
 
     /**
-     * {@code ape.llmPercentageNoSubstrate} is loaded and exposed, and no routing decision reads it
-     * (INV-RTR-09). The seam exists so a later adaptive round can substitute a percentage for
-     * widgetless substrates without a protocol change; until something deliberately wires it, a read
-     * anywhere on the decision path would give it an effect the spec says it does not have.
-     *
-     * <p>Asserted over the whole decision path rather than over one named file. The predicate that
-     * would consume it used to live in a single class and now lives in this stage, and a check that
-     * names one file stops protecting anything the next time the code moves — silently, at runtime,
-     * because reading a source file that is no longer there is not a compile error. The clamp and
-     * the {@code -1} sentinel are {@code ConfigTest}'s; what is pinned here is the absence of a
-     * consumer. Note that the plain rate {@code ape.llmPercentage} legitimately appears on this
-     * path — it is this stage's own trigger — so the search is for the override's full key name.
+     * A run in miniature that mixes every kind of step the gate distinguishes: widget-rich, opaque
+     * ({@code MODEL_BACK, MODEL_MENU}), a trivial screen with one widget, the three-action boundary,
+     * and buffered navigation on both a widget-rich and an opaque screen.
      */
-    @Test
-    public void theNoSubstrateOverrideIsReadByNoDecisionOnThePath() throws Exception {
-        List<String> consumers = new ArrayList<>();
-        for (String dir : DECISION_PATH) {
-            java.io.File root = new java.io.File(dir);
-            assertTrue("decision-path source not found at " + root.getAbsolutePath(),
-                    root.isDirectory());
-            java.io.File[] sources = root.listFiles();
-            assertTrue("decision path must not be empty: " + dir,
-                    sources != null && sources.length > 0);
-            for (java.io.File source : sources) {
-                if (!source.getName().endsWith(".java")) continue;
-                String body = new String(
-                        java.nio.file.Files.readAllBytes(source.toPath()),
-                        java.nio.charset.StandardCharsets.UTF_8);
-                if (body.contains("llmPercentageNoSubstrate")) consumers.add(source.getName());
-            }
+    private static List<FakeStepContext> drawSequenceFixture() throws Exception {
+        ActionType click = ActionType.MODEL_CLICK;
+        ActionType back = ActionType.MODEL_BACK;
+        ActionType menu = ActionType.MODEL_MENU;
+        List<FakeStepContext> steps = new ArrayList<>();
+        steps.add(fixtureStep(0, click, click, click, back, menu)); // 0 widget-rich
+        steps.add(fixtureStep(0, back, menu));                      // 1 opaque
+        steps.add(fixtureStep(0, click, back));                     // 2 trivial, one widget
+        steps.add(fixtureStep(1, click, click, click, back, menu)); // 3 widget-rich, buffered
+        steps.add(fixtureStep(0, click, click, click, back, menu)); // 4 widget-rich
+        steps.add(fixtureStep(0, back, menu));                      // 5 opaque
+        steps.add(fixtureStep(1, back, menu));                      // 6 opaque, buffered
+        steps.add(fixtureStep(0, click, back, menu));               // 7 three actions
+        steps.add(fixtureStep(0, back));                            // 8 opaque, menu disabled
+        steps.add(fixtureStep(0, click, click, click, back, menu)); // 9 widget-rich
+        return steps;
+    }
+
+    /**
+     * The steps of {@link #drawSequenceFixture()} on which the build before opaque routing drew the
+     * coin: exactly those with an empty buffer and more than two actions. Captured from jar
+     * {@code e93dea86}, whose gate was {@code actionBufferSize() == 0 && getActions().size() > 2}.
+     */
+    private static final int[] PRE_CHANGE_DRAW_STEPS = {0, 4, 7, 9};
+
+    /** The fixture's step indices on which {@code stage} drew from its stream. */
+    private static int[] drawStepsOver(LlmRandomStage stage, CountingRandom random) throws Exception {
+        List<Integer> drawn = new ArrayList<>();
+        List<FakeStepContext> steps = drawSequenceFixture();
+        for (int i = 0; i < steps.size(); i++) {
+            int before = random.draws;
+            stage.decide(steps.get(i));
+            if (random.draws > before) drawn.add(i);
         }
-        assertEquals("llmPercentageNoSubstrate must reach no decision on the path (INV-RTR-09)",
-                java.util.Collections.<String>emptyList(), consumers);
+        int[] result = new int[drawn.size()];
+        for (int i = 0; i < result.length; i++) result[i] = drawn.get(i);
+        return result;
+    }
+
+    @Test
+    public void featureOffDrawSequenceUnchanged() throws Exception {
+        CountingRandom random = new CountingRandom(42L);
+        LlmRandomStage stage = stageOver(new StubEngine(null), new Gate(true), 0.5, random);
+
+        assertArrayEquals("with opaque routing off the coin must be drawn on exactly the steps the"
+                + " pre-change gate drew it on (INV-RTR-22)",
+                PRE_CHANGE_DRAW_STEPS, drawStepsOver(stage, random));
+    }
+
+    @Test
+    public void featureOnDrawsOnOpaqueStepsToo() throws Exception {
+        // The same fixture with opaque routing on: the opaque steps with an empty buffer (1, 5, 8)
+        // join the draw sequence, and every other step keeps its place.
+        CountingRandom random = new CountingRandom(42L);
+        LlmRandomStage stage = stageOver(new StubEngine(null), new Gate(true), 0.5, 0.5, random);
+
+        assertArrayEquals(new int[] {0, 1, 4, 5, 7, 8, 9}, drawStepsOver(stage, random));
+    }
+
+    // -------------------------------------------------------------------------
+    // INV-RTR-24 — the step's rate
+    // -------------------------------------------------------------------------
+
+    /**
+     * A generator whose every draw is {@code value}, so a test states which side of a rate the coin
+     * falls on instead of searching a seed for it.
+     */
+    private static class FixedRandom extends CountingRandom {
+
+        private static final long serialVersionUID = 1L;
+
+        private final double value;
+
+        FixedRandom(double value) {
+            super(0L);
+            this.value = value;
+        }
+
+        @Override
+        public double nextDouble() {
+            super.nextDouble();
+            return value;
+        }
+    }
+
+    private static FakeStepContext opaqueStep() throws Exception {
+        return fixtureStep(0, ActionType.MODEL_BACK, ActionType.MODEL_MENU);
+    }
+
+    private static FakeStepContext widgetStep() throws Exception {
+        return fixtureStep(0, ActionType.MODEL_CLICK, ActionType.MODEL_CLICK,
+                ActionType.MODEL_CLICK, ActionType.MODEL_BACK, ActionType.MODEL_MENU);
+    }
+
+    @Test
+    public void opaqueStepUsesOpaqueRate() throws Exception {
+        // A draw of 0.5 is under the opaque rate 0.9 and over the plan rate 0.3: which one the stage
+        // compared it with is visible in whether the engine was called.
+        StubEngine engine = new StubEngine(null);
+        FixedRandom random = new FixedRandom(0.5);
+        LlmRandomStage stage = stageOver(engine, new Gate(true), 0.3, 0.9, random);
+
+        stage.decide(opaqueStep());
+        assertEquals("an opaque step is flipped against the opaque rate", 1, engine.selectCalls);
+        assertEquals(1, random.draws);
+
+        stage.decide(widgetStep());
+        assertEquals("a widget step is flipped against the plan rate", 1, engine.selectCalls);
+        assertEquals(2, random.draws);
+    }
+
+    @Test
+    public void nonOpaqueStepUsesThePlanRate() throws Exception {
+        // The mirror case: 0.5 is under the plan rate 0.7 and over the opaque rate 0.2.
+        StubEngine engine = new StubEngine(null);
+        LlmRandomStage stage =
+                stageOver(engine, new Gate(true), 0.7, 0.2, new FixedRandom(0.5));
+
+        stage.decide(widgetStep());
+        assertEquals(1, engine.selectCalls);
+
+        stage.decide(opaqueStep());
+        assertEquals(1, engine.selectCalls);
+    }
+
+    @Test
+    public void zeroOpaqueRateDrawsNothing() throws Exception {
+        // Zero opens the gate on a canvas for the new-state and stagnation hooks only; this stage
+        // passes there without touching the agent's stream.
+        StubEngine engine = new StubEngine(null);
+        Gate gate = new Gate(true);
+        CountingRandom random = new CountingRandom(42L);
+        LlmRandomStage stage = stageOver(engine, gate, 0.3, 0.0, random);
+
+        assertEquals(StageResult.Kind.CONTINUE, stage.decide(opaqueStep()).kind());
+        assertEquals(0, random.draws);
+        assertEquals(0, gate.calls);
+        assertEquals(0, engine.selectCalls);
+
+        stage.decide(widgetStep());
+        assertEquals("a widget step still draws against the plan rate", 1, random.draws);
     }
 }

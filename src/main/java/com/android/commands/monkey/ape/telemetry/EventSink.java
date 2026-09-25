@@ -66,8 +66,24 @@ public interface EventSink {
      * @param activityHasMop the static per-activity MOP fact, recorded once on the {@code ACT}
      *        entry rather than repeated on every step
      * @param stateKey the current abstract state key; interned into a {@code STATE} dictionary id
+     * @param opaque whether the state offers actions but none needing a target
+     *        ({@code LlmGate.isOpaque}), written as {@code dec.opaque:1} and omitted when false
+     *        (INV-SNK-15). Recorded on every arm, because it describes the screen and not a mechanism
      */
-    void beginStep(int step, long tRelMs, String activity, boolean activityHasMop, String stateKey);
+    void beginStep(int step, long tRelMs, String activity, boolean activityHasMop, String stateKey,
+            boolean opaque);
+
+    /**
+     * Counts one forced-restart request, from any of the agent's three stability hooks.
+     *
+     * <p>The total is written as {@code RUN_END.counters.restarts}, including {@code 0}
+     * (INV-SNK-16). It counts requests, not restarts: the graph, state and activity hooks set one
+     * shared flag, so two of them firing on the same step are two requests and one restart. It sits beside the dictionary sizes rather than in the LLM block because it is
+     * an exploration fact: an off-tree tap at a new coordinate is a new edge that resets the graph
+     * stability counter, so the count is how an analysis sees whether LLM taps change the restart
+     * cadence an arm would otherwise have.
+     */
+    void restartRequested();
 
     /**
      * Records the finalized model action and how it was picked.
@@ -243,7 +259,8 @@ public interface EventSink {
      * validates it, no task status depends on it, and its absence means only that the process was
      * killed before teardown (owner decision D5).
      *
-     * <p>The counters the sink itself owns — the step-record count and the two dictionary sizes —
+     * <p>The counters the sink itself owns — the step-record count, the two dictionary sizes and the
+     * restart count —
      * are not parameters: the sink is the only thing that knows them, and asking teardown to fetch
      * them so it could hand them back would be indirection with one subscriber.
      *

@@ -126,6 +126,75 @@ public class RunSpecResolveTest {
                 Double.parseDouble(llm.effectiveValues().get("ape.llmPercentage")), 1e-9);
     }
 
+    @Test
+    public void theOpaqueRateNormalizesToTheSentinelOrToOne() {
+        // ape.llmPercentageNoSubstrate: -1 turns opaque routing off, so any real negative collapses
+        // to it rather than becoming a second spelling of "off"; above 1 clamps like llmPercentage.
+        assertEquals("-1.0", noSubstrateResolvedFrom("-0.2"));
+        assertEquals("-1.0", noSubstrateResolvedFrom("-1"));
+        assertEquals("1.0", noSubstrateResolvedFrom("1.5"));
+        assertEquals("0.5", noSubstrateResolvedFrom("0.5"));
+        assertEquals("0.0", noSubstrateResolvedFrom("0"));
+    }
+
+    private static String noSubstrateResolvedFrom(String raw) {
+        return resolve(entries("ape.llmUrl", LLM_URL, "ape.llmPercentageNoSubstrate", raw))
+                .effectiveValues().get("ape.llmPercentageNoSubstrate");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // INV-RTR-25 — at -1 the LLM arms resolve to the plan jar e93dea86 resolved
+    // -----------------------------------------------------------------------------------------
+
+    /**
+     * The plans jar {@code e93dea86} resolved for the two LLM presets, captured from that jar before
+     * opaque routing gave {@code ape.llmPercentageNoSubstrate} a reader. The digest hashes the agent,
+     * the features and every plan value, so equal digests are equal plans; the feature list and the
+     * value count are pinned beside it so a failure says which part moved.
+     */
+    private static final String LLM_DIGEST_E93DEA86 = "a67b096e757d83ad";
+    private static final String LLM_MOP_DIGEST_E93DEA86 = "120cf56a899a4d32";
+    private static final String LLM_FEATURES_E93DEA86 = "[LLM, MODEL_MENU, FORM_COMPLETION,"
+            + " LEAST_VISITED_TIEBREAK, TREE_ENHANCEMENTS, ACTIVITY_BUDGET, DYNAMIC_EPSILON,"
+            + " HEURISTIC_INPUT, TYPED_FUZZ, FOREIGN_ACTIVITY_GUARD, TREE_PACKAGE_GUARD, COVERAGE_BOOST,"
+            + " FUZZING, LLM_NEW_STATE, LLM_STAGNATION, LLM_RANDOM]";
+    private static final String LLM_MOP_FEATURES_E93DEA86 = "[MOP, LLM, MODEL_MENU, FORM_COMPLETION,"
+            + " LEAST_VISITED_TIEBREAK, TREE_ENHANCEMENTS, ACTIVITY_BUDGET, DYNAMIC_EPSILON,"
+            + " HEURISTIC_INPUT, TYPED_FUZZ, FOREIGN_ACTIVITY_GUARD, TREE_PACKAGE_GUARD, COVERAGE_BOOST,"
+            + " FUZZING, WTG, MENU_GATEWAY, LLM_NEW_STATE, LLM_STAGNATION, LLM_RANDOM]";
+
+    @Test
+    public void sentinelPlanDigestUnchanged() {
+        RunSpec llm = resolve(entries(
+                "ape.preset", Presets.LLM,
+                "ape.llmUrl", LLM_URL,
+                "ape.llmPercentageNoSubstrate", "-1"));
+        assertEquals(LLM_FEATURES_E93DEA86, llm.features().toString());
+        assertEquals(94, llm.effectiveValues().size());
+        assertEquals("-1.0", llm.effectiveValues().get("ape.llmPercentageNoSubstrate"));
+        assertEquals(LLM_DIGEST_E93DEA86, llm.digest());
+
+        RunSpec llmMop = resolve(entries(
+                "ape.preset", Presets.LLM_MOP,
+                "ape.llmUrl", LLM_URL,
+                "ape.mopDataPath", MOP_PATH,
+                "ape.llmPercentageNoSubstrate", "-1"));
+        assertEquals(LLM_MOP_FEATURES_E93DEA86, llmMop.features().toString());
+        assertEquals(101, llmMop.effectiveValues().size());
+        assertEquals(LLM_MOP_DIGEST_E93DEA86, llmMop.digest());
+    }
+
+    @Test
+    public void aPositiveOpaqueRateChangesTheDigest() {
+        // The other half of INV-RTR-25: a trace states which regime produced it.
+        RunSpec on = resolve(entries(
+                "ape.preset", Presets.LLM,
+                "ape.llmUrl", LLM_URL,
+                "ape.llmPercentageNoSubstrate", "0.7"));
+        assertEquals(LLM_FEATURES_E93DEA86, on.features().toString());
+        assertNotEquals(LLM_DIGEST_E93DEA86, on.digest());
+    }
+
     // -----------------------------------------------------------------------------------------
     // Digest determinism
     // -----------------------------------------------------------------------------------------

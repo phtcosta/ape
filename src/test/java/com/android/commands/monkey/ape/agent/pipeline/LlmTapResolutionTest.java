@@ -1,12 +1,19 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.model.State;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -54,5 +61,24 @@ public class LlmTapResolutionTest {
                 new ModelAction(null, ActionType.MODEL_BACK)));
         assertFalse(LlmGate.requiresSynthesizedResolution(
                 new ModelAction(null, ActionType.MODEL_MENU)));
+    }
+
+    @Test
+    public void anOffTreeTapOnAnOpaqueStateIsAcceptedAndResolved() throws Exception {
+        // A game canvas offers MODEL_BACK and MODEL_MENU; the model's click lands where no widget is,
+        // and the mapper hands back a synthesized tap. The accepting stage stamps it as the LLM's and
+        // resolves it against the state — the same path a tap takes on a widget screen.
+        State canvas = FakeStepContext.stateOf("com.example.GameActivity",
+                ActionType.MODEL_BACK, ActionType.MODEL_MENU);
+        assertTrue(LlmGate.isOpaque(canvas));
+        LlmTapAction tap = new LlmTapAction(canvas, 540, 900, false);
+        List<ModelAction> resolved = new ArrayList<>();
+
+        ModelAction accepted = LlmGate.accept(tap, resolved::add);
+
+        assertSame(tap, accepted);
+        assertEquals(ModelAction.DecisionSource.LLM, accepted.getDecisionSource());
+        assertEquals(ModelAction.PickChannel.LLM, accepted.getPickChannel());
+        assertEquals(Collections.singletonList(tap), resolved);
     }
 }

@@ -136,6 +136,9 @@ public final class NdjsonSink implements EventSink {
     private long firstStepT;
     private long lastStepT;
 
+    /** Forced restarts the agent requested, which {@code RUN_END} reports as {@code restarts}. */
+    private int restarts;
+
     /** Whether {@code LLM_ACK} has been written, which caps it at one record per run. */
     private boolean acknowledged;
 
@@ -164,7 +167,7 @@ public final class NdjsonSink implements EventSink {
 
     @Override
     public void beginStep(int step, long tRelMs, String activity, boolean activityHasMop,
-            String stateKey) {
+            String stateKey, boolean opaque) {
         if (disabled) {
             return;
         }
@@ -181,7 +184,7 @@ public final class NdjsonSink implements EventSink {
                 writePending();
             }
             int actId = internActivity(activity, activityHasMop);
-            pending.open(step, tRelMs, actId, internState(stateKey, actId));
+            pending.open(step, tRelMs, actId, internState(stateKey, actId), opaque);
             writeHeartbeat(step, tRelMs);
         } catch (Throwable failure) {
             latch("beginStep", failure);
@@ -451,6 +454,13 @@ public final class NdjsonSink implements EventSink {
     }
 
     @Override
+    public void restartRequested() {
+        // A counter increment cannot fail, and counting on after a latch costs nothing; the count
+        // only reaches the trace through runEnd, which the latch already silences.
+        restarts++;
+    }
+
+    @Override
     public void runEnd(String reason, String detail, RunCounters counters) {
         if (disabled) {
             return;
@@ -473,6 +483,8 @@ public final class NdjsonSink implements EventSink {
             sideBuf.name("counters").beginObject();
             sideBuf.name("acts").value(activityIds.size());
             sideBuf.name("states").value(stateIds.size());
+            // Written at zero: a run that requested no restart is a measurement, not a default.
+            sideBuf.name("restarts").value(restarts);
             if (counters != null) {
                 writeLlmCounters(counters);
             }

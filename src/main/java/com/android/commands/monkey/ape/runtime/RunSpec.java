@@ -266,7 +266,7 @@ public final class RunSpec {
         }
         if ("ape.llmPercentageNoSubstrate".equals(key)) {
             double value = (Double) ValueType.DOUBLE.parse(key, raw);
-            // The -1 sentinel means "no override"; any real negative collapses to it.
+            // The -1 sentinel means "opaque routing off"; any real negative collapses to it.
             return Double.toString(value < 0.0d ? -1.0d : Math.min(1.0d, value));
         }
         return raw;

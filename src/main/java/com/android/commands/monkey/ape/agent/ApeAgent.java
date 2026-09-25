@@ -317,6 +317,7 @@ public abstract class ApeAgent implements Agent {
 
     public void requestRestart() {
         this.restart = true;
+        RunContext.current().sink().restartRequested();
     }
 
     protected Random getRandom() {

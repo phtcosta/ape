@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.agent.pipeline.LlmGate;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
@@ -230,7 +231,7 @@ public final class OracleDriver {
                 }
                 sink.beginStep(agent.getTimestamp(), RunContext.current().elapsedMs(),
                         state.getActivity(), hasMop(mopData, state.getActivity()),
-                        state.getStateKey().toString());
+                        state.getStateKey().toString(), LlmGate.isOpaque(state));
             }
             if (llm != null) {
                 llm.beginStep(index);

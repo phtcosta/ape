@@ -55,6 +55,7 @@ final class StepRecord {
     private long tRelMs;
     private int actId;
     private int stateId;
+    private boolean opaque;
 
     // Decision.
     private boolean hasDecision;
@@ -106,13 +107,14 @@ final class StepRecord {
         return tRelMs;
     }
 
-    void open(int step, long tRelMs, int actId, int stateId) {
+    void open(int step, long tRelMs, int actId, int stateId, boolean opaque) {
         reset();
         this.open = true;
         this.step = step;
         this.tRelMs = tRelMs;
         this.actId = actId;
         this.stateId = stateId;
+        this.opaque = opaque;
     }
 
     void decision(String action, String decisionSource, String pickChannel, int priority,
@@ -215,6 +217,11 @@ final class StepRecord {
             buf.name("a").value(action);
             buf.name("src").value(decisionSource);
             buf.name("ch").value(pickChannel);
+            if (opaque) {
+                // A fact about the state the step was decided on, so it rides model and non-model
+                // records alike; omitted when false (INV-SNK-05, INV-SNK-15).
+                buf.name("opaque").value(1);
+            }
             if (modelAction) {
                 buf.name("pri").value(priority);
                 boost(buf, "mop", mop);
@@ -294,6 +301,7 @@ final class StepRecord {
         tRelMs = 0;
         actId = 0;
         stateId = 0;
+        opaque = false;
         hasDecision = false;
         modelAction = false;
         action = null;

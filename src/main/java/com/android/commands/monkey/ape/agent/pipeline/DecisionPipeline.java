@@ -145,6 +145,11 @@ public final class DecisionPipeline {
      * @return the pipeline for this run; never empty, since the terminal candidate has no gate
      */
     public static DecisionPipeline fromSpec(RunSpec spec, StageCollaborators collaborators) {
+        // Opaque routing rides on LLM_RANDOM's sub-parameter: on when the feature is in the plan and
+        // the value is not the -1 sentinel. The three LLM stages learn it here, never from Config.
+        double opaqueRate = spec.has(Feature.LLM_RANDOM)
+                ? spec.llm().dbl("ape.llmPercentageNoSubstrate") : -1;
+        boolean opaqueEnabled = opaqueRate >= 0;
         List<DecisionStage> stages = new ArrayList<>();
         for (Candidate candidate : assembledCandidates(spec)) {
             switch (candidate) {
@@ -154,18 +159,21 @@ public final class DecisionPipeline {
                 case LLM_NEW_STATE:
                     stages.add(new LlmNewStateStage(collaborators.llmEngine(),
                             collaborators::llmBreakerAllows,
-                            collaborators::resolveSynthesizedTap));
+                            collaborators::resolveSynthesizedTap,
+                            opaqueEnabled));
                     break;
                 case LLM_STAGNATION:
                     stages.add(new LlmStagnationStage(collaborators.llmEngine(),
                             collaborators::llmBreakerAllows,
                             spec.exploration().graphStableRestartThreshold(),
-                            collaborators::resolveSynthesizedTap));
+                            collaborators::resolveSynthesizedTap,
+                            opaqueEnabled));
                     break;
                 case LLM_RANDOM:
                     stages.add(new LlmRandomStage(collaborators.llmEngine(),
                             collaborators::llmBreakerAllows,
                             spec.llm().dbl("ape.llmPercentage"),
+                            opaqueRate,
                             collaborators.agentRandom(),
                             collaborators::resolveSynthesizedTap));
                     break;

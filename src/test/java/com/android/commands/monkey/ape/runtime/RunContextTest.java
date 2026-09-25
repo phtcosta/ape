@@ -180,13 +180,13 @@ public class RunContextTest {
 
             RunContext.installForTest(spec(entries("ape.telemetryHeartbeat", "false"), 5L));
             Log.reset();
-            RunContext.current().sink().beginStep(1, 1L, "com.foo/.Main", false, "S1");
+            RunContext.current().sink().beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
             assertTrue("a plan that turned the heartbeat off gets no logcat line",
                     Log.entries().isEmpty());
 
             RunContext.resetForTest();
             RunContext.installForTest(spec(entries(), 5L));
-            RunContext.current().sink().beginStep(1, 1L, "com.foo/.Main", false, "S1");
+            RunContext.current().sink().beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
             assertEquals("and a plan that says nothing gets one: the default is on", 1,
                     Log.entries().size());
         } finally {

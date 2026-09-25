@@ -104,4 +104,40 @@ public class CoordinateMapperOffTreeTapTest {
         // state the NPE is caught internally → null (unchanged behavior). No off-tree tap for back.
         assertNull(mapper.map(0, 0, "back", null, unresolvedActions(), null, W, H));
     }
+
+    // -------------------------------------------------------------------------
+    // Opaque screens: the same mapping, bands included (declared limitation)
+    // -------------------------------------------------------------------------
+
+    /** A game canvas's candidates: {@code MODEL_BACK} and {@code MODEL_MENU}, nothing targetable. */
+    private static List<ModelAction> opaqueActions() {
+        List<ModelAction> actions = new ArrayList<>();
+        actions.add(new ModelAction(null, ActionType.MODEL_BACK));
+        actions.add(new ModelAction(null, ActionType.MODEL_MENU));
+        return actions;
+    }
+
+    @Test
+    public void opaqueClickMidScreenBuildsTap() {
+        ModelAction result = newMapper().map(
+                600, H / 2, "click", null, opaqueActions(), null, W, H);
+        assertTrue("with no widget on the screen a click is an off-tree tap",
+                result instanceof LlmTapAction);
+        assertEquals(H / 2, ((LlmTapAction) result).getPixelY());
+    }
+
+    @Test
+    public void opaqueClickInTheBottomBandIsRejectedAsBoundary() {
+        // Game controls often sit in the bottom band; opaque routing does not relax the band, so the
+        // answer is lost and counted as reason:"boundary" (llm-opaque-screen D5b).
+        int pixelY = (int) (H * 0.97);
+        ModelAction result = newMapper().map(
+                600, pixelY, "click", null, opaqueActions(), null, W, H);
+        assertNull(result);
+
+        LlmEngine.Verdict verdict = LlmEngine.classify(result, false,
+                new ToolCallParser.ParsedAction("click", 600, pixelY, null, null, "none"));
+        assertEquals("no_match", verdict.result);
+        assertEquals("boundary", verdict.noMatchReason);
+    }
 }

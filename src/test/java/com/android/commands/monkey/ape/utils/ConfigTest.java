@@ -161,40 +161,6 @@ public class ConfigTest {
     }
 
     // ---------------------------------------------------------------------------
-    // mop-reach-strategies 1.4: llmPercentageNoSubstrate — F′ LLM-routing override
-    // used when the substrate is widgetless. Default -1 sentinel = "no override"
-    // (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt
-    // from the [0,1] clamp; >=0 values are clamped like llmPercentage. The field is
-    // static final (default asserted here); the clamp seam is tested below.
-    // ---------------------------------------------------------------------------
-    @Test
-    public void testLlmPercentageNoSubstrate_defaultIsMinusOneSentinel() {
-        assertEquals(-1.0, Config.llmPercentageNoSubstrate, 1e-9);
-    }
-
-    @Test
-    public void testClampLlmPercentageNoSubstrate_sentinelStaysMinusOne() {
-        assertEquals(-1.0, Config.clampLlmPercentageNoSubstrate(-1.0), 1e-9);
-    }
-
-    @Test
-    public void testClampLlmPercentageNoSubstrate_anyNegativeCollapsesToSentinel() {
-        // a real negative (not the -1 sentinel) is meaningless as a probability;
-        // it collapses to the -1 "no override" sentinel (INV-RTR-09).
-        assertEquals(-1.0, Config.clampLlmPercentageNoSubstrate(-0.2), 1e-9);
-    }
-
-    @Test
-    public void testClampLlmPercentageNoSubstrate_aboveOneClampsToOne() {
-        assertEquals(1.0, Config.clampLlmPercentageNoSubstrate(1.5), 1e-9);
-    }
-
-    @Test
-    public void testClampLlmPercentageNoSubstrate_inRangeUnchanged() {
-        assertEquals(0.5, Config.clampLlmPercentageNoSubstrate(0.5), 1e-9);
-    }
-
-    // ---------------------------------------------------------------------------
     // activity-trigger-dose 1.1: activityTriggerStagnationStep — configurable
     // firing cadence for the stagnation activity launcher. Default 50 is
     // byte-identical to the pre-change gate (graphStableRestartThreshold/2 with

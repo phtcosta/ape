@@ -47,18 +47,22 @@ public final class LlmNewStateStage implements DecisionStage {
     private final LlmEngine engine;
     private final BooleanSupplier breakerAllows;
     private final Consumer<ModelAction> resolveSynthesizedTap;
+    private final boolean opaqueEnabled;
 
     /**
      * @param engine the run's LLM orchestrator; non-null, because this stage exists only on a plan
      *        carrying the new-state LLM feature and such a plan has one
      * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
+     * @param opaqueEnabled whether the plan turns opaque routing on, so the shared precondition also
+     *        opens on an opaque step ({@link LlmGate#allows})
      */
     public LlmNewStateStage(LlmEngine engine, BooleanSupplier breakerAllows,
-                            Consumer<ModelAction> resolveSynthesizedTap) {
+                            Consumer<ModelAction> resolveSynthesizedTap, boolean opaqueEnabled) {
         this.engine = engine;
         this.breakerAllows = breakerAllows;
         this.resolveSynthesizedTap = resolveSynthesizedTap;
+        this.opaqueEnabled = opaqueEnabled;
     }
 
     @Override
@@ -68,7 +72,8 @@ public final class LlmNewStateStage implements DecisionStage {
 
     @Override
     public StageResult decide(StepContext ctx) {
-        if (!LlmGate.allows(ctx) || !ctx.isNewState() || !breakerAllows.getAsBoolean()) {
+        if (!LlmGate.allows(ctx, opaqueEnabled) || !ctx.isNewState()
+                || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),

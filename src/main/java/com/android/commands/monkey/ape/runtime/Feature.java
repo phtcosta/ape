@@ -177,8 +177,8 @@ public enum Feature {
         LLM.own("ape.llmBoundaryTopPct", "0.05");
         LLM.own("ape.llmBoundaryBottomPct", "0.94");
 
-        // The -1 sentinel means "no override"; it is the value every baseline arm pushes on a run
-        // with no LLM, and the reason the inert rule exists at all.
+        // The -1 sentinel means "opaque routing off"; it is the value every baseline arm pushes on a
+        // run with no LLM, and the reason the inert rule exists at all.
         LLM_RANDOM.own("ape.llmPercentageNoSubstrate", "-1");
 
         for (Feature f : new Feature[] {WTG, MENU_GATEWAY, FRONTIER, MOP_FRONTIER,
