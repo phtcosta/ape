@@ -441,6 +441,7 @@ public class DecisionPipelineFromSpecTest {
         FakeStepContext ctx = new FakeStepContext();
         ctx.newState = FakeStepContext.stateOf(ACTIVITY, ActionType.MODEL_BACK,
                 ActionType.MODEL_MENU);
+        ctx.newGUITree = FakeStepContext.canvasTree();
         ctx.isNewState = true;
         ctx.graphStableCounter = spec.exploration().graphStableRestartThreshold();
         for (DecisionStage stage : pipeline.stages()) {

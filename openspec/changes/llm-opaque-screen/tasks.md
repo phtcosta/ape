@@ -71,23 +71,23 @@
 
 ## 9. Dynamic-region predicate (INV-RTR-26, design D8/D9)
 
-- [ ] 9.1 Copy the compressed dumps captured on the API 30 emulator into `src/test/resources/dynamic-region/` (retrowars menu and in-game, Shattered PD title, mtgfam and urlchecker progress dialogs, smokingtracker loading dialog, flyingcarpet About, osmtracker empty-list dialog, createpdf/deepr/paperwork capture, myne splash, and the ordinary screens `ord_*`); confirm `GUITreeBuilder`'s XML reader loads them (attributes `class`, `bounds`, `focusable`, `text`, `content-desc`), converting only what it does not read
-- [ ] 9.2 Add `LlmGate.hasDynamicRegion(GUITree)` with `DYNAMIC_REGION_MIN_AREA = 0.5`: one pass from the root, not descending into `androidx.compose.ui.platform.ComposeView` or `android.webkit.WebView` subtrees; a node qualifies when class is `android.view.View`, it has no children, text and content-desc are empty, it is focusable, clickable or long-clickable, and `area(bounds ∩ rootBounds) >= 0.5 × area(rootBounds)`; null tree or empty root bounds → `false`
-- [ ] 9.3 Add `LlmGate.isOpaqueDynamic(StepContext)` = `isOpaque(newState) && hasDynamicRegion(newGUITree)`, in that order
-- [ ] 9.4 `DynamicRegionTest` on the fixtures of 9.1: LibGDX dumps → `true`; every dialog, capture, splash and ordinary dump → `false`
-- [ ] 9.5 `DynamicRegionTest` on synthetic trees, clause by clause: area 0.49 → `false` and 0.5 → `true`; non-empty text; non-empty content-desc; not focusable/clickable/long-clickable; a child present; `ComposeView` ancestor; `WebView` ancestor; null tree; empty root bounds
-- [ ] 9.6 Run `/sdd-test-run agent/pipeline`
+- [x] 9.1 Copy the compressed dumps captured on the API 30 emulator into `src/test/resources/dynamic-region/` (retrowars menu and in-game, Shattered PD title, mtgfam and urlchecker progress dialogs, smokingtracker loading dialog, flyingcarpet About, osmtracker empty-list dialog, createpdf/deepr/paperwork capture, myne splash, and the ordinary screens `ord_*`); confirm `GUITreeBuilder`'s XML reader loads them (attributes `class`, `bounds`, `focusable`, `text`, `content-desc`), converting only what it does not read (the reader takes every attribute but `content-desc`; the test loader `tree/DumpTrees` reads nodes through `GUITreeBuilder.buildNodeFromXml` and copies `content-desc` afterwards — the production reader is unchanged)
+- [x] 9.2 Add `LlmGate.hasDynamicRegion(GUITree)` with `DYNAMIC_REGION_MIN_AREA = 0.5`: one pass from the root, not descending into `androidx.compose.ui.platform.ComposeView` or `android.webkit.WebView` subtrees; a node qualifies when class is `android.view.View`, it has no children, text and content-desc are empty, it is focusable, clickable or long-clickable, and `area(bounds ∩ rootBounds) >= 0.5 × area(rootBounds)`; null tree or empty root bounds → `false`
+- [x] 9.3 Add `LlmGate.isOpaqueDynamic(StepContext)` = `isOpaque(newState) && hasDynamicRegion(newGUITree)`, in that order
+- [x] 9.4 `DynamicRegionTest` on the fixtures of 9.1: LibGDX dumps → `true`; every dialog, capture, splash and ordinary dump → `false`
+- [x] 9.5 `DynamicRegionTest` on synthetic trees, clause by clause: area 0.49 → `false` and 0.5 → `true`; non-empty text; non-empty content-desc; not focusable/clickable/long-clickable; a child present; `ComposeView` ancestor; `WebView` ancestor; null tree; empty root bounds
+- [x] 9.6 Run `/sdd-test-run agent/pipeline`
 
 ## 10. Gate and rate
 
-- [ ] 10.1 `LlmGate.allows(ctx, opaqueEnabled)` = `bufferEmpty && (size > 2 || (opaqueEnabled && isOpaqueDynamic(ctx)))`; the flag-off path still never walks the tree (INV-RTR-22)
-- [ ] 10.2 `LlmRandomStage`: `rate = opaqueEnabled && isOpaqueDynamic(ctx) ? opaqueRate : percentage`
-- [ ] 10.3 Update the javadocs of `LlmGate.allows`/`isOpaque`, the three stages and `DecisionPipeline.fromSpec` to state the opaque-dynamic rule (no text may say every opaque step is routed)
-- [ ] 10.4 `LlmGateTest`: extend the truth table with the region (opaque ∧ region opens with the flag on; opaque without region stays closed; flag off unchanged for every combination; buffer still closes)
-- [ ] 10.5 `LlmRandomStageTest`: opaque dynamic step uses the opaque rate; opaque step without region draws no coin; the feature-off draw sequence of 3.4 still matches the 0.2 fixture
-- [ ] 10.6 `LlmNewStateStageTest` / `LlmStagnationStageTest`: opaque dynamic first visit / midpoint call the engine with the flag on; opaque without region returns `Continue` without calling it; `FakeStepContext` gains a settable tree
-- [ ] 10.7 `RunSpecResolveTest.sentinelPlanDigestUnchanged` and `DecisionPipelineFromSpecTest` pass unchanged (no plan key added — D9)
-- [ ] 10.8 Run `/sdd-test-run agent/pipeline` and `/sdd-verify agent/pipeline`
+- [x] 10.1 `LlmGate.allows(ctx, opaqueEnabled)` = `bufferEmpty && (size > 2 || (opaqueEnabled && isOpaqueDynamic(ctx)))`; the flag-off path still never walks the tree (INV-RTR-22)
+- [x] 10.2 `LlmRandomStage`: `rate = opaqueEnabled && isOpaqueDynamic(ctx) ? opaqueRate : percentage`
+- [x] 10.3 Update the javadocs of `LlmGate.allows`/`isOpaque`, the three stages and `DecisionPipeline.fromSpec` to state the opaque-dynamic rule (no text may say every opaque step is routed)
+- [x] 10.4 `LlmGateTest`: extend the truth table with the region (opaque ∧ region opens with the flag on; opaque without region stays closed; flag off unchanged for every combination; buffer still closes)
+- [x] 10.5 `LlmRandomStageTest`: opaque dynamic step uses the opaque rate; opaque step without region draws no coin; the feature-off draw sequence of 3.4 still matches the 0.2 fixture
+- [x] 10.6 `LlmNewStateStageTest` / `LlmStagnationStageTest`: opaque dynamic first visit / midpoint call the engine with the flag on; opaque without region returns `Continue` without calling it; `FakeStepContext` gains a settable tree
+- [x] 10.7 `RunSpecResolveTest.sentinelPlanDigestUnchanged` and `DecisionPipelineFromSpecTest` pass unchanged (no plan key added — D9) (the rosters and the digest pass unchanged; `modesOnAnOpaqueStep` now sets a canvas tree, since an opaque step without a region no longer opens the gate — the test probes the gate, not the plan)
+- [x] 10.8 Run `/sdd-test-run agent/pipeline` and `/sdd-verify agent/pipeline`
 
 ## 11. Telemetry (INV-SNK-17, design D10)
 

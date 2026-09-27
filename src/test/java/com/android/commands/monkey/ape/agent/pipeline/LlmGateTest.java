@@ -4,17 +4,18 @@ import org.junit.Test;
 
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.tree.GUITree;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
- * The shared LLM precondition and the opaque predicate it reads (INV-RTR-21/22/23).
+ * The shared LLM precondition and the predicates it reads (INV-RTR-21/22/23/26).
  *
- * <p>The gate is a function of three facts about the step — the buffer, the size of the action
- * list, whether the state is opaque — and one fact about the plan, whether opaque routing is on. The
- * truth table below walks all of them. The case the table exists for is the one that did not change:
+ * <p>The gate is a function of four facts about the step — the buffer, the size of the action list,
+ * whether the state is opaque, whether its tree holds a dynamic region — and one fact about the plan,
+ * whether opaque routing is on. The truth table below walks all of them. The case the table exists for is the one that did not change:
  * with the flag off, every row equals the size rule the gate had before opaque routing, which is what
  * keeps a plan at {@code ape.llmPercentageNoSubstrate=-1} on its old decisions and draws.
  */
@@ -30,6 +31,13 @@ public class LlmGateTest {
         FakeStepContext ctx = new FakeStepContext();
         ctx.newState = FakeStepContext.stateOf(ACTIVITY, types);
         ctx.actionBufferSize = bufferSize;
+        return ctx;
+    }
+
+    /** The same step on a canvas: its tree holds a dynamic region. */
+    private static FakeStepContext canvas(int bufferSize, ActionType... types) throws Exception {
+        FakeStepContext ctx = step(bufferSize, types);
+        ctx.newGUITree = FakeStepContext.canvasTree();
         return ctx;
     }
 
@@ -84,6 +92,12 @@ public class LlmGateTest {
             step(0),
             step(1, CLICK, CLICK, CLICK, BACK, MENU),
             step(1, BACK, MENU),
+            canvas(0, CLICK, CLICK, CLICK, BACK, MENU),
+            canvas(0, CLICK, BACK),
+            canvas(0, BACK, MENU),
+            canvas(0, BACK),
+            canvas(0),
+            canvas(1, BACK, MENU),
         };
         for (FakeStepContext row : rows) {
             boolean sizeRule = row.actionBufferSize == 0 && row.newState.getActions().size() > 2;
@@ -94,8 +108,25 @@ public class LlmGateTest {
     }
 
     @Test
+    public void featureOffNeverReadsTheTree() throws Exception {
+        // A step whose tree fails when asked for: with the flag off the gate must not reach it, on
+        // any row, opaque or not.
+        for (ActionType[] types : new ActionType[][] {{BACK, MENU}, {BACK}, {CLICK, BACK}, {}}) {
+            FakeStepContext ctx = new FakeStepContext() {
+                @Override
+                public GUITree newGUITree() {
+                    throw new AssertionError("the tree was read with opaque routing off");
+                }
+            };
+            ctx.newState = FakeStepContext.stateOf(ACTIVITY, types);
+            LlmGate.allows(ctx, false);
+        }
+    }
+
+    @Test
     public void featureOffClosesOpaque() throws Exception {
         assertFalse(LlmGate.allows(step(0, BACK, MENU), false));
+        assertFalse(LlmGate.allows(canvas(0, BACK, MENU), false));
     }
 
     // -------------------------------------------------------------------------
@@ -103,9 +134,36 @@ public class LlmGateTest {
     // -------------------------------------------------------------------------
 
     @Test
-    public void featureOnOpensOpaque() throws Exception {
-        assertTrue(LlmGate.allows(step(0, BACK, MENU), true));
-        assertTrue(LlmGate.allows(step(0, BACK), true));
+    public void featureOnOpensOpaqueWithARegion() throws Exception {
+        assertTrue(LlmGate.allows(canvas(0, BACK, MENU), true));
+        assertTrue(LlmGate.allows(canvas(0, BACK), true));
+    }
+
+    @Test
+    public void featureOnLeavesOpaqueWithoutARegionClosed() throws Exception {
+        assertFalse("no tree, no region", LlmGate.allows(step(0, BACK, MENU), true));
+        FakeStepContext dialog = step(0, BACK, MENU);
+        dialog.newGUITree = FakeStepContext.dialogTree();
+        assertFalse("a stuck progress dialog is opaque and has no region",
+                LlmGate.allows(dialog, true));
+    }
+
+    @Test
+    public void aRegionDoesNotOpenANonOpaqueStep() throws Exception {
+        // A surface beside one widget: the state is not opaque, so the region is not asked about
+        // and the size rule decides.
+        assertFalse(LlmGate.allows(canvas(0, CLICK, BACK), true));
+    }
+
+    // -------------------------------------------------------------------------
+    // INV-RTR-26 — the opaque-dynamic conjunction
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void opaqueDynamicNeedsBoth() throws Exception {
+        assertTrue(LlmGate.isOpaqueDynamic(canvas(0, BACK, MENU)));
+        assertFalse(LlmGate.isOpaqueDynamic(step(0, BACK, MENU)));
+        assertFalse(LlmGate.isOpaqueDynamic(canvas(0, CLICK, BACK)));
     }
 
     @Test
@@ -128,7 +186,7 @@ public class LlmGateTest {
     @Test
     public void bufferClosesOpaque() throws Exception {
         assertFalse("buffered navigation closes the gate on an opaque step as on any other",
-                LlmGate.allows(step(2, BACK, MENU), true));
+                LlmGate.allows(canvas(2, BACK, MENU), true));
         assertFalse(LlmGate.allows(step(1, CLICK, CLICK, CLICK, BACK, MENU), true));
     }
 }

@@ -286,10 +286,16 @@ public class LlmRandomStageTest {
         return ctx;
     }
 
+    private static FakeStepContext onCanvas(FakeStepContext ctx) throws Exception {
+        ctx.newGUITree = FakeStepContext.canvasTree();
+        return ctx;
+    }
+
     /**
      * A run in miniature that mixes every kind of step the gate distinguishes: widget-rich, opaque
-     * ({@code MODEL_BACK, MODEL_MENU}), a trivial screen with one widget, the three-action boundary,
-     * and buffered navigation on both a widget-rich and an opaque screen.
+     * on a canvas ({@code MODEL_BACK, MODEL_MENU} over a dynamic region), a trivial screen with one
+     * widget, the three-action boundary, buffered navigation on both a widget-rich and an opaque
+     * screen, and an opaque stuck dialog with no dynamic region.
      */
     private static List<FakeStepContext> drawSequenceFixture() throws Exception {
         ActionType click = ActionType.MODEL_CLICK;
@@ -297,15 +303,18 @@ public class LlmRandomStageTest {
         ActionType menu = ActionType.MODEL_MENU;
         List<FakeStepContext> steps = new ArrayList<>();
         steps.add(fixtureStep(0, click, click, click, back, menu)); // 0 widget-rich
-        steps.add(fixtureStep(0, back, menu));                      // 1 opaque
+        steps.add(onCanvas(fixtureStep(0, back, menu)));            // 1 opaque
         steps.add(fixtureStep(0, click, back));                     // 2 trivial, one widget
         steps.add(fixtureStep(1, click, click, click, back, menu)); // 3 widget-rich, buffered
         steps.add(fixtureStep(0, click, click, click, back, menu)); // 4 widget-rich
-        steps.add(fixtureStep(0, back, menu));                      // 5 opaque
-        steps.add(fixtureStep(1, back, menu));                      // 6 opaque, buffered
+        steps.add(onCanvas(fixtureStep(0, back, menu)));            // 5 opaque
+        steps.add(onCanvas(fixtureStep(1, back, menu)));            // 6 opaque, buffered
         steps.add(fixtureStep(0, click, back, menu));               // 7 three actions
-        steps.add(fixtureStep(0, back));                            // 8 opaque, menu disabled
+        steps.add(onCanvas(fixtureStep(0, back)));                  // 8 opaque, menu disabled
         steps.add(fixtureStep(0, click, click, click, back, menu)); // 9 widget-rich
+        FakeStepContext dialog = fixtureStep(0, back, menu);        // 10 opaque, no region
+        dialog.newGUITree = FakeStepContext.dialogTree();
+        steps.add(dialog);
         return steps;
     }
 
@@ -342,8 +351,9 @@ public class LlmRandomStageTest {
 
     @Test
     public void featureOnDrawsOnOpaqueStepsToo() throws Exception {
-        // The same fixture with opaque routing on: the opaque steps with an empty buffer (1, 5, 8)
-        // join the draw sequence, and every other step keeps its place.
+        // The same fixture with opaque routing on: the opaque canvas steps with an empty buffer
+        // (1, 5, 8) join the draw sequence, the opaque dialog (10) does not, and every other step
+        // keeps its place.
         CountingRandom random = new CountingRandom(42L);
         LlmRandomStage stage = stageOver(new StubEngine(null), new Gate(true), 0.5, 0.5, random);
 
@@ -377,7 +387,7 @@ public class LlmRandomStageTest {
     }
 
     private static FakeStepContext opaqueStep() throws Exception {
-        return fixtureStep(0, ActionType.MODEL_BACK, ActionType.MODEL_MENU);
+        return onCanvas(fixtureStep(0, ActionType.MODEL_BACK, ActionType.MODEL_MENU));
     }
 
     private static FakeStepContext widgetStep() throws Exception {
@@ -400,6 +410,23 @@ public class LlmRandomStageTest {
         stage.decide(widgetStep());
         assertEquals("a widget step is flipped against the plan rate", 1, engine.selectCalls);
         assertEquals(2, random.draws);
+    }
+
+    @Test
+    public void opaqueStepWithoutRegionDrawsNothing() throws Exception {
+        // Two actions and no dynamic region: the gate stays closed, so neither rate applies and the
+        // agent's stream is not touched.
+        StubEngine engine = new StubEngine(null);
+        Gate gate = new Gate(true);
+        CountingRandom random = new CountingRandom(42L);
+        LlmRandomStage stage = stageOver(engine, gate, 0.3, 0.9, random);
+        FakeStepContext dialog = fixtureStep(0, ActionType.MODEL_BACK, ActionType.MODEL_MENU);
+        dialog.newGUITree = FakeStepContext.dialogTree();
+
+        assertEquals(StageResult.Kind.CONTINUE, stage.decide(dialog).kind());
+        assertEquals(0, random.draws);
+        assertEquals(0, gate.calls);
+        assertEquals(0, engine.selectCalls);
     }
 
     @Test

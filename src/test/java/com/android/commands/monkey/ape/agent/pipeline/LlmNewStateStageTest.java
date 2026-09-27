@@ -104,6 +104,7 @@ public class LlmNewStateStageTest {
         FakeStepContext ctx = routableStep();
         ctx.newState = FakeStepContext.stateOf(ACTIVITY, ActionType.MODEL_BACK,
                 ActionType.MODEL_MENU);
+        ctx.newGUITree = FakeStepContext.canvasTree();
         return ctx;
     }
 
@@ -266,6 +267,21 @@ public class LlmNewStateStageTest {
         assertEquals(StageResult.Kind.CONTINUE, result.kind());
         assertEquals(0, engine.selectCalls);
         assertEquals("a closed gate reaches no breaker probe", 0, gate.calls);
+    }
+
+    @Test
+    public void opaqueFirstVisitWithoutRegionOn() throws Exception {
+        // A stuck progress dialog is opaque too, and has nothing the model could touch.
+        StubEngine engine = new StubEngine(new LlmTapAction(null, 540, 1200, false));
+        Gate gate = new Gate(true);
+        FakeStepContext ctx = opaqueFirstVisit();
+        ctx.newGUITree = FakeStepContext.dialogTree();
+
+        StageResult result = stageOver(engine, gate, new java.util.ArrayList<>(), true).decide(ctx);
+
+        assertEquals(StageResult.Kind.CONTINUE, result.kind());
+        assertEquals(0, engine.selectCalls);
+        assertEquals(0, gate.calls);
     }
 
     @Test

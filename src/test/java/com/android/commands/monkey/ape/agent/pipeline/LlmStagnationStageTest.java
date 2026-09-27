@@ -108,6 +108,7 @@ public class LlmStagnationStageTest {
         FakeStepContext ctx = stagnantStep();
         ctx.newState = FakeStepContext.stateOf(ACTIVITY, ActionType.MODEL_BACK,
                 ActionType.MODEL_MENU);
+        ctx.newGUITree = FakeStepContext.canvasTree();
         return ctx;
     }
 
@@ -321,6 +322,20 @@ public class LlmStagnationStageTest {
         Gate gate = new Gate(true);
 
         StageResult result = stageOver(engine, gate, false).decide(opaqueStagnantStep());
+
+        assertEquals(StageResult.Kind.CONTINUE, result.kind());
+        assertEquals(0, engine.selectCalls);
+        assertEquals(0, gate.calls);
+    }
+
+    @Test
+    public void opaqueMidpointWithoutRegionOn() throws Exception {
+        StubEngine engine = new StubEngine(new ModelAction(null, ActionType.MODEL_BACK));
+        Gate gate = new Gate(true);
+        FakeStepContext ctx = opaqueStagnantStep();
+        ctx.newGUITree = FakeStepContext.dialogTree();
+
+        StageResult result = stageOver(engine, gate, true).decide(ctx);
 
         assertEquals(StageResult.Kind.CONTINUE, result.kind());
         assertEquals(0, engine.selectCalls);

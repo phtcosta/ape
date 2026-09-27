@@ -47,8 +47,10 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * was drawn anyway.
  *
  * <p><b>Opaque steps may carry their own rate.</b> When the plan turns opaque routing on
- * ({@code ape.llmPercentageNoSubstrate >= 0}), an {@linkplain LlmGate#isOpaque opaque} step passes the
- * gate and is flipped against that value instead of the plan's rate (INV-RTR-24). A zero opaque rate
+ * ({@code ape.llmPercentageNoSubstrate >= 0}), an {@linkplain LlmGate#isOpaqueDynamic opaque step
+ * whose tree holds a dynamic region} passes the gate and is flipped against that value instead of the
+ * plan's rate (INV-RTR-24). An opaque step without a region — a stuck dialog, a camera preview —
+ * stays closed and draws nothing. A zero opaque rate
  * draws no coin at all: it lets the new-state and stagnation hooks consult the model on a canvas
  * without random routing there, and it does so without consuming a draw. With opaque routing off,
  * every step that passes the gate is flipped against the positive plan rate, so the {@code rate > 0}
@@ -69,8 +71,9 @@ public final class LlmRandomStage implements DecisionStage {
      *        carrying a positive rate and such a plan has one
      * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
      * @param percentage the plan's rate; positive, since a zero rate assembles no stage
-     * @param opaqueRate the rate on opaque steps, {@code ape.llmPercentageNoSubstrate}; negative when
-     *        opaque routing is off, which is how the stage knows whether it is on
+     * @param opaqueRate the rate on opaque steps with a dynamic region,
+     *        {@code ape.llmPercentageNoSubstrate}; negative when opaque routing is off, which is how
+     *        the stage knows whether it is on
      * @param random the agent's generator, which is the stream the coin must come from
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      */
@@ -96,7 +99,7 @@ public final class LlmRandomStage implements DecisionStage {
         if (!LlmGate.allows(ctx, opaqueEnabled)) {
             return StageResult.continueChain();
         }
-        double rate = opaqueEnabled && LlmGate.isOpaque(ctx.newState()) ? opaqueRate : percentage;
+        double rate = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx) ? opaqueRate : percentage;
         if (rate <= 0 || random.nextDouble() >= rate || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }

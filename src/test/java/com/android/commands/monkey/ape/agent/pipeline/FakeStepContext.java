@@ -11,9 +11,13 @@ import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
+import com.android.commands.monkey.ape.tree.DumpTrees;
 import com.android.commands.monkey.ape.tree.GUITree;
+import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.MopData;
+
+import android.graphics.Rect;
 
 /**
  * A step, stated as values, for the stage tests.
@@ -99,6 +103,43 @@ class FakeStepContext implements StepContext {
         }
         setField(state, "actions", actions);
         return state;
+    }
+
+    /**
+     * The tree of a LibGDX canvas as the jar sees it: a root holding one focusable, text-less
+     * {@code android.view.View} leaf that covers it — a {@linkplain LlmGate#hasDynamicRegion
+     * dynamic region}. Set it as {@link #newGUITree} to state "an opaque step on a canvas".
+     */
+    static GUITree canvasTree() throws Exception {
+        GUITreeNode root = new GUITreeNode(null);
+        root.setClassName("android.widget.FrameLayout");
+        root.setBoundsInScreen(new Rect(0, 0, 1080, 1920));
+        GUITreeNode surface = new GUITreeNode(root);
+        surface.setClassName("android.view.View");
+        surface.setBoundsInScreen(new Rect(0, 0, 1080, 1920));
+        surface.setFocusable(true);
+        root.addChild(surface);
+        return DumpTrees.treeOf(root);
+    }
+
+    /**
+     * The tree of a stuck progress dialog: a label and a spinner, no dynamic region. An opaque step
+     * on it is one the gate keeps closed.
+     */
+    static GUITree dialogTree() throws Exception {
+        GUITreeNode root = new GUITreeNode(null);
+        root.setClassName("android.widget.FrameLayout");
+        root.setBoundsInScreen(new Rect(28, 621, 1052, 1235));
+        GUITreeNode label = new GUITreeNode(root);
+        label.setClassName("android.widget.TextView");
+        label.setText("Checking for database updates");
+        label.setBoundsInScreen(new Rect(133, 710, 947, 773));
+        root.addChild(label);
+        GUITreeNode spinner = new GUITreeNode(root);
+        spinner.setClassName("android.widget.ProgressBar");
+        spinner.setBoundsInScreen(new Rect(112, 815, 968, 900));
+        root.addChild(spinner);
+        return DumpTrees.treeOf(root);
     }
 
     static void setField(Object target, String name, Object value) throws Exception {

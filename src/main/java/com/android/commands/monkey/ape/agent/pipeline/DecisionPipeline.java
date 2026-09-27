@@ -146,7 +146,9 @@ public final class DecisionPipeline {
      */
     public static DecisionPipeline fromSpec(RunSpec spec, StageCollaborators collaborators) {
         // Opaque routing rides on LLM_RANDOM's sub-parameter: on when the feature is in the plan and
-        // the value is not the -1 sentinel. The three LLM stages learn it here, never from Config.
+        // the value is not the -1 sentinel. It opens the LLM gate on opaque steps whose tree holds a
+        // dynamic region (LlmGate.isOpaqueDynamic), not on every opaque step. The three LLM stages
+        // learn it here, never from Config.
         double opaqueRate = spec.has(Feature.LLM_RANDOM)
                 ? spec.llm().dbl("ape.llmPercentageNoSubstrate") : -1;
         boolean opaqueEnabled = opaqueRate >= 0;

@@ -71,7 +71,7 @@ public final class LlmStagnationStage implements DecisionStage {
      *        firing point
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      * @param opaqueEnabled whether the plan turns opaque routing on, so the shared precondition also
-     *        opens on an opaque step ({@link LlmGate#allows})
+     *        opens on an opaque step whose tree holds a dynamic region ({@link LlmGate#allows})
      */
     public LlmStagnationStage(LlmEngine engine, BooleanSupplier breakerAllows, int restartThreshold,
                               Consumer<ModelAction> resolveSynthesizedTap, boolean opaqueEnabled) {
