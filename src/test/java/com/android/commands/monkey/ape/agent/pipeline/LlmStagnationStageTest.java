@@ -51,6 +51,7 @@ public class LlmStagnationStageTest {
         private final ModelAction answer;
         int selectCalls;
         String modeSeen;
+        Boolean edgeBandsOffSeen;
 
         StubEngine(ModelAction answer) {
             // Every step of the real pipeline is replaced below, so none of the units it composes
@@ -61,9 +62,11 @@ public class LlmStagnationStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode,
+                boolean edgeBandsOff) {
             selectCalls++;
             modeSeen = mode;
+            edgeBandsOffSeen = edgeBandsOff;
             return answer;
         }
     }
@@ -314,6 +317,8 @@ public class LlmStagnationStageTest {
         assertEquals(StageResult.Kind.SELECT, result.kind());
         assertEquals(1, engine.selectCalls);
         assertEquals("stagnation", engine.modeSeen);
+        assertEquals("an opaque dynamic step is mapped without the boundary bands",
+                Boolean.TRUE, engine.edgeBandsOffSeen);
     }
 
     @Test
@@ -352,5 +357,33 @@ public class LlmStagnationStageTest {
 
         assertEquals(StageResult.Kind.CONTINUE, result.kind());
         assertEquals(0, engine.selectCalls);
+    }
+
+    // -------------------------------------------------------------------------
+    // The edge-band decision (INV-RTR-27)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void aWidgetStepKeepsTheBandsWithOpaqueRoutingOn() throws Exception {
+        StubEngine engine = new StubEngine(null);
+        FakeStepContext ctx = stagnantStep();
+        ctx.newGUITree = FakeStepContext.canvasTree();
+
+        stageOver(engine, new Gate(true), true).decide(ctx);
+
+        assertEquals(1, engine.selectCalls);
+        assertEquals(Boolean.FALSE, engine.edgeBandsOffSeen);
+    }
+
+    @Test
+    public void theBandsStayWithOpaqueRoutingOff() throws Exception {
+        StubEngine engine = new StubEngine(null);
+        FakeStepContext ctx = stagnantStep();
+        ctx.newGUITree = FakeStepContext.canvasTree();
+
+        stageOver(engine, new Gate(true), false).decide(ctx);
+
+        assertEquals(1, engine.selectCalls);
+        assertEquals(Boolean.FALSE, engine.edgeBandsOffSeen);
     }
 }

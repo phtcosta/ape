@@ -48,7 +48,7 @@ public class CoordinateMapperOffTreeTapTest {
     public void offTreeClickBuildsTap() {
         CoordinateMapper mapper = newMapper();
         ModelAction result = mapper.map(
-                600, 900, "click", null, unresolvedActions(), null, W, H);
+                600, 900, "click", null, unresolvedActions(), null, W, H, false);
         assertTrue("off-tree click must synthesize an LlmTapAction", result instanceof LlmTapAction);
         LlmTapAction tap = (LlmTapAction) result;
         assertEquals(ActionType.MODEL_LLM_TAP, tap.getType());
@@ -63,7 +63,7 @@ public class CoordinateMapperOffTreeTapTest {
     public void offTreeLongClickBuildsLongPressTap() {
         CoordinateMapper mapper = newMapper();
         ModelAction result = mapper.map(
-                600, 900, "long_click", null, unresolvedActions(), null, W, H);
+                600, 900, "long_click", null, unresolvedActions(), null, W, H, false);
         assertTrue(result instanceof LlmTapAction);
         assertTrue("long_click off-tree must be a long-press tap", ((LlmTapAction) result).isLongClick());
     }
@@ -73,7 +73,7 @@ public class CoordinateMapperOffTreeTapTest {
         CoordinateMapper mapper = newMapper();
         // A raw coordinate has no EditText node to receive input — no off-tree tap is synthesized.
         assertNull(mapper.map(
-                600, 900, "type_text", "hello", unresolvedActions(), null, W, H));
+                600, 900, "type_text", "hello", unresolvedActions(), null, W, H, false));
     }
 
     @Test
@@ -82,7 +82,7 @@ public class CoordinateMapperOffTreeTapTest {
         // Nav-band coordinate: pixelY > H*0.94 (1794*0.94 = 1686). Boundary reject runs before the
         // off-tree branch, so null is returned and NO tap is constructed.
         ModelAction result = mapper.map(
-                600, 1750, "click", null, unresolvedActions(), null, W, H);
+                600, 1750, "click", null, unresolvedActions(), null, W, H, false);
         assertNull("boundary-band coordinate must not become a tap", result);
     }
 
@@ -93,7 +93,7 @@ public class CoordinateMapperOffTreeTapTest {
         // so without the reject this point would reach the off-tree branch and become a tap — which
         // is what makes the null here attributable to the top band and not to an absent match.
         ModelAction result = mapper.map(
-                600, 80, "click", null, unresolvedActions(), null, W, H);
+                600, 80, "click", null, unresolvedActions(), null, W, H, false);
         assertNull("top-band coordinate must not become a tap", result);
     }
 
@@ -102,11 +102,11 @@ public class CoordinateMapperOffTreeTapTest {
         CoordinateMapper mapper = newMapper();
         // "back" is dispatched to state.getBackAction() before any coordinate matching; with a null
         // state the NPE is caught internally → null (unchanged behavior). No off-tree tap for back.
-        assertNull(mapper.map(0, 0, "back", null, unresolvedActions(), null, W, H));
+        assertNull(mapper.map(0, 0, "back", null, unresolvedActions(), null, W, H, false));
     }
 
     // -------------------------------------------------------------------------
-    // Opaque screens: the same mapping, bands included (declared limitation)
+    // Opaque screens with the bands: the same mapping as any other step
     // -------------------------------------------------------------------------
 
     /** A game canvas's candidates: {@code MODEL_BACK} and {@code MODEL_MENU}, nothing targetable. */
@@ -120,23 +120,76 @@ public class CoordinateMapperOffTreeTapTest {
     @Test
     public void opaqueClickMidScreenBuildsTap() {
         ModelAction result = newMapper().map(
-                600, H / 2, "click", null, opaqueActions(), null, W, H);
+                600, H / 2, "click", null, opaqueActions(), null, W, H, false);
         assertTrue("with no widget on the screen a click is an off-tree tap",
                 result instanceof LlmTapAction);
         assertEquals(H / 2, ((LlmTapAction) result).getPixelY());
     }
 
     @Test
-    public void opaqueClickInTheBottomBandIsRejectedAsBoundary() {
-        // Game controls often sit in the bottom band; opaque routing does not relax the band, so the
-        // answer is lost and counted as reason:"boundary" (llm-opaque-screen D5b).
+    public void withTheBandsTheBottomBandStillRejectsAnOpaqueClick() {
+        // Without edgeBandsOff — every step that is not opaque dynamic with opaque routing on —
+        // the bands apply as before and the answer is counted as reason:"boundary".
         int pixelY = (int) (H * 0.97);
         ModelAction result = newMapper().map(
-                600, pixelY, "click", null, opaqueActions(), null, W, H);
+                600, pixelY, "click", null, opaqueActions(), null, W, H, false);
         assertNull(result);
 
         LlmEngine.Verdict verdict = LlmEngine.classify(result, false,
-                new ToolCallParser.ParsedAction("click", 600, pixelY, null, null, "none"));
+                new ToolCallParser.ParsedAction("click", 600, pixelY, null, null, "none"), false);
+        assertEquals("no_match", verdict.result);
+        assertEquals("boundary", verdict.noMatchReason);
+    }
+
+    // -------------------------------------------------------------------------
+    // Opaque dynamic steps: no bands, a zero on either axis rejected (INV-RTR-27)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void withoutTheBandsAClickAtTheBottomEdgeBuildsTap() {
+        int pixelY = (int) (H * 0.97);
+        ModelAction result = newMapper().map(
+                600, pixelY, "click", null, opaqueActions(), null, W, H, true);
+        assertTrue("the bottom band is lifted on an opaque dynamic step",
+                result instanceof LlmTapAction);
+        assertEquals(pixelY, ((LlmTapAction) result).getPixelY());
+    }
+
+    @Test
+    public void withoutTheBandsAClickAtTheTopEdgeBuildsTap() {
+        int pixelY = (int) (H * 0.02);
+        ModelAction result = newMapper().map(
+                600, pixelY, "click", null, opaqueActions(), null, W, H, true);
+        assertTrue("the top band is lifted on an opaque dynamic step",
+                result instanceof LlmTapAction);
+        assertEquals(pixelY, ((LlmTapAction) result).getPixelY());
+    }
+
+    @Test
+    public void withoutTheBandsAZeroOnEitherAxisIsRejected() {
+        CoordinateMapper mapper = newMapper();
+        for (int[] xy : new int[][] {{0, 0}, {540, 0}, {0, 900}}) {
+            assertNull("(" + xy[0] + ", " + xy[1] + ")",
+                    mapper.map(xy[0], xy[1], "click", null, opaqueActions(), null, W, H, true));
+        }
+    }
+
+    @Test
+    public void aFlaggedZeroAxisRejectionIsDegenerate() {
+        for (int[] xy : new int[][] {{0, 0}, {540, 0}, {0, 900}}) {
+            LlmEngine.Verdict verdict = LlmEngine.classify(null, false,
+                    new ToolCallParser.ParsedAction("click", xy[0], xy[1], null, null, "none"),
+                    true);
+            assertEquals("no_match", verdict.result);
+            assertEquals("(" + xy[0] + ", " + xy[1] + ")", "degenerate", verdict.noMatchReason);
+        }
+    }
+
+    @Test
+    public void anUnflaggedZeroOnOneAxisStaysBoundary() {
+        // Without the flag only (0, 0) is degenerate, as before; (540, 0) is the top band's.
+        LlmEngine.Verdict verdict = LlmEngine.classify(null, false,
+                new ToolCallParser.ParsedAction("click", 540, 0, null, null, "none"), false);
         assertEquals("no_match", verdict.result);
         assertEquals("boundary", verdict.noMatchReason);
     }

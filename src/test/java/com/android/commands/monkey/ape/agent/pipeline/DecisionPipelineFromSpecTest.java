@@ -425,7 +425,8 @@ public class DecisionPipelineFromSpecTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode,
+                boolean edgeBandsOff) {
             modes.add(mode);
             return null;
         }

@@ -47,6 +47,7 @@ public class LlmRandomStageTest {
         private final ModelAction answer;
         int selectCalls;
         String modeSeen;
+        Boolean edgeBandsOffSeen;
 
         StubEngine(ModelAction answer) {
             // Every step of the real pipeline is replaced below, so none of the units it composes
@@ -57,9 +58,11 @@ public class LlmRandomStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode,
+                boolean edgeBandsOff) {
             selectCalls++;
             modeSeen = mode;
+            edgeBandsOffSeen = edgeBandsOff;
             return answer;
         }
     }
@@ -459,5 +462,31 @@ public class LlmRandomStageTest {
 
         stage.decide(widgetStep());
         assertEquals("a widget step still draws against the plan rate", 1, random.draws);
+    }
+
+    // -------------------------------------------------------------------------
+    // The edge-band decision (INV-RTR-27)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void edgeBandsAreOffOnlyOnAnOpaqueDynamicStepWithOpaqueRoutingOn() throws Exception {
+        // 0.5 is under both rates, so every step that passes the gate reaches the engine.
+        StubEngine engine = new StubEngine(null);
+        LlmRandomStage on = stageOver(engine, new Gate(true), 0.7, 0.9, new FixedRandom(0.5));
+
+        on.decide(opaqueStep());
+        assertEquals(1, engine.selectCalls);
+        assertEquals(Boolean.TRUE, engine.edgeBandsOffSeen);
+
+        on.decide(onCanvas(widgetStep()));
+        assertEquals(2, engine.selectCalls);
+        assertEquals("a region beside widgets is not an opaque step",
+                Boolean.FALSE, engine.edgeBandsOffSeen);
+
+        LlmRandomStage off = stageOver(engine, new Gate(true), 0.7, new FixedRandom(0.5));
+        engine.edgeBandsOffSeen = null;
+        off.decide(onCanvas(widgetStep()));
+        assertEquals(3, engine.selectCalls);
+        assertEquals(Boolean.FALSE, engine.edgeBandsOffSeen);
     }
 }

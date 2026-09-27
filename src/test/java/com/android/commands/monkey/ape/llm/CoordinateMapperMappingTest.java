@@ -79,17 +79,18 @@ public class CoordinateMapperMappingTest {
     public void anAnswerWithoutAToolNameMapsToNothing() {
         // The tool the model called is what constrains the ActionType, so a null name has nothing
         // to filter by and returns before any candidate is examined.
-        assertNull(newMapper().map(540, 960, null, null, null, null, W, H));
+        assertNull(newMapper().map(540, 960, null, null, null, null, W, H, false));
     }
 
     @Test
     public void anEmptyCandidateListMapsToNothing() {
-        assertNull(newMapper().map(540, 960, "click", null, new ArrayList<ModelAction>(), null, W, H));
+        assertNull(newMapper().map(540, 960, "click", null, new ArrayList<ModelAction>(), null,
+                W, H, false));
     }
 
     @Test
     public void aNullCandidateListMapsToNothing() {
-        assertNull(newMapper().map(540, 960, "click", null, null, null, W, H));
+        assertNull(newMapper().map(540, 960, "click", null, null, null, W, H, false));
     }
 
     // -------------------------------------------------------------------------
@@ -102,7 +103,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(100, 200, 300, 250));
 
         ModelAction result = newMapper().map(
-                200, 230, "click", null, actions(longClick), null, W, H);
+                200, 230, "click", null, actions(longClick), null, W, H, false);
 
         assertNotSame("a click answer must never resolve to a MODEL_LONG_CLICK", longClick, result);
         // Both passes apply the filter, so the only remaining outcome for an in-bounds click
@@ -116,7 +117,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(0, 100, 1080, 900));
 
         ModelAction result = newMapper().map(
-                540, 500, "click", null, actions(scroll), null, W, H);
+                540, 500, "click", null, actions(scroll), null, W, H, false);
 
         assertNotSame(scroll, result);
         assertTrue(result instanceof LlmTapAction);
@@ -130,7 +131,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(100, 200, 300, 250));
 
         ModelAction result = newMapper().map(
-                200, 230, "click", null, actions(longClick, click), null, W, H);
+                200, 230, "click", null, actions(longClick, click), null, W, H, false);
 
         assertSame("the filter must not cost the click its own match", click, result);
     }
@@ -141,7 +142,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(100, 200, 300, 250));
 
         ModelAction result = newMapper().map(
-                200, 230, "long_click", null, actions(click), null, W, H);
+                200, 230, "long_click", null, actions(click), null, W, H, false);
 
         assertSame("long_click keeps its documented fallback to MODEL_CLICK", click, result);
     }
@@ -166,7 +167,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(50, 300, 400, 350));
 
         ModelAction result = newMapper().map(
-                225, 325, "click", null, actions(click), null, W, H);
+                225, 325, "click", null, actions(click), null, W, H, false);
 
         assertSame(click, result);
         assertTrue(ApePromptBuilder.isInputClass(result.getResolvedNode()));
@@ -190,7 +191,7 @@ public class CoordinateMapperMappingTest {
         click.setValid(true);
 
         ModelAction result = newMapper().map(
-                225, 325, "long_click", null, actions(longClick, click), null, W, H);
+                225, 325, "long_click", null, actions(longClick, click), null, W, H, false);
 
         assertSame("the press is converted to the action that can carry text", click, result);
     }
@@ -203,7 +204,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(50, 300, 400, 350));
 
         ModelAction result = newMapper().map(
-                225, 325, "long_click", null, actions(longClick), null, W, H);
+                225, 325, "long_click", null, actions(longClick), null, W, H, false);
 
         assertSame(longClick, result);
     }
@@ -214,7 +215,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(50, 300, 400, 350));
 
         ModelAction result = newMapper().map(
-                225, 325, "type_text", "user@example.com", actions(click), null, W, H);
+                225, 325, "type_text", "user@example.com", actions(click), null, W, H, false);
 
         assertSame("a well-behaved type_text answer keeps its existing path", click, result);
     }
@@ -231,7 +232,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(0, 200, 1080, 350));
 
         ModelAction result = newMapper().map(
-                540, 180, "click", null, actions(bar), null, W, H);
+                540, 180, "click", null, actions(bar), null, W, H, false);
 
         assertSame("edge distance 20 is within the 75 px tolerance", bar, result);
         // Regression lock on the geometry this replaced: the retired centre-distance rule measured
@@ -248,7 +249,7 @@ public class CoordinateMapperMappingTest {
 
         // 300 px below the bar's bottom edge — well past the 75 px tolerance.
         ModelAction result = newMapper().map(
-                540, 650, "click", null, actions(bar), null, W, H);
+                540, 650, "click", null, actions(bar), null, W, H, false);
 
         assertTrue("no snap, so the coordinate becomes an off-tree tap", result instanceof LlmTapAction);
     }
@@ -261,7 +262,7 @@ public class CoordinateMapperMappingTest {
                 new Rect(100, 200, 300, 250));
 
         ModelAction result = newMapper().map(
-                200, 230, "long_click", null, actions(longClick, click), null, W, H);
+                200, 230, "long_click", null, actions(longClick, click), null, W, H, false);
 
         assertSame("only input-capable widgets are converted", longClick, result);
     }

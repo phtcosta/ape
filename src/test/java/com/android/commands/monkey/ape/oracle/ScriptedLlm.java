@@ -199,7 +199,8 @@ public class ScriptedLlm {
                                         List<ModelAction> actions,
                                         MopData mopData,
                                         List<ApePromptBuilder.ActionHistoryEntry> recentActions,
-                                        String mode) {
+                                        String mode,
+                                        boolean edgeBandsOff) {
             if (entry == null) {
                 throw new IllegalStateException("scenario " + script.getName() + " step " + stepIndex
                         + " declares no LLM entry, but the agent routed a " + mode

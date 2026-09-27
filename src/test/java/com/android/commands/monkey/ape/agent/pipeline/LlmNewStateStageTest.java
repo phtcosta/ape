@@ -44,6 +44,7 @@ public class LlmNewStateStageTest {
         private final ModelAction answer;
         int selectCalls;
         String modeSeen;
+        Boolean edgeBandsOffSeen;
         GUITree treeSeen;
 
         StubEngine(ModelAction answer) {
@@ -55,9 +56,11 @@ public class LlmNewStateStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode,
+                boolean edgeBandsOff) {
             selectCalls++;
             modeSeen = mode;
+            edgeBandsOffSeen = edgeBandsOff;
             treeSeen = tree;
             return answer;
         }
@@ -250,6 +253,8 @@ public class LlmNewStateStageTest {
 
         assertEquals(1, engine.selectCalls);
         assertEquals("new-state", engine.modeSeen);
+        assertEquals("an opaque dynamic step is mapped without the boundary bands",
+                Boolean.TRUE, engine.edgeBandsOffSeen);
         assertEquals(StageResult.Kind.SELECT, result.kind());
         assertSame(tap, result.action());
         assertEquals("the off-tree tap is resolved against the state before it is selected",
@@ -295,5 +300,34 @@ public class LlmNewStateStageTest {
 
         assertEquals(StageResult.Kind.CONTINUE, result.kind());
         assertEquals(0, engine.selectCalls);
+    }
+
+    // -------------------------------------------------------------------------
+    // The edge-band decision (INV-RTR-27)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void aWidgetStepKeepsTheBandsWithOpaqueRoutingOn() throws Exception {
+        // A dynamic region beside widgets is not an opaque step: the bands stay.
+        StubEngine engine = new StubEngine(null);
+        FakeStepContext ctx = routableStep();
+        ctx.newGUITree = FakeStepContext.canvasTree();
+
+        stageOver(engine, new Gate(true), new java.util.ArrayList<>(), true).decide(ctx);
+
+        assertEquals(1, engine.selectCalls);
+        assertEquals(Boolean.FALSE, engine.edgeBandsOffSeen);
+    }
+
+    @Test
+    public void theBandsStayWithOpaqueRoutingOff() throws Exception {
+        StubEngine engine = new StubEngine(null);
+        FakeStepContext ctx = routableStep();
+        ctx.newGUITree = FakeStepContext.canvasTree();
+
+        stageOver(engine, new Gate(true), new java.util.ArrayList<>(), false).decide(ctx);
+
+        assertEquals(1, engine.selectCalls);
+        assertEquals(Boolean.FALSE, engine.edgeBandsOffSeen);
     }
 }

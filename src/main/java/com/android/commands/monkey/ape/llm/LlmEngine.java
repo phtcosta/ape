@@ -81,6 +81,10 @@ public class LlmEngine {
      * @param recentActions the action-history ring the prompt shows; may be null or empty
      * @param mode which hook asked — {@code new-state}, {@code stagnation} or {@code random} — as
      *        the decision sub-event reports it
+     * @param edgeBandsOff whether the calling stage found an opaque step with a dynamic region and
+     *        opaque routing on (INV-RTR-27); handed to {@link CoordinateMapper#map}, which then
+     *        applies no boundary band and rejects a zero on either axis, and to {@link #classify}.
+     *        The stage decides it because only the stage knows whether opaque routing is on
      * @return the selected action, or null when nothing was selected
      */
     public ModelAction selectAction(GUITree tree,
@@ -88,7 +92,8 @@ public class LlmEngine {
                                     List<ModelAction> actions,
                                     MopData mopData,
                                     List<ApePromptBuilder.ActionHistoryEntry> recentActions,
-                                    String mode) {
+                                    String mode,
+                                    boolean edgeBandsOff) {
         telemetry.countAttempt();
         long startMs = System.currentTimeMillis();
 
@@ -156,7 +161,7 @@ public class LlmEngine {
             // because the pipeline did not fail — only its answer was declined (INV-RTR-15/16).
             int[] pixels = mapper.toPixels(parsed.getX(), parsed.getY(), deviceWidth, deviceHeight);
             ModelAction match = mapper.map(pixels[0], pixels[1], parsed.getActionType(),
-                    parsed.getText(), actions, state, deviceWidth, deviceHeight);
+                    parsed.getText(), actions, state, deviceWidth, deviceHeight, edgeBandsOff);
             boolean banned = false;
             if (match != null && mapper.isDeadPair(mapper.banKey(match))) {
                 banned = true;
@@ -169,7 +174,7 @@ public class LlmEngine {
             // input widget is owed, and hand the verdict over to be counted and said.
             client.recordSuccess();
             long elapsedMs = System.currentTimeMillis() - startMs;
-            Verdict verdict = classify(match, banned, parsed);
+            Verdict verdict = classify(match, banned, parsed, edgeBandsOff);
             if ("matched".equals(verdict.result)) {
                 applyTypedText(match, parsed);
             }
@@ -227,13 +232,18 @@ public class LlmEngine {
      *
      * <p>The three {@code no_match} reasons are what an offline reader separates the mechanisms by:
      * a ban refused an answer that mapped, a {@code (0,0)} emission is the model degenerating, and
-     * everything else is a coordinate the boundary bands or the snap tolerance turned down.
+     * everything else is a coordinate the boundary bands or the snap tolerance turned down. On a
+     * step mapped with {@code edgeBandsOff} a zero on either axis is also {@code degenerate}: the
+     * mapper rejects it by name there, since no band catches it (INV-RTR-27). Elsewhere only
+     * {@code (0,0)} is, as before.
      *
      * @param match what the mapping returned, already nulled if the ban refused it
      * @param banned whether that null came from the ban rather than from the mapping
      * @param parsed the model's answer, for the degenerate-coordinate test
+     * @param edgeBandsOff whether the answer was mapped without the boundary bands
      */
-    static Verdict classify(ModelAction match, boolean banned, ToolCallParser.ParsedAction parsed) {
+    static Verdict classify(ModelAction match, boolean banned, ToolCallParser.ParsedAction parsed,
+            boolean edgeBandsOff) {
         if (match instanceof LlmTapAction) {
             return new Verdict("llm_tap", null, "none");
         }
@@ -252,8 +262,10 @@ public class LlmEngine {
         if (banned) {
             return new Verdict("no_match", "dead_pair", "none");
         }
-        return new Verdict("no_match",
-                (parsed.getX() == 0 && parsed.getY() == 0) ? "degenerate" : "boundary", "none");
+        boolean degenerate = edgeBandsOff
+                ? parsed.getX() == 0 || parsed.getY() == 0
+                : parsed.getX() == 0 && parsed.getY() == 0;
+        return new Verdict("no_match", degenerate ? "degenerate" : "boundary", "none");
     }
 
     /**

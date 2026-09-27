@@ -55,7 +55,8 @@ public final class LlmNewStateStage implements DecisionStage {
      * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      * @param opaqueEnabled whether the plan turns opaque routing on, so the shared precondition also
-     *        opens on an opaque step whose tree holds a dynamic region ({@link LlmGate#allows})
+     *        opens on an opaque step whose tree holds a dynamic region ({@link LlmGate#allows}),
+     *        and the engine maps the answer there without the boundary bands (INV-RTR-27)
      */
     public LlmNewStateStage(LlmEngine engine, BooleanSupplier breakerAllows,
                             Consumer<ModelAction> resolveSynthesizedTap, boolean opaqueEnabled) {
@@ -76,8 +77,10 @@ public final class LlmNewStateStage implements DecisionStage {
                 || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }
+        boolean edgeBandsOff = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx);
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
-                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "new-state");
+                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "new-state",
+                edgeBandsOff);
         if (result == null) {
             return StageResult.continueChain();
         }

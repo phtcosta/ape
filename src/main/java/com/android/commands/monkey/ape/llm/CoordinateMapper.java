@@ -82,7 +82,8 @@ public final class CoordinateMapper {
      * <p>Matching strategy (in order):
      * <ol>
      *   <li>back → return state.getBackAction()</li>
-     *   <li>Boundary reject: y in the configured top or bottom band</li>
+     *   <li>Boundary reject: y in the configured top or bottom band; with {@code edgeBandsOff},
+     *       instead, reject a zero on either axis</li>
      *   <li>type_text: filter to input-field widgets only</li>
      *   <li>Bounds containment: smallest widget whose bounds contain (pixelX, pixelY)</li>
      *   <li>Edge-distance fallback: nearest widget by point-to-rectangle distance,
@@ -99,6 +100,17 @@ public final class CoordinateMapper {
      * newly extracted unit is indistinguishable from a slicing regression when the parity oracle
      * later disagrees, which is why it is written down rather than quietly carried.
      *
+     * <p><b>The frame and the edge bands.</b> {@code deviceWidth}/{@code deviceHeight} are the
+     * display size {@code Display.getSize()} reports — the area available to the app, without the
+     * navigation bar — and the screenshot the model sees is cropped to it, so every answer lands
+     * inside that frame. The bands therefore keep no tap off the navigation bar; the bottom band
+     * removes the bottom of the app's own content. On an opaque step whose tree holds a dynamic
+     * region, with opaque routing on, the calling stage passes {@code edgeBandsOff = true}
+     * (INV-RTR-27): neither band applies, and a pixel with {@code pixelX == 0} or
+     * {@code pixelY == 0} is rejected instead — the parser reads a coordinate it cannot find as
+     * {@code 0}, so a zero on either axis is "no coordinate", which the top band used to catch.
+     * With {@code edgeBandsOff == false} this method behaves exactly as before the flag existed.
+     *
      * @param pixelX     x coordinate in device pixels
      * @param pixelY     y coordinate in device pixels
      * @param actionType LLM action type string ("click", "long_click", "type_text", "back")
@@ -107,13 +119,16 @@ public final class CoordinateMapper {
      * @param state      current state (for back action)
      * @param deviceWidth  display width in pixels
      * @param deviceHeight display height in pixels
+     * @param edgeBandsOff true only on an opaque dynamic step with opaque routing on: skip the
+     *                     boundary bands and reject a zero on either axis
      * @return matched ModelAction, or null if no suitable match found
      */
     public ModelAction map(int pixelX, int pixelY,
                            String actionType, String text,
                            List<ModelAction> actions,
                            State state,
-                           int deviceWidth, int deviceHeight) {
+                           int deviceWidth, int deviceHeight,
+                           boolean edgeBandsOff) {
         if (actionType == null) return null;
 
         // Handle back action
@@ -125,10 +140,19 @@ public final class CoordinateMapper {
             }
         }
 
-        // Boundary reject: top and bottom bands of the screen, keeping the model off the status and
-        // navigation bars — and off any degenerate (0,0) emission, which the top band catches.
-        if (pixelY < deviceHeight * boundaryTopPct
+        if (edgeBandsOff) {
+            // No bands on an opaque dynamic step (INV-RTR-27); a zero on either axis is the
+            // parser's default for a coordinate it could not read, not a point the model chose.
+            if (pixelX == 0 || pixelY == 0) {
+                Logger.println("[APE-RV] LLM coordinate rejected (degenerate): pixelX=" + pixelX
+                        + " pixelY=" + pixelY);
+                return null;
+            }
+        } else if (pixelY < deviceHeight * boundaryTopPct
                 || pixelY > deviceHeight * boundaryBottomPct) {
+            // Boundary reject: top and bottom bands of the screen, keeping the model off the status
+            // and navigation bars — and off any degenerate (0,0) emission, which the top band
+            // catches.
             Logger.println("[APE-RV] LLM coordinate rejected (boundary): pixelY=" + pixelY
                     + " deviceHeight=" + deviceHeight);
             return null;

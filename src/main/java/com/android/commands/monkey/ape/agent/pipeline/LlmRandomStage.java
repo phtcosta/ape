@@ -41,20 +41,24 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * every later draw of the other stream in an LLM arm. That is a real change in what a device does
  * and one no golden can see, because the parity harness substitutes this coin outright.
  *
- * <p>The rate's other role, deciding whether this stage exists at all, is settled at assembly: a plan
- * with a zero rate has no stage here. That move is draw-neutral, which is the reason it is safe — the
- * rate was already the predicate's first conjunct, so when it was zero the short-circuit meant no coin
- * was drawn anyway.
+ * <p>The rate's other role, deciding whether this stage exists at all, is settled at assembly: a
+ * plan with a zero rate has no stage here. That move is draw-neutral, which is the reason it is safe
+ * — the rate was already the predicate's first conjunct, so when it was zero the short-circuit
+ * meant no coin was drawn anyway.
  *
  * <p><b>Opaque steps may carry their own rate.</b> When the plan turns opaque routing on
  * ({@code ape.llmPercentageNoSubstrate >= 0}), an {@linkplain LlmGate#isOpaqueDynamic opaque step
- * whose tree holds a dynamic region} passes the gate and is flipped against that value instead of the
- * plan's rate (INV-RTR-24). An opaque step without a region — a stuck dialog, a camera preview —
- * stays closed and draws nothing. A zero opaque rate
- * draws no coin at all: it lets the new-state and stagnation hooks consult the model on a canvas
- * without random routing there, and it does so without consuming a draw. With opaque routing off,
- * every step that passes the gate is flipped against the positive plan rate, so the {@code rate > 0}
- * conjunct is always true and the coin falls on exactly the steps it always did (INV-RTR-22).
+ * whose tree holds a dynamic region} passes the gate and is flipped against that value instead of
+ * the plan's rate (INV-RTR-24). An opaque step without a region — a stuck dialog, a camera preview
+ * — stays closed and draws nothing. A zero opaque rate draws no coin at all: it lets the new-state
+ * and stagnation hooks consult the model on a canvas without random routing there, and it does so
+ * without consuming a draw. With opaque routing off, every step that passes the gate is flipped
+ * against the positive plan rate, so the {@code rate > 0} conjunct is always true and the coin
+ * falls on exactly the steps it always did (INV-RTR-22).
+ *
+ * <p>The same fact, computed once, also reaches the engine as {@code edgeBandsOff}: on an opaque
+ * dynamic step the boundary bands are not applied to the answer (INV-RTR-27). With opaque routing
+ * off it is {@code false} without the tree being read.
  */
 public final class LlmRandomStage implements DecisionStage {
 
@@ -72,8 +76,8 @@ public final class LlmRandomStage implements DecisionStage {
      * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
      * @param percentage the plan's rate; positive, since a zero rate assembles no stage
      * @param opaqueRate the rate on opaque steps with a dynamic region,
-     *        {@code ape.llmPercentageNoSubstrate}; negative when opaque routing is off, which is how
-     *        the stage knows whether it is on
+     *        {@code ape.llmPercentageNoSubstrate}; negative when opaque routing is off, which is
+     *        how the stage knows whether it is on
      * @param random the agent's generator, which is the stream the coin must come from
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      */
@@ -99,12 +103,14 @@ public final class LlmRandomStage implements DecisionStage {
         if (!LlmGate.allows(ctx, opaqueEnabled)) {
             return StageResult.continueChain();
         }
-        double rate = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx) ? opaqueRate : percentage;
+        boolean edgeBandsOff = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx);
+        double rate = edgeBandsOff ? opaqueRate : percentage;
         if (rate <= 0 || random.nextDouble() >= rate || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
-                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "random");
+                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "random",
+                edgeBandsOff);
         if (result == null) {
             return StageResult.continueChain();
         }
