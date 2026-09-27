@@ -21,6 +21,8 @@ Everything downstream of the gate already handles a widgetless screen:
 
 The key `ape.llmPercentageNoSubstrate` exists end to end with no reader: `Config.java:184` (static field + clamp), `runtime/Feature.java:182` (sub-parameter of `LLM_RANDOM`, neutral `-1`), `runtime/KeyOwnership.java:222`, `runtime/RunSpec.java:267` (normalization), `runtime/Presets.java:126` (every preset pushes `-1`), and rv-android `tool.py:198` (`llm_percentage_no_substrate`). Its spec requirement (INV-RTR-09) says it has no effect, and `LlmRandomStageTest:279-310` guards that.
 
+**Revision (2026-09-27).** `f828e5e6` implemented the design below with the opaque predicate alone as the trigger. E5c showed that most opaque steps are not dynamic content (stuck progress dialogs, text dialogs, an ad activity, camera previews that take no touch, Compose splashes), and device dumps showed the tree separates them (`evidence.md`). Decisions D8–D10 narrow the trigger; everything else here stands.
+
 Constraints: the project's run-plan rules (a feature absent from the plan has no mechanism, INV-RUN-05; stages read parameters injected at assembly, never `Config`, INV-DP-12; fail-fast resolution, INV-RUN-02), the agent-generator draw-sequence discipline (`decision-pipeline` INV-DP-10, `llm-routing` "Probabilistic LLM Routing"), and telemetry identical on every arm (event-sink "Telemetry Neutrality").
 
 ## Architecture
@@ -30,14 +32,15 @@ RunSpec ──(LLM_RANDOM present ∧ noSubstrate ≥ 0? rate)──► Decision
                                                     │ injects boolean opaqueEnabled
                                                     │ (+ opaqueRate for LlmRandom)
                                                     ▼
-StepContext ──► LlmNewStateStage ─┐
+StepContext (newState, newGUITree)
+            ──► LlmNewStateStage ─┐
             ──► LlmStagnationStage├─► LlmGate.allows(ctx, opaqueEnabled)
-            ──► LlmRandomStage ───┘        │  bufferEmpty ∧ (actions>2 ∨ (opaqueEnabled ∧ isOpaque(state)))
-                   │ rate = opaque ? opaqueRate : percentage; draw only if rate>0
+            ──► LlmRandomStage ───┘        │  bufferEmpty ∧ (actions>2 ∨ (opaqueEnabled ∧ isOpaque(state) ∧ hasDynamicRegion(tree)))
+                   │ rate = opaqueDynamic ? opaqueRate : percentage; draw only if rate>0
                    ▼
               LlmEngine.selectAction (unchanged) ──► CoordinateMapper.map (unchanged) ──► LlmTapAction
 
-StatefulAgent.resolveNewAction ──► sink.beginStep(..., LlmGate.isOpaque(newState)) ──► dec.opaque:1
+StatefulAgent.resolveNewAction ──► sink.beginStep(..., isOpaque(newState), hasDynamicRegion(newGUITree)) ──► dec.opaque:1, dec.dyn:1
 ApeAgent.requestRestart ─────────► sink.restartRequested() ──► RUN_END.counters.restarts
 ```
 
@@ -46,12 +49,14 @@ ApeAgent.requestRestart ─────────► sink.restartRequested() �
 | Component | Responsibility | Input | Output |
 |-----------|---------------|-------|--------|
 | `LlmGate.isOpaque(State)` | The opaque predicate (INV-RTR-21) | `State` | `boolean` |
-| `LlmGate.allows(StepContext, boolean)` | Shared precondition with the opaque clause | step context, feature flag | `boolean` |
+| `LlmGate.hasDynamicRegion(GUITree)` | The dynamic-region predicate (INV-RTR-26, D8) | the step's tree, may be null | `boolean` |
+| `LlmGate.isOpaqueDynamic(StepContext)` | `isOpaque(newState) ∧ hasDynamicRegion(newGUITree)` — the one definition the gate and `LlmRandom`'s rate share | step context | `boolean` |
+| `LlmGate.allows(StepContext, boolean)` | Shared precondition with the opaque-dynamic clause | step context, feature flag | `boolean` |
 | `LlmNewStateStage` / `LlmStagnationStage` | Pass the injected flag to the gate | `StepContext` | `StageResult` |
 | `LlmRandomStage` | Per-step rate choice, zero-rate no-draw | `StepContext` | `StageResult` |
 | `DecisionPipeline.fromSpec` | Derives opaque routing (`LLM_RANDOM` in the plan ∧ key `>= 0`) and injects the flag and the rate | `RunSpec` | stages |
 | `Feature` / `KeyOwnership` / `RunSpec` | Unchanged: the key stays an `LLM_RANDOM` sub-parameter, neutral `-1` | — | — |
-| `EventSink.beginStep(…, boolean opaque)` / `StepRecord` | `dec.opaque` | flag | record field |
+| `EventSink.beginStep(…, boolean opaque, boolean dyn)` / `StepRecord` | `dec.opaque`, `dec.dyn` | flags | record fields |
 | `EventSink.restartRequested()` / `NdjsonSink.runEnd` | `counters.restarts` | calls | record field |
 
 ## Mapping: Spec -> Implementation -> Test
@@ -60,33 +65,38 @@ ApeAgent.requestRestart ─────────► sink.restartRequested() �
 |-------------|---------------|------|
 | INV-RTR-21 opaque predicate | `LlmGate.isOpaque` | `LlmGateTest.opaqueWhenNoTargetedAction`, `…notOpaqueWithOneWidgetAction`, `…emptyActionsNotOpaque` |
 | INV-RTR-22 off ⇒ pre-change gate and draws | `LlmGate.allows(ctx, false)`; `LlmRandomStage` with `opaqueEnabled=false` | `LlmGateTest.featureOffIsSizeRule`; `LlmRandomStageTest.featureOffDrawSequenceUnchanged` |
-| INV-RTR-23 on ⇒ opaque clause, buffer kept | `LlmGate.allows(ctx, true)` | `LlmGateTest.featureOnOpensOpaque`, `…bufferClosesOpaque` |
-| INV-RTR-24 rate choice, zero-rate no draw | `LlmRandomStage.decide` | `LlmRandomStageTest.opaqueStepUsesOpaqueRate`, `…zeroOpaqueRateDrawsNothing` |
+| INV-RTR-23 on ⇒ opaque-dynamic clause, buffer kept | `LlmGate.allows(ctx, true)` | `LlmGateTest.featureOnOpensOpaqueDynamic`, `…featureOnKeepsOpaqueWithoutRegionClosed`, `…bufferClosesOpaque` |
+| INV-RTR-26 dynamic region | `LlmGate.hasDynamicRegion` | `DynamicRegionTest` over device fixtures (LibGDX true; progress dialog, text dialog, zxing, Compose splash, ordinary screens false) and synthetic trees (threshold, text, focusability, Compose/WebView ancestors, null tree) |
+| INV-RTR-24 rate choice, zero-rate no draw | `LlmRandomStage.decide` | `LlmRandomStageTest.opaqueDynamicStepUsesOpaqueRate`, `…opaqueStepWithoutRegionDrawsNothing`, `…zeroOpaqueRateDrawsNothing` |
 | New-State LLM Mode (opaque scenarios) | `LlmNewStateStage` | `LlmNewStateStageTest.opaqueFirstVisit{On,Off}` |
 | SataAgent — LLM New-State Hook | same | same |
 | INV-RTR-25 plan unchanged at `-1` | no change to `Feature`/`KeyOwnership`/`RunSpec` | `RunSpecResolveTest.sentinelPlanDigestUnchanged` (golden `digest`/`features`/`params` captured from `e93dea86` for the `llm` and `llm_mop` presets); `RunSpecAbortTest` existing sub-parameter cases (`0.5` without `LLM_RANDOM` aborts) |
 | Boundary bands unchanged on opaque steps (declared limitation) | `CoordinateMapper.map` untouched | `CoordinateMapperOffTreeTapTest`: opaque state, `pixelY = 0.97h` → `no_match`/`boundary` |
 | Removal of the seam | delete `Config.llmPercentageNoSubstrate`, `clampLlmPercentageNoSubstrate` | delete `ConfigTest` cases and `LlmRandomStageTest` no-consumer guard |
 | INV-SNK-15 `dec.opaque` | `StatefulAgent.resolveNewAction` → `beginStep`; `StepRecord` | `NdjsonSinkTest.opaqueFlag*`; `SinkNeutralityTest` unchanged |
+| INV-SNK-17 `dec.dyn` | `StatefulAgent.resolveNewAction` → `beginStep`; `StepRecord` | `NdjsonSinkTest.dynFlag*`; `SinkNeutralityTest` and parity goldens unchanged (the oracle has no trees) |
 | INV-SNK-16 `restarts` | `ApeAgent.requestRestart` → `sink.restartRequested()`; `NdjsonSink.runEnd` | `NdjsonSinkTest.restartsCounted`, `…restartsZeroWritten` |
-| Device behavior | whole path | tasks group 6 (retrowars, on vs off) |
+| Device behavior | whole path | tasks group 6 (first gate, done in E5c) and group 12 (revised gate) |
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Let the LLM act on screens with no widget action, through the existing off-tree tap, when the plan asks for it.
+- Let the LLM act on screens with no widget action whose content is a drawn, touch-taking surface, through the existing off-tree tap, when the plan asks for it — and nowhere else among opaque screens.
 - Keep every existing arm — every plan with `ape.llmPercentageNoSubstrate=-1` — identical in plan, gate, draws and actions to jar `e93dea86`.
 - Make opaque steps and forced restarts visible in the trace on every arm.
 
 **Non-Goals:**
 - A state signal for opaque screens (screenshot hash or similar). The abstraction is the project's core mechanism; `LlmNewState` therefore fires at most once per opaque state.
 - Changing how ephemeral taps reset `graphStableCounter`.
-- Identifying the kind of surface (game engine, camera, Compose, WebView).
+- Naming the kind of surface (game engine, camera, map) by class: those names never reach the compressed tree (D8).
+- Changing the coordinate mapper, its snap/containment rules or the boundary bands. Where dynamic content shares the screen with widgets the size rule already opens the gate and the off-tree tap already exists; nothing measured shows taps lost there. The E5c `boundary` count mixes band rejections with other null answers and must be recounted before any band change (`followups.md`).
+- Setting `FLAG_INCLUDE_NOT_IMPORTANT_VIEWS`: about twice the nodes on ordinary screens, and a new abstraction for every arm.
+- A screenshot comparison to tell whether a tap on a canvas had an effect: a canvas changes on its own, so a difference cannot be attributed to the tap.
 - Choosing the E6 rate. That is a campaign decision made in rv-android.
 
 ## Decisions
 
-**D1 — The predicate is "no action requires a target", read from the abstract state.** Alternatives: (a) `getActions().size() <= 2` — wrong when `ape.modelMenuEnabled=false` (a one-button dialog has two actions and is not opaque); (b) widget class names such as `SurfaceView`/`GLSurfaceView` — rejected by the owner; the class the accessibility node reports for a GL surface is not reliable, and E5's trace does not even record it; (c) static analysis (`isWidgetlessSubstrate`, deleted with the full-JSON parser) — describes applications, not screens, and a Compose app that exposes semantics at run time would be misclassified; (d) "no widget action and visited k times" to exclude splash screens — adds a calibration knob for a cost the rate already bounds. The chosen predicate is the explorer's own knowledge: SATA has nothing but leave or open the menu.
+**D1 — The predicate is "no action requires a target", read from the abstract state.** Alternatives: (a) `getActions().size() <= 2` — wrong when `ape.modelMenuEnabled=false` (a one-button dialog has two actions and is not opaque); (b) widget class names such as `SurfaceView`/`GLSurfaceView` — rejected by the owner; the class the accessibility node reports for a GL surface is not reliable, and E5's trace does not even record it; (c) static analysis (`isWidgetlessSubstrate`, deleted with the full-JSON parser) — describes applications, not screens, and a Compose app that exposes semantics at run time would be misclassified; (d) "no widget action and visited k times" to exclude splash screens — adds a calibration knob for a cost the rate already bounds. The chosen predicate is the explorer's own knowledge: SATA has nothing but leave or open the menu. *Revised by D8:* the predicate stays as the definition of an opaque step (and of `dec.opaque`), but it is no longer the whole trigger — (b) was right about class-name lists and wrong in concluding that nothing in the tree could tell a canvas from a dialog; (d)'s "cost the rate already bounds" did not hold in E5c, where two thirds of the opaque calls went to screens the model cannot act on.
 
 **D2 — Reuse `ape.llmPercentageNoSubstrate`, redefining `-1` from "inherit" to "off".** Alternative: a new boolean `ape.llmOpaqueScreen` and retire the orphan key. Reuse wins because every arm already pushes `-1`, the harness already maps the key and its type/default are pinned by rv-android's tests; the redefinition breaks nothing because nothing read the key. The cost is a semantic amendment recorded in the specs.
 
@@ -102,6 +112,21 @@ ApeAgent.requestRestart ─────────► sink.restartRequested() �
 
 **D7 — Restarts counted by the sink.** `ApeAgent.requestRestart()` is the single funnel for the three stability hooks (graph, state, activity). The sink counts calls, as it already counts `acts` and `states`, and writes `restarts` beside them in `RUN_END.counters`. `RunCounters` stays the LLM telemetry's snapshot and is not widened.
 
+**D8 — The trigger is an opaque step whose tree holds a dynamic region.** A *dynamic region* is a node of the step's `GUITree`, not inside a subtree rooted at `androidx.compose.ui.platform.ComposeView` or `android.webkit.WebView`, that (a) has class exactly `android.view.View`, (b) has no children, (c) has empty text and empty content description, (d) is focusable, clickable or long-clickable, and (e) covers at least half of the root node's bounds (intersection with the root, area ratio `>= 0.5`). Each clause answers a case measured in `evidence.md`:
+- (a) `SurfaceView`, `GLSurfaceView`, `TextureView` and plain custom views do not override `getAccessibilityClassName`, so when they reach the tree they are `android.view.View`; widgets (`TextView`, `ImageView`, `FrameLayout`, `ProgressBar`, `WebView`, …) report their own class. A class list of surface types would match nothing, which is why the earlier rejection of (b) in D1 stands for lists and not for this rule.
+- (b), (c) The content is drawn, not described: no subtree, no label. A text dialog, a progress dialog and zxing's status line fail here.
+- (d) With `FLAG_INCLUDE_NOT_IMPORTANT_VIEWS` cleared, a view reaches the tree only when it is important for accessibility; for a surface that means an input listener or focusability — the view takes touch. LibGDX sets both. A camera surface has neither and is absent, which is the desired answer: the preview takes no touch.
+- (e) The region is the screen's content, not an icon: LibGDX covers the whole root. Half is a margin under that and above any decorative view that survives (b)–(d); it is a constant, not a key (D9).
+- The Compose exclusion: Compose semantics nodes also report `android.view.View`, and a splash is a chain of full-screen views. They fail (d) today; the ancestor rule keeps a focusable Compose leaf from passing. `ComponentActivity.setContent` always wraps the composition in a `ComposeView`, so the ancestor is present.
+- The WebView exclusion: an HTML `<canvas>` becomes a `View` leaf inside the WebView's virtual tree, and an ad WebView is the case E5c must not repeat (passportreader).
+The predicate walks the tree once, O(nodes), no IPC; a null tree (tests, the oracle) yields `false`. It is evaluated only after `isOpaque` holds when used by the gate, and on every step for telemetry.
+
+Alternatives: (i) "opaque and visited k times" — E5c's stuck dialogs persist 47–188 steps, as long as a game, so persistence does not separate them; (ii) a second tree fetch with `FLAG_INCLUDE_NOT_IMPORTANT_VIEWS` set, to see listener-less surfaces — those are exactly the ones that take no touch; (iii) a window-size rule (dialog windows are smaller than the display) — true for the dialogs but silent on camera and Compose splash, which (d) and the ancestor rule already reject; (iv) the screenshot — a second signal the gate would have to calibrate, when the tree already separates every measured case.
+
+**D9 — The area threshold is a constant.** A plan key would be one more knob with no measurement to set it by, and would enter `RunSpec.planValues`, changing every LLM arm's digest (D3). `dec.dyn` records the verdict on every arm, so a later calibration has data; the constant sits in `LlmGate` with the evidence behind it.
+
+**D10 — `dec.dyn` on every arm, computed from the tree.** Like `dec.opaque` (D6) it describes the screen, so the arm without LLM carries it too and the analysis can split opaque steps into routed and not routed without re-deriving the rule. It is emitted on any step whose tree has a dynamic region, opaque or not: a surface beside widgets is the common case (`evidence.md`) and the count is what a later extension would be judged on. It is the predicate's verdict, not a label of the screen; a trace auditor checks it against screenshots or sources. The oracle and `FakeStepContext` have no tree, so their records never carry it and the parity goldens are unchanged.
+
 ## API Design
 
 ### `static boolean LlmGate.isOpaque(State state)`
@@ -110,7 +135,15 @@ Pre: `state != null`. Post: `true` iff `state.getActions()` is non-empty and no 
 
 ### `static boolean LlmGate.allows(StepContext ctx, boolean opaqueEnabled)`
 
-Post: `ctx.actionBufferSize() == 0 && (ctx.newState().getActions().size() > 2 || (opaqueEnabled && isOpaque(ctx.newState())))`. With `opaqueEnabled == false` the result equals the pre-change expression for every input. The one-argument overload is removed (P3); the three stages pass their injected flag.
+Post: `ctx.actionBufferSize() == 0 && (ctx.newState().getActions().size() > 2 || (opaqueEnabled && isOpaqueDynamic(ctx)))`. With `opaqueEnabled == false` the result equals the pre-change expression for every input. The one-argument overload is removed (P3); the three stages pass their injected flag.
+
+### `static boolean LlmGate.hasDynamicRegion(GUITree tree)`
+
+Pre: none (`null` allowed). Post: `false` for a null tree or a root with empty bounds; otherwise `true` iff some node outside every `ComposeView`/`WebView` subtree satisfies D8 (a)–(e) with `DYNAMIC_REGION_MIN_AREA = 0.5`. Pure; a single pass that does not descend into excluded subtrees.
+
+### `static boolean LlmGate.isOpaqueDynamic(StepContext ctx)`
+
+Post: `isOpaque(ctx.newState()) && hasDynamicRegion(ctx.newGUITree())`, in that order (the tree walk only runs on opaque steps).
 
 ### Stage constructors
 
@@ -122,7 +155,7 @@ Post: `ctx.actionBufferSize() == 0 && (ctx.newState().getActions().size() > 2 ||
 
 ```text
 if !LlmGate.allows(ctx, opaqueEnabled): Continue
-rate = (opaqueEnabled && LlmGate.isOpaque(ctx.newState())) ? opaqueRate : percentage
+rate = (opaqueEnabled && LlmGate.isOpaqueDynamic(ctx)) ? opaqueRate : percentage
 if rate <= 0 || random.nextDouble() >= rate || !breakerAllows: Continue
 … unchanged
 ```
@@ -133,15 +166,15 @@ With the feature absent, `rate == percentage > 0` on every step that passes the 
 
 `Feature`, `KeyOwnership` and `RunSpec` are untouched. `DecisionPipeline.fromSpec` computes `double opaqueRate = spec.has(Feature.LLM_RANDOM) ? spec.llm().dbl("ape.llmPercentageNoSubstrate") : -1` and `boolean opaqueEnabled = opaqueRate >= 0`.
 
-### `EventSink.beginStep(int step, long tRelMs, String activity, boolean activityHasMop, String stateKey, boolean opaque)` and `EventSink.restartRequested()`
+### `EventSink.beginStep(int step, long tRelMs, String activity, boolean activityHasMop, String stateKey, boolean opaque, boolean dyn)` and `EventSink.restartRequested()`
 
-`NoopSink` implements both as no-ops. `NdjsonSink` stores `opaque` in the pending record (written as `dec.opaque:1` when true) and increments a restart count written in `runEnd`.
+`NoopSink` implements both as no-ops. `NdjsonSink` stores `opaque` and `dyn` in the pending record (written as `dec.opaque:1` / `dec.dyn:1` when true) and increments a restart count written in `runEnd`.
 
 ## Data Flow
 
 1. `Monkey.run` resolves the plan exactly as before; the key is an `LLM_RANDOM` sub-parameter.
 2. `DecisionPipeline.fromSpec` derives opaque routing from `spec.has(LLM_RANDOM)` and the key's value, and passes the flag to the three stage constructors and the rate to `LlmRandom`.
-3. Each step, `StatefulAgent.resolveNewAction` opens the record with `LlmGate.isOpaque(newState)`, then the pipeline runs. On an opaque step with the feature on, an LLM stage may call the engine; a `click` answer becomes an `LlmTapAction`, accepted and resolved through the existing `LlmGate.accept` path.
+3. Each step, `StatefulAgent.resolveNewAction` opens the record with `LlmGate.isOpaque(newState)` and `LlmGate.hasDynamicRegion(newGUITree)`, then the pipeline runs. On an opaque step with a dynamic region and the feature on, an LLM stage may call the engine; a `click` answer becomes an `LlmTapAction`, accepted and resolved through the existing `LlmGate.accept` path.
 4. The tap is dispatched; the next step's graph update records an ephemeral edge (a `NEW_ACTION` edge the first time a coordinate is tapped, resetting `graphStableCounter`) and feeds `recordLlmOutcome` with `new_state=false` (the abstract state does not change on a canvas).
 5. When a stability hook calls `requestRestart()`, the sink counts it; `RUN_END` writes the total.
 
@@ -156,7 +189,11 @@ With the feature absent, `rate == percentage > 0` on every step that passes the 
 
 ## Risks / Trade-offs
 
-- [Splash and loading screens are opaque] → LLM calls there are bounded by the rate and by one new-state call per state; `dec.opaque` lets the analysis separate them. Accepted per D1.
+- [Splash and loading screens are opaque] → excluded by D8 (no focusable surface leaf); measured by `dec.opaque` without `dec.dyn`.
+- [A drawn surface that takes touch through `onTouchEvent` alone, with no listener and not focusable, is absent from the tree] → not routed (false negative). Such views almost always share the screen with widgets (paint, charts), where the size rule already opens the gate.
+- [A Compose `Canvas` game, or an HTML `<canvas>` game in a WebView] → excluded by the ancestor rule (false negative), accepted: none is in the corpus, and the WebView case is the ad failure E5c measured.
+- [A focusable decorative `View` covering half the screen with an opaque state] → would be routed (false positive); none was observed on device; in the survey of 468 uncompressed grounding dumps the large `View` leaves were surfaces, boards and image viewers, and the one decorative match (a spacer) fails (d). `dec.dyn` on every arm makes it auditable.
+- [Game controls at the screen edges] → the boundary bands still apply (D5b); recount first (`followups.md`).
 - [Taps at new coordinates reset `graphStableCounter`, delaying SATA's forced restart on canvases where the LLM makes no progress] → Not changed (non-goal); `counters.restarts` measures it per arm. If E6 shows the LLM arm restarting far less on games, a follow-up can treat ephemeral edges on opaque states as `EXISTING` for the counter.
 - [Every tap on a canvas counts as unproductive (abstract state unchanged)] → the dead-pair ban only bans an exact coordinate after 5 strikes, so varied coordinates are unaffected; repeated exact coordinates are banned, which is the intended behavior against the known `x∈{499,500}` collapse.
 - [Throughput falls on opaque screens: an LLM call costs seconds against the 200 ms throttle] → this is the treatment's cost, not a defect; step counts are not comparable between on and off, and the analysis relies on host-side coverage and violations.
@@ -169,7 +206,9 @@ With the feature absent, `rate == percentage > 0` on every step that passes the 
 
 | Layer | What to test | How | Count |
 |-------|-------------|-----|-------|
-| Unit | `LlmGate.isOpaque`/`allows` truth table (buffer × size × opaque × flag) | fake `State`/`StepContext` with typed actions | ~8 |
+| Unit | `LlmGate.isOpaque`/`allows` truth table (buffer × size × opaque × region × flag) | fake `State`/`StepContext` with typed actions and a tree | ~10 |
+| Unit | `LlmGate.hasDynamicRegion` on real trees | compressed dumps captured on the API 30 emulator (retrowars menu and in-game, Shattered PD title, mtgfam/smokingtracker/urlchecker progress dialogs, flyingcarpet About, zxing capture ×3, myne splash, ordinary screens), loaded through `GUITreeBuilder`'s XML reader | ~12 |
+| Unit | `LlmGate.hasDynamicRegion` clause by clause | synthetic trees: area 0.49/0.5, text, content-desc, not focusable, child present, `ComposeView`/`WebView` ancestor, null tree, empty root | ~9 |
 | Unit | `LlmRandomStage` rate choice, zero-rate no-draw, off-neutral draw sequence | counting `Random` over a mixed opaque/non-opaque fixture sequence; compare draw count and positions with the pre-change rule | ~5 |
 | Unit | `LlmNewStateStage`/`LlmStagnationStage` on/off on an opaque state | stub engine | ~4 |
 | Unit | digest/features/params of `llm` and `llm_mop` plans with `-1` equal to the `e93dea86` golden; existing sub-parameter abort unchanged | `RunSpecResolveTest`, `RunSpecAbortTest` | ~3 |
@@ -179,6 +218,8 @@ With the feature absent, `rate == percentage > 0` on every step that passes the 
 | Device | retrowars, `llm` preset, same seed: `-1` vs `0.7` — `llm.calls`, `llm_tap`, `restarts`, `dec.opaque` share, host-side coverage and violations | `scripts/run_emulator.sh` + standalone run, or one rv-platform task per value | 2 runs |
 
 ## Open Questions
+
+- Is `0.5` the right area threshold? Nothing measured sits near it (games are 1.0); revisit with `dec.dyn` from the next campaign.
 
 - Should `LlmStagnation` count as its episode trigger the `graphStableCounter` value that taps keep resetting on a canvas? Left as is; revisit with the `restarts` data from the device runs.
 - Is the E6 opaque rate equal to `llmPercentage` (same treatment intensity on every screen) or higher (the LLM is the only agent that can act there)? Campaign decision, outside this change.
