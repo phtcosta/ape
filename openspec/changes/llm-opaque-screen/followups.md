@@ -4,8 +4,8 @@
 
 - `openspec/specs/aperv/spec.md:760` stays correct in structure: `ape.llmPercentageNoSubstrate` is
   still an `LLM_RANDOM` sub-parameter with neutral `-1`. Only its meaning changes there:
-  `-1` = opaque routing off, `>= 0` = on (`0` = new-state/stagnation only on opaque steps, `> 0` also
-  the `LlmRandom` rate on opaque steps). No code change: `tool.py:198` already maps the key, and
+  `-1` = opaque routing off, `>= 0` = on (`0` = new-state/stagnation only on opaque steps whose tree
+  holds a dynamic region, `> 0` also the `LlmRandom` rate on those steps; see the last item below). No code change: `tool.py:198` already maps the key, and
   `tests/migration/test_jar_tables.py:86-87` (type `DOUBLE`, default `-1.0`) and
   `tests/test_runspec.py:65` (`inert` on a non-LLM plan) still hold.
 

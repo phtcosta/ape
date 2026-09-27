@@ -100,8 +100,8 @@
 
 ## 12. Documentation
 
-- [ ] 12.1 CLAUDE.md: `ape.llmPercentageNoSubstrate` routes opaque steps whose tree has a dynamic region (state the rule in one line), `dec.dyn` in the Telemetry section, test count in Notes
-- [ ] 12.2 Update `followups.md` item for rv-android (`aperv/spec.md:760`) if the wording changed during implementation
+- [x] 12.1 CLAUDE.md: `ape.llmPercentageNoSubstrate` routes opaque steps whose tree has a dynamic region (state the rule in one line), `dec.dyn` in the Telemetry section, test count in Notes
+- [x] 12.2 Update `followups.md` item for rv-android (`aperv/spec.md:760`) if the wording changed during implementation
 
 ## 13. Device validation (revised gate)
 
