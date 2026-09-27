@@ -171,3 +171,24 @@ Landroid/view/IWindowManager` from `AndroidDevice.getRotation` inside the first 
 does not have; the probe had read `Display.getRotation()` instead. Task 18.6 moves the helper onto
 that display.
 
+
+## Device re-test with the orientation fix (task 18.5, jar `3b35073a`, sha256 `f721c5c9…`)
+
+Same emulator, helper, server and settings as 16.17, 3 min per run.
+
+| Run | steps | LLM calls | `llm_tap` | `back` (matched) | `dead_pair` | `boundary` | `degenerate` | 16.17 (`700dbafd`) |
+|-----|------:|------:|------:|------:|------:|------:|------:|------|
+| retrowars `on` (landscape) | 97 | 63 | **43** | **5** | 14 | 0 | 1 | 56 calls: 17 `llm_tap`, 36 `back`, 3 `dead_pair` |
+| shatteredpixeldungeon `on` (portrait) | 81 | 56 | 16 | 9 | 31 | 0 | 0 | 65 calls: 20 `llm_tap`, 8 `back`, 37 `dead_pair` |
+| shatteredpixeldungeon `off` (`-1`) | 107 | 0 | – | – | – | – | – | digest `a67b096e757d83ad` |
+
+- **Landscape.** With the screen captured upright, retrowars' answers moved from `back` (36 of 56)
+  to taps (43 of 63). The most frequent point, `px (945–949, 515)`, is the menu's "Solo" button in
+  a `screencap` of the same screen; the next, `px (197, 374–384)`, lies on the following screen.
+  No capture failed (`screenshot_failed` 0) and the run reached its 3 minutes.
+- **Live D11/D12 paths.** One `click` answer arrived without coordinates and was rejected as
+  `degenerate` (`(0, 0)` on an opaque dynamic step, no band involved); three double-colon answers
+  (`{"x":": 500, "y": 478}`) were recovered by the existing unparseable-path `int_scan`.
+- **Portrait.** shatteredpixeldungeon behaves as in 16.17 (0 `boundary`, taps on "Enter the
+  Dungeon"); the capture call there is unchanged (rotation `0`).
+- **`-1`.** Digest equals the `llm` golden; no LLM attempt on the 107 opaque steps.
