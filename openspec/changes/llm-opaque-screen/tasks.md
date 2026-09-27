@@ -149,11 +149,11 @@ Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the
 
 ## 17. Final verification (second and third revisions)
 
-- [ ] 17.1 `mvn test` green; update the test count in CLAUDE.md if it changed
-- [ ] 17.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape`
-- [ ] 17.3 Run `/sdd-verify src/main/java/com/android/commands/monkey/ape`
-- [ ] 17.4 Invoke `/sdd-code-reviewer` via Skill tool
-- [ ] 17.5 Run `/sdd-docs-sync src/main/java/com/android/commands/monkey/ape`
+- [x] 17.1 `mvn test` green; update the test count in CLAUDE.md if it changed
+- [x] 17.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape` (checkstyle not installed: `LinterNotInstalled`, nothing changed)
+- [x] 17.3 Run `/sdd-verify src/main/java/com/android/commands/monkey/ape`
+- [x] 17.4 Invoke `/sdd-code-reviewer` via Skill tool (verdict COMMENT: 0 critical, 1 warning, 7 notes; reported to the owner, not fixed)
+- [x] 17.5 Run `/sdd-docs-sync src/main/java/com/android/commands/monkey/ape` (`NoDocumentationFiles` in that scope; the CLAUDE.md symbols this change names were checked against the source and exist)
 
 ## 15. Merge
 
