@@ -573,4 +573,73 @@ public class ToolCallParserTest {
         assertEquals(399, action.getY());
         assertEquals("none", action.getRepairForm());
     }
+
+    // ---------------------------------------------------------------------------
+    // D12 — the last-resort scan also runs on a tap that parses without a readable x or y.
+    // The missing-"y" fix turns {"x": {"x": 288, 587} } into valid JSON whose x is an object and
+    // whose y is absent; without the scan it parsed as (0,0) and was discarded as degenerate.
+    // ---------------------------------------------------------------------------
+
+    @Test
+    public void testParsedTapWithMisplacedCoordinates_xml_intScan() {
+        String content = "<tool_call>{\"name\": \"click\", \"arguments\": "
+                + "{\"x\": {\"x\": 288, 587} }}</tool_call>";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(288, action.getX());
+        assertEquals(587, action.getY());
+        assertEquals("int_scan", action.getRepairForm());
+    }
+
+    @Test
+    public void testParsedTapWithMisplacedCoordinates_nativeRaw_intScan() {
+        SglangClient.ChatResponse response = responseWithRawToolCall(
+                "click", Collections.<String, Object>emptyMap(), "{\"x\": {\"x\": 288, 587} }");
+        ToolCallParser.ParsedAction action = parser.parse(response);
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(288, action.getX());
+        assertEquals(587, action.getY());
+        assertEquals("int_scan", action.getRepairForm());
+    }
+
+    @Test
+    public void testParsedTapWithoutAnyCoordinate_keepsDefaults() {
+        String content = "{\"name\":\"click\",\"arguments\":{}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("click", action.getActionType());
+        assertEquals(0, action.getX());
+        assertEquals(0, action.getY());
+        assertEquals("none", action.getRepairForm());
+    }
+
+    @Test
+    public void testParsedBackWithoutCoordinates_notScanned() {
+        String content = "{\"name\":\"back\",\"arguments\":{\"n\": 12, \"m\": 34}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("back", action.getActionType());
+        assertEquals(0, action.getX());
+        assertEquals(0, action.getY());
+        assertEquals("none", action.getRepairForm());
+    }
+
+    @Test
+    public void testParsedTypeTextWithoutCoordinates_notScanned() {
+        String content = "{\"name\":\"type_text\",\"arguments\":{\"text\": \"room 42 17\"}}";
+        ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
+
+        assertNotNull(action);
+        assertEquals("type_text", action.getActionType());
+        assertEquals("room 42 17", action.getText());
+        assertEquals(0, action.getX());
+        assertEquals(0, action.getY());
+        assertEquals("none", action.getRepairForm());
+    }
 }

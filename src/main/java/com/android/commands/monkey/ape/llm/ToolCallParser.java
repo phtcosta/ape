@@ -226,10 +226,14 @@ public class ToolCallParser {
     }
 
     /**
-     * Last-resort recovery, run only from {@link #parseJsonString}'s catch (i.e. every regex fix
-     * failed to yield a parseable object). When {@code json} names a tap action (click / long_click)
-     * and the region after the "arguments" token holds ≥2 standalone 1–4-digit integers, those two
-     * integers become (x, y). Returns null on any other case.
+     * Last-resort recovery, run from {@link #parseJsonString} in two cases: from its catch (every
+     * regex fix failed to yield a parseable object), and after a successful parse of a tap action
+     * whose {@code x} or {@code y} is absent or unreadable as an integer — a fix can yield valid JSON
+     * with the coordinates misplaced, e.g. {@code {"x": {"x": 288, 587}}} becomes
+     * {@code {"x": {"x": 288, "y": 587}}} under the missing-"y" fix (design D12). When {@code json}
+     * names a tap action (click / long_click) and the region after the "arguments" token holds ≥2
+     * standalone 1–4-digit integers, those two integers become (x, y). Returns null on any other
+     * case.
      *
      * <p>The whole body is wrapped in its own try/catch → null: it executes inside the outer catch
      * where no other handler protects INV-LLM-04 (never throw to the caller).
@@ -296,7 +300,16 @@ public class ToolCallParser {
                             new JSONObject((String) argsRaw) + "}");
                 }
             }
-            return buildParsedAction(name, args, fix.form);
+            ParsedAction parsed = buildParsedAction(name, args, fix.form);
+            if (("click".equals(name) || "long_click".equals(name))
+                    && (!hasIntArg(args, "x") || !hasIntArg(args, "y"))) {
+                // A tap that parsed without a readable coordinate would fall to (0,0) or a zero on
+                // one axis; the integer scan over the original text recovers what the model gave
+                // when it can, and the parsed action stands when it cannot (D12).
+                ParsedAction scanned = lastResortIntScan(json);
+                if (scanned != null) return scanned;
+            }
+            return parsed;
 
         } catch (Exception e) {
             // Regex fixes could not yield a parseable object; try the form-independent last resort
@@ -331,6 +344,19 @@ public class ToolCallParser {
         Object val = args.get(key);
         if (val instanceof Number) return ((Number) val).intValue();
         try { return Integer.parseInt(String.valueOf(val)); } catch (Exception e) { return defaultValue; }
+    }
+
+    /** Whether {@code key} holds a value {@link #getIntArg} reads as an integer, not the default. */
+    private boolean hasIntArg(Map<String, Object> args, String key) {
+        if (args == null || !args.containsKey(key)) return false;
+        Object val = args.get(key);
+        if (val instanceof Number) return true;
+        try {
+            Integer.parseInt(String.valueOf(val));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private String getStringArg(Map<String, Object> args, String key) {
