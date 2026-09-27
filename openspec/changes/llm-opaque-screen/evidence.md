@@ -117,3 +117,33 @@ in `http_error`; that does not bear on the checks below.
   it below the band line at 0.94 × 1794 = 1686. The model's answer is a real target, not a
   collapse to one coordinate; the band rejects the correct tap every time, and in the 3-minute
   `on` run the game never left this screen.
+
+## Device check of the second revision (task 16.17, jar `700dbafd`, sha256 `ab878ecc…`)
+
+Same emulator (API 30, 1080×1920, window 1080×1794 portrait), same APKs and helper as task 13,
+3 min per run, vLLM `Qwen/Qwen3-VL-4B-Instruct-FP8` (the E5c server). `on` =
+`ape.llmPercentage=0.7`, `ape.llmPercentageNoSubstrate=0.7` (digest `fe43b54476962c86`); `off` =
+the golden keys (`ape.llmPercentageNoSubstrate=-1`).
+
+| Run | steps | opaque ∧ `dyn` | LLM calls | `llm_tap` | matched | `dead_pair` | `boundary` | task 13 (`b8e2e67b`) |
+|-----|------:|------:|------:|------:|------:|------:|------:|------|
+| shatteredpixeldungeon `on` | 86 | 86 | 65 | 20 | 8 (`back`) | 37 | **0** | 53 calls, **53 `boundary`**, 0 `llm_tap` |
+| retrowars `on` | 76 | 74 | 56 | 17 | 36 (`back`) | 3 | 0 | 53 calls: 15 `llm_tap`, 34 matched, 4 `dead_pair` |
+| shatteredpixeldungeon `off` (`-1`) | 116 | 116 | 0 | – | – | – | – | digest `a67b096e757d83ad` |
+
+- **Bands lifted.** Every call fell on an opaque step with `dec.dyn:1`; none was rejected as
+  `boundary` (task 13: 53/53 on shatteredpixeldungeon). The "Enter the Dungeon" answers
+  (`qwen (499–500, 978–980)`, `px y` 1754–1758) are now dispatched as `llm_tap` (15 of them); a
+  manual `adb shell input tap 538 1758` on the same first-launch screen advances the game to
+  "Choose Your Hero", so the answered point is the button and the tap acts. The abstract state does
+  not change on the canvas (`acts 1`, `states 1`), so repeated answers at one coordinate still end
+  in `dead_pair` after five strikes (37 on shatteredpixeldungeon: `(499, 980)` ×27, `(499, 500)` ×7,
+  `(500, 980)` ×3) — the ban working as designed (design, Risks).
+- **No zero-axis rejection occurred** (`degenerate` 0 in both `on` runs); the `back` answers
+  (`(0, 0)`, matched to `MODEL_BACK`) take the `back` branch before the check.
+- **`-1`.** `RUN_START.digest` equals the `llm` golden of `e93dea86`, and no LLM attempt was made
+  on the 116 opaque steps: the gate stays closed at `-1`.
+- **retrowars runs in landscape** (`ROTATION_90`, app frame 1794×1080): the `px`/`qwen` ratios
+  (e.g. `qwen (564, 877)` → `px (1011, 947)`) show the mapping used the landscape frame
+  `Display.getSize()` reports on each call. 36 of its 56 answers were `back`, each leaving the game
+  for the menu; `restarts` is 0 in every run.

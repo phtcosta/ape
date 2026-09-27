@@ -136,7 +136,7 @@ Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the
 - [x] 16.14 Run `/sdd-test-run agent/pipeline` and `/sdd-test-run llm`; confirm `RunSpecResolveTest.sentinelPlanDigestUnchanged`, `SinkNeutralityTest` and the parity goldens pass unchanged
 - [x] 16.15 CLAUDE.md: the `ape.llmPercentageNoSubstrate` entry says the boundary bands are lifted on opaque steps with a dynamic region, and the parser note says a tap answer without readable coordinates falls to the integer scan (`repair:"int_scan"`) on every arm; test count in Notes
 - [x] 16.16 `followups.md`: measuring the bands against the system bars on every step (D11 alternative B, with the ordinary-screen footer evidence); the `UiAutomation.takeScreenshot` fallback capturing the full physical screen while the mapping uses `Display.getSize()`; and what D12 leaves: a tap with no recoverable coordinate still parses as `0` on the missing axis (making it a parse failure would count against the breaker on every arm)
-- [ ] 16.17 Device check: `mvn package`; with the owner's LLM server, run shatteredpixeldungeon and retrowars at `0.7` for about 3 min each and one of them at `-1`; record `llm_tap` against `boundary` on `dec.dyn` steps next to task 13's numbers, and the `-1` digest, in `evidence.md`
+- [x] 16.17 Device check: `mvn package`; with the owner's LLM server, run shatteredpixeldungeon and retrowars at `0.7` for about 3 min each and one of them at `-1`; record `llm_tap` against `boundary` on `dec.dyn` steps next to task 13's numbers, and the `-1` digest, in `evidence.md`
 
 ## 17. Final verification (second revision)
 
