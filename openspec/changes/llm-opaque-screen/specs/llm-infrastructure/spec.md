@@ -2,6 +2,9 @@
 
 This delta extends one repair rule of `ToolCallParser`, as part of `llm-opaque-screen`. The router's degenerate answers — a tap parsed as `(0,0)`, or with one coordinate at `0` — are not points the model chose: the parser defaults a coordinate it cannot read to `0`. One cause is fixable in the parser. The pre-parse fixes can turn a malformed answer into valid JSON with the coordinates in the wrong place (`{"x": {"x": 288, 587}}` → `{"x": {"x": 288, "y": 587}}`), and the last-resort integer scan, which would recover them, ran only when the JSON did not parse. It now also runs when a tap action parses without a readable `x` or `y`. The change applies on every LLM arm; it is rare (2 of about 20 000 calls in the first 400 E5c traces) and turns a discarded answer into the tap the model gave.
 
+
+The same delta corrects the screenshot's orientation. `ScreenshotCapture` asked `SurfaceControl` for the display's content with rotation `0`; on a display turned to landscape that returns the framebuffer in its natural orientation, cropped to the landscape rectangle, so the model saw every landscape screen turned 90° and partly cut off while the coordinates were read against the landscape frame. The capture now passes the display's current rotation. In portrait the call is unchanged. It applies on every LLM arm.
+
 ## MODIFIED Requirements
 
 ### Requirement: ToolCallParser — 3-Level Fallback Parser
@@ -135,4 +138,35 @@ The returned `ParsedAction` SHALL contain `actionType` (String — one of "click
 
 - **WHEN** the response contains no parseable tool call at any level and no known action name for last-resort extraction
 - **THEN** `null` SHALL be returned
+- **AND** no exception SHALL propagate
+
+### Requirement: ScreenshotCapture — SurfaceControl Screenshot
+
+`ScreenshotCapture.capture(int width, int height)` SHALL capture a screenshot of the device display and return it as a PNG byte array. The primary capture method SHALL use `android.view.SurfaceControl.screenshot(Rect, int, int, int)` via reflection (hidden API, available from `app_process` context). If reflection fails, a fallback to `UiAutomation.takeScreenshot()` SHALL be attempted.
+
+The primary method SHALL pass as its rotation argument the display's current rotation (`Surface.ROTATION_0` … `ROTATION_270`, read through `AndroidDevice.getRotation()`), so the image shows the screen in the orientation it is displayed in, matching the `width`×`height` frame `Display.getSize()` reports for that orientation. A rotation outside `0…3` (the window manager could not be asked) SHALL be replaced by `0`. With rotation `0` — every portrait screen — the call SHALL be the one made before this requirement.
+
+#### Scenario: Successful capture via SurfaceControl
+
+- **WHEN** `capture(1080, 1920)` is called on an Android device with API 28+
+- **AND** `SurfaceControl.screenshot()` is accessible via reflection
+- **THEN** a non-null byte array containing valid PNG data SHALL be returned
+- **AND** the PNG dimensions SHALL match the requested width and height
+
+#### Scenario: Landscape display captured as shown
+
+- **WHEN** the display is at `ROTATION_90` and `capture(1794, 1080)` is called with the frame `Display.getSize()` reports
+- **THEN** `SurfaceControl.screenshot` SHALL be called with rotation `1`
+- **AND** the image SHALL show the screen upright, as `screencap` shows it, not turned 90° and cropped
+
+#### Scenario: Unknown rotation falls back to zero
+
+- **WHEN** `AndroidDevice.getRotation()` returns `-1`
+- **THEN** the rotation argument SHALL be `0`
+
+#### Scenario: SurfaceControl reflection fails
+
+- **WHEN** `SurfaceControl.screenshot()` is not accessible (e.g., API restriction)
+- **THEN** the UiAutomation fallback SHALL be attempted
+- **AND** if both methods fail, `null` SHALL be returned
 - **AND** no exception SHALL propagate

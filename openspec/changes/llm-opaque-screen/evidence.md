@@ -147,3 +147,20 @@ the golden keys (`ape.llmPercentageNoSubstrate=-1`).
   (e.g. `qwen (564, 877)` → `px (1011, 947)`) show the mapping used the landscape frame
   `Display.getSize()` reports on each call. 36 of its 56 answers were `back`, each leaving the game
   for the menu; `restarts` is 0 in every run.
+
+## Screenshot orientation in landscape (probe, 2026-09-27)
+
+Asked after 16.17, because retrowars answered `back` 36 times in 56. A probe in the session
+scratchpad (not in the repo) repeats `ScreenshotCapture.captureViaSurfaceControl` and
+`AndroidDevice.getDisplayBounds` from `app_process`, with retrowars' menu in the foreground
+(`ROTATION_90`, `Display.getSize()` 1794×1080, physical 1920×1080):
+
+| rotation argument | image (1794×1080) |
+|---|---|
+| `0` (the jar's call) | the screen turned 90° and cropped: the title and buttons lie on their side, partly cut |
+| `1` (the display's rotation) | the screen as `screencap` shows it |
+| `3` | the screen upside down |
+
+The coordinate mapping used the landscape frame all along (`qwen (564, 877)` → `px (1011, 947)` in
+16.17); the image the model answered on did not. Fixed by D13.
+

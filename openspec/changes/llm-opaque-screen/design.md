@@ -152,6 +152,12 @@ Alternatives: (A) set `ape.llmBoundaryBottomPct=1.0` in the arms — no code, bu
 
 Scope of the effect: the parser serves every LLM arm, including the `-1` arm, so a run under `-1` is no longer action-for-action identical to `e93dea86` on the rare steps where such an answer occurs (2 of about 20 000 calls in the first 400 E5c traces); the plan digest, the gate and the draw sequence are unaffected, and the steps are countable from `repair:"int_scan"` on sub-events whose response does not fail to parse. The breaker is unaffected: both outcomes are successful calls.
 
+**D13 — The screenshot is captured in the display's current orientation.** `ScreenshotCapture.captureViaSurfaceControl` called `SurfaceControl.screenshot(Rect(0, 0, w, h), w, h, 0)`. With `w`/`h` from `Display.getSize()` — 1794×1080 when the display is at `ROTATION_90` — rotation `0` returns the framebuffer in its natural (portrait) orientation, cropped to the landscape rectangle: the model receives the screen turned 90° and partly cut off. A probe in the session scratchpad that repeats the call on retrowars' menu (`evidence.md`) showed exactly that with `0`, the screen as shown with the display's rotation (`1`), and the screen upside down with `3`. The coordinate mapping already used the landscape frame (task 16.17), so only the image was wrong, on every landscape screen, on every LLM arm, since the capture was written.
+
+Chosen: pass the display's current rotation (`AndroidDevice.getRotation()`, `Surface.ROTATION_0…3`) as the last argument; a value outside `0…3` — the helper returns `-1` when the window manager cannot be asked — falls back to `0`, today's call. In portrait the rotation is `0`, so the call and the image are unchanged there. The rotation is read after the reflective lookup succeeds, so off-device (the JVM tests) nothing changes. The `UiAutomation.takeScreenshot` fallback is left as it is (`followups.md`). Alternatives: rotate the bitmap after capture — an extra full-size copy per call for the same result; capture at the physical size and let the model see the navigation bar — changes the frame every mapping rule is written against.
+
+Scope of the effect: like D12, this changes the `-1` arm too — every LLM call on a landscape screen now sees the screen as shown. Plan digest, gate and draw sequence are unaffected; the answers, and therefore the decisions, on landscape screens differ. It is declared to the Study 03 session with the jar.
+
 ## API Design
 
 ### `static boolean LlmGate.isOpaque(State state)`
@@ -194,6 +200,10 @@ With the feature absent, `rate == percentage > 0` on every step that passes the 
 ### `ModelAction LlmEngine.selectAction(GUITree, State, List<ModelAction>, MopData, List<ActionHistoryEntry>, String mode, boolean edgeBandsOff)`
 
 Unchanged except that `edgeBandsOff` is handed to `CoordinateMapper.map`. The overload without it is removed (P3); every test double follows.
+
+### `byte[] ScreenshotCapture.capture(int width, int height)`
+
+Unchanged signature. The SurfaceControl path passes `displayRotation(AndroidDevice.getRotation())` as the rotation, where the package-visible pure `static int displayRotation(int)` returns its argument when it is in `0…3` and `0` otherwise (D13).
 
 ### `ModelAction CoordinateMapper.map(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions, State state, int deviceWidth, int deviceHeight, boolean edgeBandsOff)`
 
@@ -243,6 +253,7 @@ The `no_match` reason is `degenerate` when `parsed` is `(0, 0)`, or when `edgeBa
 - [Bottom navigation and footer buttons on ordinary screens are in the bottom band] → declared (D5b); countable from `reason:"boundary"` on steps without `dec.dyn`; the general fix (alternative B of D11) is a follow-up.
 - [The mechanism is not in `RUN_START.features`] → its value is in `RUN_START.params` on every LLM arm, and the digest separates `-1` from any other value; a reader derives "opaque routing on" from `LLM_RANDOM` ∈ features ∧ value `>= 0`.
 - [The `-1` arm differs from `e93dea86` on tap answers D12 now recovers] → rare (2 in ~20 000 E5c calls), a recovered answer instead of a discarded one, identifiable per sub-event by `repair:"int_scan"`; declared to the Study 03 session with the jar.
+- [The `-1` arm differs from `e93dea86` on every landscape screen, where the model now sees the screen as shown (D13)] → a correction, not a treatment: identical in portrait, declared to the Study 03 session with the jar; landscape steps are identifiable from the device's rotation, not from the trace.
 - [Mixing jars across a campaign] → E5 stays on `e93dea86`; at `-1` the new jar's plan digest equals `e93dea86`'s (INV-RTR-25), and any other value changes it, so a trace states which regime produced it.
 - [rv-android spec row stale (`aperv/spec.md:760`)] → follow-up in that repository; no behavior depends on it.
 
@@ -259,6 +270,8 @@ The `no_match` reason is `degenerate` when `parsed` is `(0, 0)`, or when `edgeBa
 | Unit | bands lifted with `edgeBandsOff`, `(0,0)`, `(x,0)` and `(0,y)` rejected and classified `degenerate`, bands kept without it | `CoordinateMapperOffTreeTapTest`, `LlmEngine.classify` test | ~6 |
 | Unit | `edgeBandsOff` reaches the engine only on an opaque step with a region and opaque routing on | stage tests with a recording stub engine | ~4 |
 | Unit | last-resort scan on a parseable tap without readable coordinates; defaults kept when nothing is recoverable | `ToolCallParserTest` | ~3 |
+| Unit | rotation passed to the capture: `0…3` kept, anything else `0` | `ScreenshotCaptureStageTest` | ~2 |
+| Device | landscape capture as shown (D13): retrowars at `0.7` and shatteredpixeldungeon at `0.7` and `-1` re-run on the final jar, compared with task 16.17 | standalone runs as in task 16.17 | 3 runs |
 | Unit | `dec.opaque` present/absent, `restarts` written including zero | `NdjsonSink` round-trip through `org.json` | ~4 |
 | Integration | Sink neutrality with the new field; parity goldens for every preset unchanged | existing `SinkNeutralityTest`, parity oracle | existing |
 | Device | retrowars, `llm` preset, same seed: `-1` vs `0.7` — `llm.calls`, `llm_tap`, `restarts`, `dec.opaque` share, host-side coverage and violations | `scripts/run_emulator.sh` + standalone run, or one rv-platform task per value | 2 runs |

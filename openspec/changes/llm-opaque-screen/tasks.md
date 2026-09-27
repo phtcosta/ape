@@ -138,7 +138,15 @@ Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the
 - [x] 16.16 `followups.md`: measuring the bands against the system bars on every step (D11 alternative B, with the ordinary-screen footer evidence); the `UiAutomation.takeScreenshot` fallback capturing the full physical screen while the mapping uses `Display.getSize()`; and what D12 leaves: a tap with no recoverable coordinate still parses as `0` on the missing axis (making it a parse failure would count against the breaker on every arm)
 - [x] 16.17 Device check: `mvn package`; with the owner's LLM server, run shatteredpixeldungeon and retrowars at `0.7` for about 3 min each and one of them at `-1`; record `llm_tap` against `boundary` on `dec.dyn` steps next to task 13's numbers, and the `-1` digest, in `evidence.md`
 
-## 17. Final verification (second revision)
+## 18. Third revision: screenshot orientation (D13)
+
+- [x] 18.1 Revise proposal, design (D13, API, Risks, Testing Strategy), the `llm-infrastructure` delta (MODIFIED "ScreenshotCapture — SurfaceControl Screenshot"), `evidence.md` (the probe) and this file; `openspec validate llm-opaque-screen --strict` passes
+- [ ] 18.2 `ScreenshotCapture.captureViaSurfaceControl` passes `displayRotation(AndroidDevice.getRotation())` as the rotation, read after the reflective lookup; `static int displayRotation(int)` returns `0…3` unchanged and `0` otherwise; javadoc states the frame and why
+- [ ] 18.3 `ScreenshotCaptureStageTest`: `displayRotation` keeps `0…3` and maps `-1` and `4` to `0`; the existing stage cases unchanged
+- [ ] 18.4 CLAUDE.md: the LLM notes say the capture follows the display's rotation (every arm); test count
+- [ ] 18.5 Device re-test on the jar with 18.2: retrowars (landscape) and shatteredpixeldungeon at `0.7`, shatteredpixeldungeon at `-1`, about 3 min each, as in 16.17; record next to 16.17 in `evidence.md` (retrowars' `back` share and taps, the `-1` digest)
+
+## 17. Final verification (second and third revisions)
 
 - [ ] 17.1 `mvn test` green; update the test count in CLAUDE.md if it changed
 - [ ] 17.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape`
@@ -148,4 +156,4 @@ Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the
 
 ## 15. Merge
 
-- [ ] 15.1 After the revised gate passes its test (groups 13 and 16) and group 17 and task 13.3 are done, merge branch `llm-opaque-screen` into `master`. This task stays open until the merge is done, so the change cannot be archived before it
+- [ ] 15.1 After the revised gate passes its test (groups 13, 16 and 18) and group 17 and task 13.3 are done, merge branch `llm-opaque-screen` into `master`. This task stays open until the merge is done, so the change cannot be archived before it
