@@ -257,7 +257,7 @@ public class LlmClientTest {
 
         String trace = trace(new Runnable() {
             @Override public void run() {
-                sink.beginStep(10, 1000L, "com.example.MainActivity", true, "S1", false);
+                sink.beginStep(10, 1000L, "com.example.MainActivity", true, "S1", false, false);
                 trip(breaker);
                 for (int i = 0; i < 5; i++) {
                     assertFalse(client.allows());
@@ -268,7 +268,7 @@ public class LlmClientTest {
                 breaker.recordSuccess();
                 assertTrue(client.allows());
 
-                sink.beginStep(11, 2000L, "com.example.MainActivity", true, "S1", false);
+                sink.beginStep(11, 2000L, "com.example.MainActivity", true, "S1", false, false);
                 trip(breaker);
                 for (int i = 0; i < 5; i++) {
                     assertFalse(client.allows());

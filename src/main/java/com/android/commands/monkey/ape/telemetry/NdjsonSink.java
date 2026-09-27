@@ -167,7 +167,7 @@ public final class NdjsonSink implements EventSink {
 
     @Override
     public void beginStep(int step, long tRelMs, String activity, boolean activityHasMop,
-            String stateKey, boolean opaque) {
+            String stateKey, boolean opaque, boolean dyn) {
         if (disabled) {
             return;
         }
@@ -184,7 +184,7 @@ public final class NdjsonSink implements EventSink {
                 writePending();
             }
             int actId = internActivity(activity, activityHasMop);
-            pending.open(step, tRelMs, actId, internState(stateKey, actId), opaque);
+            pending.open(step, tRelMs, actId, internState(stateKey, actId), opaque, dyn);
             writeHeartbeat(step, tRelMs);
         } catch (Throwable failure) {
             latch("beginStep", failure);

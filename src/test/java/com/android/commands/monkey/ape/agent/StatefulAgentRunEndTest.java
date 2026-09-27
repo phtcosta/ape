@@ -68,7 +68,7 @@ public class StatefulAgentRunEndTest {
 
     /** Tears down an agent whose every collaborator is null, with one step still in flight. */
     private void tearDownWithAStepInFlight() throws Exception {
-        RunContext.current().sink().beginStep(199, 8_123L, "com.foo/.Main", true, "S1", false);
+        RunContext.current().sink().beginStep(199, 8_123L, "com.foo/.Main", true, "S1", false, false);
         allocateInstance(StatefulAgentTearDownTest.ThrowingAgent.class).tearDown();
     }
 

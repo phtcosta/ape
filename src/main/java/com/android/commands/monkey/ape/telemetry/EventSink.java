@@ -69,9 +69,12 @@ public interface EventSink {
      * @param opaque whether the state offers actions but none needing a target
      *        ({@code LlmGate.isOpaque}), written as {@code dec.opaque:1} and omitted when false
      *        (INV-SNK-15). Recorded on every arm, because it describes the screen and not a mechanism
+     * @param dyn whether the step's tree holds a dynamic region ({@code LlmGate.hasDynamicRegion}),
+     *        written as {@code dec.dyn:1} and omitted when false (INV-SNK-17). Recorded on every arm
+     *        and on every step, opaque or not; it is the rule's verdict, not a label of the screen
      */
     void beginStep(int step, long tRelMs, String activity, boolean activityHasMop, String stateKey,
-            boolean opaque);
+            boolean opaque, boolean dyn);
 
     /**
      * Counts one forced-restart request, from any of the agent's three stability hooks.

@@ -229,9 +229,11 @@ public final class OracleDriver {
                             state.getActivity(), hasMop(mopData, state.getActivity()),
                             !state.getActivity().equals(decidedOn));
                 }
+                // dyn is false: the harness drives states without GUI trees, and a null tree holds
+                // no dynamic region, so the goldens carry no dec.dyn.
                 sink.beginStep(agent.getTimestamp(), RunContext.current().elapsedMs(),
                         state.getActivity(), hasMop(mopData, state.getActivity()),
-                        state.getStateKey().toString(), LlmGate.isOpaque(state));
+                        state.getStateKey().toString(), LlmGate.isOpaque(state), false);
             }
             if (llm != null) {
                 llm.beginStep(index);

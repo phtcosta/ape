@@ -56,6 +56,7 @@ final class StepRecord {
     private int actId;
     private int stateId;
     private boolean opaque;
+    private boolean dyn;
 
     // Decision.
     private boolean hasDecision;
@@ -107,7 +108,7 @@ final class StepRecord {
         return tRelMs;
     }
 
-    void open(int step, long tRelMs, int actId, int stateId, boolean opaque) {
+    void open(int step, long tRelMs, int actId, int stateId, boolean opaque, boolean dyn) {
         reset();
         this.open = true;
         this.step = step;
@@ -115,6 +116,7 @@ final class StepRecord {
         this.actId = actId;
         this.stateId = stateId;
         this.opaque = opaque;
+        this.dyn = dyn;
     }
 
     void decision(String action, String decisionSource, String pickChannel, int priority,
@@ -222,6 +224,11 @@ final class StepRecord {
                 // records alike; omitted when false (INV-SNK-05, INV-SNK-15).
                 buf.name("opaque").value(1);
             }
+            if (dyn) {
+                // Likewise a fact about the step's tree, the dynamic-region rule's verdict, written
+                // whether or not the step is opaque; omitted when false (INV-SNK-17).
+                buf.name("dyn").value(1);
+            }
             if (modelAction) {
                 buf.name("pri").value(priority);
                 boost(buf, "mop", mop);
@@ -302,6 +309,7 @@ final class StepRecord {
         actId = 0;
         stateId = 0;
         opaque = false;
+        dyn = false;
         hasDecision = false;
         modelAction = false;
         action = null;

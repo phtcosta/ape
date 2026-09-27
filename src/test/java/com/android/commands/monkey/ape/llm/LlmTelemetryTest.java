@@ -59,7 +59,7 @@ public class LlmTelemetryTest {
 
     /** Runs {@code body} inside an open step and returns the step's record. */
     private JSONObject stepAround(Runnable body) throws Exception {
-        sink.beginStep(42, 8123L, "com.example.MainActivity", true, "S1", false);
+        sink.beginStep(42, 8123L, "com.example.MainActivity", true, "S1", false, false);
         body.run();
         sink.flushPendingStep();
         for (String line : new String(captured.toByteArray(), StandardCharsets.UTF_8).split("\n")) {
@@ -495,10 +495,10 @@ public class LlmTelemetryTest {
     @Test
     public void aSelectionRetryAppendsToTheSameStep() throws Exception {
         LlmTelemetry telemetry = telemetry();
-        sink.beginStep(42, 8123L, "com.example.MainActivity", true, "S1", false);
+        sink.beginStep(42, 8123L, "com.example.MainActivity", true, "S1", false, false);
         telemetry.transportFailed("timeout");
         // The BadStateException retry re-runs selection without advancing the agent timestamp.
-        sink.beginStep(42, 8140L, "com.example.MainActivity", true, "S1", false);
+        sink.beginStep(42, 8140L, "com.example.MainActivity", true, "S1", false, false);
         telemetry.decision("new-state", parsed("click", null, "none"), 540, 958, "matched", null,
                 "Button", nearest(), response("m"), 10L);
         sink.flushPendingStep();

@@ -71,7 +71,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void theOutcomeJoinsItsStepAtTheNextUpdate() throws Exception {
-        sink.beginStep(10, 1_000L, "com.foo/.Main", true, "S1", false);
+        sink.beginStep(10, 1_000L, "com.foo/.Main", true, "S1", false, false);
         sink.decision("model=CLICK@x", "MOP", "roulette_greedy", 9,
                 500, 0, 0, 0, 0, 0, null, 1, EventSink.ABSENT, null);
         // Step 11's graph update is where step 10's outcome first exists.
@@ -89,9 +89,9 @@ public class NdjsonSinkTest {
     public void aStepWhoseOutcomeNeverResolvesClosesWithoutAnOutMember() throws Exception {
         // The legitimate absence of INV-ARCH-09: a restart, a non-model action or a refinement
         // discard produced no transition, exactly the cases that emitted no [APE-OUTCOME] line.
-        sink.beginStep(20, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(20, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.decisionNonModel("EVENT_TRIGGER_ACTIVITY", "Component", "launcher");
-        sink.beginStep(21, 2L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(21, 2L, "com.foo/.Main", false, "S1", false, false);
 
         JSONObject record = stepRecords().get(0);
         assertEquals(20, record.getInt("s"));
@@ -101,7 +101,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void theTeardownFlushIsADistinctEncodingFromTheAbsentOutcome() throws Exception {
-        sink.beginStep(199, 5L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(199, 5L, "com.foo/.Main", false, "S1", false, false);
         sink.decision("model=CLICK@x", "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.flushPendingStep();
@@ -114,9 +114,9 @@ public class NdjsonSinkTest {
     @Test
     public void aSelectionRetryWithinAStepStillProducesOneRecord() throws Exception {
         // The BadStateException retry re-runs selection without advancing the agent timestamp.
-        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.llmError("timeout", "read timed out");
-        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.decision("model=CLICK@y", "SATA", "sata_other", 3,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(false, "S1", "com.foo/.Main", false, false);
@@ -132,7 +132,7 @@ public class NdjsonSinkTest {
     @Test
     public void everyStepThatOpensIsWrittenExactlyOnce() throws Exception {
         for (int step = 1; step <= 5; step++) {
-            sink.beginStep(step, step * 10L, "com.foo/.Main", false, "S" + step, false);
+            sink.beginStep(step, step * 10L, "com.foo/.Main", false, "S" + step, false, false);
             sink.decision("model=CLICK@" + step, "SATA", "sata_other", 1,
                     0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
             sink.outcome(false, "S" + step, "com.foo/.Main", false, false);
@@ -150,7 +150,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void aDictionaryEntryIsAlwaysOnAnEarlierLineThanItsFirstReference() throws Exception {
-        sink.beginStep(5, 1L, "com.foo/.Settings", true, "S9", false);
+        sink.beginStep(5, 1L, "com.foo/.Settings", true, "S9", false, false);
         sink.decision("model=CLICK@x", "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(false, "S9", "com.foo/.Settings", true, false);
@@ -169,7 +169,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void aStateFirstSeenAsAnOutcomeIsDefinedBeforeTheRecordThatReferencesIt() throws Exception {
-        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.decision("model=CLICK@x", "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(true, "S2", "com.foo/.Detail", true, true);
@@ -185,7 +185,7 @@ public class NdjsonSinkTest {
     @Test
     public void theStaticMopFactIsRecordedOnceOnTheActivityRatherThanOnEveryStep() throws Exception {
         for (int step = 1; step <= 3; step++) {
-            sink.beginStep(step, step, "com.foo/.Main", true, "S1", false);
+            sink.beginStep(step, step, "com.foo/.Main", true, "S1", false, false);
             sink.decision("model=CLICK@x", "SATA", "sata_other", 1,
                     0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
             sink.outcome(false, "S1", "com.foo/.Main", true, false);
@@ -209,7 +209,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void aFieldAtItsDefaultIsAbsentRatherThanZero() throws Exception {
-        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.decision("model=CLICK@x", "SATA", "sata_other", 2,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(false, "S1", "com.foo/.Main", false, false);
@@ -227,7 +227,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void theEnvelopeAppearsOncePerRecordAndNeverPerSubEvent() throws Exception {
-        sink.beginStep(42, 8_123L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(42, 8_123L, "com.foo/.Main", false, "S1", false, false);
         for (int call = 1; call <= 3; call++) {
             sink.llmCall(call, "new_state", "click", 500, 861, 512, 884, "matched", null, null,
                     "android.widget.Button", "android.widget.Button", 4.2d, 23, 1841, 25, 973L,
@@ -287,11 +287,11 @@ public class NdjsonSinkTest {
 
     @Test
     public void theWtgStampRidesTheBoostItDeAliases() throws Exception {
-        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.decision("model=CLICK@x", "WTG", "roulette_greedy", 9,
                 0, 0, 400, 0, 0, 0, "both", EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(false, "S1", "com.foo/.Main", false, false);
-        sink.beginStep(2, 2L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(2, 2L, "com.foo/.Main", false, "S1", false, false);
         sink.decision("model=CLICK@y", "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, "wtg", EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(false, "S1", "com.foo/.Main", false, false);
@@ -304,16 +304,16 @@ public class NdjsonSinkTest {
 
     @Test
     public void theExposurePairAndTheLaunchResultRideTheirOwnStep() throws Exception {
-        sink.beginStep(1, 1L, "com.foo/.Main", true, "S1", false);
+        sink.beginStep(1, 1L, "com.foo/.Main", true, "S1", false, false);
         sink.mopExposure(2, 17);
         sink.decision("model=CLICK@x", "MOP", "roulette_greedy", 9,
                 500, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(false, "S1", "com.foo/.Main", true, false);
 
-        sink.beginStep(2, 2L, "com.foo/.Main", true, "S1", false);
+        sink.beginStep(2, 2L, "com.foo/.Main", true, "S1", false, false);
         sink.decisionNonModel("EVENT_TRIGGER_ACTIVITY", "Component", "launcher");
         sink.componentLaunch(-2, "START_CLASS_NOT_FOUND");
-        sink.beginStep(3, 3L, "com.foo/.Main", true, "S1", false);
+        sink.beginStep(3, 3L, "com.foo/.Main", true, "S1", false, false);
 
         List<JSONObject> records = stepRecords();
         JSONArray exposure = records.get(0).getJSONObject("dec").getJSONArray("mopx");
@@ -331,7 +331,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void everyKindOfAttemptLandsOnTheStepThatMadeIt() throws Exception {
-        sink.beginStep(55, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(55, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.llmError("timeout", "read timed out after 15000 ms");
         sink.llmBreakerOpen(2);
         sink.llmCall(4, "stagnation", "click", 500, 499, 512, 511, "no_match", "dead_pair", null,
@@ -360,12 +360,12 @@ public class NdjsonSinkTest {
     public void aDumpBelongsToTheAttemptItWasWrittenFor() throws Exception {
         // The prompt exists before the response is parsed and the mapping decided, which is why it
         // is staged: an attempt abandoned before it maps still keeps the prompt that produced it.
-        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.llmDump("you are a tester", "Screen \"Main\":\n[0] BACK", null, null);
         sink.llmError("parse", "no tool call in response");
         sink.llmCall(2, "new_state", "click", 1, 2, 3, 4, "matched", null, null, null, null,
                 0.0d, 1, 10, 2, 5L, null);
-        sink.beginStep(2, 2L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(2, 2L, "com.foo/.Main", false, "S1", false, false);
 
         JSONArray llm = stepRecords().get(0).getJSONArray("llm");
         assertEquals("you are a tester", llm.getJSONObject(0).getString("sys"));
@@ -379,7 +379,7 @@ public class NdjsonSinkTest {
     @Test
     public void everyRecordLineBeginsWithABrace() throws Exception {
         sink.mopData("loaded", null, 1, "sha256:ab", "com.foo", 12, 340, 8, 2, 7, 1, 0, 3, 4, 5, 9);
-        sink.beginStep(1, 1L, "com.foo/.Main", true, "S1", false);
+        sink.beginStep(1, 1L, "com.foo/.Main", true, "S1", false, false);
         sink.decision("model=CLICK@x", "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(false, "S1", "com.foo/.Main", true, false);
@@ -399,7 +399,7 @@ public class NdjsonSinkTest {
         // 18 runs of the decisive campaign are physically split because a widget's text carried a
         // raw newline, and what those steps silently lost was decision_source.
         String hostile = "Salvar\n\"opção\" \\fim\u0000";
-        sink.beginStep(1, 1L, "com.foo/.Main\n", false, "S1\"S2", false);
+        sink.beginStep(1, 1L, "com.foo/.Main\n", false, "S1\"S2", false, false);
         sink.decision(hostile, "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.outcome(false, "S1\"S2", "com.foo/.Main\n", false, false);
@@ -506,11 +506,11 @@ public class NdjsonSinkTest {
         NdjsonSink latching = new NdjsonSink(failing);
 
         // None of these may throw: a telemetry defect must not alter or kill an experimental run.
-        latching.beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
+        latching.beginStep(1, 1L, "com.foo/.Main", false, "S1", false, false);
         latching.decision("model=CLICK@x", "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         latching.outcome(false, "S1", "com.foo/.Main", false, false);
-        latching.beginStep(2, 2L, "com.foo/.Other", false, "S2", false);
+        latching.beginStep(2, 2L, "com.foo/.Other", false, "S2", false, false);
         latching.flushPendingStep();
         latching.mopData("loaded", null, 1, "sha256:ab", "com.foo", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         latching.llmAck("qwen3-vl-8b");
@@ -537,9 +537,9 @@ public class NdjsonSinkTest {
 
     @Test
     public void runEndCarriesTheReasonTheStepSpanAndTheCounters() throws Exception {
-        sink.beginStep(1, 1_500L, "com.foo/.Main", true, "S1", false);
+        sink.beginStep(1, 1_500L, "com.foo/.Main", true, "S1", false, false);
         sink.outcome(false, "S1", "com.foo/.Main", true, false);
-        sink.beginStep(2, 9_800L, "com.foo/.Detail", false, "S2", false);
+        sink.beginStep(2, 9_800L, "com.foo/.Detail", false, "S2", false, false);
         sink.outcome(false, "S2", "com.foo/.Detail", false, false);
 
         RunCounters counters = new RunCounters();
@@ -584,7 +584,7 @@ public class NdjsonSinkTest {
     public void aPlanWithNoLlmCarriesNoLlmCounterBlock() throws Exception {
         // Not a zeroed block: seventeen zeros would read as an LLM that was asked nothing, and the
         // control arm's whole point is that it has none to ask.
-        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.flushPendingStep();
         sink.runEnd("timeout", null, null);
 
@@ -598,7 +598,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void opaqueFlagOnAnOpaqueStep() throws Exception {
-        sink.beginStep(12, 1L, "com.foo/.Game", false, "S1", true);
+        sink.beginStep(12, 1L, "com.foo/.Game", false, "S1", true, false);
         sink.decision("model=MODEL_LLM_TAP@x", "LLM", "llm", 0,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.flushPendingStep();
@@ -608,7 +608,7 @@ public class NdjsonSinkTest {
 
     @Test
     public void opaqueFlagAbsentOnAWidgetStep() throws Exception {
-        sink.beginStep(12, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(12, 1L, "com.foo/.Main", false, "S1", false, false);
         sink.decision("model=CLICK@x", "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
         sink.flushPendingStep();
@@ -620,7 +620,7 @@ public class NdjsonSinkTest {
     @Test
     public void opaqueFlagOnANonModelRecordFromAnOpaqueState() throws Exception {
         // A component trigger fired from a canvas: the flag describes the state, not the action.
-        sink.beginStep(13, 1L, "com.foo/.Game", false, "S1", true);
+        sink.beginStep(13, 1L, "com.foo/.Game", false, "S1", true, false);
         sink.decisionNonModel("EVENT_TRIGGER_ACTIVITY", "Component", "launcher");
         sink.flushPendingStep();
 
@@ -630,15 +630,50 @@ public class NdjsonSinkTest {
     @Test
     public void opaqueFlagDoesNotLeakIntoTheNextStep() throws Exception {
         // One StepRecord is reused for the whole run, so reset() has to clear the flag.
-        sink.beginStep(1, 1L, "com.foo/.Game", false, "S1", true);
+        sink.beginStep(1, 1L, "com.foo/.Game", false, "S1", true, false);
         sink.decisionNonModel("EVENT_RESTART", "SATA", "restart");
-        sink.beginStep(2, 2L, "com.foo/.Main", false, "S2", false);
+        sink.beginStep(2, 2L, "com.foo/.Main", false, "S2", false, false);
         sink.decisionNonModel("EVENT_RESTART", "SATA", "restart");
         sink.flushPendingStep();
 
         List<JSONObject> records = stepRecords();
         assertTrue(records.get(0).getJSONObject("dec").has("opaque"));
         assertFalse(records.get(1).getJSONObject("dec").has("opaque"));
+    }
+
+    // --- dynamic regions (INV-SNK-17) ------------------------------------------------------------
+
+    @Test
+    public void dynFlagIndependentOfOpaque() throws Exception {
+        // All four combinations, one step each: dyn is written iff true, whatever opaque says.
+        boolean[][] rows = {{false, false}, {false, true}, {true, false}, {true, true}};
+        for (int i = 0; i < rows.length; i++) {
+            sink.beginStep(i + 1, i + 1, "com.foo/.Game", false, "S1", rows[i][0], rows[i][1]);
+            sink.decision("model=BACK@x", "SATA", "sata_other", 1,
+                    0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
+        }
+        sink.flushPendingStep();
+
+        List<JSONObject> records = stepRecords();
+        assertEquals(4, records.size());
+        for (int i = 0; i < rows.length; i++) {
+            JSONObject dec = records.get(i).getJSONObject("dec");
+            String row = "opaque=" + rows[i][0] + " dyn=" + rows[i][1];
+            assertEquals(row, rows[i][0], dec.has("opaque"));
+            assertEquals(row, rows[i][1], dec.has("dyn"));
+            if (rows[i][1]) {
+                assertEquals(row, 1, dec.getInt("dyn"));
+            }
+        }
+    }
+
+    @Test
+    public void dynFlagOnANonModelRecord() throws Exception {
+        sink.beginStep(13, 1L, "com.foo/.Game", false, "S1", false, true);
+        sink.decisionNonModel("EVENT_TRIGGER_ACTIVITY", "Component", "launcher");
+        sink.flushPendingStep();
+
+        assertEquals(1, onlyStepRecord().getJSONObject("dec").getInt("dyn"));
     }
 
     @Test
@@ -664,9 +699,9 @@ public class NdjsonSinkTest {
 
     @Test
     public void oneHeartbeatLinePerStepOnTheStepsOwnClock() throws Exception {
-        sink.beginStep(1, 1_500L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(1, 1_500L, "com.foo/.Main", false, "S1", false, false);
         sink.outcome(false, "S1", "com.foo/.Main", false, false);
-        sink.beginStep(2, 9_800L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(2, 9_800L, "com.foo/.Main", false, "S1", false, false);
         sink.outcome(false, "S1", "com.foo/.Main", false, false);
 
         List<Log.Entry> beats = Log.entries();
@@ -685,8 +720,8 @@ public class NdjsonSinkTest {
     public void aSelectionRetryDoesNotBeatTwice() throws Exception {
         // The retry re-enters the same step; one step is one record (INV-SNK-03) and one heartbeat,
         // or the logcat line count stops being a step count.
-        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1", false);
-        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1", false, false);
+        sink.beginStep(7, 1L, "com.foo/.Main", false, "S1", false, false);
 
         assertEquals(1, Log.entries().size());
     }
@@ -712,9 +747,9 @@ public class NdjsonSinkTest {
         Log.failWith(new IllegalStateException("logcat is gone"));
 
         String warnings = onStdout(() -> {
-            sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false);
+            sink.beginStep(1, 1L, "com.foo/.Main", false, "S1", false, false);
             sink.outcome(false, "S1", "com.foo/.Main", false, false);
-            sink.beginStep(2, 2L, "com.foo/.Main", false, "S1", false);
+            sink.beginStep(2, 2L, "com.foo/.Main", false, "S1", false, false);
             sink.outcome(false, "S1", "com.foo/.Main", false, false);
         });
 
@@ -741,7 +776,7 @@ public class NdjsonSinkTest {
     @Test
     public void theNoopSinkAcceptsEveryCallAndWritesNothing() throws Exception {
         EventSink noop = new NoopSink();
-        noop.beginStep(1, 1L, "com.foo/.Main", true, "S1", false);
+        noop.beginStep(1, 1L, "com.foo/.Main", true, "S1", false, false);
         noop.decision("model=CLICK@x", "MOP", "roulette_greedy", 9,
                 500, 0, 0, 0, 0, 0, null, 1, 0, null);
         noop.decisionNonModel("EVENT_TRIGGER_ACTIVITY", "Component", "launcher");
@@ -765,7 +800,7 @@ public class NdjsonSinkTest {
     // --- helpers ----------------------------------------------------------------------------------
 
     private void record(int step, int patched, int cfChanged, String cfAction) throws Exception {
-        sink.beginStep(step, step, "com.foo/.Main", false, "S1", false);
+        sink.beginStep(step, step, "com.foo/.Main", false, "S1", false, false);
         sink.decision("model=CLICK@" + step, "MOP", "roulette_greedy", 9,
                 500, 0, 0, 0, 0, 0, null, patched, cfChanged, cfAction);
         sink.outcome(false, "S1", "com.foo/.Main", false, false);
@@ -802,11 +837,11 @@ public class NdjsonSinkTest {
 
     /** Two ordinary resolved steps, the same script through whichever sink is handed in. */
     private static void scriptedRun(NdjsonSink target) {
-        target.beginStep(1, 1_500L, "com.foo/.Main", true, "S1", false);
+        target.beginStep(1, 1_500L, "com.foo/.Main", true, "S1", false, false);
         target.decision("model=CLICK@x", "MOP", "roulette_greedy", 9,
                 500, 0, 0, 0, 0, 0, null, 1, EventSink.ABSENT, null);
         target.outcome(true, "S2", "com.foo/.Detail", false, true);
-        target.beginStep(2, 9_800L, "com.foo/.Detail", false, "S2", false);
+        target.beginStep(2, 9_800L, "com.foo/.Detail", false, "S2", false, false);
         target.decisionNonModel("EVENT_TRIGGER_ACTIVITY", "Component", "launcher");
         target.outcome(false, "S2", "com.foo/.Detail", false, false);
     }

@@ -1567,7 +1567,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // the run, and where the agent is standing (INV-SNK-03).
         RunContext.current().sink().beginStep(getTimestamp(), RunContext.current().elapsedMs(),
                 newState.getActivity(), activityHasMop(newState.getActivity()) == 1,
-                newState.getStateKey().toString(), LlmGate.isOpaque(newState));
+                newState.getStateKey().toString(), LlmGate.isOpaque(newState),
+                LlmGate.hasDynamicRegion(newGUITree));
         adjustActionsByGUITree();
         Action action = selectNewActionNonnull();
         Utils.assertNotNull(action);

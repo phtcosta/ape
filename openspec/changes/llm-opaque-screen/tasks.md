@@ -91,12 +91,12 @@
 
 ## 11. Telemetry (INV-SNK-17, design D10)
 
-- [ ] 11.1 `EventSink.beginStep(..., boolean opaque, boolean dyn)` in the interface, `NdjsonSink` and `NoopSink`; `StepRecord` writes `dec.dyn:1` when true and nothing when false, for model and non-model records alike
-- [ ] 11.2 `StatefulAgent.resolveNewAction`: pass `LlmGate.hasDynamicRegion(newGUITree)` on every arm
-- [ ] 11.3 `OracleDriver` and `EventSink` javadoc follow the new signature; the oracle passes `false` (no tree)
-- [ ] 11.4 `NdjsonSinkTest`: `dyn` present when true, absent when false, independent of `opaque` (all four combinations)
-- [ ] 11.5 Confirm `SinkNeutralityTest` and the parity goldens pass unchanged
-- [ ] 11.6 Run `/sdd-test-run telemetry`
+- [x] 11.1 `EventSink.beginStep(..., boolean opaque, boolean dyn)` in the interface, `NdjsonSink` and `NoopSink`; `StepRecord` writes `dec.dyn:1` when true and nothing when false, for model and non-model records alike
+- [x] 11.2 `StatefulAgent.resolveNewAction`: pass `LlmGate.hasDynamicRegion(newGUITree)` on every arm
+- [x] 11.3 `OracleDriver` and `EventSink` javadoc follow the new signature; the oracle passes `false` (no tree)
+- [x] 11.4 `NdjsonSinkTest`: `dyn` present when true, absent when false, independent of `opaque` (all four combinations)
+- [x] 11.5 Confirm `SinkNeutralityTest` and the parity goldens pass unchanged
+- [x] 11.6 Run `/sdd-test-run telemetry`
 
 ## 12. Documentation
 
