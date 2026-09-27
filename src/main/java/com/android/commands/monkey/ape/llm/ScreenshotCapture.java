@@ -3,6 +3,8 @@ package com.android.commands.monkey.ape.llm;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 
+import com.android.commands.monkey.ape.AndroidDevice;
+
 import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Method;
 
@@ -70,6 +72,13 @@ public class ScreenshotCapture {
      *
      * SurfaceControl is a hidden Android API available on API 29+ from app_process.
      * Reflection is required because it is not part of the public SDK.
+     *
+     * <p>{@code width}×{@code height} is the frame {@code Display.getSize()} reports for the
+     * current orientation, so the capture must be taken in that orientation too: the display's
+     * rotation is passed as the last argument. With {@code 0} on a display turned to landscape,
+     * the framebuffer comes back in its natural (portrait) orientation cropped to the landscape
+     * rectangle — the model saw the screen turned 90° and partly cut off (design D13). In portrait
+     * the rotation is {@code 0} and the call is unchanged.
      */
     private byte[] captureViaSurfaceControl(int width, int height) {
         try {
@@ -77,8 +86,9 @@ public class ScreenshotCapture {
             Method screenshotMethod = surfaceControlClass.getMethod(
                     "screenshot", Rect.class, int.class, int.class, int.class);
 
+            int rotation = displayRotation(AndroidDevice.getRotation());
             Rect displayRect = new Rect(0, 0, width, height);
-            Object bitmapObj = screenshotMethod.invoke(null, displayRect, width, height, 0);
+            Object bitmapObj = screenshotMethod.invoke(null, displayRect, width, height, rotation);
             if (bitmapObj == null) return null;
 
             Bitmap bitmap = (Bitmap) bitmapObj;
@@ -88,6 +98,19 @@ public class ScreenshotCapture {
             // Reflection not available or no permission — fall through to backup
             return null;
         }
+    }
+
+    /**
+     * The rotation argument for {@code SurfaceControl.screenshot}: the display's rotation
+     * ({@code Surface.ROTATION_0…ROTATION_270}) when it is one of them, else {@code 0} — the call
+     * made before the rotation was passed. {@code AndroidDevice.getRotation()} returns {@code -1}
+     * when the window manager cannot be asked.
+     *
+     * @param displayRotation the display's current rotation
+     * @return a value in {@code 0…3}
+     */
+    static int displayRotation(int displayRotation) {
+        return displayRotation >= 0 && displayRotation <= 3 ? displayRotation : 0;
     }
 
     /**

@@ -40,4 +40,20 @@ public class ScreenshotCaptureStageTest {
         capture.capture(720, 1280);
         assertEquals(ScreenshotCapture.STAGE_UIAUTOMATION, capture.getLastFailureStage());
     }
+
+    // D13 — the capture is taken in the display's orientation; the rotation itself needs a device.
+
+    @Test
+    public void theDisplayRotationIsPassedAsItIs() {
+        for (int rotation = 0; rotation <= 3; rotation++) {
+            assertEquals(rotation, ScreenshotCapture.displayRotation(rotation));
+        }
+    }
+
+    @Test
+    public void anUnknownRotationFallsBackToZero() {
+        assertEquals("the window manager could not be asked", 0,
+                ScreenshotCapture.displayRotation(-1));
+        assertEquals(0, ScreenshotCapture.displayRotation(4));
+    }
 }
