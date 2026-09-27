@@ -25,6 +25,9 @@ pins them.
 - **Boundary recount.** E5c's `reason:"boundary"` also counts `type_text` and other null answers.
   Recount shatteredpixeldungeon's 245 by cause (band vs other) from the `llm[]` sub-events before
   any change to `ape.llmBoundaryTopPct`/`ape.llmBoundaryBottomPct` on dynamic steps.
+  Task 13 adds one clean data point: on shatteredpixeldungeon's title screen all 53 answers were
+  `click` at y ≈ 980 (0.98 h) and all 53 were rejected by the bottom band, not by a null answer
+  (`evidence.md`, device validation).
 - **APE action extraction, not the LLM gate.** Two false-opaque screens seen on the way:
   flyingcarpet's About dialog has a scrollable `android:id/scrollView` that the compressed tree
   drops (not focusable), so its scroll action is lost; AnyMemo's CardPlayer settings dialog has

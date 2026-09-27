@@ -105,8 +105,8 @@
 
 ## 13. Device validation (revised gate)
 
-- [ ] 13.1 `mvn package`; on the emulator, run APE standalone with `ape.llmPercentageNoSubstrate=0.7` and an SGLang server for about 3 min each on retrowars, shatteredpixeldungeon, mtgfam (DB-update dialog), smokingtracker (loading dialog path) and one zxing app (createpdf capture); check from the trace that `dec.dyn:1` appears on the games' steps and not on the dialog, camera or splash steps, and that LLM calls on opaque steps happen only where `dec.dyn:1`
-- [ ] 13.2 Same runs with `-1`: 0 LLM calls on opaque steps, `RUN_START.digest` equal to the `e93dea86` golden
+- [x] 13.1 `mvn package`; on the emulator, run APE standalone with `ape.llmPercentageNoSubstrate=0.7` and an SGLang server for about 3 min each on retrowars, shatteredpixeldungeon, mtgfam (DB-update dialog), smokingtracker (loading dialog path) and one zxing app (createpdf capture); check from the trace that `dec.dyn:1` appears on the games' steps and not on the dialog, camera or splash steps, and that LLM calls on opaque steps happen only where `dec.dyn:1` (every opaque-step call fell on a `dec.dyn:1` step: retrowars 53/53, shatteredpixeldungeon 53/53, mtgfam 1/1; the DB-update dialog took 259/260 opaque steps without a region and no call; one transient `dyn` step on the dialog state; the smokingtracker loading dialog and createpdf capture were not reached in 3 min and rest on their dumps in `DynamicRegionTest`; numbers in `evidence.md`)
+- [x] 13.2 Same runs with `-1`: 0 LLM calls on opaque steps, `RUN_START.digest` equal to the `e93dea86` golden (digest `a67b096e757d83ad` on all five, 0 opaque-step attempts)
 - [ ] 13.3 Build the jar at a committed revision, record its sha256 and commit, and send both to the rep-pack-e03 session with the E5c follow-up on arm order (`followups.md`)
 
 ## 14. Final verification (revised gate)
