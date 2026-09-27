@@ -18,7 +18,13 @@ import org.w3c.dom.NodeList;
  * <p>The nodes come from {@link GUITreeBuilder}'s own XML reader, so a fixture is read with the
  * attributes production reads. That reader does not read {@code content-desc}; this loader copies it
  * onto the nodes afterwards, walking the document and the tree in the same order, and converts
- * nothing else.
+ * nothing else. The tree is then patched by {@link GUITreeBuilder#patchGUITree}, as production
+ * patches every tree it builds ({@code ape.patchGUITree} is on by default), so clickability the
+ * patch copies onto children is present, and marked, exactly as on a device.
+ *
+ * <p>What still differs from production: the nodes are read from the dump's XML rather than from
+ * {@code AccessibilityNodeInfo}, and the text is not truncated as the live reader truncates it
+ * ({@code StringCache.truncateText}). Neither changes a predicate that tests text for emptiness.
  *
  * <p>The builder and the tree are allocated rather than constructed: their constructors take an
  * {@code android.content.ComponentName} and a naming manager, which the surefire classpath does not
@@ -31,7 +37,8 @@ public final class DumpTrees {
 
     /**
      * @param resource a classpath resource, e.g. {@code /dynamic-region/retrowars_ingame.xml}
-     * @return the tree the jar's reader builds from it, with content descriptions filled in
+     * @return the tree the jar's reader builds from it, with content descriptions filled in and
+     *         patched as production patches it
      */
     public static GUITree load(String resource) throws Exception {
         Document document;
@@ -44,6 +51,16 @@ public final class DumpTrees {
         GUITreeBuilder builder = allocate(GUITreeBuilder.class);
         GUITreeNode root = builder.buildNodeFromXml(document);
         copyContentDesc(firstElement(document.getDocumentElement()), root);
+        GUITreeBuilder.patchGUITree(root);
+        return treeOf(root);
+    }
+
+    /**
+     * A tree whose root is {@code root}, after {@link GUITreeBuilder#patchGUITree} has run over it
+     * as production runs it; for synthetic trees whose test is about patched clickability.
+     */
+    public static GUITree patchedTreeOf(GUITreeNode root) throws Exception {
+        GUITreeBuilder.patchGUITree(root);
         return treeOf(root);
     }
 

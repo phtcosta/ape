@@ -13,11 +13,12 @@ import static org.junit.Assert.assertTrue;
 /**
  * The shared LLM precondition and the predicates it reads (INV-RTR-21/22/23/26).
  *
- * <p>The gate is a function of four facts about the step — the buffer, the size of the action list,
- * whether the state is opaque, whether its tree holds a dynamic region — and one fact about the plan,
- * whether opaque routing is on. The truth table below walks all of them. The case the table exists for is the one that did not change:
- * with the flag off, every row equals the size rule the gate had before opaque routing, which is what
- * keeps a plan at {@code ape.llmPercentageNoSubstrate=-1} on its old decisions and draws.
+ * <p>The gate is a function of four facts about the step — the buffer, the size of the action
+ * list, whether the state is opaque, whether its tree holds a dynamic region — and one fact about
+ * the plan, whether opaque routing is on. The truth table below walks all of them. The case the
+ * table exists for is the one that did not change: with the flag off, every row equals the size
+ * rule the gate had before opaque routing, which is what keeps a plan at
+ * {@code ape.llmPercentageNoSubstrate=-1} on its old decisions and draws.
  */
 public class LlmGateTest {
 
@@ -53,22 +54,24 @@ public class LlmGateTest {
 
     @Test
     public void opaqueWithMenuDisabled() throws Exception {
-        // ape.modelMenuEnabled=false leaves the canvas with MODEL_BACK alone; still nothing to target.
+        // ape.modelMenuEnabled=false leaves the canvas with MODEL_BACK alone; still nothing to
+        // target.
         assertTrue(LlmGate.isOpaque(FakeStepContext.stateOf(ACTIVITY, BACK)));
     }
 
     @Test
     public void opaqueWithANonActionableWidget() throws Exception {
-        // A tree with one widget that yields no model action abstracts to the same action list as an
-        // empty tree: the predicate reads the actions, so the widget does not make the screen legible.
+        // A tree with one widget that yields no model action abstracts to the same action list as
+        // an empty tree: the predicate reads the actions, so the widget does not make the screen
+        // legible.
         State state = FakeStepContext.stateOf(ACTIVITY, BACK, MENU);
         assertTrue(LlmGate.isOpaque(state));
     }
 
     @Test
     public void notOpaqueWithOneWidgetAction() throws Exception {
-        // A one-button dialog with ape.modelMenuEnabled=false has two actions, as a canvas does, but
-        // one of them has a target — which is why the predicate is not "two actions or fewer".
+        // A one-button dialog with ape.modelMenuEnabled=false has two actions, as a canvas does,
+        // but one of them has a target — which is why the predicate is not "two actions or fewer".
         assertFalse(LlmGate.isOpaque(FakeStepContext.stateOf(ACTIVITY, CLICK, BACK)));
     }
 

@@ -30,7 +30,8 @@ import com.android.commands.monkey.ape.tree.GUITreeNode;
 import android.graphics.Rect;
 
 /**
- * What every LLM stage does around its engine call: the precondition before, the acceptance after.
+ * What every LLM stage does around its engine call: the precondition before, the acceptance after;
+ * and the classifier of the step's screen that the precondition and the step record share.
  *
  * <p>Both halves were written out three times in the ladder, once per hook, which is what made them
  * worth a name. The precondition in particular — {@code actionBufferSize() == 0 &&
@@ -40,6 +41,11 @@ import android.graphics.Rect;
  * <p>The third conjunct of those three copies, a null test on the run's LLM, is not here: an LLM
  * stage exists only on a plan carrying its feature, and such a plan builds the units. The guard
  * dissolved into assembly rather than moving (INV-DP-03).
+ *
+ * <p>The class's second role is to classify the screen: {@link #isOpaque} reads the abstract
+ * state, {@link #hasDynamicRegion} reads the step's tree. The gate routes on them and the agent
+ * writes them as {@code dec.opaque} and {@code dec.dyn} on every arm, so the routing and the
+ * record cannot disagree.
  */
 public final class LlmGate {
 
@@ -47,12 +53,13 @@ public final class LlmGate {
     }
 
     /**
-     * The least share of the root's area a {@linkplain #hasDynamicRegion dynamic region} must cover.
+     * The least share of the root's area a {@linkplain #hasDynamicRegion dynamic region} must
+     * cover.
      *
-     * <p>A constant, not a plan key (design D9): a key would enter the plan values and change every
-     * LLM arm's digest, and there is no measurement to set it by. The one measured surface, a LibGDX
-     * canvas, covers the whole root; half is a margin under that and above any decorative view.
-     * {@code dec.dyn} records the verdict on every arm, so a later calibration has data.
+     * <p>A constant, not a plan key (design D9): a key would enter the plan values and change
+     * every LLM arm's digest, and there is no measurement to set it by. The one measured surface,
+     * a LibGDX canvas, covers the whole root; half is a margin under that and above any decorative
+     * view. {@code dec.dyn} records the verdict on every arm, so a later calibration has data.
      */
     static final double DYNAMIC_REGION_MIN_AREA = 0.5;
 
@@ -67,19 +74,20 @@ public final class LlmGate {
      * executing a path it already committed to, and redirecting there would abandon the path rather
      * than choose within it — which is as true on an opaque screen as on any other.
      *
-     * <p>With the buffer empty, a state offering more than two actions opens it. Two actions or fewer
-     * is, for the chain, a screen with nothing to reason about: the model's answer would cost a round
-     * trip to pick from a set the chain picks from just as well. That premise fails on an
-     * {@linkplain #isOpaqueDynamic opaque step whose tree holds a dynamic region} — a game canvas —
-     * where the two actions are {@code MODEL_BACK} and {@code MODEL_MENU}, the chain can only leave or
-     * open the menu, and the model, which sees the screenshot and can answer with an off-tree tap, is
-     * the one decider with anything to offer. So when the plan turns opaque routing on, such a step
-     * opens it too. An opaque step without a dynamic region — a stuck progress dialog, a camera
-     * preview, a splash — does not: the model has nothing there to touch (design D8).
+     * <p>With the buffer empty, a state offering more than two actions opens it. Two actions or
+     * fewer is, for the chain, a screen with nothing to reason about: the model's answer would cost
+     * a round trip to pick from a set the chain picks from just as well. That premise fails on an
+     * {@linkplain #isOpaqueDynamic opaque step whose tree holds a dynamic region} — a game canvas
+     * — where the two actions are {@code MODEL_BACK} and {@code MODEL_MENU}, the chain can only
+     * leave or open the menu, and the model, which sees the screenshot and can answer with an
+     * off-tree tap, is the one decider with anything to offer. So when the plan turns opaque
+     * routing on, such a step opens it too. An opaque step without a dynamic region — a stuck
+     * progress dialog, a camera preview, a splash — does not: the model has nothing there to touch
+     * (design D8).
      *
-     * <p>With {@code opaqueEnabled} false the result is the size rule alone, for every input, and the
-     * tree is never walked — the property that keeps a plan without opaque routing on the gate, and
-     * therefore on the draw sequence, it always had (INV-RTR-22).
+     * <p>With {@code opaqueEnabled} false the result is the size rule alone, for every input, and
+     * the tree is never walked — the property that keeps a plan without opaque routing on the
+     * gate, and therefore on the draw sequence, it always had (INV-RTR-22).
      *
      * @param ctx the step being decided
      * @param opaqueEnabled whether the plan turns opaque routing on, injected at assembly
@@ -110,8 +118,8 @@ public final class LlmGate {
      * target (INV-RTR-21).
      *
      * <p>This is the explorer's own knowledge of the screen, read from the abstract state and from
-     * nothing else. It does not tell a LibGDX canvas from a camera preview or a loading screen with an
-     * empty tree, which is why it is not the whole routing trigger: the gate also asks
+     * nothing else. It does not tell a LibGDX canvas from a camera preview or a loading screen with
+     * an empty tree, which is why it is not the whole routing trigger: the gate also asks
      * {@link #hasDynamicRegion}. A screen whose one widget yields no model action is opaque; a
      * one-button dialog is not, even at two actions.
      *
@@ -150,8 +158,11 @@ public final class LlmGate {
      * their own class;</li>
      * <li>it has no children, and empty text and content description — the content is drawn, not
      * described;</li>
-     * <li>it is focusable, clickable or long-clickable — with not-important views excluded from the
-     * tree, that is what brings a surface into it at all, and it means the view takes input;</li>
+     * <li>it is focusable, natively clickable or long-clickable — with not-important views excluded
+     * from the tree, that is what brings a surface into it at all, and it means the view takes
+     * input. Clickability {@code GUITreeBuilder.patchGUITree} copied onto the child of a clickable
+     * container ({@link GUITreeNode#isPatchedClickable}) does not count: the child does not take
+     * touch itself;</li>
      * <li>its bounds, intersected with the root's, cover at least {@link #DYNAMIC_REGION_MIN_AREA}
      * of the root's area — the screen's content, not an icon.</li>
      * </ul>
@@ -159,21 +170,24 @@ public final class LlmGate {
      * inside a WebView, which is why those subtrees are not entered.
      *
      * <p>The verdict is the rule's, not a truth about the screen: it is what the gate routes on and
-     * what {@code dec.dyn} records. One pass over the tree, no IPC.
+     * what {@code dec.dyn} records. One pass over the tree, no IPC. A known false positive is not
+     * excluded: Flutter semantics nodes also report {@code android.view.View}, so an unlabeled,
+     * focusable, full-screen Flutter node passes. No Flutter application is in the corpus, and
+     * {@code dec.dyn} would show one if it appeared.
      *
      * @param tree the step's tree; may be null
-     * @return {@code false} for a null tree or a root with empty bounds; otherwise whether some node
-     *         satisfies every clause above
+     * @return {@code false} for a null tree or a root with empty bounds; otherwise whether some
+     *         node satisfies every clause above
      */
     public static boolean hasDynamicRegion(GUITree tree) {
         if (tree == null) {
             return false;
         }
         GUITreeNode root = tree.getRootNode();
-        Rect rootBounds = root == null ? null : root.getBoundsInScreen();
-        if (rootBounds == null) {
+        if (root == null) {
             return false;
         }
+        Rect rootBounds = root.getBoundsInScreen();
         long rootArea = area(rootBounds.left, rootBounds.top, rootBounds.right, rootBounds.bottom);
         if (rootArea == 0) {
             return false;
@@ -204,13 +218,11 @@ public final class LlmGate {
                 || !isEmpty(leaf.getContentDesc())) {
             return false;
         }
-        if (!leaf.isFocusable() && !leaf.isClickable() && !leaf.isLongClickable()) {
+        boolean nativelyClickable = leaf.isClickable() && !leaf.isPatchedClickable();
+        if (!leaf.isFocusable() && !nativelyClickable && !leaf.isLongClickable()) {
             return false;
         }
         Rect b = leaf.getBoundsInScreen();
-        if (b == null) {
-            return false;
-        }
         long covered = area(Math.max(b.left, rootBounds.left), Math.max(b.top, rootBounds.top),
                 Math.min(b.right, rootBounds.right), Math.min(b.bottom, rootBounds.bottom));
         return covered >= DYNAMIC_REGION_MIN_AREA * rootArea;

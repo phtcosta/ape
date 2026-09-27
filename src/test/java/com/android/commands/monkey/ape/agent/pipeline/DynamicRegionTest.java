@@ -148,6 +148,27 @@ public class DynamicRegionTest {
     }
 
     @Test
+    public void patchedClickabilityDoesNotCount() throws Exception {
+        // patchGUITree copies a clickable container's clickability onto its label-less child; the
+        // child does not take touch itself, so it is no region (WR-01).
+        GUITreeNode patched = root();
+        GUITreeNode container = node(patched, "android.widget.FrameLayout",
+                new Rect(0, 0, 1000, 1000));
+        container.setClickable(true);
+        GUITreeNode leaf = node(container, VIEW, new Rect(0, 0, 1000, 1000));
+        assertFalse(LlmGate.hasDynamicRegion(DumpTrees.patchedTreeOf(patched)));
+        assertTrue("the patch ran", leaf.isClickable() && leaf.isPatchedClickable());
+
+        GUITreeNode nativeClick = root();
+        GUITreeNode nativeContainer = node(nativeClick, "android.widget.FrameLayout",
+                new Rect(0, 0, 1000, 1000));
+        nativeContainer.setClickable(true);
+        node(nativeContainer, VIEW, new Rect(0, 0, 1000, 1000)).setClickable(true);
+        assertTrue("the same leaf, natively clickable",
+                LlmGate.hasDynamicRegion(DumpTrees.patchedTreeOf(nativeClick)));
+    }
+
+    @Test
     public void aChildRejects() throws Exception {
         GUITreeNode r = root();
         GUITreeNode parent = surface(r, new Rect(0, 0, 1000, 1000));
