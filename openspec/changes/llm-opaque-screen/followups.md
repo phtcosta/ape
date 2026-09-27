@@ -27,7 +27,9 @@ pins them.
   any change to `ape.llmBoundaryTopPct`/`ape.llmBoundaryBottomPct` on dynamic steps.
   Task 13 adds one clean data point: on shatteredpixeldungeon's title screen all 53 answers were
   `click` at y ≈ 980 (0.98 h) and all 53 were rejected by the bottom band, not by a null answer
-  (`evidence.md`, device validation).
+  (`evidence.md`, device validation). The answered point is the "Enter the Dungeon" button, a real
+  target wholly inside the bottom band; relaxing the band on opaque ∧ `dyn` steps was left out of
+  this change (owner's scope decision) and is the open question for E5d.
 - **APE action extraction, not the LLM gate.** Two false-opaque screens seen on the way:
   flyingcarpet's About dialog has a scrollable `android:id/scrollView` that the compressed tree
   drops (not focusable), so its scroll action is lost; AnyMemo's CardPlayer settings dialog has

@@ -107,16 +107,45 @@
 
 - [x] 13.1 `mvn package`; on the emulator, run APE standalone with `ape.llmPercentageNoSubstrate=0.7` and an SGLang server for about 3 min each on retrowars, shatteredpixeldungeon, mtgfam (DB-update dialog), smokingtracker (loading dialog path) and one zxing app (createpdf capture); check from the trace that `dec.dyn:1` appears on the games' steps and not on the dialog, camera or splash steps, and that LLM calls on opaque steps happen only where `dec.dyn:1` (every opaque-step call fell on a `dec.dyn:1` step: retrowars 53/53, shatteredpixeldungeon 53/53, mtgfam 1/1; the DB-update dialog took 259/260 opaque steps without a region and no call; one transient `dyn` step on the dialog state; the smokingtracker loading dialog and createpdf capture were not reached in 3 min and rest on their dumps in `DynamicRegionTest`; numbers in `evidence.md`)
 - [x] 13.2 Same runs with `-1`: 0 LLM calls on opaque steps, `RUN_START.digest` equal to the `e93dea86` golden (digest `a67b096e757d83ad` on all five, 0 opaque-step attempts)
-- [ ] 13.3 Build the jar at a committed revision, record its sha256 and commit, and send both to the rep-pack-e03 session with the E5c follow-up on arm order (`followups.md`)
+- [ ] 13.3 After group 17, build the jar at a committed revision, record its sha256 and commit, and send both to the rep-pack-e03 session with the E5c follow-up on arm order (`followups.md`). (A provisional jar, `8125a651` / `d990abd5…`, was sent before group 14 and withdrawn as provisional; only the jar built after group 17 is final)
 
 ## 14. Final verification (revised gate)
 
-- [ ] 14.1 `mvn test` green; update the test count in CLAUDE.md if it changed
-- [ ] 14.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape`
-- [ ] 14.3 Run `/sdd-verify src/main/java/com/android/commands/monkey/ape`
-- [ ] 14.4 Invoke `/sdd-code-reviewer` via Skill tool
-- [ ] 14.5 Run `/sdd-docs-sync src/main/java/com/android/commands/monkey/ape`
+Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the docs-sync step and a repeat of 14.1–14.3 run in group 17, after the second revision.
+
+- [x] 14.1 `mvn test` green; update the test count in CLAUDE.md if it changed
+- [x] 14.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape` (checkstyle is not installed and the pom has no checkstyle plugin; no file changed)
+- [x] 14.3 Run `/sdd-verify src/main/java/com/android/commands/monkey/ape` (1181 tests green at `8125a651`, no `src` change since; lint skipped, checkstyle not installed)
+- [x] 14.4 Invoke `/sdd-code-reviewer` via Skill tool (verdict COMMENT: 0 critical, 2 warnings, 7 notes; WR-01, WR-02, NT-01, NT-03, NT-04 and NT-06 are addressed in group 16; NT-02, NT-05 and NT-07 are accepted as they are)
+
+## 16. Second revision: edge bands on opaque dynamic steps (D11, INV-RTR-27) and the review findings
+
+- [x] 16.1 Revise proposal, design (D5b narrowed, D8 (d) native clickability and the Flutter note, D11, D12), the `llm-routing` delta (INV-RTR-26, INV-RTR-27, MODIFIED "Coordinate-to-ModelAction Mapping", the opaque-routing requirement and its scenarios), a new `llm-infrastructure` delta (MODIFIED "ToolCallParser — 3-Level Fallback Parser") and this file; `openspec validate llm-opaque-screen --strict` passes
+- [ ] 16.2 `LlmGate`: the input clause of `isRegion` reads `isFocusable() || (isClickable() && !isPatchedClickable()) || isLongClickable()` (WR-01); drop the `null` checks on `getBoundsInScreen()`, which never returns null (NT-01); the class javadoc names the tree classifier as the class's second role (NT-03); the `hasDynamicRegion` javadoc states the Flutter false positive (NT-04)
+- [ ] 16.3 `DumpTrees.load` applies `GUITreeBuilder.patchGUITree` after reading, as production does on every tree; its javadoc states what still differs from production (the XML reader instead of `AccessibilityNodeInfo`, and no text truncation) (WR-02)
+- [ ] 16.4 `DynamicRegionTest`: a clickable container holding a label-less `View` leaf covering the root, patched by `patchGUITree`, is `false`; the same leaf natively clickable is `true`; the 26 fixtures keep their verdicts
+- [ ] 16.5 `CoordinateMapper.map(..., boolean edgeBandsOff)`: when true, skip both bands and return null when `pixelX == 0 || pixelY == 0` (the parser's default for an unreadable coordinate); when false, exactly the current behavior; javadoc states the frame (`Display.getSize()`, the crop) and the rule
+- [ ] 16.6 `LlmEngine.selectAction(..., boolean edgeBandsOff)` passes the argument to `map` and to `classify`, which names the null `degenerate` when `edgeBandsOff` holds and either parsed coordinate is `0` (unchanged otherwise); javadoc
+- [ ] 16.7 The three LLM stages compute `edgeBandsOff = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx)` and pass it; `LlmRandomStage` computes it once and uses it for the rate too; the flag-off path still never reads the tree (INV-RTR-22)
+- [ ] 16.8 Test doubles follow the new `selectAction` signature (`PipelineFixture.StubLlm`, the three stage tests' stubs, `oracle/ScriptedLlm`); every existing `CoordinateMapper` test call passes `false` and keeps its expectation
+- [ ] 16.9 `CoordinateMapperOffTreeTapTest`: with `edgeBandsOff`, `click` at `0.97h` and at `0.02h` yields an `LlmTapAction`, and `(0, 0)`, `(540, 0)` and `(0, 900)` yield null; without it, `0.97h` is still rejected; `LlmEngine.classify` names the flagged zero-axis rejections `degenerate` and keeps `boundary` for `(540, 0)` without the flag (replaces the declared-limitation case of 3.8)
+- [ ] 16.10 Stage tests: the stub engine records `edgeBandsOff`; it is `true` only on an opaque step with a dynamic region and opaque routing on, `false` on a widget step and with opaque routing off
+- [ ] 16.11 Line length and reflow in the javadocs touched by this change (`LlmGate`, `LlmRandomStage`, `LlmGateTest`) (NT-06)
+- [ ] 16.12 `ToolCallParser.parseJsonString`: after a successful parse of `click`/`long_click` with `x` or `y` absent or unreadable as an integer, run `lastResortIntScan` on the original text and return its result when non-null; otherwise the parsed action unchanged (D12, `llm-infrastructure` delta)
+- [ ] 16.13 `ToolCallParserTest`: `{"x": {"x": 288, 587} }` (XML and native raw forms) → `(288, 587)`, `int_scan`; `{"name":"click","arguments":{}}` → `(0, 0)`, `none`; a `back` and a `type_text` are unaffected; every existing case unchanged
+- [ ] 16.14 Run `/sdd-test-run agent/pipeline` and `/sdd-test-run llm`; confirm `RunSpecResolveTest.sentinelPlanDigestUnchanged`, `SinkNeutralityTest` and the parity goldens pass unchanged
+- [ ] 16.15 CLAUDE.md: the `ape.llmPercentageNoSubstrate` entry says the boundary bands are lifted on opaque steps with a dynamic region, and the parser note says a tap answer without readable coordinates falls to the integer scan (`repair:"int_scan"`) on every arm; test count in Notes
+- [ ] 16.16 `followups.md`: measuring the bands against the system bars on every step (D11 alternative B, with the ordinary-screen footer evidence); the `UiAutomation.takeScreenshot` fallback capturing the full physical screen while the mapping uses `Display.getSize()`; and what D12 leaves: a tap with no recoverable coordinate still parses as `0` on the missing axis (making it a parse failure would count against the breaker on every arm)
+- [ ] 16.17 Device check: `mvn package`; with the owner's LLM server, run shatteredpixeldungeon and retrowars at `0.7` for about 3 min each and one of them at `-1`; record `llm_tap` against `boundary` on `dec.dyn` steps next to task 13's numbers, and the `-1` digest, in `evidence.md`
+
+## 17. Final verification (second revision)
+
+- [ ] 17.1 `mvn test` green; update the test count in CLAUDE.md if it changed
+- [ ] 17.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape`
+- [ ] 17.3 Run `/sdd-verify src/main/java/com/android/commands/monkey/ape`
+- [ ] 17.4 Invoke `/sdd-code-reviewer` via Skill tool
+- [ ] 17.5 Run `/sdd-docs-sync src/main/java/com/android/commands/monkey/ape`
 
 ## 15. Merge
 
-- [ ] 15.1 After the revised gate passes its test (group 13), merge branch `llm-opaque-screen` into `master`. This task stays open until the merge is done, so the change cannot be archived before it
+- [ ] 15.1 After the revised gate passes its test (groups 13 and 16) and group 17 and task 13.3 are done, merge branch `llm-opaque-screen` into `master`. This task stays open until the merge is done, so the change cannot be archived before it

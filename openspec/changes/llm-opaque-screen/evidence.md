@@ -110,3 +110,10 @@ in `http_error`; that does not bear on the checks below.
   above `llmBoundaryBottomPct=0.94`), every one rejected as `boundary`: the declared limitation
   (D5b), here with the band and not a null answer as the cause (see `followups.md`). No
   `stale ephemeral edge` warnings; `restarts` 0 in every run.
+- **What the band rejects on shatteredpixeldungeon** (investigated at rep-pack-e03's request,
+  2026-09-27, no code change). A screenshot of the first-launch title screen (after `pm clear`,
+  window 1080×1794, portrait) with the answered point marked puts `px (540, 1758)` on the
+  "Enter the Dungeon" button, the screen's one way forward, which spans roughly y 1705–1840, all of
+  it below the band line at 0.94 × 1794 = 1686. The model's answer is a real target, not a
+  collapse to one coordinate; the band rejects the correct tap every time, and in the 3-minute
+  `on` run the game never left this screen.
