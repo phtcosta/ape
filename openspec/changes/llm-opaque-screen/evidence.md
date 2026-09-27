@@ -164,3 +164,10 @@ scratchpad (not in the repo) repeats `ScreenshotCapture.captureViaSurfaceControl
 The coordinate mapping used the landscape frame all along (`qwen (564, 877)` → `px (1011, 947)` in
 16.17); the image the model answered on did not. Fixed by D13.
 
+**First device run of the fix (jar `f993081f`).** retrowars `on` died at step 1 with
+`java.lang.NoSuchMethodError: No interface method getRotation()I in class
+Landroid/view/IWindowManager` from `AndroidDevice.getRotation` inside the first capture
+(`RUN_END.reason:"crash"`). The helper, never called before, used a window-manager method API 30
+does not have; the probe had read `Display.getRotation()` instead. Task 18.6 moves the helper onto
+that display.
+

@@ -144,7 +144,7 @@ The returned `ParsedAction` SHALL contain `actionType` (String — one of "click
 
 `ScreenshotCapture.capture(int width, int height)` SHALL capture a screenshot of the device display and return it as a PNG byte array. The primary capture method SHALL use `android.view.SurfaceControl.screenshot(Rect, int, int, int)` via reflection (hidden API, available from `app_process` context). If reflection fails, a fallback to `UiAutomation.takeScreenshot()` SHALL be attempted.
 
-The primary method SHALL pass as its rotation argument the display's current rotation (`Surface.ROTATION_0` … `ROTATION_270`, read through `AndroidDevice.getRotation()`), so the image shows the screen in the orientation it is displayed in, matching the `width`×`height` frame `Display.getSize()` reports for that orientation. A rotation outside `0…3` (the window manager could not be asked) SHALL be replaced by `0`. With rotation `0` — every portrait screen — the call SHALL be the one made before this requirement.
+The primary method SHALL pass as its rotation argument the display's current rotation (`Surface.ROTATION_0` … `ROTATION_270`, read through `AndroidDevice.getRotation()` from the same real default `Display` whose size is the frame — not from `IWindowManager.getRotation()`, which API 30 no longer has), so the image shows the screen in the orientation it is displayed in, matching the `width`×`height` frame `Display.getSize()` reports for that orientation. A rotation outside `0…3` (the window manager could not be asked) SHALL be replaced by `0`. With rotation `0` — every portrait screen — the call SHALL be the one made before this requirement.
 
 #### Scenario: Successful capture via SurfaceControl
 
