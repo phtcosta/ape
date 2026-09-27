@@ -144,7 +144,7 @@ Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the
 - [x] 18.2 `ScreenshotCapture.captureViaSurfaceControl` passes `displayRotation(AndroidDevice.getRotation())` as the rotation, read after the reflective lookup; `static int displayRotation(int)` returns `0…3` unchanged and `0` otherwise; javadoc states the frame and why
 - [x] 18.3 `ScreenshotCaptureStageTest`: `displayRotation` keeps `0…3` and maps `-1` and `4` to `0`; the existing stage cases unchanged
 - [x] 18.4 CLAUDE.md: the LLM notes say the capture follows the display's rotation (every arm); test count
-- [ ] 18.6 `AndroidDevice.getRotation()` returns `Display.getRotation()` of `DisplayManagerGlobal.getInstance().getRealDisplay(DEFAULT_DISPLAY)` (the display `getDisplayBounds()` reads), `-1` when it cannot be read; replaces `IWindowManager.getRotation()`, absent on API 30 (first 18.5 run: `NoSuchMethodError` at the first capture)
+- [x] 18.6 `AndroidDevice.getRotation()` returns `Display.getRotation()` of `DisplayManagerGlobal.getInstance().getRealDisplay(DEFAULT_DISPLAY)` (the display `getDisplayBounds()` reads), `-1` when it cannot be read; replaces `IWindowManager.getRotation()`, absent on API 30 (first 18.5 run: `NoSuchMethodError` at the first capture)
 - [ ] 18.5 Device re-test on the jar with 18.2: retrowars (landscape) and shatteredpixeldungeon at `0.7`, shatteredpixeldungeon at `-1`, about 3 min each, as in 16.17; record next to 16.17 in `evidence.md` (retrowars' `back` share and taps, the `-1` digest)
 
 ## 17. Final verification (second and third revisions)
