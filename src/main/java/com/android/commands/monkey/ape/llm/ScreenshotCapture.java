@@ -102,9 +102,9 @@ public class ScreenshotCapture {
 
     /**
      * The rotation argument for {@code SurfaceControl.screenshot}: the display's rotation
-     * ({@code Surface.ROTATION_0…ROTATION_270}) when it is one of them, else {@code 0} — the call
-     * made before the rotation was passed. {@code AndroidDevice.getRotation()} returns {@code -1}
-     * when the display's rotation cannot be read.
+     * ({@code Surface.ROTATION_0…ROTATION_270}) when it is one of them, else {@code 0}, the
+     * natural orientation. {@code AndroidDevice.getRotation()} returns {@code -1} when the
+     * display's rotation cannot be read.
      *
      * @param displayRotation the display's current rotation
      * @return a value in {@code 0…3}

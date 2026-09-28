@@ -109,7 +109,7 @@ public final class CoordinateMapper {
      * (INV-RTR-27): neither band applies, and a pixel with {@code pixelX == 0} or
      * {@code pixelY == 0} is rejected instead — the parser reads a coordinate it cannot find as
      * {@code 0}, so a zero on either axis is "no coordinate", which the top band used to catch.
-     * With {@code edgeBandsOff == false} this method behaves exactly as before the flag existed.
+     * With {@code edgeBandsOff == false} both bands apply and no zero-axis rejection is made.
      *
      * @param pixelX     x coordinate in device pixels
      * @param pixelY     y coordinate in device pixels

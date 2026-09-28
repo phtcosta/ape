@@ -122,8 +122,8 @@ public class AndroidDevice {
     /**
      * The default display's current rotation, {@code Surface.ROTATION_0…ROTATION_270}, read from
      * the same real display {@link #getDisplayBounds()} reads its size from, so the two describe one
-     * orientation; {@code -1} when it cannot be read. ({@code IWindowManager.getRotation()}, which
-     * this used to call, does not exist on API 30.)
+     * orientation; {@code -1} when it cannot be read. {@code IWindowManager.getRotation()} is not
+     * used: the bundled framework jar declares it, but it does not exist on API 30.
      */
     public static int getRotation() {
         try {

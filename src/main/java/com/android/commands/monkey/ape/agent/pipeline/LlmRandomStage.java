@@ -56,9 +56,11 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * against the positive plan rate, so the {@code rate > 0} conjunct is always true and the coin
  * falls on exactly the steps it always did (INV-RTR-22).
  *
- * <p>The same fact, computed once, also reaches the engine as {@code edgeBandsOff}: on an opaque
- * dynamic step the boundary bands are not applied to the answer (INV-RTR-27). With opaque routing
- * off it is {@code false} without the tree being read.
+ * <p>Whether the step is routed as opaque is {@link LlmGate#opaqueRouted}. {@code LlmGate.allows}
+ * evaluates it when the state offers two actions or fewer; once the gate is open, {@code decide}
+ * evaluates it again, picks the rate from it, and passes it to the engine as {@code edgeBandsOff}:
+ * on an opaque dynamic step the boundary bands are not applied to the answer (INV-RTR-27). With
+ * opaque routing off it is {@code false} without the tree being read.
  */
 public final class LlmRandomStage implements DecisionStage {
 
