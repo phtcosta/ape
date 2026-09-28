@@ -107,7 +107,7 @@
 
 - [x] 13.1 `mvn package`; on the emulator, run APE standalone with `ape.llmPercentageNoSubstrate=0.7` and an SGLang server for about 3 min each on retrowars, shatteredpixeldungeon, mtgfam (DB-update dialog), smokingtracker (loading dialog path) and one zxing app (createpdf capture); check from the trace that `dec.dyn:1` appears on the games' steps and not on the dialog, camera or splash steps, and that LLM calls on opaque steps happen only where `dec.dyn:1` (every opaque-step call fell on a `dec.dyn:1` step: retrowars 53/53, shatteredpixeldungeon 53/53, mtgfam 1/1; the DB-update dialog took 259/260 opaque steps without a region and no call; one transient `dyn` step on the dialog state; the smokingtracker loading dialog and createpdf capture were not reached in 3 min and rest on their dumps in `DynamicRegionTest`; numbers in `evidence.md`)
 - [x] 13.2 Same runs with `-1`: 0 LLM calls on opaque steps, `RUN_START.digest` equal to the `e93dea86` golden (digest `a67b096e757d83ad` on all five, 0 opaque-step attempts)
-- [ ] 13.3 After group 17, build the jar at a committed revision, record its sha256 and commit, and send both to the rep-pack-e03 session with the E5c follow-up on arm order (`followups.md`). (A provisional jar, `8125a651` / `d990abd5…`, was sent before group 14 and withdrawn as provisional; only the jar built after group 17 is final)
+- [ ] 13.3 After groups 17 and 19, build the jar at a committed revision, record its sha256 and commit, and send both to the rep-pack-e03 session with the E5c follow-up on arm order (`followups.md`). (A provisional jar, `8125a651` / `d990abd5…`, was sent before group 14 and withdrawn as provisional; only the jar built after group 17 is final)
 
 ## 14. Final verification (revised gate)
 
@@ -147,6 +147,15 @@ Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the
 - [x] 18.6 `AndroidDevice.getRotation()` returns `Display.getRotation()` of `DisplayManagerGlobal.getInstance().getRealDisplay(DEFAULT_DISPLAY)` (the display `getDisplayBounds()` reads), `-1` when it cannot be read; replaces `IWindowManager.getRotation()`, absent on API 30 (first 18.5 run: `NoSuchMethodError` at the first capture)
 - [x] 18.5 Device re-test on the jar with 18.2: retrowars (landscape) and shatteredpixeldungeon at `0.7`, shatteredpixeldungeon at `-1`, about 3 min each, as in 16.17; record next to 16.17 in `evidence.md` (retrowars' `back` share and taps, the `-1` digest)
 
+## 19. Review finding WR-01: classify the zero-axis rejection on pixels
+
+The code review of group 17 (17.4) found that `CoordinateMapper.map` rejects a zero on either axis in pixel space while `LlmEngine.classify` labeled `degenerate` from the parsed answer; `CoordinateNormalizer` truncates and clamps, so a negative answer, or one under `1000 / dimension` on an axis narrower than 1000 px, was rejected and recorded as `boundary` on a step with no band (INV-RTR-27).
+
+- [x] 19.1 Revise design (D11, the `classify` API entry, Testing Strategy) and this file; `openspec validate llm-opaque-screen --strict` passes
+- [ ] 19.2 `LlmEngine.classify(match, banned, parsed, pixelX, pixelY, edgeBandsOff)`: with `edgeBandsOff`, `degenerate` iff `pixelX == 0 || pixelY == 0`; without it, `degenerate` iff `parsed` is `(0, 0)` (unchanged); `selectAction` passes the pixels it gave `map`; javadoc
+- [ ] 19.3 Tests: every existing `classify` call passes its pixels and keeps its expectation; with `edgeBandsOff`, a parsed `(-5, 500)` and a parsed `(1, 500)` at width 720 (both pixel `x = 0`) are `degenerate`, and a non-zero pixel null (a `type_text` with no input field) stays `boundary`
+- [ ] 19.4 `mvn test` green; CLAUDE.md test count if it changed
+
 ## 17. Final verification (second and third revisions)
 
 - [x] 17.1 `mvn test` green; update the test count in CLAUDE.md if it changed
@@ -157,4 +166,4 @@ Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the
 
 ## 15. Merge
 
-- [ ] 15.1 After the revised gate passes its test (groups 13, 16 and 18) and group 17 and task 13.3 are done, merge branch `llm-opaque-screen` into `master`. This task stays open until the merge is done, so the change cannot be archived before it
+- [ ] 15.1 After the revised gate passes its test (groups 13, 16 and 18), groups 17 and 19 and task 13.3 are done, merge branch `llm-opaque-screen` into `master`. This task stays open until the merge is done, so the change cannot be archived before it
