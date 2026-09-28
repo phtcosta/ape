@@ -340,23 +340,25 @@ public class ToolCallParser {
     }
 
     private int getIntArg(Map<String, Object> args, String key, int defaultValue) {
-        if (args == null || !args.containsKey(key)) return defaultValue;
-        Object val = args.get(key);
-        if (val instanceof Number) return ((Number) val).intValue();
-        try { return Integer.parseInt(String.valueOf(val)); } catch (Exception e) { return defaultValue; }
+        Integer val = readIntArg(args, key);
+        return val == null ? defaultValue : val;
     }
 
-    /** Whether {@code key} holds a value {@link #getIntArg} reads as an integer, not the default. */
+    /** Whether {@code key} holds a value {@link #readIntArg} reads as an integer, not the default. */
     private boolean hasIntArg(Map<String, Object> args, String key) {
-        if (args == null || !args.containsKey(key)) return false;
+        return readIntArg(args, key) != null;
+    }
+
+    /**
+     * The integer {@code key} holds: a {@link Number}'s {@code intValue()}, or the value's text read
+     * by {@link Integer#parseInt}. {@code null} when {@code args} is null, the key is absent, or the
+     * value is neither.
+     */
+    private Integer readIntArg(Map<String, Object> args, String key) {
+        if (args == null || !args.containsKey(key)) return null;
         Object val = args.get(key);
-        if (val instanceof Number) return true;
-        try {
-            Integer.parseInt(String.valueOf(val));
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        if (val instanceof Number) return ((Number) val).intValue();
+        try { return Integer.parseInt(String.valueOf(val)); } catch (Exception e) { return null; }
     }
 
     private String getStringArg(Map<String, Object> args, String key) {
