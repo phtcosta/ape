@@ -97,3 +97,27 @@ Outside this change, seen during the survey:
   group 17, note NT-01).
 - The last-resort integer scan may take integers unrelated to the coordinates, such as an
   `element_id` placed before `x` (code review of group 17, note NT-02).
+
+## From the final verification (code review of group 21)
+
+Notes of the code review of groups 19 and 20 (task 21.4, verdict APPROVE), deferred by the owner:
+
+- **NT-01.** `design.md` (API Design, stage constructors) says `LlmRandomStage.decide` evaluates
+  `opaqueRouted` once; `allows` also evaluates it when the state offers two actions or fewer. The
+  stage's javadoc states this correctly. See also "One evaluation of `opaqueRouted` per step" above.
+- **NT-02.** `ToolCallParser.isTapAction` sits between the `Pattern` fields and repeats the tap set
+  `TAP_ACTION_NAME` encodes, with no cross-reference between the two.
+- **NT-03.** `isTapAction` tests the raw tool name while `buildParsedAction` normalizes it, so a
+  `"Long-Click"` without readable coordinates is not recovered. Same defect as the case-sensitive
+  D12 tap test above (group 17, note NT-01).
+- **NT-04.** `ToolCallParserTest.testNativeArrayPlusSeparateY_*` pins the test classpath's org.json,
+  which rejects the duplicate `"y"` and yields `(a,b)`; Android's org.json keeps the last duplicate
+  (checked on the API 30 emulator) and yields `(a,c)` labeled `array_xy`.
+- **NT-05.** The `CoordinateMapper` comments saying the top band catches a zero `pixelY` hold only
+  when `ape.llmBoundaryTopPct > 0`.
+- **NT-06.** The `ScreenshotCapture.captureViaSurfaceControl` comment "In portrait the rotation is
+  `0`" leaves out `ROTATION_180`; "in the natural orientation" is exact.
+- **NT-07.** `ToolCallParserTest.assertTap` is also used for `back` and `type_text` results;
+  `assertParsed` names it better.
+- A `back` answer whose `state.getBackAction()` throws is labeled `degenerate` (parsed and pixels
+  are `(0,0)`); the `LlmEngine.classify` javadoc does not list that case (predates this change).
