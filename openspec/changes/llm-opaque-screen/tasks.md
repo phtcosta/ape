@@ -180,11 +180,11 @@ Only refactors confined to one expression or one method; the rest are in `follow
 
 ## 21. Final verification (after groups 19 and 20)
 
-- [ ] 21.1 `mvn test` green; update the test count in CLAUDE.md if it changed
-- [ ] 21.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape`
-- [ ] 21.3 Run `/sdd-verify src/main/java/com/android/commands/monkey/ape`
-- [ ] 21.4 Invoke `/sdd-code-reviewer` via Skill tool on the diff since `550cb75c` (groups 19 and 20); report the findings to the owner, do not fix them
-- [ ] 21.5 Run `/sdd-docs-sync src/main/java/com/android/commands/monkey/ape`
+- [x] 21.1 `mvn test` green; update the test count in CLAUDE.md if it changed (1201 run, 19 skipped: unchanged)
+- [x] 21.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape` (checkstyle not installed: `LinterNotInstalled`, nothing changed)
+- [x] 21.3 Run `/sdd-verify src/main/java/com/android/commands/monkey/ape` (pass: 1201 tests, 19 skipped; lint skipped, checkstyle not installed)
+- [x] 21.4 Invoke `/sdd-code-reviewer` via Skill tool on the diff since `550cb75c` (groups 19 and 20); report the findings to the owner, do not fix them (verdict APPROVE: 0 critical, 0 warnings, 7 notes; reported to the owner, not fixed)
+- [x] 21.5 Run `/sdd-docs-sync src/main/java/com/android/commands/monkey/ape` (`NoDocumentationFiles` in that scope; the CLAUDE.md symbols this change names were checked against the source and exist)
 
 ## 15. Merge
 
