@@ -1,0 +1,63 @@
+
+== expA_head768.jsonl  (unambiguous targets; top-1 accuracy)
+    N     n  random  lexical        english   multilingual typed-decision
+    5   445   0.200    0.975     0.706          0.449          0.735     
+   10   208   0.100    0.971     0.457          0.462          0.471     
+   20    90   0.050    0.967     0.222          0.289          0.233     
+   40    24   0.025    1.000     0.125          0.208          0.292     
+  all   636   0.205    0.959     0.569 e22      0.443          0.597     
+-- N=all by category
+   icon             n= 138 lex=0.99 english=0.50 multilin=0.39 typed-de=0.57
+   list-item        n= 159 lex=0.96 english=0.64 multilin=0.45 typed-de=0.63
+   text-button      n= 248 lex=0.96 english=0.54 multilin=0.48 typed-de=0.57
+   text-input       n=  27 lex=0.93 english=0.59 multilin=0.56 typed-de=0.74
+   toggle           n=  64 lex=0.94 english=0.64 multilin=0.38 typed-de=0.61
+-- N=all by label_source
+   content-desc     n= 113 lex=0.99 english=0.48 multilin=0.35 typed-de=0.54
+   descendant-text  n= 177 lex=0.96 english=0.59 multilin=0.44 typed-de=0.60
+   resource-id      n=  35 lex=0.94 english=0.66 multilin=0.49 typed-de=0.74
+   text             n= 311 lex=0.95 english=0.58 multilin=0.48 typed-de=0.60
+-- confidence bins (all N): acc / count
+   english          [0.0-0.2) 0.16/74  [0.2-0.4) 0.37/466  [0.4-0.6) 0.61/392  [0.6-0.8) 0.78/259  [0.8-1.0) 0.89/190
+   multilingual     [0.0-0.2) 0.15/157  [0.2-0.4) 0.32/615  [0.4-0.6) 0.52/328  [0.6-0.8) 0.69/194  [0.8-1.0) 0.78/109
+   typed-decisions  [0.0-0.2) 0.24/321  [0.2-0.4) 0.59/740  [0.4-0.6) 0.93/254  [0.6-0.8) 0.98/59  [0.8-1.0) 1.00/29
+-- latency ms p50=29 p95=33
+
+== expA_headdef.jsonl  (unambiguous targets; top-1 accuracy)
+    N     n  random  lexical        english   multilingual typed-decision
+    5   445   0.200    0.975     0.706          0.449          0.735     
+   10   208   0.100    0.971     0.457          0.462          0.471     
+   20    90   0.050    0.967     0.200          0.378          0.344     
+   40    24   0.025    1.000     0.000          0.042          0.042     
+  all   636   0.205    0.959     0.583 e22      0.447          0.605     
+-- N=all by category
+   icon             n= 138 lex=0.99 english=0.54 multilin=0.40 typed-de=0.60
+   list-item        n= 159 lex=0.96 english=0.64 multilin=0.46 typed-de=0.62
+   text-button      n= 248 lex=0.96 english=0.55 multilin=0.48 typed-de=0.58
+   text-input       n=  27 lex=0.93 english=0.59 multilin=0.56 typed-de=0.74
+   toggle           n=  64 lex=0.94 english=0.64 multilin=0.36 typed-de=0.62
+-- N=all by label_source
+   content-desc     n= 113 lex=0.99 english=0.53 multilin=0.36 typed-de=0.58
+   descendant-text  n= 177 lex=0.96 english=0.60 multilin=0.45 typed-de=0.58
+   resource-id      n=  35 lex=0.94 english=0.66 multilin=0.49 typed-de=0.74
+   text             n= 311 lex=0.95 english=0.59 multilin=0.47 typed-de=0.61
+-- confidence bins (all N): acc / count
+   english          [0.0-0.2) 0.10/51  [0.2-0.4) 0.37/473  [0.4-0.6) 0.61/386  [0.6-0.8) 0.76/280  [0.8-1.0) 0.88/191
+   multilingual     [0.0-0.2) 0.15/184  [0.2-0.4) 0.33/597  [0.4-0.6) 0.55/323  [0.6-0.8) 0.68/187  [0.8-1.0) 0.76/112
+   typed-decisions  [0.0-0.2) 0.23/325  [0.2-0.4) 0.60/738  [0.4-0.6) 0.93/253  [0.6-0.8) 0.98/58  [0.8-1.0) 1.00/29
+-- latency ms p50=27 p95=31
+
+== expC_headdef.jsonl  (exploration instruction, 427 screens, 4 shuffles each)
+  english          all-4-same=0.40 modal-share=0.75 conf=0.52 normEnt=0.74
+                   argmax quartile of list: Q1=0.34 Q2=0.24 Q3=0.25 Q4=0.17
+                   kinds picked: text-button=0.30, icon=0.26, list-item=0.21, text-input=0.13, toggle=0.10
+  multilingual     all-4-same=0.30 modal-share=0.71 conf=0.46 normEnt=0.81
+                   argmax quartile of list: Q1=0.49 Q2=0.24 Q3=0.21 Q4=0.06
+                   kinds picked: text-button=0.32, icon=0.30, list-item=0.19, text-input=0.10, toggle=0.09
+  typed-decisions  all-4-same=0.45 modal-share=0.78 conf=0.35 normEnt=0.92
+                   argmax quartile of list: Q1=0.24 Q2=0.27 Q3=0.32 Q4=0.17
+                   kinds picked: icon=0.30, text-button=0.26, list-item=0.22, text-input=0.12, toggle=0.10
+  agreement english vs multilingual: 0.40 (n=426)
+  agreement english vs typed-decisions: 0.57 (n=426)
+  agreement multilingual vs typed-decisions: 0.44 (n=427)
+  chance of agreeing by luck ~ 0.21

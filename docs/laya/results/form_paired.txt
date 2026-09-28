@@ -1,0 +1,12 @@
+buttons observed in both conditions: 1752 (of 5505)
+mean act_change: none=0.171 some=0.168
+mean new_state|act_change: none=0.323 some=0.268
+buttons where act_change higher after touching: 80; lower: 92; equal: 1580
+   org.dynalogin.android_3.apk ProfileSetupManual Save Pro {'none': [1, 0, 0], 'some': [3, 3, 3]}
+   ee.ioc.phon.android.speak_1814.apk RecognitionServiceWsUrlActivity #125df9d5 {'none': [1, 0, 1], 'some': [2, 2, 2]}
+   io.github.domi04151309.home_1100.apk EditDeviceActivity #129bd1c5 {'none': [2, 0, 0], 'some': [3, 3, 3]}
+   eu.bubu1.fdroidclassic_1110.apk ManageReposActivity #82e2eb29 {'none': [1, 0, 0], 'some': [1, 1, 1]}
+   org.secuso.privacyfriendlyludo_5.apk GameSettingActivity #38099730 {'none': [3, 0, 1], 'some': [1, 1, 1]}
+   edu.cmu.cylab.starslinger.demo_17301504.apk MainActivity Begin Ex {'none': [1, 0, 0], 'some': [1, 1, 1]}
+   com.rafapps.simplenotes_7.apk NotesListActivity #e12b9281 {'none': [2, 1, 1], 'some': [73, 71, 72]}
+   org.emergent.android.weave_8.apk LoginActivity Cancel {'none': [63, 33, 37], 'some': [42, 41, 42]}

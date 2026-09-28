@@ -1,0 +1,6 @@
+
+== Exp B: 2679 real LLM decisions (Qwen3-VL) replayed; base new-state rate of Qwen picks = 0.12; chance agreement = 0.12
+  english          n=2679 agree=0.20  newstate|agree=0.10 newstate|disagree=0.12  AUROC(p_qwen->new_state)=0.47  picks: untried=0.28 mop=0.14 back=0.08
+  typed-decisions  n=2679 agree=0.20  newstate|agree=0.11 newstate|disagree=0.12  AUROC(p_qwen->new_state)=0.50  picks: untried=0.33 mop=0.11 back=0.03
+  multilingual     n=2679 agree=0.20  newstate|agree=0.09 newstate|disagree=0.12  AUROC(p_qwen->new_state)=0.45  picks: untried=0.34 mop=0.10 back=0.19
+  qwen picks: untried=0.33 mop=0.16; new_state|untried=0.19 new_state|tried=0.08

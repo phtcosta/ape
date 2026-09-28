@@ -1,0 +1,8 @@
+label         base    1st  later  consist  expect  contrast  shortcut AUROC
+effect       0.529  0.565  0.508    0.907   0.288     0.713  unvisited=0.51 is_back=0.54 is_menu=0.45 has_text=0.54 mop_flag=0.49 button=0.55
+act_change   0.074  0.085  0.067    0.982   0.714     0.302  unvisited=0.53 is_back=0.53 is_menu=0.45 has_text=0.55 mop_flag=0.53 button=0.62
+new_state    0.064  0.149  0.012    0.711   0.741     0.391  unvisited=0.77 is_back=0.43 is_menu=0.46 has_text=0.54 mop_flag=0.50 button=0.51
+new_act      0.005  0.014  0.000    0.969   0.963     0.037  unvisited=0.79 is_back=0.43 is_menu=0.46 has_text=0.61 mop_flag=0.54 button=0.55
+mop_act      0.051  0.059  0.047    0.989   0.777     0.191  unvisited=0.53 is_back=0.54 is_menu=0.45 has_text=0.54 mop_flag=0.54 button=0.62
+escape_ok    0.058  0.074  0.049    0.986   0.757     0.276  unvisited=0.54 is_back=0.42 is_menu=0.45 has_text=0.62 mop_flag=0.54 button=0.67
+(repeated keys: 179701; states with >=2 actions: 100622)

@@ -1,0 +1,15 @@
+records=2042243 traces=554 apps=167
+arms: [('aperv:sata_mop', 1791382), ('ape', 246646), ('aperv', 1511), ('aperv:mop_off_llm_off', 1052), ('aperv:mop_on_llm_off', 1012), ('aperv:mop_on_llm_70', 640)]
+strategies: [('EARLY_STAGE', 1027064), ('EPSILON_GREEDY', 939943), ('USE_BUFFER', 72983), ('TRIVIAL_ACTIVITY', 2248), ('NULL', 5)]
+K candidates/step: median=8 p90=23 max=187 frac<=20=0.88 frac<=40=1.00
+candidate labels: {'none': 0.15, 'text': 0.5, 'rid': 0.35}
+MOP: steps with >=1 mop candidate=0.19; chosen mop when available=0.33
+outcomes (n=1927843): effect=0.53 act_change=0.07 new_state=0.08
+effect by chosen unvisited: {True: '0.55 (n=617518)', False: '0.52 (n=1310325)'}
+act_change by chosen mop: {False: '0.07 (n=1798842)', True: '0.13 (n=129001)'}
+effect by strategy: {'EARLY_STAGE': '0.71 (n=1004243)', 'EPSILON_GREEDY': '0.29 (n=849380)', 'USE_BUFFER': '0.92 (n=71985)', 'TRIVIAL_ACTIVITY': '0.98 (n=2230)', 'NULL': '0.40 (n=5)'}
+abstract states=126874; with >=2 distinct actions tried=100622 (median actions 5.0); contrastive (some actions effective, some not)=71706; (state,action) pairs in contrastive states=593312
+contrastive states per app: apps=153 median=58
+form dependency (Button click in state with input fields):  {'filled': 'effect=0.61 (n=81028)', 'empty': 'effect=0.89 (n=22650)'}
+generic form state (Button click on screen with value widgets; effect rate by share manipulated since arrival): {'all': '0.70 (n=73363)', 'none': '0.66 (n=65319)', 'partial': '0.77 (n=19105)'}
+overlap with evaluation APK list: 2 of 167 corpus apps (163 in eval list)
