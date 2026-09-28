@@ -143,7 +143,7 @@ public final class CoordinateMapper {
         if (edgeBandsOff) {
             // No bands on an opaque dynamic step (INV-RTR-27); a zero on either axis is the
             // parser's default for a coordinate it could not read, not a point the model chose.
-            if (pixelX == 0 || pixelY == 0) {
+            if (isZeroAxis(pixelX, pixelY)) {
                 Logger.println("[APE-RV] LLM coordinate rejected (degenerate): pixelX=" + pixelX
                         + " pixelY=" + pixelY);
                 return null;
@@ -275,6 +275,16 @@ public final class CoordinateMapper {
             return new LlmTapAction(state, pixelX, pixelY, "long_click".equals(actionType));
         }
         return null;
+    }
+
+    /**
+     * Whether a pixel has a zero on either axis: the parser reads a coordinate it cannot find as
+     * {@code 0}, so such a pixel carries no coordinate the model chose. {@link #map} rejects it
+     * with {@code edgeBandsOff}, and {@code LlmEngine.classify} labels that rejection
+     * {@code degenerate} (INV-RTR-27).
+     */
+    static boolean isZeroAxis(int pixelX, int pixelY) {
+        return pixelX == 0 || pixelY == 0;
     }
 
     /**

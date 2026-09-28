@@ -267,7 +267,7 @@ public class LlmEngine {
             return new Verdict("no_match", "dead_pair", "none");
         }
         boolean degenerate = edgeBandsOff
-                ? pixelX == 0 || pixelY == 0
+                ? CoordinateMapper.isZeroAxis(pixelX, pixelY)
                 : parsed.getX() == 0 && parsed.getY() == 0;
         return new Verdict("no_match", degenerate ? "degenerate" : "boundary", "none");
     }
