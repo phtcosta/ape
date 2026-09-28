@@ -103,14 +103,14 @@ public final class LlmRandomStage implements DecisionStage {
         if (!LlmGate.allows(ctx, opaqueEnabled)) {
             return StageResult.continueChain();
         }
-        boolean edgeBandsOff = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx);
-        double rate = edgeBandsOff ? opaqueRate : percentage;
+        boolean opaqueRouted = LlmGate.opaqueRouted(ctx, opaqueEnabled);
+        double rate = opaqueRouted ? opaqueRate : percentage;
         if (rate <= 0 || random.nextDouble() >= rate || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
                 ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "random",
-                edgeBandsOff);
+                opaqueRouted);
         if (result == null) {
             return StageResult.continueChain();
         }

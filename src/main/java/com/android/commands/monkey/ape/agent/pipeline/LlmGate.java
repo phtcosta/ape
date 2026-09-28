@@ -97,7 +97,23 @@ public final class LlmGate {
         if (ctx.actionBufferSize() != 0) {
             return false;
         }
-        return ctx.newState().getActions().size() > 2 || (opaqueEnabled && isOpaqueDynamic(ctx));
+        return ctx.newState().getActions().size() > 2 || opaqueRouted(ctx, opaqueEnabled);
+    }
+
+    /**
+     * Whether the step is routed as opaque: the plan turns opaque routing on and the step is opaque
+     * with a dynamic region. {@link #allows} opens on it, and the three LLM stages pass it to the
+     * engine as {@code edgeBandsOff} (INV-RTR-27).
+     *
+     * <p>{@code opaqueEnabled} is tested first, so with it false the tree is never read
+     * (INV-RTR-22).
+     *
+     * @param ctx the step being decided
+     * @param opaqueEnabled whether the plan turns opaque routing on, injected at assembly
+     * @return {@code opaqueEnabled && isOpaqueDynamic(ctx)}
+     */
+    static boolean opaqueRouted(StepContext ctx, boolean opaqueEnabled) {
+        return opaqueEnabled && isOpaqueDynamic(ctx);
     }
 
     /**

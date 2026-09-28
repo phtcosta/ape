@@ -113,7 +113,7 @@ public final class LlmStagnationStage implements DecisionStage {
             return StageResult.continueChain();
         }
         firedThisEpisode = true;
-        boolean edgeBandsOff = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx);
+        boolean edgeBandsOff = LlmGate.opaqueRouted(ctx, opaqueEnabled);
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
                 ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "stagnation",
                 edgeBandsOff);

@@ -77,7 +77,7 @@ public final class LlmNewStateStage implements DecisionStage {
                 || !breakerAllows.getAsBoolean()) {
             return StageResult.continueChain();
         }
-        boolean edgeBandsOff = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx);
+        boolean edgeBandsOff = LlmGate.opaqueRouted(ctx, opaqueEnabled);
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
                 ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "new-state",
                 edgeBandsOff);
