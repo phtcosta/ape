@@ -61,6 +61,12 @@ public class ToolCallParser {
     // wrong-gesture tap, a text-less type_text is a wasted step, and back has no coordinates.
     private static final Pattern TAP_ACTION_NAME =
             Pattern.compile("\"name\"\\s*:\\s*\"(long_click|click)\"");
+
+    /** Whether a parsed action {@code name} is a tap ({@code click} or {@code long_click}). */
+    private static boolean isTapAction(String name) {
+        return "click".equals(name) || "long_click".equals(name);
+    }
+
     // A standalone 1–4-digit integer run: bounded so Integer.parseInt cannot overflow and long
     // non-coordinate numbers are skipped.
     private static final Pattern STANDALONE_INT =
@@ -301,21 +307,27 @@ public class ToolCallParser {
                 }
             }
             ParsedAction parsed = buildParsedAction(name, args, fix.form);
-            if (("click".equals(name) || "long_click".equals(name))
-                    && (!hasIntArg(args, "x") || !hasIntArg(args, "y"))) {
-                // A tap that parsed without a readable coordinate would fall to (0,0) or a zero on
-                // one axis; the integer scan over the original text recovers what the model gave
-                // when it can, and the parsed action stands when it cannot (D12).
-                ParsedAction scanned = lastResortIntScan(json);
-                if (scanned != null) return scanned;
-            }
-            return parsed;
+            return recoverUnreadableTap(name, args, parsed, json);
 
         } catch (Exception e) {
             // Regex fixes could not yield a parseable object; try the form-independent last resort
             // before giving up. It is internally guarded and returns null on any failure (INV-LLM-04).
             return lastResortIntScan(json);
         }
+    }
+
+    /**
+     * A tap that parsed without a readable coordinate would fall to (0,0) or a zero on one axis;
+     * the integer scan over the original text recovers what the model gave when it can, and the
+     * parsed action stands when it cannot (D12). Any other action is returned as parsed.
+     */
+    private ParsedAction recoverUnreadableTap(String name, Map<String, Object> args,
+                                              ParsedAction parsed, String json) {
+        if (isTapAction(name) && (!hasIntArg(args, "x") || !hasIntArg(args, "y"))) {
+            ParsedAction scanned = lastResortIntScan(json);
+            if (scanned != null) return scanned;
+        }
+        return parsed;
     }
 
     /**
