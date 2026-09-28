@@ -136,7 +136,8 @@ public class CoordinateMapperOffTreeTapTest {
         assertNull(result);
 
         LlmEngine.Verdict verdict = LlmEngine.classify(result, false,
-                new ToolCallParser.ParsedAction("click", 600, pixelY, null, null, "none"), false);
+                new ToolCallParser.ParsedAction("click", 600, pixelY, null, null, "none"),
+                600, pixelY, false);
         assertEquals("no_match", verdict.result);
         assertEquals("boundary", verdict.noMatchReason);
     }
@@ -179,7 +180,7 @@ public class CoordinateMapperOffTreeTapTest {
         for (int[] xy : new int[][] {{0, 0}, {540, 0}, {0, 900}}) {
             LlmEngine.Verdict verdict = LlmEngine.classify(null, false,
                     new ToolCallParser.ParsedAction("click", xy[0], xy[1], null, null, "none"),
-                    true);
+                    xy[0], xy[1], true);
             assertEquals("no_match", verdict.result);
             assertEquals("(" + xy[0] + ", " + xy[1] + ")", "degenerate", verdict.noMatchReason);
         }
@@ -189,7 +190,39 @@ public class CoordinateMapperOffTreeTapTest {
     public void anUnflaggedZeroOnOneAxisStaysBoundary() {
         // Without the flag only (0, 0) is degenerate, as before; (540, 0) is the top band's.
         LlmEngine.Verdict verdict = LlmEngine.classify(null, false,
-                new ToolCallParser.ParsedAction("click", 540, 0, null, null, "none"), false);
+                new ToolCallParser.ParsedAction("click", 540, 0, null, null, "none"),
+                540, 0, false);
+        assertEquals("no_match", verdict.result);
+        assertEquals("boundary", verdict.noMatchReason);
+    }
+
+    @Test
+    public void aFlaggedAnswerThatNormalizesToPixelZeroIsDegenerate() {
+        // The mapper rejects on pixels; CoordinateNormalizer truncates and clamps, so a negative
+        // answer, or one under 1000/width on a narrow axis, reaches pixel 0 from a non-zero parsed
+        // value. The label must name the rejection the mapper made (review WR-01).
+        int[][] cases = {{-5, 500, W, H}, {1, 500, 720, 1280}};
+        for (int[] c : cases) {
+            int[] px = CoordinateNormalizer.normalize(c[0], c[1], c[2], c[3]);
+            assertEquals("pixel x", 0, px[0]);
+            assertNull(newMapper().map(px[0], px[1], "click", null, opaqueActions(), null,
+                    c[2], c[3], true));
+            LlmEngine.Verdict verdict = LlmEngine.classify(null, false,
+                    new ToolCallParser.ParsedAction("click", c[0], c[1], null, null, "none"),
+                    px[0], px[1], true);
+            assertEquals("no_match", verdict.result);
+            assertEquals("parsed (" + c[0] + ", " + c[1] + ")", "degenerate",
+                    verdict.noMatchReason);
+        }
+    }
+
+    @Test
+    public void aFlaggedNullOffTheZeroAxesStaysBoundary() {
+        // A type_text with no input field maps to null at a non-zero pixel: not degenerate.
+        assertNull(newMapper().map(600, 900, "type_text", "x", opaqueActions(), null, W, H, true));
+        LlmEngine.Verdict verdict = LlmEngine.classify(null, false,
+                new ToolCallParser.ParsedAction("type_text", 556, 502, "x", null, "none"),
+                600, 900, true);
         assertEquals("no_match", verdict.result);
         assertEquals("boundary", verdict.noMatchReason);
     }

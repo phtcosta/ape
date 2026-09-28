@@ -174,7 +174,7 @@ public class LlmEngine {
             // input widget is owed, and hand the verdict over to be counted and said.
             client.recordSuccess();
             long elapsedMs = System.currentTimeMillis() - startMs;
-            Verdict verdict = classify(match, banned, parsed, edgeBandsOff);
+            Verdict verdict = classify(match, banned, parsed, pixels[0], pixels[1], edgeBandsOff);
             if ("matched".equals(verdict.result)) {
                 applyTypedText(match, parsed);
             }
@@ -233,17 +233,21 @@ public class LlmEngine {
      * <p>The three {@code no_match} reasons are what an offline reader separates the mechanisms by:
      * a ban refused an answer that mapped, a {@code (0,0)} emission is the model degenerating, and
      * everything else is a coordinate the boundary bands or the snap tolerance turned down. On a
-     * step mapped with {@code edgeBandsOff} a zero on either axis is also {@code degenerate}: the
-     * mapper rejects it by name there, since no band catches it (INV-RTR-27). Elsewhere only
-     * {@code (0,0)} is, as before.
+     * step mapped with {@code edgeBandsOff} a zero on either pixel axis is {@code degenerate}: the
+     * mapper rejects it by name there, since no band catches it (INV-RTR-27), and the test reads
+     * the same pixels the mapper was given — {@code CoordinateNormalizer} truncates and clamps, so
+     * a negative or sub-pixel answer reaches pixel {@code 0} from a non-zero parsed value. Without
+     * {@code edgeBandsOff} the parsed answer {@code (0,0)} is {@code degenerate}.
      *
      * @param match what the mapping returned, already nulled if the ban refused it
      * @param banned whether that null came from the ban rather than from the mapping
-     * @param parsed the model's answer, for the degenerate-coordinate test
+     * @param parsed the model's answer, for the degenerate-coordinate test without the flag
+     * @param pixelX the x the mapper was given
+     * @param pixelY the y the mapper was given
      * @param edgeBandsOff whether the answer was mapped without the boundary bands
      */
     static Verdict classify(ModelAction match, boolean banned, ToolCallParser.ParsedAction parsed,
-            boolean edgeBandsOff) {
+            int pixelX, int pixelY, boolean edgeBandsOff) {
         if (match instanceof LlmTapAction) {
             return new Verdict("llm_tap", null, "none");
         }
@@ -263,7 +267,7 @@ public class LlmEngine {
             return new Verdict("no_match", "dead_pair", "none");
         }
         boolean degenerate = edgeBandsOff
-                ? parsed.getX() == 0 || parsed.getY() == 0
+                ? pixelX == 0 || pixelY == 0
                 : parsed.getX() == 0 && parsed.getY() == 0;
         return new Verdict("no_match", degenerate ? "degenerate" : "boundary", "none");
     }

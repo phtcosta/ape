@@ -61,6 +61,16 @@ public class LlmEngineTest {
         return new ModelAction(null, new TestName("//unresolved"), ActionType.MODEL_CLICK);
     }
 
+    /**
+     * {@link LlmEngine#classify} on a step mapped with the bands, given the pixels the engine
+     * computes for {@code parsed} on a 1080x1794 display.
+     */
+    private static LlmEngine.Verdict classify(ModelAction match, boolean banned,
+            ToolCallParser.ParsedAction parsed) {
+        int[] px = CoordinateNormalizer.normalize(parsed.getX(), parsed.getY(), 1080, 1794);
+        return LlmEngine.classify(match, banned, parsed, px[0], px[1], false);
+    }
+
     private static ToolCallParser.ParsedAction parsed(String actionType, int x, int y, String text) {
         return new ToolCallParser.ParsedAction(actionType, x, y, text, null, "none");
     }
@@ -73,9 +83,8 @@ public class LlmEngineTest {
     public void anOffTreeTapIsCountedAsItsOwnOutcome() {
         // Separate from matched precisely because it matched nothing: the coordinate is honest
         // about being off-tree, and folding it into either neighbour would hide the effect.
-        LlmEngine.Verdict verdict = LlmEngine.classify(
-                new LlmTapAction(null, 500, 499, false), false, parsed("click", 500, 499, null),
-                false);
+        LlmEngine.Verdict verdict = classify(
+                new LlmTapAction(null, 500, 499, false), false, parsed("click", 500, 499, null));
 
         assertEquals("llm_tap", verdict.result);
         assertNull("a selecting outcome gives no reason", verdict.noMatchReason);
@@ -84,9 +93,9 @@ public class LlmEngineTest {
 
     @Test
     public void aMatchedAnswerNamesTheWidgetItLandedOn() {
-        LlmEngine.Verdict verdict = LlmEngine.classify(
+        LlmEngine.Verdict verdict = classify(
                 action(ActionType.MODEL_CLICK, "android.widget.Button"), false,
-                parsed("click", 500, 499, null), false);
+                parsed("click", 500, 499, null));
 
         assertEquals("matched", verdict.result);
         assertNull(verdict.noMatchReason);
@@ -98,8 +107,8 @@ public class LlmEngineTest {
     public void aMatchWithNoResolvedNodeStillClassifiesAsMatched() {
         // The class is a property of the widget, not of the outcome: an action that selected
         // something without resolving a node is still a decision the agent will execute.
-        LlmEngine.Verdict verdict = LlmEngine.classify(
-                unresolvedAction(), false, parsed("click", 500, 499, null), false);
+        LlmEngine.Verdict verdict = classify(
+                unresolvedAction(), false, parsed("click", 500, 499, null));
 
         assertEquals("matched", verdict.result);
         assertEquals("none", verdict.matchedClass);
@@ -110,8 +119,8 @@ public class LlmEngineTest {
         // The ban is the third no_match mechanism and the only one that had an answer to refuse.
         // It is what bucket D of the falsification gate counts, so it must be separable from the
         // two mapping failures below.
-        LlmEngine.Verdict verdict = LlmEngine.classify(
-                null, true, parsed("click", 500, 499, null), false);
+        LlmEngine.Verdict verdict = classify(
+                null, true, parsed("click", 500, 499, null));
 
         assertEquals("no_match", verdict.result);
         assertEquals("dead_pair", verdict.noMatchReason);
@@ -122,8 +131,8 @@ public class LlmEngineTest {
     public void anAnswerAtTheOriginIsDegenerateRatherThanOutOfBounds() {
         // A (0,0) emission is the model collapsing, not a coordinate the bands turned down, and the
         // two are counted apart because only one of them says anything about the model.
-        LlmEngine.Verdict verdict = LlmEngine.classify(
-                null, false, parsed("click", 0, 0, null), false);
+        LlmEngine.Verdict verdict = classify(
+                null, false, parsed("click", 0, 0, null));
 
         assertEquals("no_match", verdict.result);
         assertEquals("degenerate", verdict.noMatchReason);
@@ -131,8 +140,8 @@ public class LlmEngineTest {
 
     @Test
     public void anAnswerThatMappedToNothingElsewhereIsABoundary() {
-        LlmEngine.Verdict verdict = LlmEngine.classify(
-                null, false, parsed("type_text", 500, 12, "x"), false);
+        LlmEngine.Verdict verdict = classify(
+                null, false, parsed("type_text", 500, 12, "x"));
 
         assertEquals("no_match", verdict.result);
         assertEquals("boundary", verdict.noMatchReason);

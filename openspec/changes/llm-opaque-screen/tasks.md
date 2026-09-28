@@ -152,9 +152,9 @@ Group 14 ran on `8125a651`. Its code review found the issues group 16 fixes; the
 The code review of group 17 (17.4) found that `CoordinateMapper.map` rejects a zero on either axis in pixel space while `LlmEngine.classify` labeled `degenerate` from the parsed answer; `CoordinateNormalizer` truncates and clamps, so a negative answer, or one under `1000 / dimension` on an axis narrower than 1000 px, was rejected and recorded as `boundary` on a step with no band (INV-RTR-27).
 
 - [x] 19.1 Revise design (D11, the `classify` API entry, Testing Strategy) and this file; `openspec validate llm-opaque-screen --strict` passes
-- [ ] 19.2 `LlmEngine.classify(match, banned, parsed, pixelX, pixelY, edgeBandsOff)`: with `edgeBandsOff`, `degenerate` iff `pixelX == 0 || pixelY == 0`; without it, `degenerate` iff `parsed` is `(0, 0)` (unchanged); `selectAction` passes the pixels it gave `map`; javadoc
-- [ ] 19.3 Tests: every existing `classify` call passes its pixels and keeps its expectation; with `edgeBandsOff`, a parsed `(-5, 500)` and a parsed `(1, 500)` at width 720 (both pixel `x = 0`) are `degenerate`, and a non-zero pixel null (a `type_text` with no input field) stays `boundary`
-- [ ] 19.4 `mvn test` green; CLAUDE.md test count if it changed
+- [x] 19.2 `LlmEngine.classify(match, banned, parsed, pixelX, pixelY, edgeBandsOff)`: with `edgeBandsOff`, `degenerate` iff `pixelX == 0 || pixelY == 0`; without it, `degenerate` iff `parsed` is `(0, 0)` (unchanged); `selectAction` passes the pixels it gave `map`; javadoc
+- [x] 19.3 Tests: every existing `classify` call passes its pixels and keeps its expectation; with `edgeBandsOff`, a parsed `(-5, 500)` and a parsed `(1, 500)` at width 720 (both pixel `x = 0`) are `degenerate`, and a non-zero pixel null (a `type_text` with no input field) stays `boundary`
+- [x] 19.4 `mvn test` green; CLAUDE.md test count if it changed
 
 ## 17. Final verification (second and third revisions)
 
