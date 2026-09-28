@@ -586,11 +586,7 @@ public class ToolCallParserTest {
                 + "{\"x\": {\"x\": 288, 587} }}</tool_call>";
         ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
 
-        assertNotNull(action);
-        assertEquals("click", action.getActionType());
-        assertEquals(288, action.getX());
-        assertEquals(587, action.getY());
-        assertEquals("int_scan", action.getRepairForm());
+        assertTap(action, "click", 288, 587, "int_scan");
     }
 
     @Test
@@ -599,11 +595,7 @@ public class ToolCallParserTest {
                 "click", Collections.<String, Object>emptyMap(), "{\"x\": {\"x\": 288, 587} }");
         ToolCallParser.ParsedAction action = parser.parse(response);
 
-        assertNotNull(action);
-        assertEquals("click", action.getActionType());
-        assertEquals(288, action.getX());
-        assertEquals(587, action.getY());
-        assertEquals("int_scan", action.getRepairForm());
+        assertTap(action, "click", 288, 587, "int_scan");
     }
 
     @Test
@@ -611,11 +603,7 @@ public class ToolCallParserTest {
         String content = "{\"name\":\"click\",\"arguments\":{}}";
         ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
 
-        assertNotNull(action);
-        assertEquals("click", action.getActionType());
-        assertEquals(0, action.getX());
-        assertEquals(0, action.getY());
-        assertEquals("none", action.getRepairForm());
+        assertTap(action, "click", 0, 0, "none");
     }
 
     @Test
@@ -623,11 +611,7 @@ public class ToolCallParserTest {
         String content = "{\"name\":\"back\",\"arguments\":{\"n\": 12, \"m\": 34}}";
         ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
 
-        assertNotNull(action);
-        assertEquals("back", action.getActionType());
-        assertEquals(0, action.getX());
-        assertEquals(0, action.getY());
-        assertEquals("none", action.getRepairForm());
+        assertTap(action, "back", 0, 0, "none");
     }
 
     @Test
@@ -635,11 +619,17 @@ public class ToolCallParserTest {
         String content = "{\"name\":\"type_text\",\"arguments\":{\"text\": \"room 42 17\"}}";
         ToolCallParser.ParsedAction action = parser.parse(responseWithContent(content));
 
-        assertNotNull(action);
-        assertEquals("type_text", action.getActionType());
+        assertTap(action, "type_text", 0, 0, "none");
         assertEquals("room 42 17", action.getText());
-        assertEquals(0, action.getX());
-        assertEquals(0, action.getY());
-        assertEquals("none", action.getRepairForm());
+    }
+
+    /** The parsed action exists and carries this type, coordinate pair and repair form. */
+    private static void assertTap(ToolCallParser.ParsedAction action, String type, int x, int y,
+                                  String repair) {
+        assertNotNull(action);
+        assertEquals(type, action.getActionType());
+        assertEquals(x, action.getX());
+        assertEquals(y, action.getY());
+        assertEquals(repair, action.getRepairForm());
     }
 }
