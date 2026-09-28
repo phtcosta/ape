@@ -107,7 +107,7 @@
 
 - [x] 13.1 `mvn package`; on the emulator, run APE standalone with `ape.llmPercentageNoSubstrate=0.7` and an SGLang server for about 3 min each on retrowars, shatteredpixeldungeon, mtgfam (DB-update dialog), smokingtracker (loading dialog path) and one zxing app (createpdf capture); check from the trace that `dec.dyn:1` appears on the games' steps and not on the dialog, camera or splash steps, and that LLM calls on opaque steps happen only where `dec.dyn:1` (every opaque-step call fell on a `dec.dyn:1` step: retrowars 53/53, shatteredpixeldungeon 53/53, mtgfam 1/1; the DB-update dialog took 259/260 opaque steps without a region and no call; one transient `dyn` step on the dialog state; the smokingtracker loading dialog and createpdf capture were not reached in 3 min and rest on their dumps in `DynamicRegionTest`; numbers in `evidence.md`)
 - [x] 13.2 Same runs with `-1`: 0 LLM calls on opaque steps, `RUN_START.digest` equal to the `e93dea86` golden (digest `a67b096e757d83ad` on all five, 0 opaque-step attempts)
-- [ ] 13.3 After groups 17 and 19, build the jar at a committed revision, record its sha256 and commit, and send both to the rep-pack-e03 session with the E5c follow-up on arm order (`followups.md`). (A provisional jar, `8125a651` / `d990abd5…`, was sent before group 14 and withdrawn as provisional; only the jar built after group 17 is final)
+- [ ] 13.3 After groups 17, 19, 20 and 21, build the jar at a committed revision, record its sha256 and commit, and send both to the rep-pack-e03 session with the E5c follow-up on arm order (`followups.md`). (A provisional jar, `8125a651` / `d990abd5…`, was sent before group 14 and withdrawn as provisional; only the jar built after group 17 is final)
 
 ## 14. Final verification (revised gate)
 
@@ -164,6 +164,28 @@ The code review of group 17 (17.4) found that `CoordinateMapper.map` rejects a z
 - [x] 17.4 Invoke `/sdd-code-reviewer` via Skill tool (verdict COMMENT: 0 critical, 1 warning, 7 notes; reported to the owner, not fixed)
 - [x] 17.5 Run `/sdd-docs-sync src/main/java/com/android/commands/monkey/ape` (`NoDocumentationFiles` in that scope; the CLAUDE.md symbols this change names were checked against the source and exist)
 
+## 20. Behavior-preserving refactor (D14)
+
+Only refactors confined to one expression or one method; the rest are in `followups.md`. Behavior must not change: `RunSpecResolveTest.sentinelPlanDigestUnchanged`, `SinkNeutralityTest` and the parity goldens (`*Golden*`, `*Parity*`) stay green and are not edited.
+
+- [x] 20.1 Revise design (D14, API Design: `LlmGate.opaqueRouted`, `CoordinateMapper.isZeroAxis`, the stages' `edgeBandsOff`, `LlmRandomStage.decide`), `followups.md` and this file; `openspec validate llm-opaque-screen --strict` passes
+- [ ] 20.2 `ToolCallParser`: one primitive `Integer readIntArg(Map<String, Object> args, String key)`, `null` when the key is absent or its value is not readable as an integer; `getIntArg` and `hasIntArg` derive from it and return what they return today for every input
+- [ ] 20.3 `ToolCallParser`: `isTapAction(String name)` (`click` or `long_click`) declared next to `TAP_ACTION_NAME`, which stays as it is; the D12 block of `parseJsonString` moves, unchanged in order and effect, into `recoverUnreadableTap(name, args, parsed, json)`
+- [ ] 20.4 `CoordinateMapper.isZeroAxis(int pixelX, int pixelY)` = `pixelX == 0 || pixelY == 0`; `map` (with `edgeBandsOff`) and `LlmEngine.classify` (with `edgeBandsOff`) call it; the unflagged `classify` rule (parsed `(0,0)`) unchanged
+- [ ] 20.5 `LlmGate.opaqueRouted(StepContext ctx, boolean opaqueEnabled)` = `opaqueEnabled && isOpaqueDynamic(ctx)`; `allows` and the three stages call it; in `LlmRandomStage.decide` the local is named `opaqueRouted` and passed as the engine's `edgeBandsOff`
+- [ ] 20.6 Comments state the current behavior (P4): the `LlmRandomStage` class javadoc no longer says "computed once" of the whole step; `AndroidDevice.getRotation` ("which this used to call"), `CoordinateMapper.map` ("exactly as before the flag existed") and `ScreenshotCapture.displayRotation` ("the call made before…") drop the history; `EventSink.restartRequested` and `runEnd` javadocs reflowed to the line length
+- [ ] 20.7 `ToolCallParserTest`: a helper `assertTap(action, type, x, y, repair)` replaces the repeated assert block in the D12 tests; the expected values are unchanged
+- [ ] 20.8 Run `/sdd-doc-code` on the helpers added in 20.2–20.5 (`readIntArg`, `isTapAction`, `recoverUnreadableTap`, `isZeroAxis`, `opaqueRouted`); keep only javadoc changes to those symbols
+- [ ] 20.9 `mvn test` green after each of 20.2–20.7; `git diff` of the group touches none of `RunSpecResolveTest`, `SinkNeutralityTest`, `*Golden*`, `*Parity*`; the group's diff checked for duplicated logic
+
+## 21. Final verification (after groups 19 and 20)
+
+- [ ] 21.1 `mvn test` green; update the test count in CLAUDE.md if it changed
+- [ ] 21.2 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey/ape`
+- [ ] 21.3 Run `/sdd-verify src/main/java/com/android/commands/monkey/ape`
+- [ ] 21.4 Invoke `/sdd-code-reviewer` via Skill tool on the diff since `550cb75c` (groups 19 and 20); report the findings to the owner, do not fix them
+- [ ] 21.5 Run `/sdd-docs-sync src/main/java/com/android/commands/monkey/ape`
+
 ## 15. Merge
 
-- [ ] 15.1 After the revised gate passes its test (groups 13, 16 and 18), groups 17 and 19 and task 13.3 are done, merge branch `llm-opaque-screen` into `master`. This task stays open until the merge is done, so the change cannot be archived before it
+- [ ] 15.1 After the revised gate passes its test (groups 13, 16 and 18), groups 17, 19, 20 and 21 and task 13.3 are done, merge branch `llm-opaque-screen` into `master`. This task stays open until the merge is done, so the change cannot be archived before it

@@ -28,8 +28,9 @@ pins them.
   Task 13 adds one clean data point: on shatteredpixeldungeon's title screen all 53 answers were
   `click` at y ≈ 980 (0.98 h) and all 53 were rejected by the bottom band, not by a null answer
   (`evidence.md`, device validation). The answered point is the "Enter the Dungeon" button, a real
-  target wholly inside the bottom band; relaxing the band on opaque ∧ `dyn` steps was left out of
-  this change (owner's scope decision) and is the open question for E5d.
+  target wholly inside the bottom band. The second revision (D11) lifts the bands on opaque ∧
+  `dyn` steps, and task 16.17 measured `boundary` there going from 53 of 53 to 0; the recount by
+  cause still matters for the steps without `dyn`, where the bands apply.
 - **APE action extraction, not the LLM gate.** Two false-opaque screens seen on the way:
   flyingcarpet's About dialog has a scrollable `android:id/scrollView` that the compressed tree
   drops (not focusable), so its scroll action is lost; AnyMemo's CardPlayer settings dialog has
@@ -52,9 +53,47 @@ pins them.
   so the model's normalized answer would be scaled onto a shorter frame than the image it saw. The
   fallback usually fails from `app_process` (it needs `InstrumentationRegistry`), so the case has
   not been observed; cropping it to the same frame, or mapping against the image's own size,
-  would align the two.
+  would align the two. D13 changed only the SurfaceControl path: whether the fallback's image is
+  upright on a landscape screen was not checked (code review of group 17, note NT-07).
 - **What D12 leaves.** A tap answer with no recoverable coordinate (an empty `arguments`, a single
   number) still parses as `0` on the missing axis. Making the parser return no action for it
   would fix the degenerate answer at the root, but a parse failure counts against the circuit
   breaker on every arm; the mapper's zero-axis rejection covers it on opaque dynamic steps and the
   top band on the others (a zero `x` alone still becomes a tap on the left edge there).
+
+## From the refactor (D14)
+
+Refactors surveyed and left out because they are not confined to one expression or one method:
+
+- **One engine call per stage (A6).** The three LLM stages repeat
+  `engine.selectAction(ctx.newGUITree(), ctx.newState(), ctx.newState().getActions(),
+  ctx.mopData(), ctx.actionHistory(), mode, edgeBandsOff)` and `null → Continue / accept /
+  select`. A shared helper restructures their control flow; `LlmStagnationStage` resets the graph
+  stability counter between the null test and the acceptance, so it needs two helpers, not one.
+- **`AndroidDevice.defaultDisplay()` (A7).** `getRotation` and `getDisplayBounds` fetch the same
+  display with the same call. The code runs only on a device, and no unit test reaches it.
+- **One rotation sentinel (A8).** `getRotation` returns `-1` and `ScreenshotCapture.displayRotation`
+  maps it to `0`. Collapsing them moves the rule into `AndroidDevice`, where no test reaches it.
+- **`Rect` API in `LlmGate.isRegion` (A9).** The intersection is computed by hand; the device runs
+  the framework's `Rect`, not the test stub, and the empty-rectangle case must keep its guard.
+- **One recording `LlmEngine` stub (C1).** `StubEngine` in the three stage tests and
+  `PipelineFixture.StubLlm` are near copies (the duplication predates this change). Merging them
+  rewrites the tests that guard the stages.
+- **Stage tests of the band decision (C3)** repeat per stage; with `opaqueRouted` tested once each
+  stage would only need to check that it passes the value on.
+- **One evaluation of `opaqueRouted` per step (code review of group 17, note NT-03).** `allows` and
+  the stage each evaluate it, so an opaque step walks the tree twice (three times with the step
+  record). Passing it into `allows` changes that method's signature in the spec (INV-RTR-23).
+
+Outside this change, seen during the survey:
+
+- The `Unsafe` allocation helper is copied in 27 test files.
+- The string-`arguments` branch of `ToolCallParser.parseJsonString` builds the name into JSON
+  without `JSONObject.quote` and does not go through `fixMalformedJson` (code review of group 17,
+  note NT-06; predates this change).
+- `.sdd/sdd-config.yaml` says `build_system: ant` and `test_framework: none`; the build is Maven
+  and the tests are JUnit.
+- The D12 tap test is case-sensitive: `Click` or `long-click` is not recovered (code review of
+  group 17, note NT-01).
+- The last-resort integer scan may take integers unrelated to the coordinates, such as an
+  `element_id` placed before `x` (code review of group 17, note NT-02).

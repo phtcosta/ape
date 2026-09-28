@@ -39,7 +39,7 @@ StepContext (newState, newGUITree)
             ──► LlmStagnationStage├─► LlmGate.allows(ctx, opaqueEnabled)
             ──► LlmRandomStage ───┘        │  bufferEmpty ∧ (actions>2 ∨ (opaqueEnabled ∧ isOpaque(state) ∧ hasDynamicRegion(tree)))
                    │ rate = opaqueDynamic ? opaqueRate : percentage; draw only if rate>0
-                   │ edgeBandsOff = opaqueEnabled ∧ isOpaqueDynamic(ctx)   (all three stages)
+                   │ edgeBandsOff = opaqueRouted(ctx, opaqueEnabled) = opaqueEnabled ∧ isOpaqueDynamic(ctx)   (all three stages)
                    ▼
               LlmEngine.selectAction(…, edgeBandsOff) ──► CoordinateMapper.map(…, edgeBandsOff) ──► LlmTapAction
                                                              │ edgeBandsOff: no top/bottom band, x=0 or y=0 rejected
@@ -59,7 +59,7 @@ ApeAgent.requestRestart ─────────► sink.restartRequested() �
 | `LlmGate.allows(StepContext, boolean)` | Shared precondition with the opaque-dynamic clause | step context, feature flag | `boolean` |
 | `LlmNewStateStage` / `LlmStagnationStage` | Pass the injected flag to the gate | `StepContext` | `StageResult` |
 | `LlmRandomStage` | Per-step rate choice, zero-rate no-draw | `StepContext` | `StageResult` |
-| The three LLM stages | Compute `edgeBandsOff = opaqueEnabled ∧ isOpaqueDynamic(ctx)` and pass it to the engine (D11) | `StepContext` | argument |
+| The three LLM stages | Compute `edgeBandsOff = LlmGate.opaqueRouted(ctx, opaqueEnabled)` and pass it to the engine (D11) | `StepContext` | argument |
 | `LlmEngine.selectAction(…, boolean edgeBandsOff)` | Hands the fact to the mapper unchanged | argument | argument |
 | `ToolCallParser.parseJsonString` | Runs the last-resort integer scan also when a tap action parses without a readable `x` or `y` (D12) | response text | `ParsedAction` |
 | `CoordinateMapper.map(…, boolean edgeBandsOff)` | Skips the boundary bands and rejects a pixel with either coordinate `0` when set; unchanged otherwise (INV-RTR-27) | pixel, action type, flag | `ModelAction` or null |
@@ -158,6 +158,8 @@ Chosen: pass the display's current rotation (`AndroidDevice.getRotation()`, `Sur
 
 Scope of the effect: like D12, this changes the `-1` arm too — every LLM call on a landscape screen now sees the screen as shown. Plan digest, gate and draw sequence are unaffected; the answers, and therefore the decisions, on landscape screens differ. It is declared to the Study 03 session with the jar.
 
+**D14 — Refactor (no behavior change).** After the third revision, each rule this change added is written once and named. `ToolCallParser` reads an integer argument through one primitive, `Integer readIntArg(args, key)` (`null` when absent or unreadable), from which `getIntArg` and `hasIntArg` derive; `isTapAction(name)` states the tap test D12 applies to a parsed name, and the D12 block becomes `recoverUnreadableTap`. `CoordinateMapper.isZeroAxis(pixelX, pixelY)` is the zero-axis rule the mapper applies and `LlmEngine.classify` labels (D11); the unflagged `classify` rule, a parsed `(0,0)`, stays as it is, since unifying it would change labels on arms already measured. `LlmGate.opaqueRouted(ctx, opaqueEnabled)` names `opaqueEnabled && isOpaqueDynamic(ctx)`, read by `allows` and by the three stages, and `LlmRandomStage.decide` names its local after that fact. Comments that narrate earlier code are rewritten to state the current behavior (P4). Only refactors whose effect is confined to one expression or one method were taken; the ones that restructure the stages' control flow, touch device-only code (`AndroidDevice`) that no unit test reaches, replace the rectangle arithmetic the device runs on the framework's `Rect`, or rewrite the stage test doubles are recorded in `followups.md`. The `TAP_ACTION_NAME` regex, which the last-resort gate matches on raw text, stays as it is. Plan digest, gate, draw sequence, labels and the parity goldens are unchanged, and the neutrality tests are not edited.
+
 ## API Design
 
 ### `static boolean LlmGate.isOpaque(State state)`
@@ -166,7 +168,7 @@ Pre: `state != null`. Post: `true` iff `state.getActions()` is non-empty and no 
 
 ### `static boolean LlmGate.allows(StepContext ctx, boolean opaqueEnabled)`
 
-Post: `ctx.actionBufferSize() == 0 && (ctx.newState().getActions().size() > 2 || (opaqueEnabled && isOpaqueDynamic(ctx)))`. With `opaqueEnabled == false` the result equals the pre-change expression for every input. The one-argument overload is removed (P3); the three stages pass their injected flag.
+Post: `ctx.actionBufferSize() == 0 && (ctx.newState().getActions().size() > 2 || opaqueRouted(ctx, opaqueEnabled))`. With `opaqueEnabled == false` the result equals the pre-change expression for every input. The one-argument overload is removed (P3); the three stages pass their injected flag.
 
 ### `static boolean LlmGate.hasDynamicRegion(GUITree tree)`
 
@@ -176,22 +178,26 @@ Pre: none (`null` allowed). Post: `false` for a null tree or a root with empty b
 
 Post: `isOpaque(ctx.newState()) && hasDynamicRegion(ctx.newGUITree())`, in that order (the tree walk only runs on opaque steps).
 
+### `static boolean LlmGate.opaqueRouted(StepContext ctx, boolean opaqueEnabled)`
+
+Post: `opaqueEnabled && isOpaqueDynamic(ctx)`, in that order, so with `opaqueEnabled == false` the tree is not read (INV-RTR-22). The one definition `allows` and the three stages share (D14).
+
 ### Stage constructors
 
 - `LlmNewStateStage(LlmEngine, BooleanSupplier, Consumer<ModelAction>, boolean opaqueEnabled)`
 - `LlmStagnationStage(LlmEngine, BooleanSupplier, int restartThreshold, Consumer<ModelAction>, boolean opaqueEnabled)`
 - `LlmRandomStage(LlmEngine, BooleanSupplier, double percentage, double opaqueRate, Random, Consumer<ModelAction>)` — `opaqueRate < 0` means the feature is absent; the stage derives `opaqueEnabled = opaqueRate >= 0`.
 
-Each stage calls `engine.selectAction(tree, state, actions, mopData, history, mode, edgeBandsOff)` with `edgeBandsOff = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx)` (D11). `LlmRandomStage` computes it once and uses it for the rate as well.
+Each stage calls `engine.selectAction(tree, state, actions, mopData, history, mode, edgeBandsOff)` with `edgeBandsOff = LlmGate.opaqueRouted(ctx, opaqueEnabled)` (D11, D14). `LlmRandomStage.decide` evaluates it once and uses it for the rate as well.
 
 `LlmRandomStage.decide`:
 
 ```text
 if !LlmGate.allows(ctx, opaqueEnabled): Continue
-edgeBandsOff = opaqueEnabled && LlmGate.isOpaqueDynamic(ctx)
-rate = edgeBandsOff ? opaqueRate : percentage
+opaqueRouted = LlmGate.opaqueRouted(ctx, opaqueEnabled)
+rate = opaqueRouted ? opaqueRate : percentage
 if rate <= 0 || random.nextDouble() >= rate || !breakerAllows: Continue
-result = engine.selectAction(…, "random", edgeBandsOff)
+result = engine.selectAction(…, "random", opaqueRouted)
 … unchanged
 ```
 
@@ -209,9 +215,13 @@ Unchanged signature. The SurfaceControl path passes `displayRotation(AndroidDevi
 
 `edgeBandsOff == false`: exactly the current behavior. `edgeBandsOff == true`: after the `back` branch, `pixelX == 0 || pixelY == 0` returns null; the band check is skipped; everything after it is unchanged.
 
+### `static boolean CoordinateMapper.isZeroAxis(int pixelX, int pixelY)`
+
+Post: `pixelX == 0 || pixelY == 0`. Pure. The rejection `map` makes with `edgeBandsOff` and the `degenerate` test `classify` applies with it both read this method (D14).
+
 ### `static Verdict LlmEngine.classify(ModelAction match, boolean banned, ParsedAction parsed, int pixelX, int pixelY, boolean edgeBandsOff)`
 
-The `no_match` reason is `degenerate` when `edgeBandsOff` holds and `pixelX == 0 || pixelY == 0` — the pixels `CoordinateMapper.map` was given, so the label names exactly the rejection the mapper made — or, without `edgeBandsOff`, when `parsed` is `(0, 0)`; otherwise `boundary`. Without `edgeBandsOff` the labels are the ones every arm had before this change.
+The `no_match` reason is `degenerate` when `edgeBandsOff` holds and `CoordinateMapper.isZeroAxis(pixelX, pixelY)` — the pixels `CoordinateMapper.map` was given, so the label names exactly the rejection the mapper made — or, without `edgeBandsOff`, when `parsed` is `(0, 0)`; otherwise `boundary`. Without `edgeBandsOff` the labels are the ones every arm had before this change.
 
 ### Plan (no change)
 
