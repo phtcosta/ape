@@ -91,14 +91,15 @@ public final class CoordinateMapper {
      *   <li>Off-tree synthesis: a targetless tap carrying the coordinate</li>
      * </ol>
      *
-     * <p><b>A known defect is reproduced here deliberately, and naming it is mandatory.</b> A
+     * <p><b>A known defect is kept here deliberately, and naming it is mandatory.</b> A
      * {@code type_text} answer can execute a {@code MODEL_LONG_CLICK}, measured at 28 of 1,233 LLM
      * responses (2.3%): the containment pass restricts the candidate's {@code ActionType} only when
-     * the tool is {@code click}, and {@link #fixTextEdit} returns the match untouched for any tool
-     * that is neither {@code click} nor {@code long_click}, so the long-click preference can win.
-     * The fix belongs to a separate change against this class — a silently inherited defect in a
-     * newly extracted unit is indistinguishable from a slicing regression when the parity oracle
-     * later disagrees, which is why it is written down rather than quietly carried.
+     * the tool is {@code click} or {@code long_click}, so for {@code type_text} the first action
+     * on the smallest containing input widget wins, which can be its long-click; and
+     * {@link #fixTextEdit} returns the match untouched for any tool that is neither {@code click}
+     * nor {@code long_click}. Correcting it changes which action executes, so it belongs to its
+     * own change; it is written down so that a parity-oracle disagreement it causes is not read
+     * as a regression.
      *
      * <p><b>The frame and the edge bands.</b> {@code deviceWidth}/{@code deviceHeight} are the
      * display size {@code Display.getSize()} reports — the area available to the app, without the
@@ -108,8 +109,9 @@ public final class CoordinateMapper {
      * region, with opaque routing on, the calling stage passes {@code edgeBandsOff = true}
      * (INV-RTR-27): neither band applies, and a pixel with {@code pixelX == 0} or
      * {@code pixelY == 0} is rejected instead — the parser reads a coordinate it cannot find as
-     * {@code 0}, so a zero on either axis is "no coordinate", which the top band used to catch.
-     * With {@code edgeBandsOff == false} both bands apply and no zero-axis rejection is made.
+     * {@code 0}, so a zero on either axis is "no coordinate". With {@code edgeBandsOff == false}
+     * both bands apply and no zero-axis rejection is made: the top band catches a zero
+     * {@code pixelY}, and a zero {@code pixelX} with an in-band {@code pixelY} is not rejected.
      *
      * @param pixelX     x coordinate in device pixels
      * @param pixelY     y coordinate in device pixels
@@ -150,9 +152,9 @@ public final class CoordinateMapper {
             }
         } else if (pixelY < deviceHeight * boundaryTopPct
                 || pixelY > deviceHeight * boundaryBottomPct) {
-            // Boundary reject: top and bottom bands of the screen, keeping the model off the status
-            // and navigation bars — and off any degenerate (0,0) emission, which the top band
-            // catches.
+            // Boundary reject: the top band covers the status bar and catches a degenerate (0,0)
+            // emission; the bottom band cuts the bottom of the app's own content, because the frame
+            // already excludes the navigation bar (see the javadoc).
             Logger.println("[APE-RV] LLM coordinate rejected (boundary): pixelY=" + pixelY
                     + " deviceHeight=" + deviceHeight);
             return null;
@@ -177,10 +179,11 @@ public final class CoordinateMapper {
                 if ("type_text".equals(actionType) && !ApePromptBuilder.isInputClass(node)) continue;
 
                 // For click: the tool the model called constrains the ActionType (INV-RTR-17). Without
-                // this, any action sharing the widget's bounds could answer a click — measured, a click
-                // answer executed a CLICK only 80.9% of the time, the rest being long-clicks and
-                // scrolls. A click that finds no MODEL_CLICK falls to the snap pass or off-tree
-                // synthesis, both of which stay honest about what the model asked for.
+                // this filter any action sharing the widget's bounds could answer a click; measured
+                // without it, a click answer executes a CLICK in only 80.9% of cases, the rest
+                // being long-clicks and scrolls. A click that finds no MODEL_CLICK falls to the
+                // snap pass or off-tree synthesis, both of which stay honest about what the model
+                // asked for.
                 if ("click".equals(actionType) && action.getType() != ActionType.MODEL_CLICK) continue;
 
                 // For long_click: prefer MODEL_LONG_CLICK; fall through to MODEL_CLICK if needed
@@ -238,10 +241,10 @@ public final class CoordinateMapper {
                 Rect bounds = node.getBoundsInScreen();
                 // Point-to-rectangle (edge) distance, clamped per axis: zero when the point is
                 // inside, otherwise how far outside the widget's own border it fell (INV-RTR-18).
-                // Centre distance punished elongated widgets — on a 1080×150 bar only points within
-                // ~75 px of the centre could snap, leaving ~450 px of the bar's own edge
-                // unsnappable, so a tap 20 px outside a wide widget failed while being visually on
-                // target.
+                // Centre distance would punish elongated widgets — on a 1080×150 bar only points
+                // within ~75 px of the centre could snap, leaving ~450 px of the bar's own edge
+                // unsnappable, so a tap 20 px outside a wide widget would fail while being visually
+                // on target.
                 int dx = Math.max(Math.max(bounds.left - pixelX, 0), pixelX - bounds.right);
                 int dy = Math.max(Math.max(bounds.top - pixelY, 0), pixelY - bounds.bottom);
                 double dist = Math.hypot(dx, dy);
@@ -265,12 +268,13 @@ public final class CoordinateMapper {
         }
 
         // --- Off-tree coordinate tap (dynamic element) ---
-        // No widget contains the point and none is within edge-distance tolerance. The boundary reject
-        // ran first, so a coordinate reaching here is guaranteed in-bounds and non-degenerate. For a
-        // click/long_click, synthesize a targetless MODEL_LLM_TAP carrying the LLM coordinate so APE
-        // can act on elements invisible to UIAutomator (game canvas, custom view, Compose-without-
-        // semantics). type_text and any other type stay null — a raw coordinate has no node to
-        // receive text. (llm-coordinate-tap, D4)
+        // No widget contains the point and none is within edge-distance tolerance. The band reject
+        // (or, with edgeBandsOff, the zero-axis reject) ran first, so a coordinate reaching here is
+        // outside the bands or, with edgeBandsOff, has no zero axis. For a click/long_click,
+        // synthesize a targetless MODEL_LLM_TAP carrying the LLM coordinate so APE can act on
+        // elements invisible to UIAutomator (game canvas, custom view, Compose-without-semantics).
+        // type_text and any other type stay null — a raw coordinate has no node to receive text.
+        // (llm-coordinate-tap, D4)
         if ("click".equals(actionType) || "long_click".equals(actionType)) {
             return new LlmTapAction(state, pixelX, pixelY, "long_click".equals(actionType));
         }

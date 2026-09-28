@@ -29,10 +29,10 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * never enters a new state and never stalls still carries some LLM influence.
  *
  * <p><b>Where the coin is drawn matters more than what it decides.</b> It is drawn after the shared
- * precondition and ahead of the circuit breaker, which is exactly where the predicate this stage
- * inherited drew it (INV-DP-10). A seeded run's whole decision sequence is a function of the order
- * its draws are consumed in, so a coin flipped one line earlier or later would shift every later
- * decision in the run and turn the goldens red for a reason that looks like a logic bug and is not.
+ * precondition and ahead of the circuit breaker (INV-DP-10). A seeded run's whole decision
+ * sequence is a function of the order its draws are consumed in, so a coin flipped one line
+ * earlier or later would shift every later decision in the run and turn the goldens red for a
+ * reason that looks like a logic bug and is not.
  *
  * <p><b>Which stream it comes from, stated because the run has two.</b> The generator is the
  * agent's — {@code ape.getRandom()}, Monkey's {@code mRandom} — injected at assembly, and it is
@@ -42,9 +42,9 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * and one no golden can see, because the parity harness substitutes this coin outright.
  *
  * <p>The rate's other role, deciding whether this stage exists at all, is settled at assembly: a
- * plan with a zero rate has no stage here. That move is draw-neutral, which is the reason it is safe
- * — the rate was already the predicate's first conjunct, so when it was zero the short-circuit
- * meant no coin was drawn anyway.
+ * plan with a zero rate has no stage here. That is draw-neutral, which is the reason it is safe: a
+ * zero rate inside the stage would draw no coin either, because {@code rate <= 0} short-circuits
+ * ahead of the draw.
  *
  * <p><b>Opaque steps may carry their own rate.</b> When the plan turns opaque routing on
  * ({@code ape.llmPercentageNoSubstrate >= 0}), an {@linkplain LlmGate#isOpaqueDynamic opaque step
@@ -53,8 +53,8 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * — stays closed and draws nothing. A zero opaque rate draws no coin at all: it lets the new-state
  * and stagnation hooks consult the model on a canvas without random routing there, and it does so
  * without consuming a draw. With opaque routing off, every step that passes the gate is flipped
- * against the positive plan rate, so the {@code rate > 0} conjunct is always true and the coin
- * falls on exactly the steps it always did (INV-RTR-22).
+ * against the positive plan rate, so the {@code rate > 0} conjunct is always true and a coin is
+ * drawn on every step the size rule opens and on no other (INV-RTR-22).
  *
  * <p>Whether the step is routed as opaque is {@link LlmGate#opaqueRouted}. {@code LlmGate.allows}
  * evaluates it when the state offers two actions or fewer; once the gate is open, {@code decide}

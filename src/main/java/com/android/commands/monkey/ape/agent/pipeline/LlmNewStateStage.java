@@ -31,10 +31,10 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * and the once-per-open-episode log latch) and must not be reached on a step the first conjunct
  * already declined.
  *
- * <p><b>The mode conjunct is gone, and assembly is the whole reason it could go.</b> The predicate
- * this stage inherited also tested that new-state routing was enabled, which is precisely the
- * condition under which this stage exists at all (INV-DP-03). Inside the stage it is necessarily
- * true, so testing it would be asking whether the object running the test was constructed.
+ * <p><b>No mode conjunct is tested, because assembly settles it.</b> The stage exists only on a
+ * plan that enables new-state routing (INV-DP-03), so inside the stage that condition is
+ * necessarily true, and testing it would be asking whether the object running the test was
+ * constructed.
  *
  * <p><b>A declining model does not change the step's shape.</b> Precondition unmet, trigger false,
  * breaker open, or an engine that returns null for any of its reasons — screenshot failure, transport

@@ -57,7 +57,7 @@ public class ScreenshotCapture {
      * <p>Honesty boundary: the Android API returns null for FLAG_SECURE, reflection unavailability
      * and permission denial without distinguishing them, so this names the failing <b>stage</b>,
      * not the OS-level reason. Joining the stage and the foreground activity — which LlmTelemetry's
-     * surviving {@code [APE-RV] LLM screenshot capture failed} free-text line carries — with the
+     * {@code [APE-RV] LLM screenshot capture failed} free-text line carries — with the
      * known FLAG_SECURE APK list
      * is an offline step. {@code OutOfMemoryError} is an {@code Error} and escapes the
      * {@code catch (Exception)} blocks below: it is not folded into the null return, and this seam
@@ -75,10 +75,10 @@ public class ScreenshotCapture {
      *
      * <p>{@code width}×{@code height} is the frame {@code Display.getSize()} reports for the
      * current orientation, so the capture must be taken in that orientation too: the display's
-     * rotation is passed as the last argument. With {@code 0} on a display turned to landscape,
-     * the framebuffer comes back in its natural (portrait) orientation cropped to the landscape
-     * rectangle — the model saw the screen turned 90° and partly cut off (design D13). In portrait
-     * the rotation is {@code 0} and the call is unchanged.
+     * rotation is passed as the last argument. Given {@code 0} on a display turned to landscape,
+     * the call returns the framebuffer in its natural (portrait) orientation cropped to the
+     * landscape rectangle, and the model would see the screen turned 90° and partly cut off
+     * (design D13). In portrait the rotation is {@code 0}.
      */
     private byte[] captureViaSurfaceControl(int width, int height) {
         try {

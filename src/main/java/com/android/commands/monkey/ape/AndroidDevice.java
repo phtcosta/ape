@@ -134,6 +134,12 @@ public class AndroidDevice {
         }
     }
 
+    /**
+     * The default display's frame for its current orientation, with its origin at {@code (0, 0)}:
+     * the size {@code Display.getSize()} reports, which is the area available to the app and
+     * excludes the navigation bar. {@link #getRotation()} reads the same real display, so the two
+     * describe one orientation. Nothing here catches a failure to read the display.
+     */
     public static Rect getDisplayBounds() {
         android.view.Display display = DisplayManagerGlobal.getInstance().getRealDisplay(android.view.Display.DEFAULT_DISPLAY);
         Point size = new Point();

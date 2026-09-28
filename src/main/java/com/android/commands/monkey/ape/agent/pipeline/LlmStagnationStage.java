@@ -48,9 +48,9 @@ import com.android.commands.monkey.ape.model.StateTransition;
  *
  * <p><b>The threshold arrives separately from the rest of the LLM parameters, and that is a fact
  * about ownership.</b> {@code ape.graphStableRestartThreshold} is the agent's stagnation budget —
- * exploration scope, not LLM scope — and this stage only ever reads its midpoint. The mode conjunct
- * the inherited predicate also carried is gone: enabling stagnation routing is the condition under
- * which this stage exists (INV-DP-03), so inside it the test is vacuous.
+ * exploration scope, not LLM scope — and this stage only ever reads its midpoint. No mode conjunct
+ * is tested: enabling stagnation routing is the condition under which this stage exists
+ * (INV-DP-03), so inside it the test would be vacuous.
  */
 public final class LlmStagnationStage implements DecisionStage {
 
@@ -87,12 +87,11 @@ public final class LlmStagnationStage implements DecisionStage {
      * The stagnation trigger predicate (INV-RTR-19): at or past the midpoint, with the episode's
      * flag still armed.
      *
-     * <p>The retired condition was exact equality with {@code threshold / 2}. Since the counter
-     * resets to 0 on every new edge, that gave each stagnation episode a one-step window: any step
-     * where the counter jumped past the midpoint, or was reset just before it, silently cost the
-     * episode its only chance, and the hook virtually never fired. {@code >=} closes the window and
-     * the flag preserves the original single-shot intent. Pure, so it is unit-testable without a
-     * stage, an agent or a plan.
+     * <p>The test is {@code >=} rather than equality with {@code threshold / 2}: the counter resets
+     * to 0 on every new edge, so equality would give each stagnation episode a one-step window, and
+     * a step where the counter jumped past the midpoint, or was reset just before it, would cost
+     * the episode its only chance. The flag keeps the hook to one call per episode. Pure, so it is
+     * unit-testable without a stage, an agent or a plan.
      */
     static boolean stagnationMidpointReached(int graphStableCounter, int threshold,
                                              boolean firedThisEpisode) {

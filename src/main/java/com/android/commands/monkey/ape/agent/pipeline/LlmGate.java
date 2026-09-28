@@ -33,14 +33,12 @@ import android.graphics.Rect;
  * What every LLM stage does around its engine call: the precondition before, the acceptance after;
  * and the classifier of the step's screen that the precondition and the step record share.
  *
- * <p>Both halves were written out three times in the ladder, once per hook, which is what made them
- * worth a name. The precondition in particular — {@code actionBufferSize() == 0 &&
- * newState.getActions().size() > 2} — was verbatim at three sites, so a change to one of them was a
- * change to the policy at one hook and not the others, silently.
+ * <p>The three LLM stages call both halves from here, so the precondition — an empty action
+ * buffer, and then more than two actions or an opaque routed step — is one policy for all three
+ * hooks, and a change to it reaches every hook at once.
  *
- * <p>The third conjunct of those three copies, a null test on the run's LLM, is not here: an LLM
- * stage exists only on a plan carrying its feature, and such a plan builds the units. The guard
- * dissolved into assembly rather than moving (INV-DP-03).
+ * <p>No null test on the run's LLM is made here: an LLM stage exists only on a plan carrying its
+ * feature, and such a plan builds the units, so assembly settles it (INV-DP-03).
  *
  * <p>The class's second role is to classify the screen: {@link #isOpaque} reads the abstract
  * state, {@link #hasDynamicRegion} reads the step's tree. The gate routes on them and the agent
@@ -86,8 +84,8 @@ public final class LlmGate {
      * (design D8).
      *
      * <p>With {@code opaqueEnabled} false the result is the size rule alone, for every input, and
-     * the tree is never walked — the property that keeps a plan without opaque routing on the
-     * gate, and therefore on the draw sequence, it always had (INV-RTR-22).
+     * the tree is never walked, so on a plan without opaque routing the gate, and therefore the
+     * draw sequence, is decided by the size rule alone (INV-RTR-22).
      *
      * @param ctx the step being decided
      * @param opaqueEnabled whether the plan turns opaque routing on, injected at assembly

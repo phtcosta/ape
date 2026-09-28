@@ -25,10 +25,10 @@ import java.util.Map;
  * <p><b>The shape is the neutrality argument.</b> Every method returns {@code void} and takes
  * primitives and strings the caller already holds, so no decision path can read anything the sink
  * computed, and no sink call can advance the seeded RNG or hand back a value that steers a pick.
- * That is INV-SNK-07, and it is what replaced INV-ARCH-01 when telemetry became always-on for
- * every arm: the control arm is no longer protected by being blind, it is protected by the sink
- * being unable to speak. The property is proven rather than asserted — the parity harness runs the
- * same seed with {@link NdjsonSink} and with {@link NoopSink} and the action sequences must match.
+ * That is INV-SNK-07. Telemetry is on for every arm, so the control arm is protected not by being
+ * blind but by the sink being unable to speak. The property is checked rather than asserted —
+ * {@code SinkNeutralityTest} runs the same seed with {@link NdjsonSink} and with {@link NoopSink}
+ * and the action sequences must match.
  *
  * <p><b>No method throws.</b> A telemetry defect must not alter or kill an experimental run
  * (INV-SNK-12), so implementations swallow their own failures and latch off. Callers never guard a
@@ -93,7 +93,7 @@ public interface EventSink {
      * Records the finalized model action and how it was picked.
      *
      * @param action the full action string, escaped by the serializer rather than flattened at the
-     *        origin — which is the defect class this whole stage removes
+     *        origin, so no character in it can break the record
      * @param decisionSource the mechanism credited with the pick, from the fixed enum
      * @param pickChannel the pick channel label, from the fixed enum
      * @param priority the selected action's priority
@@ -136,11 +136,10 @@ public interface EventSink {
     /**
      * Records the platform's answer to a component launch, on component-trigger steps.
      *
-     * <p>It is a separate call because of when the answer exists: the retired {@code [APE-STEP]}
-     * line was emitted before dispatch and therefore could never carry it, while this record is not
-     * written until step N+1, comfortably after. A refused intent and an accepted one are otherwise
-     * the same trace evidence, which is what makes the campaign's ~1,075 direct launches against 0
-     * in the control unfalsifiable.
+     * <p>It is a separate call because of when the answer exists: only after dispatch, and the
+     * record is not written until step N+1, comfortably after. Without the result code a refused
+     * intent and an accepted one are the same trace evidence, and the campaign's ~1,075 direct
+     * launches against 0 in the control could not be checked.
      *
      * @param result the platform's {@code START_*} result code
      * @param error the failure enum, or {@code null} when the launch was accepted
@@ -151,10 +150,9 @@ public interface EventSink {
      * Stages the prompt and response dumps for the next LLM sub-event of this step.
      *
      * <p>They are staged rather than passed to {@link #llmCall} because of when they exist: the
-     * prompt is written before the response is parsed and the mapping decided, exactly as the
-     * retired {@code [APE-LLM-PROMPT]}/{@code [APE-LLM-RESPONSE]} lines preceded their
-     * {@code [APE-LLM-TEL]} line. An attempt abandoned before it maps therefore keeps its prompt,
-     * which the retired rendering also managed and no field ordering here should lose. Anything
+     * prompt is written before the response is parsed and the mapping decided. An attempt
+     * abandoned before it maps therefore keeps its prompt on the {@link #llmError} entry that
+     * records it, since the next LLM entry of the step takes whatever is staged. Anything
      * still staged when the step closes is discarded.
      */
     void llmDump(String system, String user, String response, String toolCalls);
@@ -168,15 +166,16 @@ public interface EventSink {
      * @param reason the {@code no_match} discriminator ({@code dead_pair}, {@code degenerate},
      *        {@code boundary}), or {@code null}
      * @param repair the repair-form label when the parse needed one, or {@code null} on a clean
-     *        parse — orthogonal to {@code result}, as it has always been
+     *        parse — orthogonal to {@code result}
      */
     void llmCall(int call, String mode, String tool, int qwenX, int qwenY, int pixelX, int pixelY,
             String result, String reason, String repair, String matchedClass, String nearestClass,
             double nearestDistance, int widgets, int tokensIn, int tokensOut, long ms, String text);
 
     /**
-     * Appends an attempt abandoned before it could map, with exactly one named cause. Replaces the
-     * {@code [APE-LLM-ERROR]} line, whose {@code step=} key becomes unnecessary.
+     * Appends an attempt abandoned before it could map, with exactly one named cause. Like
+     * {@link #llmCall}, the entry is a member of the step's own record, so it carries no
+     * {@code step=} key.
      */
     void llmError(String cause, String detail);
 
@@ -188,8 +187,7 @@ public interface EventSink {
 
     /**
      * Closes the pending record with its outcome and writes it. Called during step N+1's graph
-     * update, under the caller's single-shot, reference-equality buffered-decision guard — the
-     * same discipline that governed the retired {@code [APE-OUTCOME]} line.
+     * update, under the caller's single-shot, reference-equality buffered-decision guard.
      *
      * <p>The target's activity travels with the state key because the target state may be seen
      * here for the first time, and its {@code STATE} dictionary entry has to name the activity it
@@ -214,9 +212,9 @@ public interface EventSink {
      *
      * <p>{@code wtgEdges} is the summed size of the click-only {@code wtgTransitions} view — the
      * number the three frontier passes actually gate on — and deliberately not the flat
-     * {@code transitions} list the retired line reported: 14 of the decisive campaign's 40
-     * applications report 9–29 transitions with the whole frontier family disabled, so restoring
-     * the old field would restore the misreading. No {@code has_wtg_data} boolean is emitted; it is
+     * {@code transitions} list: 14 of the decisive campaign's 40 applications report 9–29
+     * transitions with the whole frontier family disabled, so that count would read as frontier
+     * input that does not exist. No {@code has_wtg_data} boolean is emitted; it is
      * {@code wtgEdges > 0} by construction.
      *
      * <p>{@code formatVersion} and {@code sourceDigest} are the provenance pair: they name which
@@ -238,8 +236,8 @@ public interface EventSink {
      *
      * <p>The candidate census is what makes the pass list readable as a data-dependent outcome
      * instead of a configuration echo — the WTG/frontier family is never constructed in 25 of the
-     * campaign's 40 applications, and nothing in the trace said so except three names missing from
-     * a list nobody was reading as an outcome. No {@code reason} field: the gate conjuncts are all
+     * campaign's 40 applications, which a list of constructed passes shows only as three missing
+     * names. No {@code reason} field: the gate conjuncts are all
      * recoverable from {@code MOP_DATA.status}, {@code MOP_DATA.wtgEdges} and
      * {@code RUN_START.params}, and the passes do not evaluate them in a uniform order, so a
      * "first failing conjunct" would encode source order rather than cause.
@@ -270,10 +268,8 @@ public interface EventSink {
      * @param reason how the run ended: {@code timeout} (the time budget or a
      *        {@code StopTestingException}), {@code crash} (a {@code Throwable} escaped the
      *        exploration loop), or {@code unknown} when nothing said
-     * @param detail the crash's exception class name, or {@code null} — the sketch in the design's
-     *        API section carried no such parameter, and it is here because the same section
-     *        specifies the class name as part of what {@code crash} means, which a bare reason
-     *        enum cannot say
+     * @param detail the crash's exception class name, or {@code null} — the class name is part of
+     *        what {@code crash} means, which a bare reason enum cannot say
      * @param counters the LLM totals, or {@code null} on a plan with no LLM — in which case the
      *        record carries no LLM counter block at all, since a zeroed one would read as an LLM
      *        that was asked nothing rather than an arm that has none

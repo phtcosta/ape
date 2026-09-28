@@ -18,7 +18,8 @@ import java.util.List;
  * is what the sequence is worth stating for — the order the steps run in is behaviour, not style.
  * The attempt is counted before anything can fail, the breaker is told about a failure at the three
  * sites that are failures and about success at the one site that is not, the error seam is read at
- * exactly one of them, and the decision line is emitted last, after the answer has been judged.
+ * exactly one of them, and the decision sub-event is recorded last, after the answer has been
+ * judged.
  *
  * <p><b>What this class decides is what an answer was.</b> Everything else it delegates. The
  * judgement — {@code matched}, {@code llm_tap} or {@code no_match} with its reason — needs the
@@ -26,12 +27,13 @@ import java.util.List;
  * both, and it is handed to {@link LlmTelemetry} rather than counted here: deciding and recording
  * are different acts and only the first one needs a screen.
  *
- * <p><b>It never throws</b> (INV-RTR-02). Anything unexpected is the {@code internal} cause and
- * leaves through the same {@code null} the declared fallback reads, so a failing model can never
- * take the agent's step with it. Large temporaries — the capture, its encoding, the messages — are
- * released in a {@code finally} so a decision's memory does not outlive it (INV-RTR-06).
+ * <p><b>It never throws an {@code Exception}</b> (INV-RTR-02). Any unexpected one is the
+ * {@code internal} cause and leaves through the same {@code null} the declared fallback reads,
+ * so a failing model can never take the agent's step with it; an {@code Error} is not caught.
+ * Large temporaries — the capture, its encoding, the messages — are released in a
+ * {@code finally} so a decision's memory does not outlive it (INV-RTR-06).
  *
- * <p>The class is left open, unlike the four units it composes, because the parity oracle
+ * <p>The class is left open, unlike four of the six units it composes, because the parity oracle
  * substitutes a scripted engine per LLM hook to replay a recorded decision without a screen or a
  * server.
  */
@@ -50,7 +52,7 @@ public class LlmEngine {
      * @param client the run's single door to the model, breaker included
      * @param parser the tool-call extractor, repair pipeline included
      * @param mapper coordinate mapping, nearest-widget geometry and the dead-pair ban
-     * @param telemetry the counters and the {@code [APE-LLM-*]} lines
+     * @param telemetry the counters and the step record's LLM sub-events
      */
     public LlmEngine(ScreenshotStep screenshot, ApePromptBuilder promptBuilder, LlmClient client,
                      ToolCallParser parser, CoordinateMapper mapper, LlmTelemetry telemetry) {
@@ -107,9 +109,10 @@ public class LlmEngine {
         List<SglangClient.Message> messages = null;
 
         try {
-            // Step 2: read the screen. A null capture (secure window) is a failure, not a free
-            // retry: recording it is what eventually opens the breaker on an app that never yields
-            // a screen, and stops the run paying per-step for a call that cannot work.
+            // Step 2: read the screen. A null capture (a secure window, among other causes) is a
+            // failure, not a free retry: recording it is what eventually opens the breaker on an
+            // app that never yields a screen, and stops the run paying per-step for a call that
+            // cannot work.
             pngBytes = screenshot.capture(deviceWidth, deviceHeight);
             if (pngBytes == null) {
                 client.recordFailure();
@@ -232,7 +235,10 @@ public class LlmEngine {
      *
      * <p>The three {@code no_match} reasons are what an offline reader separates the mechanisms by:
      * a ban refused an answer that mapped, a {@code (0,0)} emission is the model degenerating, and
-     * everything else is a coordinate the boundary bands or the snap tolerance turned down. On a
+     * everything else is {@code boundary}: a coordinate inside a band, or an answer the mapper
+     * turned into no action (a {@code type_text} or other non-tap tool with no widget in reach,
+     * or an empty action list — a {@code click}/{@code long_click} outside every widget becomes
+     * an off-tree tap instead). On a
      * step mapped with {@code edgeBandsOff} a zero on either pixel axis is {@code degenerate}: the
      * mapper rejects it by name there, since no band catches it (INV-RTR-27), and the test reads
      * the same pixels the mapper was given — {@code CoordinateNormalizer} truncates and clamps, so

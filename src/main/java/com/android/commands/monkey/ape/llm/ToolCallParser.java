@@ -15,20 +15,21 @@ import java.util.regex.Pattern;
  *   2. XML     — model wraps the call in <tool_call>...</tool_call> tags in its text
  *   3. JSON    — model embeds {"name": "...", "arguments": {...}} in its text
  *
- * Qwen3-VL commonly generates malformed JSON coordinates. A pre-parse fix step (ported
- * from RVAgent's _fix_malformed_json) repairs these before org.json sees the string:
+ * Qwen3-VL commonly generates malformed JSON coordinates. A pre-parse fix step (the same
+ * repairs as RVAgent's _fix_malformed_json) repairs these before org.json sees the string:
  *   - {"x": "540, 399} / {"x": "540, 399"}  → {"x": 540, "y": 399}  (collapsed into one string)
  *   - {"x": 540, 399}      → {"x": 540, "y": 399}   (missing "y" key)
  *   - {"x": [540, 399]}    → {"x": 540, "y": 399}   (array format)
  *   - {"x": .91}           → {"x": 0.91}            (leading-zero float)
- * When every fix still leaves an unparseable object that names a tap action, a last-resort
- * integer scan takes the first two standalone ints in the arguments region as (x, y).
+ * When every fix still leaves an unparseable object that names a tap action, or a tap action
+ * parses without a readable x or y (D12), a last-resort integer scan takes the first two
+ * standalone ints in the arguments region as (x, y).
  *
  * A successful parse carries a repair-form label (none / missing_y / array_xy / quoted_xy /
- * int_scan) so downstream telemetry keeps raw tool-call fidelity measurable after hardening.
+ * int_scan) so telemetry can tell a clean tool call from a repaired one.
  *
- * Action types produced ("click", "long_click", "scroll", "type_text", "back") map
- * directly to Action.Type via AgentLoop conventions.
+ * The action type is the tool name lower-cased with '-' replaced by '_' ("click", "long_click",
+ * "scroll", "type_text", "back"); CoordinateMapper.map interprets it.
  */
 public class ToolCallParser {
 
@@ -37,7 +38,7 @@ public class ToolCallParser {
             "<(?:tool_call|function_call)>(.*?)</(?:tool_call|function_call)>",
             Pattern.DOTALL);
 
-    // Malformed JSON fixes (ported from RVAgent tool_call_parser.py _fix_malformed_json)
+    // Malformed JSON fixes (the same repairs as RVAgent tool_call_parser.py _fix_malformed_json)
     // Pattern 0: "x": "352, 782  or  "x": "352, 782"  →  "x": 352, "y": 782
     //   (Qwen3-VL collapses both coordinates into one string under "x"; opening quote always
     //    present, closing quote optional). Anchored on "x": so it never touches "text" or other
@@ -93,15 +94,18 @@ public class ToolCallParser {
         // preserved and route it through the shared parseJsonString (fixMalformedJson → org.json →
         // lastResortIntScan), so native malformations get identical repair + repair-form labeling
         // (INV-LLM-09). When the raw form is null (2-arg ToolCall / absent arguments) or the shared
-        // pipeline yields no action, fall back to the pre-delta map-based construction — every input
-        // that parses today parses identically, so the change can only add recoveries (D3).
+        // pipeline yields no action, the action is built from the decoded arguments map with the
+        // label "none", so the shared pipeline can only add recoveries to that path (D3).
         //
-        // Two intended divergences from the pre-delta map path, both on well-formed object arguments:
-        //   - array form {"x":[a,b]} is now labeled array_xy instead of reaching TEL unlabeled (D4);
-        //   - the self-contradictory shape {"x":[a,b],"y":c} — an x-array AND a separate y — resolves
-        //     to (a,b) via the array fix + int-scan here, where the map path's !obj.has("y") guard kept
-        //     (a,c). Both stay non-degenerate; the input has no correct answer and does not occur in the
-        //     dominant string malformations. Pinned by ToolCallParserTest.testNativeArrayPlusSeparateY_*.
+        // Two results of routing well-formed object arguments through the shared pipeline:
+        //   - array form {"x":[a,b]} is labeled array_xy (D4);
+        //   - the self-contradictory shape {"x":[a,b],"y":c} — an x-array AND a separate y — gets
+        //     a duplicate "y" from the array fix. The standalone org.json on the test classpath
+        //     rejects it and the int-scan yields (a,b), pinned by
+        //     ToolCallParserTest.testNativeArrayPlusSeparateY_*; Android's bundled org.json keeps
+        //     the last duplicate, which yields (a,c) labeled array_xy. Both are non-degenerate;
+        //     the input has no correct answer and does not occur in the dominant string
+        //     malformations.
         if (response.getToolCalls() != null && !response.getToolCalls().isEmpty()) {
             SglangClient.ToolCall tc = response.getToolCalls().get(0);
             String raw = tc.getRawArguments();
@@ -189,7 +193,7 @@ public class ToolCallParser {
 
     /**
      * Fix common Qwen3-VL JSON malformations before passing to org.json.
-     * Ported from RVAgent tool_call_parser.py _fix_malformed_json().
+     * Applies the same repairs as RVAgent tool_call_parser.py _fix_malformed_json().
      *
      * Fixes run in order quoted_xy → array_xy → missing_y → leading_zero → brace-close. The
      * returned label is the highest-precedence coordinate-structure fix (quoted_xy > array_xy >
@@ -241,8 +245,8 @@ public class ToolCallParser {
      * standalone 1–4-digit integers, those two integers become (x, y). Returns null on any other
      * case.
      *
-     * <p>The whole body is wrapped in its own try/catch → null: it executes inside the outer catch
-     * where no other handler protects INV-LLM-04 (never throw to the caller).
+     * <p>The whole body is wrapped in its own try/catch → null: one of its two call sites is the
+     * outer catch, where no other handler protects INV-LLM-04 (never throw to the caller).
      */
     private ParsedAction lastResortIntScan(String json) {
         try {
@@ -333,8 +337,9 @@ public class ToolCallParser {
     /**
      * Build a ParsedAction from a parsed action name and its arguments map.
      *
-     * The action name maps to the canonical set used by Action.Type:
-     *   click, long_click, scroll, type_text, back, etc.
+     * The action name is lower-cased with '-' replaced by '_', giving the names
+     * CoordinateMapper.map interprets: click, long_click, scroll, type_text, back, etc.
+     * An absent or unreadable x or y defaults to 0.
      * Coordinates from Qwen3-VL are in [0, 1000) normalized space;
      * the caller must convert to pixels via CoordinateNormalizer.
      */
