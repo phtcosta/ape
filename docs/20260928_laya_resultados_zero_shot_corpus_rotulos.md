@@ -160,3 +160,38 @@ MOP/violação realmente disparado, se a ligação logcat↔passo for confiável
 4. Investigar a ligação logcat ↔ passo para o nível 4.
 5. No jar (via OpenSpec, só após aprovação): modo de dump `{state, options}` com o valor de cada componente, e o estágio
    LAYA como prior amostrado sobre a pontuação do SATA.
+
+## 8. Decisões (2026-09-29)
+
+1. **Rótulo F aprovado** (nível graduado por desfecho sobre as ações tentadas de cada estado; G como extensão futura).
+2. **Seleção por lista reaberta para o Laya.** A decisão de 2026-07-29 (`rv-android/docs/20260721_sota_llm_gui_testing.md`
+   §6, "seleção por lista DESCARTADA") valia para o VLM, cuja evidência era copiar centros de contêineres de uma lista
+   impressa (14,89% vs 31,61% de rendimento). O Laya devolve a própria `ModelAction` (sem coordenadas), então a
+   decisão fica revista para esta branch.
+
+## 9. Primeiro fine-tune (v1, 2026-09-29)
+
+Scripts: `docs/laya/scripts/train/` (`build_dataset.py`, `balance.py`, `train.py` — cópia local do treino single-GPU do
+`cklxx/laya-browser` —, `calibrate.py`, `evaluate.py`, `analyze_v1.py`). Checkpoint (fora do repo):
+`/home/pedro/tmp/laya/train/out/v1`.
+
+- **Dataset (rótulo F)**: estados contrastivos, sem duplicatas, corte por app (train 600, val/test 300):
+  train 13.116 itens / 117 apps, val 2.113 / 15, test 1.805 / 17 (os 2 apps que coincidem com os 163 ficam no test).
+  Sequências curtas (mediana 173 tokens), nenhuma opção truncada.
+- **Treino**: typed-decisions, `head_max_len` 640, 4 épocas, bf16, uma GPU: 21 min, 11,7 GB. Temperatura calibrada
+  no val: T = 1,44.
+
+| test (17 apps, macro) | best@1 | pairacc |
+|---|---|---|
+| aleatório | 0,40 | 0,53 |
+| Laya zero-shot | 0,45–0,48 | 0,50 |
+| prior verbo+classe (aprendido no train) | 0,724 | 0,749 |
+| **Laya v1** | **0,740** | **0,744** |
+
+Bootstrap por app (v1 − prior): test best@1 +0,017 [−0,028; +0,058], pairacc −0,005 [−0,039; +0,025]; val best@1
++0,067 [−0,010; +0,139]. **MOP**: em estados com uma opção nível 3, o v1 põe essa opção em primeiro em 0,66 vs 0,48
+(val) e 0,722 vs 0,655 (test).
+
+**Leitura**: no ranking geral o v1 empata com o prior de tipo de widget; o ganho consistente está em reconhecer ações
+que levam a MOP. Próximos experimentos propostos (não iniciados): IC da métrica MOP; ablação sem texto das opções;
+mais dados (sem corte, ponderando por app); checkpoint mmBERT-base.

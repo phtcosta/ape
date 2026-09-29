@@ -46,3 +46,13 @@ act_change .074 / escape_ok .058 / mop_act .051: consistency .98-.99, contrast .
 Recommendation F: graded level per tried action (0 none, 1 in-activity effect, 2 other activity non-back,
 3 MOP-reachable activity), soft gold over tried actions per state; ~72k contrastive states / 594k pairs / 153 apps.
 G (future level 4): MOP method/violation via logcat join.
+
+## Fine-tune v1 (2026-09-29) — train/
+Dataset (build_dataset.py + balance.py): label F, contrastive states, dedupe, cap/app (train 600, val/test 300):
+train 13,116 items / 117 apps, val 2,113 / 15, test 1,805 / 17 (the 2 apps overlapping the 163 are in test).
+Base typed-decisions, head 640, 4 epochs, bf16, single GPU: 21 min, 11.7 GB. Calibrated T=1.44 (val soft-CE 1.642->1.631).
+Test (macro over apps): random best@1 .40 pairacc .53 | zero-shot .45-.48/.50 | prior(verb+class) .724/.749 | v1 .740/.744
+Val: prior .594/.707 | v1 .661/.740 | blend .670/.754.
+Bootstrap over apps, v1 - prior: test best@1 +.017 [-.028,+.058], pairacc -.005 [-.039,+.025]; val best@1 +.067 [-.010,+.139].
+MOP-top1 (states with a level-3 option): val prior .48 vs v1 .66; test prior .655 vs v1 .722.
+=> v1 ~ prior on general ranking; the one consistent gain is ranking MOP-reaching options.

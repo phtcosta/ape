@@ -1,0 +1,37 @@
+  ep 1 step 50/1636 loss 1.848 ce 2.439 reward -2.232 38s
+  ep 1 step 100/1636 loss 0.990 ce 1.336 reward -0.997 74s
+  ep 1 step 150/1636 loss 0.231 ce 1.233 reward -0.852 110s
+  ep 1 step 200/1636 loss 1.020 ce 1.596 reward -1.255 145s
+  ep 1 step 250/1636 loss 0.884 ce 1.560 reward -1.246 181s
+  ep 1 step 300/1636 loss 0.803 ce 0.971 reward -0.566 222s
+  ep 1 step 350/1636 loss 0.937 ce 1.867 reward -1.643 258s
+  ep 1 step 400/1636 loss 1.198 ce 1.749 reward -1.501 294s
+=== epoch 1/4 avg loss 1.1045  301s
+  ep 2 step 460/1636 loss 1.312 ce 1.793 reward -1.500 344s
+  ep 2 step 510/1636 loss 0.953 ce 1.666 reward -1.347 381s
+  ep 2 step 560/1636 loss -0.195 ce 1.288 reward -0.880 417s
+  ep 2 step 610/1636 loss 1.040 ce 1.307 reward -0.934 459s
+  ep 2 step 660/1636 loss 1.292 ce 1.115 reward -0.673 496s
+  ep 2 step 710/1636 loss 0.614 ce 0.953 reward -0.496 533s
+  ep 2 step 760/1636 loss 0.733 ce 1.505 reward -1.147 574s
+  ep 2 step 810/1636 loss 0.718 ce 1.730 reward -1.455 614s
+=== epoch 2/4 avg loss 1.0446  622s
+  ep 3 step 870/1636 loss 1.049 ce 1.428 reward -1.034 665s
+  ep 3 step 920/1636 loss 1.138 ce 1.916 reward -1.601 708s
+  ep 3 step 970/1636 loss 1.363 ce 1.839 reward -1.523 745s
+  ep 3 step 1020/1636 loss 0.637 ce 1.272 reward -0.815 783s
+  ep 3 step 1070/1636 loss 1.160 ce 1.316 reward -0.897 819s
+  ep 3 step 1120/1636 loss 1.121 ce 1.237 reward -0.798 857s
+  ep 3 step 1170/1636 loss 0.938 ce 1.916 reward -1.628 895s
+  ep 3 step 1220/1636 loss 0.062 ce 1.427 reward -1.013 938s
+=== epoch 3/4 avg loss 1.0800  946s
+  ep 4 step 1280/1636 loss 2.139 ce 1.876 reward -1.550 988s
+  ep 4 step 1330/1636 loss 0.782 ce 1.797 reward -1.485 1024s
+  ep 4 step 1380/1636 loss 1.851 ce 2.063 reward -1.763 1061s
+  ep 4 step 1430/1636 loss 1.305 ce 1.440 reward -1.042 1097s
+  ep 4 step 1480/1636 loss 1.231 ce 1.594 reward -1.189 1134s
+  ep 4 step 1530/1636 loss 0.207 ce 1.869 reward -1.534 1178s
+  ep 4 step 1580/1636 loss 0.438 ce 1.185 reward -0.728 1215s
+  ep 4 step 1630/1636 loss 1.870 ce 1.806 reward -1.453 1253s
+=== epoch 4/4 avg loss 1.2184  1260s
+saved train/out/v1
