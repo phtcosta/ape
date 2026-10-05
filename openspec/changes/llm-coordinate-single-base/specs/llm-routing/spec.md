@@ -198,6 +198,8 @@ The dead-pair outcome feedback SHALL continue to flow from the join-buffer site 
 - **WHEN** `ape.properties` contains `ape.llmBoundaryTopPct=0.05`
 - **THEN** a `pixelY=80` click on a 1080x1794 device SHALL be rejected (80 < 89.7) without any code change
 
+---
+
 ### Requirement: LLM Telemetry Logging
 
 `LlmRouter` SHALL record structured per-attempt telemetry as `llm[]` sub-events on the current step's `StepRecord` (event-sink capability) and aggregate counters reported in `RUN_END`.
@@ -318,7 +320,7 @@ When the plan carries the LLM feature, `RunContext` SHALL construct and own the 
 
 - `LlmClient` — transport + circuit breaker as one unit (`llm-infrastructure` capability): base URL, model, `temperature`, `top_p`, `top_k`, `max_tokens` (default `1024`), `timeout_ms`.
 - `ScreenshotStep` — `ScreenshotCapture` + `ImageProcessor` + device-dimension determination.
-- `ApePromptBuilder` — unchanged, variant from `LlmParams`.
+- `ApePromptBuilder` — variant from `LlmParams`; `build` takes the decision's display dimensions instead of the `GUITree` (`llm-prompt` "Single Coordinate Base").
 - `ToolCallParser` — unchanged.
 - `CoordinateMapper` — coordinate normalization, the status-bar boundary band (`llmBoundaryTopPct`) and the answer-space check, snap tolerance floor (`llmSnapTolerancePx`), back/long-click preference, `fixTextEdit`, and the dead-pair ban record.
 - `LlmTelemetry` — all LLM counters and latches, and the sink calls that carry them (`llmCall`, `llmError`, `llmBreakerOpen`, `llmDump`, `llmAck`); it exposes the counters through an accessor for `RUN_END` and prints no summary.

@@ -8,7 +8,7 @@ Until this change, the element list divided by the right and bottom edges of the
 
 `uiautomator dump`, the tool used to inspect screens offline, clips every node to `Display.getSize`. The view behind the navigation bar shows up as `[0,0][0,0]` and the root as `[0,0][1080,1794]`, which made the two bases look identical in every dump anyone looked at. The tree the jar builds is not clipped. The root node is the bounds of one window, not the size of the screen, and it is not a valid divisor for a coordinate shown next to a full-display screenshot.
 
-The history had a second defect in the same code. An off-tree LLM tap and a menu press have no resolved node, and both were recorded as `click @(0,0)`, a click at the screen's corner that never happened. Such an entry appeared in 24.2 % of E6 arm-4 prompts (31,466 of 130,266) and 22.5 % of E5b `v13_A` prompts (2,157 of 9,586); the model copied it twice, both times as a `degenerate` answer. `v17` also rendered its history inline from the raw fields, outside the shared formatter, which is how `back@(0,0)` appears in its prompts.
+The history had two more defects in the same code. It did not clamp: a widget centred below the display was shown at y ≥ 1000, one left of or above it at a negative value, outside the space the model answers in (2,860 entries in 2,182 E6 arm-4 prompts; 10 of the 19 E6 answers with `qwen` y ≥ 1000 copy one, `evidence/prompt_zero_scan_e6.out`). And an off-tree LLM tap and a menu press have no resolved node, and both were recorded as `click @(0,0)`, a click at the screen's corner that never happened. Such an entry appeared in 24.2 % of E6 arm-4 prompts (31,466 of 130,266) and 22.5 % of E5b `v13_A` prompts (2,157 of 9,586); the model copied it twice, both times as a `degenerate` answer. `v17` also rendered its history inline from the raw fields, outside the shared formatter, which is how `back@(0,0)` appears in its prompts.
 
 This delta states where the dimensions come from, routes every [0,1000) value the prompt shows through one primitive (`CoordinateNormalizer.toNormalized`, `llm-infrastructure`), moves the history's normalization from the moment an action is recorded to the moment the prompt is built, so the list and the history cannot diverge, and makes every history entry record the action that ran, rendered by one formatter in every variant. A listed coordinate is the centre of the part of the widget that is on screen, the point the jar taps for that widget, and a widget with no part on screen lists none. The `v13` and `v17` element lists also stop repeating a widget once per action and drop an ordinal nothing reads. The image, the system message, the variants' layouts (apart from how history entries without a node render, and the `v13`/`v17` element lists) and the answer mapping are unchanged.
 
@@ -24,9 +24,9 @@ This delta states where the dimensions come from, routes every [0,1000) value th
 
 Every [0,1000) coordinate the builder renders SHALL be produced by `CoordinateNormalizer.toNormalized(pixelX, pixelY, deviceWidth, deviceHeight)`. `ApePromptBuilder` SHALL contain no inline normalization arithmetic: the shared line formatter (variants `ape_current`, `ape_reasoning`, `compact_v1`), the `v13` builder, the `v17` builder, and the history formatter SHALL all call that one primitive.
 
-The pixel a widget is listed at SHALL be the centre of its **visible part**: its `getBoundsInScreen()` intersected with the display rectangle `[0, deviceWidth) × [0, deviceHeight)` (`Rect.intersect`), then `Rect.centerX()`/`Rect.centerY()`. For a widget wholly on screen that is the centre of its bounds. For a widget cut by the display edge (a list item half behind the navigation bar, an off-canvas menu partly slid in) it is the centre of the part the model can see in the screenshot. This is the point the jar itself taps for a node action: `MonkeySourceApe.generateClickEventAt` taps the centre of the node's bounds intersected with the visible window, and drops an action whose node does not intersect it (INV-EXPL-19). A widget whose visible part is empty, i.e. entirely off screen, has no pixel the model can point at and that the jar would tap, so its line SHALL omit `@(x,y)`, exactly as for an unresolved node below. Its line still appears: whether off-screen actions belong in the list at all is the separate list-curation question. One helper computes this pixel for the list sites and the history formatter alike, so a widget and the history entry of a click on it show one coordinate.
+The pixel a widget is listed at SHALL be the centre of its **visible part**: its `getBoundsInScreen()` intersected with the display rectangle `[0, deviceWidth) × [0, deviceHeight)` (`Rect.intersect`), then `Rect.centerX()`/`Rect.centerY()`. For a widget wholly on screen that is the centre of its bounds. For a widget cut by the display edge (a list item half behind the navigation bar, an off-canvas menu partly slid in) it is the centre of the part the model can see in the screenshot. This is the point the jar itself taps for a node action: `MonkeySourceApe.generateClickEventAt` taps the centre of the node's bounds intersected with the visible window, and drops an action whose node does not intersect it (`exploration` "Off-Screen Action Handling"; the code labels the drop INV-EXPL-19). A widget whose visible part is empty, i.e. entirely off screen, has no pixel the model can point at and that the jar would tap, so its line SHALL omit `@(x,y)`, exactly as for an unresolved node below. Its line still appears: whether off-screen actions belong in the list at all is the separate list-curation question. One helper computes this pixel for the list sites and the history formatter alike, so a widget and the history entry of a click on it show one coordinate.
 
-At `e93dea86` the list used the centre of the whole bounds, clamped to the display edge by the arithmetic. In E6 arm 4, 23,080 listed lines (2.1 %, in 3.9 % of prompts) belonged to a node entirely off screen, and 58,765 (5.3 %) to a node cut by the display edge (`evidence/dup_identity_e6.out`). Of 53,352 copied answers, 227 copied an off-screen entry: they mapped to another widget (103), tapped off-tree at the edge (83), were rejected by the band (17), or snapped to the intended node (24), an action the dispatcher then drops as off-screen; 128 of the 227 copied an action APE had already marked invalid. Holding the copied entry fixed, the share of copies that map to their widget is 87.1 % under this rule against 87.2 % with the clamped centre, the difference being those 24 snaps (`evidence/coordinate_counterfactual.out`, scenarios S3 and S4).
+At `e93dea86` the list used the centre of the whole bounds, clamped to the display edge by the arithmetic. In E6 arm 4, 23,080 listed lines (2.1 %, in 3.9 % of prompts) belonged to a node entirely off screen, and 58,765 (5.3 %) to a node cut by the display edge (`evidence/dup_identity_e6.out`). Of 53,352 copied answers, 227 copied an off-screen entry: they mapped to another widget (103), tapped off-tree at the edge (83), were rejected by the band (17), or snapped to the intended node (24), an action the dispatcher then drops as off-screen; 128 of the 227 copied an action APE had already marked invalid. Holding the copied entry fixed, the share of copies that map to their widget is 87.1 % under this rule against 87.2 % with the clamped centre, the difference being those 24 snaps and one copy of an edge-cut entry that now maps to a neighbour (`evidence/coordinate_counterfactual.out`, scenarios S3 and S4). The 24 snaps exist only because the bottom band is gone (`llm-routing` INV-RTR-22): the nodes lie in the strip behind the navigation bar, which APE marks valid because it overlaps the 1920-high root, and an answer clamped to y = 1793 snaps to them. As run, the band rejected 191 of the 227 off-screen copies, and only 3 reached their widget (`evidence/coordinate_counterfactual.out`, transitions S0 → S4). A dropped action is still marked visited and still counts a dead-pair strike, so listing no coordinate for these nodes removes wasted steps rather than costing hits.
 
 A list line whose action has no resolved node, or whose node's bounds cannot be read, has no pixel to normalize. At every list site (the shared line formatter, `v13`, `v17`) such a line SHALL omit `@(x,y)` entirely and SHALL NOT render `@(0,0)`. Until this change all three sites wrote `@(0,0)` in that case, contradicting the "Unresolved action node" scenario of "Widget List Generation", which no test exercised. E6 and E5b contain no such line (every listed action of the current state is resolved against the latest tree by `StatefulAgent.validateAllNewActions`), so the repair changes no measured prompt.
 
@@ -118,8 +118,6 @@ Every field of a line describes the widget, so one line per action wrote identic
 
 The text content of the user message SHALL contain a structured list of all available actions on the current state. Each action SHALL be formatted as one line with the following pattern:
 
-_Scope (`llm-coordinate-single-base`):_ the one-line-per-action format below, with its `[<index>]` prefix, is the list of the shared line formatter, used by the variants `ape_current`, `ape_reasoning` and `compact_v1`, which keep it unchanged. The `v13` and `v17` lists are governed by "Element List of the v13 and v17 Variants" (one line per widget, no ordinal). The `@(<normX>,<normY>)` rule and the omission for an unresolved node below apply to every coordinate-bearing variant.
-
 **Non-target actions** (MODEL_BACK, MODEL_MENU):
 ```
 [<index>] <ACTION_TYPE> (key press)
@@ -145,6 +143,8 @@ Where:
 - `(v:<N>)` is the action's visited count in compact form
 
 The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`.
+
+_Scope (`llm-coordinate-single-base`):_ the one-line-per-action format above, with its `[<index>]` prefix, is the list of the shared line formatter, used by the variants `ape_current`, `ape_reasoning` and `compact_v1`, which keep it unchanged. The `v13` and `v17` lists are governed by "Element List of the v13 and v17 Variants" (one line per widget, no ordinal). The `@(<normX>,<normY>)` rule and the omission for an unresolved node below apply to every coordinate-bearing variant.
 
 #### Scenario: Mixed action list with MOP data and visited counts
 
@@ -182,7 +182,7 @@ The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`
 
 - **WHEN** an action has `getResolvedNode()` returning null
 - **THEN** the `@(x,y)` coordinates SHALL be omitted from that action's line
-- **AND** the action SHALL still appear in the list with its index, type, and visited count
+- **AND** the action SHALL still appear in the list, with its index, type and visited count in the shared line formatter's variants (the `v13`/`v17` lines carry neither index nor visited count)
 
 #### Scenario: Widget text truncation
 
@@ -198,7 +198,12 @@ The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`
 
 The text content SHALL include a section showing the last 3-5 executed actions with their results, positioned after the widget list and before the exploration context. This section prevents the LLM from repeatedly suggesting the same action.
 
-The format SHALL be compact with coordinates in [0,1000) normalized space, computed exactly as the widget list computes them. Each `ActionHistoryEntry` SHALL carry the executed widget's **pixel bounds** (`bounds`, a copy of the resolved node's `getBoundsInScreen()`, recorded by `StatefulAgent.recordActionHistory` when the action executes), not a pre-normalized pair. `ApePromptBuilder` SHALL render it at build time with the same visible-centre rule and the same `CoordinateNormalizer.toNormalized` call as the list, with the dimensions `build` received; an entry whose bounds do not intersect the display renders without coordinates. `StatefulAgent` SHALL NOT normalize and SHALL NOT read the display for the history. Normalizing at build time is what guarantees one base per prompt (INV-PRM-06): the list and the history are computed by the same call with the same divisor, so a widget listed and clicked in the same prompt shows one coordinate in both.
+The format SHALL be compact with coordinates in [0,1000) normalized space, computed exactly as the widget list computes them. Each `ActionHistoryEntry` SHALL carry the executed widget's **pixel bounds** (`bounds`, a copy of the resolved node's `getBoundsInScreen()`, recorded by `StatefulAgent.recordActionHistory` when the action executes), not a pre-normalized pair. `ApePromptBuilder` SHALL render it at build time with the same visible-centre rule and the same `CoordinateNormalizer.toNormalized` call as the list, with the dimensions `build` received; an entry whose bounds are null or do not intersect the display renders without coordinates, so no entry shows a value outside [0,999]. `StatefulAgent` SHALL NOT normalize and SHALL NOT read the display for the history. Normalizing at build time is what guarantees one base per prompt (INV-PRM-06): the list and the history are computed by the same call with the same divisor, so a widget listed and clicked in the same prompt shows one coordinate in both.
+
+```
+Recent:
+- <action_type> @(<normX>,<normY>) <WidgetClass> "<text>" → <result>
+```
 
 An entry for an action with no resolved node SHALL record what ran:
 - an off-tree `MODEL_LLM_TAP` records `click`, or `long_click` when `LlmTapAction.isLongClick()` is true, with a one-pixel rectangle at the tap's own pixel (`[x,y][x+1,y+1]` from `getPixelX()`/`getPixelY()`, whose visible centre is `(x,y)`) as its bounds, and no class or text;
@@ -207,10 +212,6 @@ An entry for an action with no resolved node SHALL record what ran:
 No entry SHALL render `@(0,0)` because its action had no node.
 
 `formatHistoryEntry` SHALL be the only place an entry becomes text. Every variant that shows a history renders through it: the default branch (`ape_current`, `ape_reasoning`, `compact_v1`), `v13`, `visual_only`, and `v17`. `v17` uses the formatter's compact form, one token per entry joined by `, `: `<action_type>@(<normX>,<normY>)` for an entry with coordinates, and `<action_type>` alone for `back` and `menu`. The position stated above (after the widget list) holds for every variant except `v17`, whose compact `Recent:` line precedes `ELEMENTS:`, as it did before this change.
-```
-Recent:
-- <action_type> @(<normX>,<normY>) <WidgetClass> "<text>" → <result>
-```
 
 Where `<result>` is a brief outcome: `same`, `new screen`, `previous screen`. Result is determined by comparing states: if `newState == lastState` → "same"; if `newState == stateBeforeLast` → "previous screen"; else → "new screen".
 
@@ -261,3 +262,4 @@ If `recentActions` is empty (first steps), this section SHALL be omitted entirel
 - **WHEN** a recent action was type_text on an EditText "Domain"
 - **THEN** the entry SHALL be: `- type_text @(500,487) "google.com" → same`
 
+---

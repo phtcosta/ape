@@ -9,3 +9,5 @@ answers with qwen (0,0) (tool, outcome, prompt showed @(0,0) in list / history):
   back       matched/None             -       hist00  4
   click      no_match/degenerate      -       -       1
   type       no_match/degenerate      -       -       1
+history coordinates outside [0,999] (unclamped): entries 134 in 111 prompts (1.2%)
+answers with qwen outside [0,999] (tool, equals an out-of-space history coordinate):

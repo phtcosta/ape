@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`StatefulAgent` records the action history the LLM prompt shows. Until this change it normalized each executed widget's centre to [0,1000) itself, dividing by `AndroidDevice.getDisplayBounds()`, while the element list of the same prompt divided by the active window's root node. It also recorded an off-tree `MODEL_LLM_TAP` and a `MODEL_MENU` as `click` with no node, which rendered as `click @(0,0)`: a click at the screen's corner that never happened, shown in 24.2 % of E6 arm-4 prompts (31,466 of 130,266) and 22.5 % of E5b `v13_A` prompts (2,157 of 9,586).
+`StatefulAgent` records the action history the LLM prompt shows. Until this change it normalized each executed widget's centre to [0,1000) itself, dividing by `AndroidDevice.getDisplayBounds()`, while the element list of the same prompt divided by the active window's root node. It also recorded an off-tree `MODEL_LLM_TAP` and a `MODEL_MENU` as `click` with no node, which rendered as `click @(0,0)`: a click at the screen's corner that never happened, shown in 24.2 % of E6 arm-4 prompts (31,466 of 130,266) and 22.5 % of E5b `v13_A` prompts (2,157 of 9,586). Nor did it clamp: a widget centred below the display was recorded at y ≥ 1000, outside the space the model answers in (2,860 entries in 2,182 E6 prompts).
 
 This delta moves the normalization out of the agent. The entry carries the executed widget's pixel bounds, and `ApePromptBuilder` renders them at build time with the decision's dimensions and the same visible-centre rule as the element list (`llm-prompt` "Action History", INV-PRM-06). Entries for actions without a resolved node record what ran.
 
@@ -25,7 +25,7 @@ This delta moves the normalization out of the agent. The entry carries the execu
 
 `StatefulAgent` SHALL NOT normalize and SHALL NOT read `AndroidDevice.getDisplayBounds()` for the history. `ApePromptBuilder` derives the displayed coordinate at build time (the centre of the bounds' part inside the display) with the dimensions the decision was captured at (`llm-prompt` "Action History"), so the list and the history of one prompt share one base.
 
-An action with no resolved node SHALL record what ran: a `MODEL_LLM_TAP` records `click`, or `long_click` when `LlmTapAction.isLongClick()` is true, with the one-pixel rectangle at the tap's own pixel, and no class or text; a `MODEL_MENU` press records `menu` with no bounds.
+An action with no resolved node SHALL record what ran: a `MODEL_LLM_TAP` records `click`, or `long_click` when `LlmTapAction.isLongClick()` is true, with the one-pixel rectangle at the tap's own pixel, and no class or text; a `MODEL_MENU` press records `menu` with no bounds. A node action whose bounds cannot be read records null bounds, never a `(0,0)` placeholder.
 
 **Result determination**: After `updateStateInternal()` resolves the new state:
 - If `newState == _lastState` → `"same"`
@@ -66,3 +66,5 @@ The buffer is passed to `ApePromptBuilder.build()` via `LlmEngine.selectAction()
 #### Scenario: menu press recorded as menu
 - **WHEN** a `MODEL_MENU` action is executed
 - **THEN** the entry SHALL carry `actionType="menu"`, no bounds and no widget class
+
+---

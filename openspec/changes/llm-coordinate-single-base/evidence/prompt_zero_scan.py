@@ -12,6 +12,11 @@ WHAT THIS MEASURES
       `click` at (0,0);
     * answers whose `qwen` is (0,0), by tool and outcome, and whether the prompt they answered showed
       a `@(0,0)` in the list or the history.
+    * (added 2026-10-05, adversarial review) history entries whose coordinate lies outside [0,999]:
+      StatefulAgent.recordActionHistory divides the whole centre by the display and does not clamp,
+      so a widget centred below the display (or left of / above it) is shown at y >= 1000 (or < 0);
+      and answers whose `qwen` lies outside [0,999], split by whether they equal such a history
+      coordinate of the prompt they answered.
 
 INPUTS
   Plain APE trace files (`*.trace`); NDJSON step records are the lines starting with `{"s"`.
@@ -41,6 +46,7 @@ E5B_GLOB = "e5bm1_*/e5bm1_*/*/*e5b_m1_v13_A.trace"
 EXCLUDE_APKS = {("/e6-campaign/", "com.ds.avare_404.apk")}
 
 RE_HIST = re.compile(r"^- (\w+) @\(0,0\)(.*?)(?: → .*)?$")
+RE_ANYXY = re.compile(r"@\((-?\d+),(-?\d+)\)")
 
 
 def split_prompt(user):
@@ -91,7 +97,16 @@ def scan(path):
                 if "@(0,0)" in hist:
                     C["prompts_with_hist00"] += 1
                 C["hist00_entries"] += hist.count("@(0,0)")
+                oos = {(int(a), int(b)) for a, b in RE_ANYXY.findall(hist)
+                       if not (0 <= int(a) <= 999 and 0 <= int(b) <= 999)}
+                n_oos = sum(1 for a, b in RE_ANYXY.findall(hist)
+                            if not (0 <= int(a) <= 999 and 0 <= int(b) <= 999))
+                C["hist_oos_entries"] += n_oos
+                C["prompts_with_hist_oos"] += bool(n_oos)
                 q = call.get("qwen")
+                if q and not (0 <= q[0] <= 999 and 0 <= q[1] <= 999):
+                    C[("ans_oos", str(call.get("tool")),
+                       "copies_history_oos" if (q[0], q[1]) in oos else "other")] += 1
                 if q and list(q) == [0, 0]:
                     C[("ans00", str(call.get("tool")), "%s/%s" % (call.get("result"), call.get("reason")),
                        "list00" if zero else "-", "hist00" if h00 else "-")] += 1
@@ -130,6 +145,11 @@ def main():
     print("answers with qwen (0,0) (tool, outcome, prompt showed @(0,0) in list / history):")
     for k in sorted(k for k in T if isinstance(k, tuple) and k[0] == "ans00"):
         print("  %-10s %-24s %-7s %-7s %d" % (k[1], k[2], k[3], k[4], T[k]))
+    print("history coordinates outside [0,999] (unclamped): entries %d in %d prompts (%.1f%%)" % (
+        T["hist_oos_entries"], T["prompts_with_hist_oos"], 100.0 * T["prompts_with_hist_oos"] / max(p, 1)))
+    print("answers with qwen outside [0,999] (tool, equals an out-of-space history coordinate):")
+    for k in sorted(k for k in T if isinstance(k, tuple) and k[0] == "ans_oos"):
+        print("  %-10s %-20s %d" % (k[1], k[2], T[k]))
 
 
 if __name__ == "__main__":

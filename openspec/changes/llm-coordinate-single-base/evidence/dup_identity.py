@@ -25,6 +25,18 @@ WHAT THIS MEASURES
     * partial_centre_out:  cut by the display edge, whole centre outside (the old list clamped it);
     * offscreen:           no intersection with the display (the new list shows no coordinate).
 
+  Added 2026-10-05 (adversarial review):
+    * alias count: the listing prints `[RN=n]`, the number of nodes the action's target Name resolves
+      to (ModelAction.resolvedInfo), not a node id. Node identity is recoverable from the trace only
+      where RN = 1 (a Name with one node); dup_same_name lines with RN > 1 are the ones where a
+      (Name, bounds) repeat may still be two distinct alias nodes with identical bounds.
+    * root clip versus display clip: MonkeySourceApe taps node actions at the centre of
+      node ∩ root ∩ display, the list of the change at the centre of node ∩ display. The root's right
+      and bottom edges are bounded by the list base the alignment infers (its upper bound is used, so
+      the count is a lower bound; the root's left and top edges are not recoverable). Counted: lines
+      whose two visible centres differ, and among them those whose node misses the root entirely
+      (listed with a coordinate, dropped by the dispatcher).
+
 RUN
   python3 dup_identity.py              # E6 arm 4
   python3 dup_identity.py e5b          # E5b v13_A
@@ -54,10 +66,18 @@ def visibility(b, w, h):
     return "partial_centre_in" if 0 <= cx < w and 0 <= cy < h else "partial_centre_out"
 
 
+def visible_centre(b, w, h):
+    l, t, r, bt = max(b[0], 0), max(b[1], 0), min(b[2], w), min(b[3], h)
+    if l >= r or t >= bt:
+        return None
+    return (l + r) >> 1, (t + bt) >> 1
+
+
 def proc(path):
     C = collections.Counter()
     listings = collections.defaultdict(list)
     step, collecting, records = 0, None, []
+    rn = {}
     with open(path, "rt", errors="replace") as fh:
         for line in fh:
             if line.startswith('{"s"'):
@@ -80,7 +100,10 @@ def proc(path):
             if collecting is not None:
                 m = ca.RE_ACTION.match(line)
                 if m:
-                    collecting.append(ca.parse_action_rest(m.group(3), m.group(4)))
+                    act = ca.parse_action_rest(m.group(3), m.group(4))
+                    t = ca.RE_TAIL.match(m.group(4))
+                    rn[id(act)] = int(t.group(5)) if t and t.group(5) is not None else 0
+                    collecting.append(act)
                 elif not ca.RE_COUNTER.match(line):
                     collecting = None
     for rec in records:
@@ -97,7 +120,8 @@ def proc(path):
                 if any(e[0] != (a.simple if a.bounds is not None else "View")
                        for e, a in zip(entries, targets)):
                     continue
-                if ca.infer_base(entries, targets) is None:
+                base = ca.infer_base(entries, targets)
+                if base is None:
                     continue
                 aligned = targets
                 break
@@ -114,6 +138,8 @@ def proc(path):
                         C["dup_bounds"] += 1
                         if a.name in names_at[a.bounds]:
                             C["dup_same_name"] += 1
+                            if rn.get(id(a), 0) > 1:
+                                C["dup_same_name_rn_gt1"] += 1
                         else:
                             C["dup_other_name"] += 1
                             distinct_same_bounds = True
@@ -136,6 +162,21 @@ def proc(path):
                     seen_v.add(v)
             for v in seen_v:
                 C[("vis_prompt", v)] += 1
+            rw, rh = min(disp[0], base[1]), min(disp[1], base[3])
+            if (rw, rh) != tuple(disp):
+                differs = False
+                for a in aligned:
+                    if a.bounds is None:
+                        continue
+                    v1 = visible_centre(a.bounds, *disp)
+                    if v1 is None:
+                        continue
+                    v2 = visible_centre(a.bounds, rw, rh)
+                    if v2 != v1:
+                        differs = True
+                        C["clip_differs_lines"] += 1
+                        C["clip_root_miss_lines"] += v2 is None
+                C["clip_differs_calls"] += differs
     return C
 
 
@@ -164,6 +205,11 @@ def main():
         print("  %-20s lines %8d (%.1f%% of lines)  prompts %7d (%.1f%%)" % (
             v, T[("vis", v)], 100.0 * T[("vis", v)] / max(n, 1),
             T[("vis_prompt", v)], 100.0 * T[("vis_prompt", v)] / max(T["prompts"], 1)))
+    print("dup_same_name lines whose Name has more than one alias node (RN > 1; identity not "
+          "recoverable from the trace): %d" % T["dup_same_name_rn_gt1"])
+    print("root clip vs display clip (lower bound; root right/bottom only): lines with a different "
+          "visible centre %d in %d calls; of them, node outside the root %d"
+          % (T["clip_differs_lines"], T["clip_differs_calls"], T["clip_root_miss_lines"]))
 
 
 if __name__ == "__main__":

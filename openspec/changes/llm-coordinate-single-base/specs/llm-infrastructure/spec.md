@@ -66,6 +66,8 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 - **WHEN** `normalize(0, 0, 1080, 1920)` is called
 - **THEN** the returned array SHALL be `[0, 0]`
 
+---
+
 ### Requirement: LLM Configuration Keys
 
 `Config.java` SHALL declare the following `public static final` fields for LLM configuration, loaded from `ape.properties` at class-loading time:
