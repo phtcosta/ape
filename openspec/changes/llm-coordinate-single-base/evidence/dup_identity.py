@@ -37,10 +37,17 @@ WHAT THIS MEASURES
       whose two visible centres differ, and among them those whose node misses the root entirely
       (listed with a coordinate, dropped by the dispatcher).
 
+  Added 2026-10-05 (consistency verification; earlier lines unchanged):
+    * offscreen split by Rect.intersect: `visibility` above calls a zero-width or zero-height node
+      lying inside the display `offscreen`, but Rect.intersect (AOSP, and the JVM stub) accepts it,
+      so the change lists it with a coordinate and MonkeySourceApe taps it. The line splits the
+      offscreen lines into nodes off the display and zero-area nodes inside it, with prompt counts.
+
 RUN
   python3 dup_identity.py              # E6 arm 4
   python3 dup_identity.py e5b          # E5b v13_A
-Reads only; prints to stdout. Imports curation_analysis.py from this directory without writing bytecode.
+Reads only; prints to stdout. Imports curation_analysis.py and coordinate_counterfactual.py from this
+directory without writing bytecode.
 """
 
 import collections
@@ -155,13 +162,22 @@ def proc(path):
                 C["display_unknown"] += 1
                 continue
             seen_v = set()
+            seen_off = set()
             for a in aligned:
                 if a.bounds is not None:
                     v = visibility(a.bounds, *disp)
                     C[("vis", v)] += 1
                     seen_v.add(v)
+                    if v == "offscreen":
+                        l, t, r, bt = a.bounds
+                        k = ("zero_area_inside" if l < disp[0] and 0 < r and t < disp[1] and 0 < bt
+                             else "off_display")
+                        C[("vis_off", k)] += 1
+                        seen_off.add(k)
             for v in seen_v:
                 C[("vis_prompt", v)] += 1
+            for k in seen_off:
+                C[("vis_off_prompt", k)] += 1
             rw, rh = min(disp[0], base[1]), min(disp[1], base[3])
             if (rw, rh) != tuple(disp):
                 differs = False
@@ -210,6 +226,12 @@ def main():
     print("root clip vs display clip (lower bound; root right/bottom only): lines with a different "
           "visible centre %d in %d calls; of them, node outside the root %d"
           % (T["clip_differs_lines"], T["clip_differs_calls"], T["clip_root_miss_lines"]))
+    print("offscreen lines split by Rect.intersect: off the display %d (%.1f%% of lines, prompts %d, %.1f%%); "
+          "zero-area node inside the display, which Rect.intersect accepts %d (prompts %d)" % (
+              T[("vis_off", "off_display")], 100.0 * T[("vis_off", "off_display")] / max(n, 1),
+              T[("vis_off_prompt", "off_display")],
+              100.0 * T[("vis_off_prompt", "off_display")] / max(T["prompts"], 1),
+              T[("vis_off", "zero_area_inside")], T[("vis_off_prompt", "zero_area_inside")]))
 
 
 if __name__ == "__main__":

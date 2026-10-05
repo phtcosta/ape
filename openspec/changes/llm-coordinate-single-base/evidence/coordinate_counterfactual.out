@@ -211,3 +211,45 @@ copied answers with a resolved intended node: 53352; intended entry without node
          159  other overlapping/near widget
           53  top band (y<63.0)
           22  type_text on non-input entry
+
+## 7. S4 off-screen intended entries split by Rect.intersect (added 2026-10-05, consistency verification)
+  kind (off_display: no intersection with the display; zero_area_inside: zero-width or zero-height node inside it, which Rect.intersect accepts, so the change lists it, at the same point as S3): {'off_display': 200, 'zero_area_inside': 27}
+  (kind, side, S0 outcome, S3 outcome): {('off_display', 'above', 'S0:boundary', 'S3:boundary'): 17, ('off_display', 'below', 'S0:boundary', 'S3:intended'): 21, ('off_display', 'below', 'S0:boundary', 'S3:llm_tap'): 60, ('off_display', 'below', 'S0:boundary', 'S3:other'): 93, ('off_display', 'below', 'S0:llm_tap', 'S3:llm_tap'): 3, ('off_display', 'below', 'S0:llm_tap', 'S3:other'): 1, ('off_display', 'below', 'S0:other', 'S3:other'): 1, ('off_display', 'right', 'S0:intended', 'S3:intended'): 3, ('off_display', 'right', 'S0:llm_tap', 'S3:llm_tap'): 1, ('zero_area_inside', 'inside', 'S0:llm_tap', 'S3:llm_tap'): 17, ('zero_area_inside', 'inside', 'S0:other', 'S3:llm_tap'): 2, ('zero_area_inside', 'inside', 'S0:other', 'S3:other'): 8}
+  S3 snaps to the intended node (kind, side, S3 tap pixel): {('off_display', 'below', 'pixel (540,1792)'): 7, ('off_display', 'below', 'pixel (746,1792)'): 1, ('off_display', 'below', 'pixel (803,1792)'): 1, ('off_display', 'below', 'pixel (943,1792)'): 1, ('off_display', 'below', 'pixel (968,1792)'): 2, ('off_display', 'below', 'pixel (975,1792)'): 4, ('off_display', 'below', 'pixel (978,1792)'): 5, ('off_display', 'right', 'pixel (1792,125)'): 3}
+  S3 residual cause of the others (kind, cause): {('off_display', 'click on LONG_CLICK-only node'): 1, ('off_display', 'intended action INVALID'): 101, ('off_display', 'other overlapping/near widget'): 56, ('off_display', 'other: llm_tap'): 1, ('off_display', 'top band (y<63.0)'): 17, ('zero_area_inside', 'intended action INVALID'): 27}
+
+## 8. Copied answers, S0 -> S4 with the ban outcome (added 2026-10-05, consistency verification)
+  (S0 outcome, S0 ban, S4 outcome, S4 ban): count, changed only:
+        3484  ('other', 'live', 'intended', 'live')
+        1547  ('other', 'dead_pair', 'intended', 'live')
+        1184  ('llm_tap', 'dead_pair', 'llm_tap', 'live')
+        1088  ('llm_tap', 'live', 'intended', 'live')
+         597  ('other', 'live', 'intended', 'dead_pair')
+         573  ('other', 'dead_pair', 'intended', 'dead_pair')
+         474  ('llm_tap', 'dead_pair', 'intended', 'live')
+         402  ('null', 'live', 'intended', 'live')
+         242  ('llm_tap', 'live', 'intended', 'dead_pair')
+         241  ('boundary', 'live', 'intended', 'live')
+         191  ('boundary', 'live', 'nocoord', 'live')
+         150  ('llm_tap', 'dead_pair', 'intended', 'dead_pair')
+         111  ('llm_tap', 'live', 'other', 'live')
+         101  ('intended', 'live', 'other', 'live')
+          91  ('other', 'dead_pair', 'other', 'live')
+          69  ('boundary', 'live', 'intended', 'dead_pair')
+          62  ('other', 'live', 'llm_tap', 'live')
+          47  ('intended', 'live', 'other', 'dead_pair')
+          39  ('other', 'dead_pair', 'llm_tap', 'live')
+          25  ('llm_tap', 'live', 'other', 'dead_pair')
+          22  ('llm_tap', 'dead_pair', 'other', 'dead_pair')
+          22  ('llm_tap', 'dead_pair', 'other', 'live')
+          18  ('llm_tap', 'live', 'llm_tap', 'dead_pair')
+          17  ('llm_tap', 'live', 'nocoord', 'live')
+          17  ('other', 'live', 'other', 'dead_pair')
+          14  ('intended', 'dead_pair', 'other', 'dead_pair')
+           8  ('other', 'live', 'nocoord', 'live')
+           5  ('boundary', 'live', 'other', 'live')
+           5  ('llm_tap', 'dead_pair', 'nocoord', 'live')
+           4  ('intended', 'dead_pair', 'other', 'live')
+           3  ('intended', 'live', 'nocoord', 'live')
+           3  ('other', 'dead_pair', 'nocoord', 'live')
+           2  ('other', 'live', 'null', 'live')

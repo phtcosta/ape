@@ -201,3 +201,30 @@ copied answers with a resolved intended node: 4106; intended entry without node:
           19  containment picked smaller child
            3  other overlapping/near widget
            2  intended node entirely off-screen (S4 lists no coordinate)
+
+## 7. S4 off-screen intended entries split by Rect.intersect (added 2026-10-05, consistency verification)
+  kind (off_display: no intersection with the display; zero_area_inside: zero-width or zero-height node inside it, which Rect.intersect accepts, so the change lists it, at the same point as S3): {'off_display': 2}
+  (kind, side, S0 outcome, S3 outcome): {('off_display', 'below', 'S0:boundary', 'S3:other'): 2}
+  S3 snaps to the intended node (kind, side, S3 tap pixel): {}
+  S3 residual cause of the others (kind, cause): {('off_display', 'other overlapping/near widget'): 2}
+
+## 8. Copied answers, S0 -> S4 with the ban outcome (added 2026-10-05, consistency verification)
+  (S0 outcome, S0 ban, S4 outcome, S4 ban): count, changed only:
+         487  ('other', 'live', 'intended', 'live')
+         113  ('llm_tap', 'live', 'intended', 'live')
+          53  ('other', 'live', 'intended', 'dead_pair')
+          46  ('other', 'dead_pair', 'intended', 'live')
+          38  ('boundary', 'live', 'intended', 'live')
+          35  ('null', 'live', 'intended', 'live')
+          23  ('llm_tap', 'dead_pair', 'intended', 'live')
+          21  ('llm_tap', 'dead_pair', 'llm_tap', 'live')
+          11  ('llm_tap', 'live', 'other', 'live')
+          10  ('intended', 'live', 'other', 'live')
+           7  ('llm_tap', 'live', 'intended', 'dead_pair')
+           6  ('other', 'live', 'llm_tap', 'live')
+           5  ('llm_tap', 'dead_pair', 'intended', 'dead_pair')
+           4  ('other', 'dead_pair', 'intended', 'dead_pair')
+           3  ('other', 'dead_pair', 'other', 'live')
+           2  ('boundary', 'live', 'nocoord', 'live')
+           1  ('boundary', 'live', 'intended', 'dead_pair')
+           1  ('other', 'dead_pair', 'llm_tap', 'dead_pair')

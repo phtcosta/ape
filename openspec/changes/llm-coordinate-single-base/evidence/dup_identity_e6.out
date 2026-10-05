@@ -13,3 +13,4 @@ visibility of listed nodes against the call's display (display unknown for 0 cal
   offscreen            lines    23080 (2.1% of lines)  prompts    5056 (3.9%)
 dup_same_name lines whose Name has more than one alias node (RN > 1; identity not recoverable from the trace): 14241
 root clip vs display clip (lower bound; root right/bottom only): lines with a different visible centre 151 in 44 calls; of them, node outside the root 83
+offscreen lines split by Rect.intersect: off the display 21938 (2.0% of lines, prompts 4703, 3.6%); zero-area node inside the display, which Rect.intersect accepts 1142 (prompts 546)

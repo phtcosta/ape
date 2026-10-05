@@ -4,7 +4,7 @@
 
 `StatefulAgent` records the action history the LLM prompt shows. Until this change it normalized each executed widget's centre to [0,1000) itself, dividing by `AndroidDevice.getDisplayBounds()`, while the element list of the same prompt divided by the active window's root node. It also recorded an off-tree `MODEL_LLM_TAP` and a `MODEL_MENU` as `click` with no node, which rendered as `click @(0,0)`: a click at the screen's corner that never happened, shown in 24.2 % of E6 arm-4 prompts (31,466 of 130,266) and 22.5 % of E5b `v13_A` prompts (2,157 of 9,586). Nor did it clamp: a widget centred below the display was recorded at y ≥ 1000, outside the space the model answers in (2,860 entries in 2,182 E6 prompts).
 
-This delta moves the normalization out of the agent. The entry carries the executed widget's pixel bounds, and `ApePromptBuilder` renders them at build time with the decision's dimensions and the same visible-centre rule as the element list (`llm-prompt` "Action History", INV-PRM-06). Entries for actions without a resolved node record what ran.
+This delta moves the normalization out of the agent. The entry carries the executed widget's pixel bounds, and `ApePromptBuilder` renders them at build time with the decision's dimensions and the same visible-centre rule as the element list (`llm-prompt` "Action History", INV-PRM-06). Entries for actions without a resolved node record what ran. The requirement also corrects a stale name: the buffer reaches the builder through `LlmEngine.selectAction()`, not `LlmRouter.selectAction()`.
 
 ## MODIFIED Requirements
 

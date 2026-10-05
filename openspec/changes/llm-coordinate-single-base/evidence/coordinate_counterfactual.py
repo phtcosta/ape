@@ -38,7 +38,8 @@ DEFINITIONS
   * mapper replica: CoordinateMapper.map at e93dea86 (back; boundary band; containment smallest area
     over valid target actions, click restricted to MODEL_CLICK, long_click preferring
     MODEL_LONG_CLICK then any type; type_text restricted to input classes; edge-distance snap with
-    tolerance max(50, min(w,h)/2); off-tree LlmTapAction for click/long_click; fixTextEdit), then the
+    tolerance max(floor, min(w,h)/2), the floor read from each run's RUN_START (`ape.llmSnapTolerancePx`,
+    150 in E6 and E5b; 50 when absent); off-tree LlmTapAction for click/long_click; fixTextEdit), then the
     dead-pair ban (5 unproductive executions of (state, Name, type) or (state, exact tap pixel);
     input-class targets exempt). Strikes are replayed from the recorded run's executed LLM
     decisions and outcomes, strictly before the step being evaluated.
@@ -55,6 +56,16 @@ state, is the recorded run's)
      intersected with the display [0,W)x[0,H) (the point MonkeySourceApe taps for a node action), and
      no coordinate at all when that intersection is empty (outcome `nocoord`: the entry cannot be
      copied). Added 2026-10-05 after the consistency review; S0-S3 are computed exactly as before.
+     Section 7 (added 2026-10-05, consistency verification; earlier lines unchanged) splits S4's
+     `nocoord` entries by what Rect.intersect (AOSP, and the JVM stub) does: `off_display` nodes have no
+     intersection with the display; `zero_area_inside` nodes are zero-width or zero-height rects inside
+     it, which Rect.intersect accepts, so the change lists them with a coordinate at the same point as
+     S3 (S4 above counts them as `nocoord`). Per kind it prints the side of the display the node lies
+     on with its S0 and S3 outcomes, the S3 tap pixel of the copies that snap to the intended node, and
+     the S3 residual cause of the others.
+     Section 8 (same date) lists, for copied answers, every changed (outcome, ban) pair from S0 to S4,
+     so the effect of the change on executed actions can be weighted by per-outcome rates, such as
+     the new-state rates of curation_analysis.py §D.
   Non-copied answers keep their pixel: only the band changes (S0 vs S2 vs S3 bands).
 
 CAVEATS: counterfactuals hold the trajectory fixed (same states, same answers, same strike record);
@@ -608,6 +619,8 @@ def process(path):
                     else:
                         out = k2
                     hit_by[sc] = (out, dp)
+                    if sc == "S3":
+                        s3_px = (out, p2, ux, uy, top)
                     C[("cf", sc, wcls, out, "dead_pair" if dp else "live")] += 1
                     C[("cf", sc, "ALL", out, "dead_pair" if dp else "live")] += 1
                     if compat:
@@ -618,6 +631,25 @@ def process(path):
                         W["q2_s1_boundary"][wid(ia)] += 1
                 vcls = "inside" if vis == (cx, cy) else "offscreen" if vis is None else "partial"
                 C[("s4_vis", vcls, "S3:" + hit_by["S3"][0], "S4:" + hit_by["S4"][0])] += 1
+                C[("s8", hit_by["S0"][0], "dead_pair" if hit_by["S0"][1] else "live",
+                   hit_by["S4"][0], "dead_pair" if hit_by["S4"][1] else "live")] += 1
+                if vis is None:
+                    # Section 7: Rect.intersect (AOSP) accepts a zero-width or zero-height rect lying
+                    # inside the display, which visible_centre() above treats as empty.
+                    b = ia.bounds
+                    if b[0] < dw and 0 < b[2] and b[1] < dh and 0 < b[3]:
+                        okind, side = "zero_area_inside", "inside"
+                    else:
+                        okind = "off_display"
+                        side = "+".join(s for s, c in (("below", b[1] >= dh), ("above", b[3] <= 0),
+                                                       ("right", b[0] >= dw), ("left", b[2] <= 0)) if c)
+                    C[("s7_kind", okind)] += 1
+                    C[("s7_side", okind, side, "S0:" + hit_by["S0"][0], "S3:" + hit_by["S3"][0])] += 1
+                    o3, p3, x3, y3, t3 = s3_px
+                    if o3 == "intended":
+                        C[("s7_snap", okind, side, "pixel (%d,%d)" % (x3, y3))] += 1
+                    else:
+                        C[("s7_cause", okind, residual_cause(o3, p3, ia, acts, tool, y3, dh, t3))] += 1
                 for sc in ("S1", "S2", "S3", "S4"):
                     C[("trans", sc, hit_by["S0"][0], hit_by[sc][0])] += 1
                     if compat:
@@ -833,6 +865,23 @@ def report(root, pattern, C, S, W):
         P(f"  {sc}: total {sum(v for _, v in rows)}")
         for cause, v in rows:
             P(f"     {v:7}  {cause}")
+
+    P("\n## 7. S4 off-screen intended entries split by Rect.intersect (added 2026-10-05, consistency verification)")
+    P("  kind (off_display: no intersection with the display; zero_area_inside: zero-width or zero-height "
+      "node inside it, which Rect.intersect accepts, so the change lists it, at the same point as S3):",
+      {k[1]: v for k, v in sorted(C.items()) if k[0] == "s7_kind"})
+    P("  (kind, side, S0 outcome, S3 outcome):",
+      {k[1:]: v for k, v in sorted(C.items()) if k[0] == "s7_side"})
+    P("  S3 snaps to the intended node (kind, side, S3 tap pixel):",
+      {k[1:]: v for k, v in sorted(C.items()) if k[0] == "s7_snap"})
+    P("  S3 residual cause of the others (kind, cause):",
+      {k[1:]: v for k, v in sorted(C.items()) if k[0] == "s7_cause"})
+
+    P("\n## 8. Copied answers, S0 -> S4 with the ban outcome (added 2026-10-05, consistency verification)")
+    P("  (S0 outcome, S0 ban, S4 outcome, S4 ban): count, changed only:")
+    for k, v in sorted(((k[1:], v) for k, v in C.items() if k[0] == "s8" and k[1:3] != k[3:5]),
+                       key=lambda x: (-x[1], x[0])):
+        P(f"     {v:7}  {k}")
 
 
 if __name__ == "__main__":
