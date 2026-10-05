@@ -1,0 +1,11 @@
+excluded (overwritten in place): ['e6_07/e6_07/com.ds.avare_404.apk/com.ds.avare_404.apk__1__1800__aperv:e6_mop_on_llm_90.trace']
+# inputs: /home/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec-study03-replication-package/data/raw/e6-campaign/e6_0?/e6_0?/*/*__aperv:e6_mop_on_llm_90.trace
+files: 162; prompts: 130266; list lines with a coordinate: 1105147
+list @(0,0): lines 25 in 1 prompts, 1 APKs
+  e.g. org.glpi.inventory.agent_39469.apk step 794: 9. View "Nous contacter" @(0,0)
+history @(0,0): entries 47573 in 31466 prompts (24.2%)
+  click      noclass  47573
+answers with qwen (0,0) (tool, outcome, prompt showed @(0,0) in list / history):
+  back       matched/None             -       -       1869
+  back       matched/None             -       hist00  144
+  click      no_match/degenerate      -       hist00  2

@@ -1,6 +1,6 @@
 # Tasks: llm-coordinate-single-base
 
-Implementation is not scheduled. These tasks are written so the change can be picked up later without re-running the investigation. Before starting, re-check the line numbers cited in `design.md` §Context against the HEAD of that day.
+Implementation is not scheduled. These tasks are written so the change can be picked up later without re-running the investigation. Before starting, re-check the line numbers cited in `design.md` §Context against the HEAD of that day. The measured basis for every decision is in `evidence/` (counterfactual script and outputs, 2026-10-05).
 
 ## 1. Forward primitive in CoordinateNormalizer (TDD RED→GREEN)
 
@@ -12,50 +12,97 @@ Implementation is not scheduled. These tasks are written so the change can be pi
 
 - [ ] 2.1 RED: create `ApePromptBuilderCoordinateBaseTest` building real `GUITreeNode`/`ModelAction` fixtures as `ApePromptBuilderIdentifierTest` does, covering the llm-prompt scenarios for each coordinate-bearing variant (`ape_current`, `compact_v1`, `v13`, `v17`):
       full-screen widget `[0,105][1080,252]` with `1080 × 1794` → `@(500,99)`;
-      dialog widget `[745,1081][897,1207]` → `@(760,637)`;
-      centre at y=1857 → y=999, action still listed;
-      the list and the history render the same coordinate for the same widget.
+      dialog widget `[745,1040][897,1140]` → `@(760,607)`;
+      edge-cut widget `[0,1740][1080,1974]` → `@(500,984)` (centre of the visible part `[0,1740][1080,1794]`), not `@(500,999)`;
+      wholly off-screen widget `[0,1800][1080,1900]` → line present with no `@(`;
+      the list and the history render the same coordinate for the same widget;
+      an action whose `getResolvedNode()` is null renders a line with no `@(` (scenario "unresolved node renders no coordinate"; today all three sites write `@(0,0)`).
       The test calls the new `build(int, int, …)` signature, so it fails to compile until 2.2
 - [ ] 2.2 GREEN: change `ApePromptBuilder.build` to `build(int deviceWidth, int deviceHeight, State, List<ModelAction>, MopData, String, List<ActionHistoryEntry>)`. Delete the root-node dimension block (`:131-140`) and the `GUITree` parameter of `build` and `buildUserText` (P3)
-- [ ] 2.3 GREEN: replace the three inline normalizations (shared line formatter `:400-409`, `buildRvsmartV13UserText` `:635-640`, `buildRvsmartV17UserText` `:714-719`) with `CoordinateNormalizer.toNormalized(bounds.centerX(), bounds.centerY(), deviceWidth, deviceHeight)` (design D3/D4). Keep each site's existing omission behavior for unresolved nodes
+- [ ] 2.3 GREEN: replace the three inline normalizations (shared line formatter `:400-409`, `buildRvsmartV13UserText` `:635-640`, `buildRvsmartV17UserText` `:714-719`) with one private helper, `visibleCentre(bounds, deviceWidth, deviceHeight)` (bounds ∩ display via `Rect.intersect` on a copy, then `centerX()`/`centerY()`; null when empty), followed by `CoordinateNormalizer.toNormalized(…, deviceWidth, deviceHeight)` (design D3/D4/D11). At all three sites, a line whose node is null, whose bounds throw, or whose bounds do not intersect the display omits ` @(x,y)` entirely: no site has that omission today (`normX`/`normY` default to 0 and are always appended at `:398,438`, `:634,646`, `:713,726`), so this is new behavior that the main spec's "Unresolved action node" scenario has required since gh6
 - [ ] 2.4 Update the class javadoc (`:24-25`) and the `build` javadoc: dimensions are the display pair the caller determined, never the root node
-- [ ] 2.5 Update `ApePromptBuilderTest` and `ApePromptBuilderIdentifierTest` call sites to the new signature (dimensions `1080, 1920`, matching the values their assertions already assume)
-- [ ] 2.6 Rewrite `PromptIntegrationTest:245-300` to assert on `build` output instead of re-implementing the formula in the test
+- [ ] 2.5 Update every `build(null, …)` caller to the new signature: `ApePromptBuilderTest`, `ApePromptBuilderIdentifierTest`, `LlmTelemetryTest:543,567,584` and `LlmClientTest:198,214`. Use dimensions `1080, 1920` where the assertions already assume them. Confirm by `grep -rn 'build(null' src/test` that no caller is left
+- [ ] 2.6 Rewrite `PromptIntegrationTest:246-299` (formula copies at `:261-264`, `:292-295`) to assert on `build` output instead of re-implementing the formula in the test
 - [ ] 2.7 Run `/sdd-test-run` for the `ape.llm` tests
 
 ## 3. History carries pixels, normalized at build time (TDD RED→GREEN)
 
-- [ ] 3.1 RED: add to `ApePromptBuilderCoordinateBaseTest` the scenario "history entry normalized at build time": an `ActionHistoryEntry` with `centerX=540, centerY=178` renders `- click @(500,99) ...` under `1080 × 1794` and `@(500,92)` under `1080 × 1920`
-- [ ] 3.2 GREEN: rename `ActionHistoryEntry.normX/normY` to `centerX/centerY` (pixels); `formatHistoryEntry` normalizes them with `CoordinateNormalizer.toNormalized` and the dimensions `build` received (pass them through to the formatter); `back` entries render without coordinates, as today
-- [ ] 3.3 GREEN: `StatefulAgent.recordActionHistory` (`:1828-1839`) stores `bounds.centerX()`, `bounds.centerY()` and drops the `AndroidDevice.getDisplayBounds()` call and the inline normalization
-- [ ] 3.4 Update the remaining `ActionHistoryEntry` constructions (`ApePromptBuilderTest:42,56,68,81,198`) to pixel inputs. Confirm by grep that `LlmNewStateStageTest`, `LlmStagnationStageTest`, `BudgetStageTest`, `DecisionPipelineFromSpecTest` and `oracle/ScriptedLlm` only pass entries through and need no value change
-- [ ] 3.5 Run `/sdd-test-run` for the full suite (`mvn test`): baseline 1123 tests / 19 skipped, plus the new cases, 0 failures
+- [ ] 3.1 RED: add to `ApePromptBuilderCoordinateBaseTest` the scenario "history entry normalized at build time": an `ActionHistoryEntry` with bounds `[0,105][1080,252]` renders `- click @(500,99) ...` under `1080 × 1794` and `@(500,92)` under `1080 × 1920`
+- [ ] 3.2 GREEN: replace `ActionHistoryEntry.normX/normY` with `Rect bounds` (pixels; null for `back` and `menu`); `formatHistoryEntry` renders it with `visibleCentre` and `CoordinateNormalizer.toNormalized` and the dimensions `build` received (pass them through to the formatter), and without coordinates when `visibleCentre` is null; `back` entries render without coordinates, as today
+- [ ] 3.3 RED: add to `ApePromptBuilderCoordinateBaseTest` the llm-prompt scenarios "off-tree LLM tap in history" (`(600,900)` → `- click @(555,501) …`), "menu press in history" (`- menu → …`), and "v17 history goes through the formatter" (`Recent: click@(500,99), back`). Also assert that `visual_only` and `v13` render the same entry as the default branch
+- [ ] 3.4 GREEN: give `formatHistoryEntry` a compact form (`<type>@(x,y)` / `<type>`) and make `buildRvsmartV17UserText` (`:679-690`) use it instead of reading the entry's fields inline (`:686`); render `menu` without coordinates, as `back`
+- [ ] 3.5 GREEN: `StatefulAgent.recordActionHistory` (`:1796-1864`) stores `new Rect(node.getBoundsInScreen())` and drops the `AndroidDevice.getDisplayBounds()` call, the centre computation and the inline normalization. In the type switch (`:1804-1817`): `MODEL_MENU` → `menu`; `MODEL_LLM_TAP` → `click`/`long_click` from `LlmTapAction.isLongClick()` (`LlmTapAction.java:67`), with the one-pixel rectangle `[x,y][x+1,y+1]` at `getPixelX()/getPixelY()` (`:59,63`) as its bounds (design D9; `exploration` "StatefulAgent — Action History Ring Buffer"). Cover the three `exploration` scenarios (node click → bounds `[0,105][1080,252]`, LLM tap → `[600,900][601,901]`, menu → no bounds) with a JVM test if `recordActionHistory` is reachable from a fixture; otherwise record in `verification.md` that they are covered by the builder tests of 3.3 plus the device check 8.2
+- [ ] 3.6 Update the remaining `ActionHistoryEntry` constructions (`ApePromptBuilderTest:42,56,68,81,198`) to bounds inputs, and the field reads `entry.normX`/`entry.normY` (`ApePromptBuilderTest:47,48,74,75,84,85`) to assertions on `entry.bounds`. Confirm by grep that `LlmNewStateStageTest`, `LlmStagnationStageTest`, `LlmRandomStageTest`, `BudgetStageTest`, `DecisionPipelineFromSpecTest`, `PipelineFixture`, `FakeStepContext` and `oracle/ScriptedLlm` only pass entries through and need no value change
+- [ ] 3.7 Run `/sdd-test-run` for the full suite (`mvn test`): baseline 1123 tests / 19 skipped, plus the new cases, 0 failures
 
-## 4. Engine hands the pair to the builder
+## 4. Boundary band in the display base (TDD RED→GREEN)
 
-- [ ] 4.1 `LlmEngine.selectAction` (`:124`): call `promptBuilder.build(deviceWidth, deviceHeight, state, actions, mopData, base64, recentActions)` with the `dimensions` determined at `:95-97`; update the `@param tree` javadoc (`:77`): the tree is a dimension fallback for `ScreenshotStep`, not a prompt input
-- [ ] 4.2 Review INV-RTR-21 by inspection: in `selectAction`, the only dimension values reaching `screenshot.capture`, `promptBuilder.build`, `mapper.toPixels` and `mapper.map` are the `deviceWidth`/`deviceHeight` locals from `screenshot.deviceDimensions(tree)`. Record the check in `verification.md`
-- [ ] 4.3 Grep gate (INV-PRM-06 / INV-LLM-13 "only implementation"): no `* 1000` normalization arithmetic outside `CoordinateNormalizer` in `src/main/java/.../ape/llm/` and `StatefulAgent`; no `getRootNode().getBoundsInScreen()` in `ApePromptBuilder`. Record the grep output in `verification.md`
-- [ ] 4.4 Run `/sdd-verify` for the module (intermediate checkpoint)
+- [ ] 4.1 RED: create `CoordinateMapperBoundaryTest` with the llm-routing scenarios at `1080 × 1794` and the jar defaults: `(540,40)` click → null, no `LlmTapAction`; `(540,80)` on a toolbar `[0,63][1080,210]` → the toolbar; `(135,1720)` on a bottom-navigation item `[0,1647][270,1794]` → the item; `(0,0)` → null; `ape.llmBoundaryTopPct=0.05` → `(540,80)` null. Add `inAnswerSpace` edges: `(0,0)`, `(999,999)` true; `(1000,500)`, `(500,1000)`, `(-1,500)` false
+- [ ] 4.2 RED: `ConfigTest:267-273`: the top default is `0.035`, and the bottom-band test is deleted. Add the new key to the exact retired-key set that `KeyOwnershipTotalityTest:176-181` pins. Add an assertion that the `Feature` neutral value of `ape.llmBoundaryTopPct` is `0.035`: no existing test compares `Feature.own` with the default, so forgetting `Feature.java:177` would otherwise pass. `RunSpecAbortTest` gets an explicit case for `ape.llmBoundaryBottomPct=0.94` → `retired_key`, with a detail naming the navigation bar. Its existing loop over `RETIRED` covers the rest
+- [ ] 4.3 GREEN: delete the bottom band.
+      - Remove `Config.llmBoundaryBottomPct` (`Config.java:193,197`), the `feature(...)` line (`KeyOwnership.java:217`), and `LLM.own(...)` (`Feature.java:178`).
+      - Remove the `CoordinateMapper` field, its read (`:45,59`) and its condition (`:131`).
+      - Add `RETIRED.put("ape.llmBoundaryBottomPct", …)` to `KeyOwnership` (`:254-287`), with a reason in the style of its neighbours.
+      - Set the top default to `0.035` in `Config.java:196`, `KeyOwnership.java:216` and `Feature.java:177`. The neutral value must stay equal to the default; `KeyOwnershipTotalityTest:139-163` checks only `Config` against `KeyOwnership`, so the assertion added in 4.2 is what holds `Feature`.
+      - Update the comment block at `Config.java:186-193` ("bit-for-bit", "all four"): three keys remain, and the top band's default is re-derived. The `Config` fields are not read at runtime (the effective default is `KeyOwnership.java:216`, through `KeyOwnership.defaultOf`); they are kept equal to it, which `KeyOwnershipTotalityTest:139-163` checks.
+- [ ] 4.4 GREEN: add `static boolean CoordinateMapper.inAnswerSpace(int x, int y)`. In `LlmEngine.selectAction` step 8 (`:157-163`), skip `map` for a non-`back` answer outside the space, so the match is null and `classify` yields `boundary`. `(0,0)` is inside the space and stays `degenerate`. Keep calling `toPixels`, because `telemetry.decision` (`:176`) and `nearest` need a pixel; it is recorded, never matched or tapped
+- [ ] 4.5 Update `CoordinateMapperOffTreeTapTest:80-97`. `boundaryRejectSynthesizesNoTap` (y=1750) becomes a match or an off-tree tap per the scenario. `topBandRejectSynthesizesNoTap` moves to y=40. Update the band comments that name two bands or the navigation bar: `CoordinateMapper` javadoc `:53-54` and `:85`, the comment at `:128-129`, and `:244-245`; `LlmEngine.java:230` ("the boundary bands"); the class javadocs of `CoordinateMapperOffTreeTapTest:29-30`, `CoordinateMapperMappingTest:31-32` and `CoordinateMapperDeadPairTest:36-37`
+- [ ] 4.6 Update `CoordinateMapIntegrationTest:34-36`, which uses its own constants of `0.05`/`0.94` at H=1920, to the display base and the single band. Or delete its band cases if they duplicate `CoordinateMapperBoundaryTest`, and record which in `verification.md` (P3)
+- [ ] 4.7 Update CLAUDE.md's LLM notes (`:209`, the `llmBoundaryTopPct`/`llmBoundaryBottomPct` bullet) to the single band and the retired key
+- [ ] 4.8 Run `/sdd-test-run` for the full suite
 
-## 5. Regression floor
+## 5. Element list: one line per widget, no ordinal (TDD RED→GREEN)
 
-- [ ] 5.1 Run the `rearch-01` parity golden suite: the per-preset decision sequences compare identical (its LLM is scripted and ignores prompt text, so any difference is a regression)
-- [ ] 5.2 `mvn package` produces `target/ape-rv.jar`; `RUN_START` carries the new build stamp
+- [ ] 5.1 RED: create `ApePromptBuilderElementListTest` with the llm-prompt scenarios of "Element List of the v13 and v17 Variants", using real `GUITreeNode`/`ModelAction` fixtures as in `ApePromptBuilderIdentifierTest`:
+      - click + long-click on one EditText → one line `  EditText "Email" @(500,299)`;
+      - two scroll directions on one ScrollView → one line;
+      - no line starts with a digit after its indentation;
+      - lines in first-appearance order;
+      - `v17`: visits 2 + 1 → `[TESTED-3x]`;
+      - `v17` screen line: a Button with click (1 visit) + long-click (0) and a TextView with click (0) → `1/2 elements tested`;
+      - an action with a null resolved node keeps its own line, with no `@(`;
+      - `CoordinateMapper.map` still matches a `long_click` answer to the collapsed widget's `MODEL_LONG_CLICK`.
+- [ ] 5.2 GREEN: in `buildRvsmartV13UserText` (`ApePromptBuilder.java:626-652`) and `buildRvsmartV17UserText` (`:692-733`):
+      - group target-requiring actions by resolved node (identity) in a `LinkedHashMap`, keeping the first-appearance order;
+      - render one line per group;
+      - delete the `index++` ordinal;
+      - keep the `(no elements)` fallback by testing the line count instead of `index == 1`;
+      - in `v17`, sum `getVisitedCount()` per group for the status tag; the screen-info line counts widgets in both numerator and denominator and reads `elements tested`;
+      - leave `buildExplorationContext` (the `MOP NAVIGATION` block, shared with the default-branch variants) counting actions.
 
-## 6. Verification
+      Actions with an unresolved node keep a line each.
+- [ ] 5.3 Update existing assertions that expect `1. ` prefixes or per-action lines (grep `src/test` for `"  1. "` and `UI elements:`)
+- [ ] 5.4 Run `/sdd-test-run` for the full suite
 
-- [ ] 6.1 Device smoke on the RVSec AVD (display 1080 × 1794) against the campaign's server configuration, for comparability: vLLM v0.29.0 serving `Qwen/Qwen3-VL-4B-Instruct-FP8` with `--enable-auto-tool-choice --tool-call-parser hermes` and no `tool_choice` in the request (`rvsec-study03-replication-package/experiments/E6-campaign/config/docker-compose.e6.yml:31,48-64`). If another server is used (e.g. SGLang), record the difference in `verification.md`. Use `ape.preset=llm`, `llmPercentage=0.7`, prompt variant `v13`, 2–5 min on an APK with dialogs (e.g. `app.eduroam.geteduroam`, the E6 example). If no LLM server is available, mark this task skipped with that reason rather than substituting a scripted run
-- [ ] 6.2 Trace check (script in the scratchpad, same join as `coordinate_base.py`): for every matched LLM decision, the executed widget's listed `@(x,y)` equals `toNormalized(centre, 1080, 1794)`, including decisions in dialog states. Copied answers' tap y minus widget centre y has median within [−2, 0] px in every height band (E6 baseline: −12 to −103 px)
-- [ ] 6.3 Record the gate evidence (trace excerpts, check output) in `verification.md`
-- [ ] 6.4 Run `/sdd-qa-lint-fix` for the module
-- [ ] 6.5 Run `/sdd-verify` for the module
-- [ ] 6.6 Invoke `/sdd-code-reviewer` via the Skill tool; report findings to the author before applying any fix
-- [ ] 6.7 Run `/sdd-docs-sync`. Update CLAUDE.md's LLM notes only if they describe the coordinate base
-- [ ] 6.8 `openspec validate llm-coordinate-single-base --strict`
+## 6. Engine hands the pair to the builder
 
-## 7. Close-out (after the author's approval)
+- [ ] 6.1 `LlmEngine.selectAction` (`:124`): call `promptBuilder.build(deviceWidth, deviceHeight, state, actions, mopData, base64, recentActions)` with the `dimensions` determined at `:95-97`; update the `@param tree` javadoc (`:77`): the tree is a dimension fallback for `ScreenshotStep`, not a prompt input
+- [ ] 6.2 Review INV-RTR-21 by inspection: in `selectAction`, the only dimension values reaching `screenshot.capture`, `promptBuilder.build`, `mapper.toPixels` and `mapper.map` are the `deviceWidth`/`deviceHeight` locals from `screenshot.deviceDimensions(tree)`. Record the check in `verification.md`
+- [ ] 6.3 Grep gate (INV-PRM-06 / INV-LLM-13 "only implementation"): no `* 1000` normalization arithmetic outside `CoordinateNormalizer` in `src/main/java/.../ape/llm/` and `StatefulAgent`; no `getRootNode().getBoundsInScreen()` in `ApePromptBuilder`; no `llmBoundaryBottomPct` in `src/` outside the `RETIRED` entry and its test; no read of an `ActionHistoryEntry`'s `bounds` in `ApePromptBuilder` outside `formatHistoryEntry`; no `centerX()`/`centerY()` call in `ApePromptBuilder` outside `visibleCentre`, and no `centerX`/`centerY`/`(left + right)` centre computation left in `StatefulAgent.recordActionHistory`. Record the grep output in `verification.md`
+- [ ] 6.4 Run `/sdd-verify` for the module (intermediate checkpoint)
 
-- [ ] 7.1 Commit only when the author says so
-- [ ] 7.2 Archive. `openspec archive` syncs requirements only, so add by hand to the main specs: INV-PRM-06 to `llm-prompt` `## Invariants`, INV-LLM-13 to `llm-infrastructure` `## Invariants`, INV-RTR-21 to `llm-routing` `## Invariants`. Also update `llm-prompt` `## Data Contracts` (`recentActions` entries carry pixel centres; `build` takes `deviceWidth`/`deviceHeight` and no `GUITree`) and its `## Purpose` coordinate paragraph
-- [ ] 7.3 Tell the study side (rv-android / replication packages) that arms run with this jar are a new arm version, and that `coordinate_base.py`'s base inference will report the display base everywhere
+## 7. Regression floor
+
+- [ ] 7.1 Run the `rearch-01` parity golden suite: the per-preset decision sequences compare identical (its engine is scripted, overrides `selectAction` and constructs no `CoordinateMapper`, so it cannot observe this change: it is a regression floor for everything else, and any difference is a regression)
+- [ ] 7.2 `mvn package` produces `target/ape-rv.jar`; `RUN_START` carries the new build stamp
+
+## 8. Verification
+
+- [ ] 8.1 Device smoke on the RVSec AVD (display 1080 × 1794) against the campaign's server configuration, for comparability: vLLM v0.29.0 serving `Qwen/Qwen3-VL-4B-Instruct-FP8` with `--enable-auto-tool-choice --tool-call-parser hermes` and no `tool_choice` in the request (`rvsec-study03-replication-package/experiments/E6-campaign/config/docker-compose.e6.yml:31,48-64`). If another server is used (e.g. SGLang), record the difference in `verification.md`. Use `ape.preset=llm`, `llmPercentage=0.7`, prompt variant `v13`, 2–5 min on an APK with dialogs (e.g. `app.eduroam.geteduroam`, the E6 example). If no LLM server is available, mark this task skipped with that reason rather than substituting a scripted run
+- [ ] 8.2 Trace check (script in the scratchpad, same join as `coordinate_base.py`): for every matched LLM decision, the executed widget's listed `@(x,y)` equals `toNormalized(visibleCentre(bounds, 1080, 1794))`, including decisions in dialog states, and no wholly off-screen widget carries a coordinate (E6 baseline: 23,080 such lines, `evidence/dup_identity_e6.out`). Copied answers' tap y minus the widget's visible-centre y has median within [−2, 0] px in every height band (E6 baseline: −12 to −105 px, `evidence/audit_rerun.out` §4). `boundary` outcomes of `click`/`long_click` answers, counted by height band, occur only at y < 63 or for answers outside [0,999]. Exclude `type_text` answers, which `classify` also labels `boundary` when no input widget is near. E6 baseline: 4,879 non-copied answers rejected in y > 1686, and 559 copies rejected at the boundary by either band. No class-less history entry renders `@(0,0)` (E6 baseline: 47,573 entries in 24.2 % of prompts, `evidence/prompt_zero_scan_e6.out`). No `v13`/`v17` prompt lists two lines whose actions share both target `Name` and resolved-node bounds, and none begins a line with an ordinal (distinct nodes with identical bounds, such as a container and its single child, legitimately keep a line each: 4,633 E6 lines, `evidence/dup_identity_e6.out`). No list line renders `@(` for an unresolved node. Adapt the alignment of `evidence/coordinate_counterfactual.py` rather than writing a new join; on this jar's traces it must align lines with widgets (resolved-node bounds), not with actions
+- [ ] 8.3 Record the gate evidence (trace excerpts, check output) in `verification.md`
+- [ ] 8.4 Run `/sdd-qa-lint-fix` for the module
+- [ ] 8.5 Run `/sdd-verify` for the module
+- [ ] 8.6 Invoke `/sdd-code-reviewer` via the Skill tool; report findings to the author before applying any fix
+- [ ] 8.7 Run `/sdd-docs-sync`. Update CLAUDE.md's LLM notes where they describe the coordinate base or the bands (the band bullet is task 4.7)
+- [ ] 8.8 `openspec validate llm-coordinate-single-base --strict`
+
+## 9. Close-out (after the author's approval)
+
+- [ ] 9.1 Commit only when the author says so
+- [ ] 9.2 Archive. `openspec archive` syncs requirements only, so add by hand to the main specs: INV-PRM-06 to `llm-prompt` `## Invariants`, INV-LLM-13 to `llm-infrastructure` `## Invariants`, INV-RTR-21 and INV-RTR-22 to `llm-routing` `## Invariants` (INV-RTR-22 supersedes INV-RTR-14's band-default clause, which lives only in the archived `2026-07-23-llm-native-toolcall-repair` delta; note the supersession there). Also, by hand:
+      - `llm-prompt` INV-PRM-03 ("include all actions … No actions SHALL be filtered out"): scope it to the shared line formatter's list (`ape_current`, `ape_reasoning`, `compact_v1`), and state that `v13`/`v17` render one line per widget ("Element List of the v13 and v17 Variants");
+      - `llm-prompt` `## Data Contracts` (`recentActions` entries carry pixel bounds; `build` takes `deviceWidth`/`deviceHeight` and no `GUITree`), its `## Purpose` line 3 ("`GUITree`" is no longer a `build` input) and its coordinate paragraph;
+      - `llm-infrastructure` `## Purpose` and `## Data Contracts`: `CoordinateNormalizer` converts in both directions, and its outputs include the forward `int[] normalized`;
+      - check that the archived `exploration` requirement (delta in this change) and `llm-prompt` "Action History" agree on `bounds` and `menu`
+- [ ] 9.3 Tell the study side (rv-android / replication packages) that arms run with this jar are a new arm version, and that `coordinate_base.py`'s base inference will report the display base everywhere; that `ape.llmBoundaryBottomPct` is retired (a stale properties file aborts); that the plan digest of every LLM arm changes; and, separately, that the E6 arm-4 trace of `com.ds.avare_404` was overwritten on 2026-10-05 (proposal, Evidence)

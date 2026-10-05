@@ -1,0 +1,91 @@
+traces: 163; LLM decisions with an answer: 130248; executed: 71201
+
+1. answer base (pixel/answer ratio x1000, top 5): [(1793, 23585), (1794, 10457), (1792, 9900), (1791, 4377), (1789, 3405)]
+
+2. list base per matched LLM decision: {'full': 49766, 'window': 4777, 'unresolved': 4063, 'display': 74}
+   APKs per base: {'full': 158, 'window': 148, 'display': 11}
+
+3. answers by state base, group and result (no_match by reason):
+   ('display', 'copied', 'dead_pair'): 81
+   ('display', 'copied', 'llm_tap'): 3
+   ('display', 'copied', 'matched'): 70
+   ('display', 'visual', 'dead_pair'): 19
+   ('display', 'visual', 'llm_tap'): 30
+   ('display', 'visual', 'matched'): 26
+   ('full', 'copied', 'boundary'): 357
+   ('full', 'copied', 'dead_pair'): 23067
+   ('full', 'copied', 'llm_tap'): 1439
+   ('full', 'copied', 'matched'): 23168
+   ('full', 'visual', 'boundary'): 4223
+   ('full', 'visual', 'dead_pair'): 19503
+   ('full', 'visual', 'degenerate'): 2
+   ('full', 'visual', 'llm_tap'): 5844
+   ('full', 'visual', 'matched'): 28816
+   ('unknown', 'copied', 'boundary'): 168
+   ('unknown', 'copied', 'dead_pair'): 525
+   ('unknown', 'copied', 'llm_tap'): 511
+   ('unknown', 'copied', 'matched'): 661
+   ('unknown', 'visual', 'boundary'): 605
+   ('unknown', 'visual', 'dead_pair'): 1909
+   ('unknown', 'visual', 'llm_tap'): 701
+   ('unknown', 'visual', 'matched'): 1362
+   ('window', 'copied', 'boundary'): 444
+   ('window', 'copied', 'dead_pair'): 1089
+   ('window', 'copied', 'llm_tap'): 930
+   ('window', 'copied', 'matched'): 861
+   ('window', 'visual', 'boundary'): 234
+   ('window', 'visual', 'dead_pair'): 6821
+   ('window', 'visual', 'llm_tap'): 994
+   ('window', 'visual', 'matched'): 5785
+   copied: 53374 (41.0 %)
+   visual: 76874 (59.0 %)
+
+4. full-screen states: tap y minus executed widget centre y (px), by centre band:
+   visual    0- 359 px  n= 6409  median=    -2  predicted=   -12
+   visual  360- 719 px  n= 6683  median=    -2  predicted=   -35
+   visual  720-1079 px  n= 6822  median=    -2  predicted=   -59
+   visual 1080-1439 px  n= 3611  median=    -2  predicted=   -83
+   visual 1440-1799 px  n= 3374  median=    -2  predicted=  -106
+   copied    0- 359 px  n= 7556  median=   -12  predicted=   -12
+   copied  360- 719 px  n= 4876  median=   -36  predicted=   -35
+   copied  720-1079 px  n= 5367  median=   -58  predicted=   -59
+   copied 1080-1439 px  n= 2739  median=   -78  predicted=   -83
+   copied 1440-1799 px  n= 2329  median=  -105  predicted=  -106
+
+5. full-screen states, matched copied answers: executed widget is not the listed one
+   once     y   0-199  n= 4382  other=  112 (2.6 %)
+   once     y 200-399  n= 2724  other=  296 (10.9 %)
+   once     y 400-599  n= 2897  other=  954 (32.9 %)
+   once     y 600-799  n= 2098  other= 1021 (48.7 %)
+   once     y 800-999  n= 1853  other=  890 (48.0 %)
+   repeated y   0-199  n= 3436  other=  113 (3.3 %)
+   repeated y 200-399  n= 2376  other=  186 (7.8 %)
+   repeated y 400-599  n= 2314  other= 1039 (44.9 %)
+   repeated y 600-799  n=  485  other=  157 (32.4 %)
+   repeated y 800-999  n=  302  other=   61 (20.2 %)
+   excess over the y 0-199 rate: 4179
+   (tap inside executed, listed centre inside executed): {(False, False): 1202, (True, False): 1582, (True, True): 1612, (False, True): 433}
+
+6. window states (dialogs, popups, keyboard-resized windows):
+   matched copied answers with a resolved base: 491, executed another widget: 99; excess over the full-screen y 0-199 rate: 85
+   (tap inside executed, listed centre inside executed): {(False, False): 52, (True, False): 39, (False, True): 7, (True, True): 1}
+   control, display-base states: 0 of 62 matched copied answers executed another
+   llm_tap among acted answers: copied 930/1791 (51.9 %), visual 994/6779 (14.7 %); excess 667
+   boundary among all answers: copied 444/3324 (13.4 %), visual 234/13834 (1.7 %); excess 388
+
+7. full-screen states: click answers ending as llm_tap, by answer y:
+   copied y   0-199  n= 7243  llm_tap=0.9 %
+   copied y 200-399  n= 5011  llm_tap=3.6 %
+   copied y 400-599  n= 6015  llm_tap=15.8 %
+   copied y 600-799  n= 2817  llm_tap=6.4 %
+   copied y 800-999  n= 2218  llm_tap=2.8 %
+   visual y   0-199  n= 7253  llm_tap=11.4 %
+   visual y 200-399  n= 6537  llm_tap=14.8 %
+   visual y 400-599  n= 8338  llm_tap=20.8 %
+   visual y 600-799  n= 4783  llm_tap=26.2 %
+   visual y 800-999  n= 4522  llm_tap=23.6 %
+
+8. diverted decisions (share of decisions; executed ones, share of executed actions):
+   lower      1621   1.2 %     1621   2.3 %   (direct mechanism, full-screen and window states)
+   central    5319   4.1 %     4931   6.9 %   (full-screen excess + window excess (other widget, llm_tap, boundary))
+   upper      7770   6.0 %     7158  10.1 %   (full-screen excess + every window other/llm_tap/boundary copy + every full-screen copied llm_tap + unknown-state copied llm_tap/boundary)

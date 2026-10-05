@@ -1,0 +1,11 @@
+excluded (overwritten in place): []
+# inputs: /home/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec/rv-android/data/results/e5bm1_*/e5bm1_*/*/*e5b_m1_v13_A.trace
+files: 60; prompts: 9586; list lines with a coordinate: 84129
+list @(0,0): lines 0 in 0 prompts, 0 APKs
+history @(0,0): entries 3086 in 2157 prompts (22.5%)
+  click      noclass  3086
+answers with qwen (0,0) (tool, outcome, prompt showed @(0,0) in list / history):
+  back       matched/None             -       -       193
+  back       matched/None             -       hist00  4
+  click      no_match/degenerate      -       -       1
+  type       no_match/degenerate      -       -       1

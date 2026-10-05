@@ -1,0 +1,203 @@
+# inputs: /home/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec/rv-android/data/results/e5bm1_*/e5bm1_*/*/*e5b_m1_v13_A.trace
+files: 60; APKs: 60; LLM calls with an answer: 9583
+files with no LLM call record: ['e5bm1_00/com.serwylo.retrowars_70.apk/com.serwylo.retrowars_70.apk__1__600__aperv:e5b_m1_v13_A.trace', 'e5bm1_01/com.shatteredpixel.shatteredpixeldungeon_896.apk/com.shatteredpixel.shatteredpixeldungeon_896.apk__1__600__aperv:e5b_m1_v13_A.trace']
+aligned (prompt list 1:1 with listing): 9579; not aligned: 4
+RUN_START (snap floor, bands): {(150, (0.05, 0.94)): 60}
+list base class of aligned calls: {'display': 12, 'full': 7832, 'landscape': 72, 'narrow': 1364, 'other': 2, 'short': 251, 'tall': 46}
+answer kind (aligned): {'copied': 4106, 'history': 2959, 'visual': 2514}
+
+## 1. Mapper replica validation (recorded pixel -> replica incl. replayed dead-pair ban)
+result/reason agreement: 9579/9579 (100.0%)
+   recorded matched                replica matched                   6579
+   recorded no_match/dead_pair     replica no_match/dead_pair        1818
+   recorded llm_tap                replica llm_tap                    785
+   recorded no_match/boundary      replica no_match/boundary          395
+   recorded no_match/degenerate    replica no_match/degenerate          2
+executed matched  same action as dec.a: 6382/6382 (100.0%)
+executed llm_tap  same action as dec.a: 785/785 (100.0%)
+executed back     same action as dec.a: 197/197 (100.0%)
+matched calls, replica class == recorded mcls: 6382/6382 (100.0%)
+
+## 2. Copied answers: scenarios (SAME-ENTRY ASSUMPTION for S1-S4)
+copied answers with a resolved intended node: 4106; intended entry without node: 0; coordinate shared by entries of different bounds: 27
+
+  window class ALL: n=4106   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0      2229+640      69.9%    728+113      20.5%    268+52        7.8%     41+0         1.0%     35+0         0.9%      0+0         0.0%
+   S1      2801+702      85.3%    205+60        6.5%    161+4         4.0%    173+0         4.2%      0+0         0.0%      0+0         0.0%
+   S2      2957+710      89.3%    208+60        6.5%    163+4         4.1%      4+0         0.1%      0+0         0.0%      0+0         0.0%
+   S3      2961+710      89.4%    208+60        6.5%    163+4         4.1%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4      2961+710      89.4%    206+59        6.5%    164+4         4.1%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 2   0.0%
+   intended-widget hits vs S0, S1: recovered 720, lost 86, net +634
+   intended-widget hits vs S0, S2: recovered 808, lost 10, net +798
+   intended-widget hits vs S0, S3: recovered 812, lost 10, net +802
+   intended-widget hits vs S0, S4: recovered 812, lost 10, net +802
+
+  window class COMPAT: n=3695   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0      2229+640      77.6%    550+52       16.3%    120+28        4.0%     41+0         1.1%     35+0         0.9%      0+0         0.0%
+   S1      2801+702      94.8%     19+2         0.6%      0+0         0.0%    171+0         4.6%      0+0         0.0%      0+0         0.0%
+   S2      2957+710      99.2%     22+2         0.6%      0+0         0.0%      4+0         0.1%      0+0         0.0%      0+0         0.0%
+   S3      2961+710      99.4%     22+2         0.6%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4      2961+710      99.4%     20+2         0.6%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 2   0.1%
+   intended-widget hits vs S0, S1: recovered 720, lost 86, net +634
+   intended-widget hits vs S0, S2: recovered 808, lost 10, net +798
+   intended-widget hits vs S0, S3: recovered 812, lost 10, net +802
+   intended-widget hits vs S0, S4: recovered 812, lost 10, net +802
+
+  window class full: n=3637   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0      2106+621      75.0%    625+109      20.2%    131+22        4.2%     23+0         0.6%      0+0         0.0%      0+0         0.0%
+   S1      2392+671      84.2%    200+60        7.1%    141+4         4.0%    169+0         4.6%      0+0         0.0%      0+0         0.0%
+   S2      2546+678      88.6%    203+60        7.2%    143+4         4.0%      3+0         0.1%      0+0         0.0%      0+0         0.0%
+   S3      2549+678      88.7%    203+60        7.2%    143+4         4.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4      2549+678      88.7%    199+59        7.1%    146+4         4.1%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 2   0.1%
+   intended-widget hits vs S0, S1: recovered 422, lost 86, net +336
+   intended-widget hits vs S0, S2: recovered 507, lost 10, net +497
+   intended-widget hits vs S0, S3: recovered 510, lost 10, net +500
+   intended-widget hits vs S0, S4: recovered 510, lost 10, net +500
+
+  window class display: n=10   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0        10+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S1        10+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S2        10+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S3        10+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4        10+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 0   0.0%
+   intended-widget hits vs S0, S1: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S2: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S3: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S4: recovered 0, lost 0, net +0
+
+  window class narrow: n=308   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0        51+16       21.8%     75+2        25.0%    102+28       42.2%      5+0         1.6%     29+0         9.4%      0+0         0.0%
+   S1       276+26       98.1%      1+0         0.3%      3+0         1.0%      2+0         0.6%      0+0         0.0%      0+0         0.0%
+   S2       278+26       98.7%      1+0         0.3%      3+0         1.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S3       278+26       98.7%      1+0         0.3%      3+0         1.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4       278+26       98.7%      1+0         0.3%      3+0         1.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 0   0.0%
+   intended-widget hits vs S0, S1: recovered 235, lost 0, net +235
+   intended-widget hits vs S0, S2: recovered 237, lost 0, net +237
+   intended-widget hits vs S0, S3: recovered 237, lost 0, net +237
+   intended-widget hits vs S0, S4: recovered 237, lost 0, net +237
+
+  window class short: n=104   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0        28+1        27.9%     26+2        26.9%     28+2        28.8%     11+0        10.6%      6+0         5.8%      0+0         0.0%
+   S1        89+3        88.5%      1+0         1.0%     11+0        10.6%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S2        89+3        88.5%      1+0         1.0%     11+0        10.6%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S3        89+3        88.5%      1+0         1.0%     11+0        10.6%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4        89+3        88.5%      3+0         2.9%      9+0         8.7%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 0   0.0%
+   intended-widget hits vs S0, S1: recovered 63, lost 0, net +63
+   intended-widget hits vs S0, S2: recovered 63, lost 0, net +63
+   intended-widget hits vs S0, S3: recovered 63, lost 0, net +63
+   intended-widget hits vs S0, S4: recovered 63, lost 0, net +63
+
+  window class tall: n=15   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0        10+0        66.7%      1+0         6.7%      3+0        20.0%      1+0         6.7%      0+0         0.0%      0+0         0.0%
+   S1        10+0        66.7%      1+0         6.7%      3+0        20.0%      1+0         6.7%      0+0         0.0%      0+0         0.0%
+   S2        10+0        66.7%      1+0         6.7%      3+0        20.0%      1+0         6.7%      0+0         0.0%      0+0         0.0%
+   S3        11+0        73.3%      1+0         6.7%      3+0        20.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4        11+0        73.3%      1+0         6.7%      3+0        20.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 0   0.0%
+   intended-widget hits vs S0, S1: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S2: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S3: recovered 1, lost 0, net +1
+   intended-widget hits vs S0, S4: recovered 1, lost 0, net +1
+
+  window class landscape: n=31   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0        24+2        83.9%      1+0         3.2%      3+0         9.7%      1+0         3.2%      0+0         0.0%      0+0         0.0%
+   S1        24+2        83.9%      1+0         3.2%      3+0         9.7%      1+0         3.2%      0+0         0.0%      0+0         0.0%
+   S2        24+3        87.1%      1+0         3.2%      3+0         9.7%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S3        24+3        87.1%      1+0         3.2%      3+0         9.7%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4        24+3        87.1%      1+0         3.2%      3+0         9.7%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 0   0.0%
+   intended-widget hits vs S0, S1: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S2: recovered 1, lost 0, net +1
+   intended-widget hits vs S0, S3: recovered 1, lost 0, net +1
+   intended-widget hits vs S0, S4: recovered 1, lost 0, net +1
+
+  window class other: n=1   (cells: live + dead_pair-refused)
+   scen               intended                 other               llm_tap              boundary                  null                  back
+   S0         0+0         0.0%      0+0         0.0%      1+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S1         0+0         0.0%      1+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S2         0+0         0.0%      1+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S3         0+0         0.0%      1+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4         0+0         0.0%      1+0       100.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%      0+0         0.0%
+   S4   nocoord (intended node entirely off-screen, no coordinate listed): 0   0.0%
+   intended-widget hits vs S0, S1: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S2: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S3: recovered 0, lost 0, net +0
+   intended-widget hits vs S0, S4: recovered 0, lost 0, net +0
+   ALL, live intended hits (not dead_pair) vs S0, S1: recovered 651, lost 79, net +572
+   ALL, live intended hits (not dead_pair) vs S0, S2: recovered 738, lost 10, net +728
+   ALL, live intended hits (not dead_pair) vs S0, S3: recovered 742, lost 10, net +732
+   ALL, live intended hits (not dead_pair) vs S0, S4: recovered 742, lost 10, net +732
+   tool-compatible copies (intended node offers a valid action of the tool's kind): 3695; incompatible: 411
+   S4 intended entries by visibility of the node: {'inside': 3940, 'offscreen': 2, 'partial': 164}
+   S4 offscreen intended entries, outcome S3 -> S4 (changed only): {'S3:other -> S4:nocoord': 2}
+   S4 partial intended entries, outcome S3 -> S4 (changed only): {'S3:llm_tap -> S4:other': 3, 'S3:other -> S4:llm_tap': 4}
+   transitions S0 -> S1 (changed only): other->intended 523, llm_tap->intended 148, intended->boundary 77, other->boundary 68, null->intended 35, boundary->intended 14, llm_tap->other 14, intended->other 9, other->llm_tap 8, llm_tap->boundary 1
+   transitions S0 -> S2 (changed only): other->intended 590, llm_tap->intended 148, boundary->intended 35, null->intended 35, llm_tap->other 14, intended->other 10, other->llm_tap 9, boundary->other 2
+   transitions S0 -> S3 (changed only): other->intended 590, llm_tap->intended 148, boundary->intended 39, null->intended 35, llm_tap->other 14, intended->other 10, other->llm_tap 9, boundary->other 2
+   transitions S0 -> S4 (changed only): other->intended 590, llm_tap->intended 148, boundary->intended 39, null->intended 35, llm_tap->other 11, intended->other 10, other->llm_tap 7, boundary->nocoord 2
+   S1 boundary rejects of copied answers, intended widget (top 12): [('View#-', 74), ('ImageButton#-', 28), ('Switch#enable', 9), ('TextView#-', 8), ('Button#grade_button_2', 6), ('LinearLayout#-', 5), ('Button#connect', 5), ('Button#-', 4), ('Button#reloadStickerPackInfoBtn', 3), ('Button#skip', 3), ('Button#cancelBtn', 3), ('EditText#-', 2)]
+
+## 3. Non-copied answers (history copies, visual): band effect, pixel unchanged
+  history rejected by bottom band (S0): 104
+     under S2: llm_tap/live=15, matched/dead_pair=6, matched/live=83
+     under S3: llm_tap/live=15, matched/dead_pair=6, matched/live=83
+  history rejected by top band (S0): 1
+     under S2: boundary/live=1
+     under S3: boundary/live=1
+  history top-band rejects split: {'y<63': 1}
+  visual  rejected by bottom band (S0): 197
+     under S2: llm_tap/live=94, matched/live=103
+     under S3: llm_tap/live=94, matched/live=103
+  visual  rejected by top band (S0): 1
+     under S2: boundary/live=1
+     under S3: boundary/live=1
+  visual  top-band rejects split: {'y<63': 1}
+  widgets hit under S2 by formerly bottom-rejected non-copied answers (28 APKs; top 15): [('View#-', 114), ('Button#cancelBtn', 10), ('Button#connect', 9), ('ImageButton#-', 8), ('EditText#-', 6), ('TextView#-', 4), ('LinearLayout#leak_canary_navigation_button_leaks', 4), ('Switch#enable', 3), ('Button#grade_button_0', 3), ('Button#grade_button_2', 3), ('CompoundButton#ButtonOpenFilters', 3), ('Button#-', 2), ('CheckBox#-', 2), ('Button#new_hand', 2), ('ImageButton#card_player_next_button', 2)]
+  widgets hit under S2 by formerly top-rejected non-copied answers (0 APKs; top 15): []
+  degenerate (0,0) answers (group, S0 replica, S3 replica): {('visual', 'S0:boundary', 'S3:boundary'): 1}
+  answers with qwen x or y >= 1000 (axis, tool, S0 replica, S3 replica): {}
+  answers with px y >= display H: 0 (normalize clamps to H-1)
+
+## 4. Target-requiring actions centred in the bottom band / behind the nav bar (all listings)
+  steps with a listing: 17482; states: 1752; APKs: 60
+  centre y in (1686.36,1794): steps 4735 ( 27.1%), states 587 ( 33.5%; with a valid one 584), APKs 51 ( 85.0%)
+  centre y >= 1794: steps 754, states 95, APKs 23
+  MODEL_CLICK widgets centred in the band (step-weighted, top 15): [('View#-', 3857), ('LinearLayout#-', 256), ('FrameLayout#nav_settings', 230), ('FrameLayout#nav_generate', 203), ('TextView#-', 201), ('FrameLayout#navigation_home', 151), ('FrameLayout#navigation_graph', 151), ('FrameLayout#navigation_analytics', 151), ('FrameLayout#navigation_settings', 151), ('Button#settings_link', 127), ('ImageButton#-', 112), ('FrameLayout#nav_test', 101), ('TextView#title', 86), ('EditText#-', 84), ('ImageButton#move_up', 81)]
+
+## 5. Landscape
+  calls whose qwen->px implies a landscape display: 72; display unresolved: 0; listing steps with a node right > 1080: 374 (12 APKs)
+  aligned calls whose list base has W > 1080 (root wider than portrait): 74 (4 APKs); APKs with landscape-display calls: 3
+  base APKs: full 57, display 2
+
+## 6. Residual misses of copied answers (not the intended widget), by cause
+  S2: total 439
+         349  click on SCROLL_* entry (no MODEL_CLICK on node)
+          62  click on LONG_CLICK-only node
+          19  containment picked smaller child
+           5  other overlapping/near widget
+           4  top band (y<89.7)
+  S3: total 435
+         349  click on SCROLL_* entry (no MODEL_CLICK on node)
+          62  click on LONG_CLICK-only node
+          19  containment picked smaller child
+           5  other overlapping/near widget
+  S4: total 435
+         349  click on SCROLL_* entry (no MODEL_CLICK on node)
+          62  click on LONG_CLICK-only node
+          19  containment picked smaller child
+           3  other overlapping/near widget
+           2  intended node entirely off-screen (S4 lists no coordinate)

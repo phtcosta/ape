@@ -1,0 +1,122 @@
+excluded (overwritten in place): ['e6_07/e6_07/com.ds.avare_404.apk/com.ds.avare_404.apk__1__1800__aperv:e6_mop_on_llm_90.trace']
+# inputs: /home/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec-study03-replication-package/data/raw/e6-campaign/e6_0?/e6_0?/*/*__aperv:e6_mop_on_llm_90.trace
+files: 162; LLM calls with an answer: 130248; aligned: 130199; not aligned: 49
+
+## A. List composition (aligned calls, call-weighted)
+prompts 130199; entries 1104445 (mean 8.48/prompt); empty lists 0; distinct widgets 824982 (mean 6.34/prompt)
+list length distribution (bins of 10, 60=60+): {0: 83160, 10: 40179, 20: 5659, 30: 839, 40: 164, 50: 80, 60: 118}
+entries by action type: CLICK 736688 ( 66.7%), LONG_CLICK 141509 ( 12.8%), SCROLL 226248 ( 20.5%), other 0 (  0.0%)
+entries by widget category: clickable 883893 ( 80.0%), longclick_only 15578 (  1.4%), scroll_only 204974 ( 18.6%), nonode 0 (  0.0%), other 0 (  0.0%)
+widgets (with node) by category: clickable 734603 ( 89.0%), longclick_only 15575 (  1.9%), scroll_only 74804 (  9.1%), other 0 (  0.0%)
+duplicate lines (same bounds as an earlier entry): 279463 ( 25.3%); one-line-per-widget list = 824982 lines
+identical-text duplicate lines (same text after the prefix): 284375 ( 25.7%)
+container entries: 278887 ( 25.3%) by category: clickable 100497, longclick_only 1471, scroll_only 176919, other 0
+prompts with a scroll-only entry: 64824 ( 49.8%)
+prompts with a duplicate: 96595 ( 74.2%)
+prompts with a container: 72524 ( 55.7%)
+prompts with a long-click-only entry: 13076 ( 10.0%)
+
+## B. Character / token cost (aligned calls)
+mean chars: system 688, user 686, UI block 303 ( 44.2% of user,  22.1% of sys+user)
+  (1) scroll-only lines              mean    49.8 chars =  16.4% of block,   3.6% of sys+user
+  (2) duplicate lines (1/widget)     mean    78.1 chars =  25.7% of block,   5.7% of sys+user
+  (1)+(2) together                   mean    96.5 chars =  31.8% of block,   7.0% of sys+user
+  (4) container lines (upper bound)  mean    71.6 chars =  23.6% of block,   5.2% of sys+user
+  (5) 'N. ' prefixes                 mean    27.7 chars =   9.1% of block,   2.0% of sys+user
+tokens (portrait calls n=129871): mean tok_in 1329; OLS tok_in = 672 + 0.4782*chars (R^2 0.892; 2.09 chars/token)
+  => est. non-text (image + chat template) 672 tok ( 50.5%); text 657 tok ( 49.5%)
+  (1)      est.   23.8 tok/call =   1.8% of tok_in,   3.6% of text tokens
+  (2)      est.   37.3 tok/call =   2.8% of tok_in,   5.7% of text tokens
+  (1)+(2)  est.   46.1 tok/call =   3.5% of tok_in,   7.0% of text tokens
+  (4)      est.   34.3 tok/call =   2.6% of tok_in,   5.2% of text tokens
+  (5)      est.   13.2 tok/call =   1.0% of tok_in,   2.0% of text tokens
+all calls: mean tok_in 1329, mean tok_out 26.3
+
+## C. Model choice vs exposure (copied answers)
+answer kinds by tool: {('back', 'back'): 2013, ('click', 'copied'): 51569, ('click', 'history'): 39665, ('click', 'visual'): 32661, ('long_click', 'history'): 1, ('type_text', 'copied'): 1783, ('type_text', 'history'): 2216, ('type_text', 'visual'): 291}
+  tool=click: copied 51569; intended entry fits the tool: 45926 ( 89.1%)
+    category          observed   share   exp(line)  ratio   exp(widget)  ratio
+    clickable            45926  89.1%      40629   1.13       44815   1.02
+    longclick_only         577   1.1%        668   0.86         851   0.68
+    scroll_only           5066   9.8%      10272   0.49        5903   0.86
+    nonode                   0   0.0%          0   0.00           0   0.00
+    cont                  5867  11.4%      11832   0.50        7733   0.76
+    dupw                 14493  28.1%      21210   0.68       13854   1.05
+  tool=type_text: copied 1783; intended entry fits the tool: 1761 ( 98.8%)
+    category          observed   share   exp(line)  ratio   exp(widget)  ratio
+    clickable             1698  95.2%       1564   1.09        1628   1.04
+    longclick_only          66   3.7%         31   2.15          37   1.80
+    scroll_only             19   1.1%        189   0.10         118   0.16
+    nonode                   0   0.0%          0   0.00           0   0.00
+    cont                   327  18.3%        307   1.06         209   1.57
+    dupw                  1640  92.0%        967   1.70         691   2.37
+  position (first entry with the copied coordinate), n=53352: decile observed / expected(line)
+    d0:15517/13969  d1:3961/4267  d2:5418/5957  d3:3217/5040  d4:3162/3502  d5:5503/6014  d6:4719/5092  d7:4389/3995  d8:5463/4114  d9:2003/1402
+    first entry: observed 13483 ( 25.3%), expected 12393 ( 23.2%)
+
+## D. Results and outcomes by what was answered (all tools)
+  back       back                             calls   2013  matched 100.0%
+                                              executed 2013 (new_state 6/966 = 0.6%); exec type {'MODEL_BACK': 2013}
+  click      copied:clickable                 calls  43851  no_match/dead_pair 48.9%, matched 47.0%, llm_tap 3.0%, no_match/boundary 1.1%
+                                              executed 21951 (new_state 1699/21628 = 7.9%); exec type {'CLICK': 20629, 'MODEL_LLM_TAP': 1322}; vs intended {'llm_tap': 1322, 'other': 2838, 'parent': 1225, 'same': 16566}
+                                                llm_tap  new_state 42/1309 = 3.2%
+                                                other    new_state 175/2816 = 6.2%
+                                                parent   new_state 64/1214 = 5.3%
+                                                same     new_state 1418/16289 = 8.7%
+  click      copied:clickable+cont            calls   2075  matched 66.3%, no_match/dead_pair 27.8%, no_match/boundary 4.4%, llm_tap 1.5%
+                                              executed 1407 (new_state 89/1388 = 6.4%); exec type {'CLICK': 1375, 'MODEL_LLM_TAP': 32}; vs intended {'child': 180, 'llm_tap': 32, 'other': 137, 'parent': 9, 'same': 1049}
+                                                child    new_state 13/176 = 7.4%
+                                                llm_tap  new_state 0/32 = 0.0%
+                                                other    new_state 3/131 = 2.3%
+                                                same     new_state 73/1040 = 7.0%
+  click      copied:longclick_only            calls    546  llm_tap 44.5%, matched 38.8%, no_match/dead_pair 16.3%, no_match/boundary 0.4%
+                                              executed 455 (new_state 17/449 = 3.8%); exec type {'CLICK': 212, 'MODEL_LLM_TAP': 243}; vs intended {'llm_tap': 243, 'other': 209, 'parent': 3}
+                                                llm_tap  new_state 5/240 = 2.1%
+                                                other    new_state 12/206 = 5.8%
+  click      copied:longclick_only+cont       calls     31  matched 48.4%, llm_tap 41.9%, no_match/dead_pair 9.7%
+                                              executed 28 (new_state 1/28 = 3.6%); exec type {'CLICK': 15, 'MODEL_LLM_TAP': 13}; vs intended {'child': 4, 'llm_tap': 13, 'other': 11}
+  click      copied:scroll_only               calls   1305  no_match/dead_pair 71.3%, llm_tap 22.7%, matched 6.1%
+                                              executed 375 (new_state 6/371 = 1.6%); exec type {'CLICK': 79, 'MODEL_LLM_TAP': 296}; vs intended {'llm_tap': 296, 'other': 77, 'parent': 2}
+                                                llm_tap  new_state 4/293 = 1.4%
+                                                other    new_state 2/76 = 2.6%
+  click      copied:scroll_only+cont          calls   3761  no_match/dead_pair 45.9%, matched 28.2%, llm_tap 25.9%
+                                              executed 2036 (new_state 75/2021 = 3.7%); exec type {'CLICK': 1061, 'MODEL_LLM_TAP': 975}; vs intended {'child': 1027, 'llm_tap': 975, 'other': 27, 'parent': 7}
+                                                child    new_state 46/1018 = 4.5%
+                                                llm_tap  new_state 23/970 = 2.4%
+                                                other    new_state 0/26 = 0.0%
+  click      history                          calls  39665  matched 49.9%, no_match/dead_pair 38.8%, llm_tap 7.8%, no_match/boundary 3.5%, no_match/degenerate 0.0%
+                                              executed 22880 (new_state 616/22520 = 2.7%); exec type {'CLICK': 19791, 'MODEL_LLM_TAP': 3089}
+  click      visual                           calls  32661  no_match/dead_pair 39.4%, matched 36.1%, llm_tap 13.7%, no_match/boundary 10.8%
+                                              executed 16276 (new_state 1103/16045 = 6.9%); exec type {'CLICK': 11799, 'MODEL_LLM_TAP': 4477}
+  type_text  copied:clickable                 calls   1402  matched 73.8%, no_match/boundary 26.2%
+                                              executed 1035 (new_state 71/1026 = 6.9%); exec type {'CLICK': 1035}; vs intended {'other': 24, 'parent': 2, 'same': 1009}
+                                                other    new_state 2/24 = 8.3%
+                                                same     new_state 69/1000 = 6.9%
+  type_text  copied:clickable+cont            calls    296  matched 88.2%, no_match/boundary 11.8%
+                                              executed 261 (new_state 19/253 = 7.5%); exec type {'CLICK': 261}; vs intended {'other': 1, 'same': 260}
+                                                same     new_state 19/252 = 7.5%
+  type_text  copied:longclick_only            calls     54  matched 94.4%, no_match/boundary 5.6%
+                                              executed 51 (new_state 0/51 = 0.0%); exec type {'CLICK': 4, 'LONG_CLICK': 47}; vs intended {'other': 4, 'same': 47}
+                                                same     new_state 0/47 = 0.0%
+  type_text  history                          calls   2216  matched 96.2%, no_match/boundary 3.8%
+                                              executed 2131 (new_state 37/2095 = 1.8%); exec type {'CLICK': 2041, 'LONG_CLICK': 90}
+  type_text  visual                           calls    291  matched 82.5%, no_match/boundary 17.5%
+                                              executed 240 (new_state 13/238 = 5.5%); exec type {'CLICK': 210, 'LONG_CLICK': 30}
+  baseline steps by dec.src (resolved out): Budget 101/5623 = 1.8%, Coverage 1386/7514 = 18.4%, Form 47/493 = 9.5%, LLM 3765/69141 = 5.4%, MOP 143/850 = 16.8%, Menu 4/53 = 7.5%, SATA 2080/102722 = 2.0%, WTG 59/484 = 12.2%
+
+## F. Copied container entries: recorded result by tool / category
+  click      clickable       matched                1375
+  click      clickable       no_match/dead_pair     576
+  click      clickable       no_match/boundary      92
+  click      clickable       llm_tap                32
+  click      longclick_only  matched                15
+  click      longclick_only  llm_tap                13
+  click      longclick_only  no_match/dead_pair     3
+  click      scroll_only     no_match/dead_pair     1725
+  click      scroll_only     matched                1061
+  click      scroll_only     llm_tap                975
+  type_text  clickable       matched                261
+  type_text  clickable       no_match/boundary      35
+  type_text  longclick_only  matched                12
+  type_text  scroll_only     matched                16
+  type_text  scroll_only     no_match/boundary      3

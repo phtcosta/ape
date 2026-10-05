@@ -1,0 +1,13 @@
+# inputs: /home/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec-study03-replication-package/data/raw/e6-campaign/e6_0?/e6_0?/*/*__aperv:e6_mop_on_llm_90.trace ; files: 162
+aligned prompts 130199; lines 1104445
+  dup_bounds        279463  (25.3% of lines)
+  dup_same_name     274830  (24.9% of lines)
+  dup_other_name      4633  (0.4% of lines)
+  dup_name          292695  (26.5% of lines)
+  name repeated, different node (dup_name - dup_same_name): 17865
+  prompts with distinct nodes sharing bounds: 4434 (3.4%)
+visibility of listed nodes against the call's display (display unknown for 0 calls):
+  inside               lines  1022600 (92.6% of lines)  prompts  129659 (99.6%)
+  partial_centre_in    lines    55288 (5.0% of lines)  prompts   16976 (13.0%)
+  partial_centre_out   lines     3477 (0.3% of lines)  prompts    2723 (2.1%)
+  offscreen            lines    23080 (2.1% of lines)  prompts    5056 (3.9%)
