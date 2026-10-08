@@ -1,0 +1,12 @@
+excluded (overwritten in place): []
+# inputs: /home/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec/rv-android/data/results/e5bm1_*/e5bm1_*/*/*e5b_m1_v13_A.trace
+files: 60; prompts: 9586; with a Recent: history: 9530
+node-action history entries (click/long_click with a class): 40859
+  full package class: 40859 (100.0%); prompts showing one: 9474 (98.8%)
+  without text: 22420 (54.9%); prompts showing one: 7490 (78.1%)
+  text-less entries matched to a line of the same prompt's list (lower bound):
+    list shows text/content-description: 1551; prompts: 1015 (10.6%)
+    list shows id=: 1382
+    list shows no identifier: 6660
+    unmatched (dialog, popup, widget gone, base other than full window): 12827
+type_text entries (no class, no widget text): 991; prompts showing one: 760 (7.9%)

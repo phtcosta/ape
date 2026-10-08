@@ -9,6 +9,58 @@ Sources: rv-android `docs/20261005_gator_fragments_compose_guia_teste.md` (the p
 §5).
 
 Nothing here changes code, specs or the decided order (C0 → 7.5 → 7.1 expanded → GATOR change).
+
+## 0. Update, 2026-10-07 (evening)
+
+The GATOR side moved during the day; the rest of this document was written in the morning and is
+corrected below where it no longer holds. Sources: rv-android `docs/20261007_experimentos_gator_status.md`,
+`docs/20261007_gh120_verificacao_final.md`, commits `c1203805`, `c9a43d98` (gh120) and `b7abcd6a`,
+`c054038a` (gh121) [verified in the git log and the archived change].
+
+- **C0 is done** (exclusions had no effect; the `-exclude`s were removed, author 12:40) and **7.5 has a
+  verdict** (12:45): distance per target, the lambda wrapper → body edge, and the boundary target B
+  enter.
+- **gh120 (GATOR) is implemented and archived** (`c9a43d98`). The `.apk.json` carries the target list,
+  per-method distances (`distanceTargets`, `targetDistances`), the boundary set, and `FRAGMENT`/`HOSTED`
+  windows, written before the WTG. Its derive change is limited to INV-DRV-09 (a listed D8 wrapper keeps
+  its own flags; only an unlisted one goes to the class recovery). It does **not** carry distances into
+  the compact artifact: `derive_mop_artifact.py:69` and `MopData.java:149` are both still at format 1, and
+  the gh120 proposal lists the APE-RV consumer as "not affected" [verified].
+- **gh121 (handler stamp) is implemented** (`b7abcd6a`, behind `--stamp-handlers`, View and Compose) and
+  its device smoke passed: the `rvsec.*` extras reach a `UiAutomation` client, 58 paired nodes (49 View,
+  9 Compose), 0 divergences (`c054038a`). Four close-out tasks remain (10.3–10.6). The jar reads no
+  extras yet (`GUITreeBuilder` has no `getExtras` call) [verified].
+- **Consequence for W3 and W4.** Neither waits on the GATOR any more. What W3 needs is the derive
+  (distances and a handler-class table in the compact artifact, `FORMAT_VERSION` 1 → 2) and the APE-RV
+  consumer (format 2 in `MopData`, scoring and launcher by distance, the prompt marker). The stamp gives
+  Compose nodes their handler class on device, so W4 as a separate "bind channel" is largely subsumed by
+  the APE-RV consumer of the stamp; whether the distances reach the Compose lambdas, and whether GATOR
+  finishes on Compose-only APKs (openbible hit 1,800 s even with `--skip-wtg`), is not measured.
+- **New sync gap.** The `ape` main spec `static-analysis-entrypoints/spec.md:196` requires `executeButton`
+  to be flagged "only through the D8 recovery" on the cryptoapp fixture. Under INV-DRV-09 a listed
+  wrapper with `reachesTarget=false` is no longer recovered, and with the gh120 lambda edge the wrapper
+  reaches on its own; the scenario no longer describes the derive (see §3.1, wrapper bullet). Not changed
+  here.
+- **Later the same evening the author folded W1 and W3 into W2** instead of opening more changes:
+  `llm-coordinate-single-base` now has a Part A (the LLM prompt repairs, D1–D14) and a Part B (the
+  MOP-guidance consumer, design D15–D23): derive format 2 (contract here; the generator in rv-android
+  under its own issue and quick-path change `gh<N>`, not yet opened), the handler stamp read in
+  `GUITreeBuilder.fillNode`, one lookup (stamp, then id key), `ape.mopScoring=flag|distance` (default
+  `flag`, the E6 mark), retirement (N = 3), the launcher ordered by distance as a rotation, the
+  ordered shortcut (decision 9, both modes), the per-line prompt marker, and distance telemetry.
+  Decision 10 takes the plan's values (K = 3, D_max = 6, N = 3, 500/400/300, 0 from d = 4), with two
+  author changes: an activity's own `<init>`/`<clinit>` are left out of `activityDist`, and a tie
+  at the state's best distance gets `max(W/n, W_next)`. B weighs as C. W4 is covered by the stamp
+  reader of Part B, with Compose coverage still unmeasured. Part B can run only on artifacts derived
+  from gh120 `.apk.json` files (the night analysis of the 163 APKs) [verified in the change's
+  artifacts; `openspec validate --strict` passes].
+- **W2** now carries D1–D14 with D10 (one line per widget in the `v13`/`v17` lists, an improvement the
+  author confirmed on 2026-10-07; grouping by (target `Name`, resolved bounds)); 50 tasks, valid. Of the
+  four points of verification §7.1, three landed (191 → 174 + 17; the identity proxy, now moot; "1.2 to
+  2.3 per run"); the fourth, INV-PRM-03, is now amended in the delta's `## Invariants`. Its design records
+  that the prompt's MOP marker must get a rule per line when the distance and the stamp reach APE-RV
+  (D10; Risks).
+
 It records the state of the APE-RV work and the facts verified on 2026-10-07. Every fact is tagged
 **[verified]** (checked in code, specs, fixture or trace by this session) or **[relayed]** (taken
 from the documents or from session memory, not rechecked).
@@ -17,13 +69,13 @@ from the documents or from session memory, not rechecked).
 
 | # | Change | Depends on | Specs |
 |---|---|---|---|
-| W1 | Ordered MOP shortcut (decision 9): at both deterministic MOP sites, rank candidates first by "not yet interacted in this activity" (`UICoverageTracker.hasActivityInteraction`), then by the MOP boost; keep the cap of 3 | nothing on the GATOR side | `action-selection`; `event-sink` only if a field is added |
-| W2 | `llm-coordinate-single-base` (D1–D12) | nothing on the GATOR side | `llm-prompt`, `llm-infrastructure`, `llm-routing`, `exploration`, `run-spec` |
-| W3 | Distance consumer (plan §6.7): `formatVersion` 1 → 2, per-widget/per-activity `[[i,d],…]`, distance scoring replacing +500/+300, retirement counters, launcher ordered by distance | C0 → 7.5; decision 10; the INV-DRV-06 amendment | `mop-guidance`, `static-analysis-entrypoints`, `action-selection`, `component-triggering`, `event-sink`, `llm-prompt` |
-| W4 | Compose / widget-bind channel on device | C0 → E2; bind direction after 7.5; INV-RUN-06 | not designed |
+| W1 | *(folded into W2, Part B D21, 2026-10-07 evening)* Ordered MOP shortcut (decision 9): at both deterministic MOP sites, rank candidates first by "not yet interacted in this activity" (`UICoverageTracker.hasActivityInteraction`), then by the MOP boost; keep the cap of 3 | nothing on the GATOR side | `action-selection`; `event-sink` only if a field is added |
+| W2 | `llm-coordinate-single-base` (D1–D14, with D10 confirmed; §0) | nothing on the GATOR side | `llm-prompt`, `llm-infrastructure`, `llm-routing`, `exploration`, `run-spec` |
+| W3 | *(folded into W2, Part B D15–D20, D22–D23, 2026-10-07 evening)* Distance consumer (plan §6.7): `formatVersion` 1 → 2, per-widget/per-activity `[[i,d],…]`, distance scoring replacing +500/+300, retirement counters, launcher ordered by distance | ~~C0 → 7.5~~ (done, §0); the derive to format 2; decision 10; the INV-DRV-06 amendment | `mop-guidance`, `static-analysis-entrypoints`, `action-selection`, `component-triggering`, `event-sink`, `llm-prompt` |
+| W4 | Compose / widget-bind channel on device | ~~C0 → E2; bind direction after 7.5~~; largely subsumed by the stamp consumer (§0); INV-RUN-06 | not designed |
 
 Proposed jar order (verification §7.2): W2 → W1 → W3. Which change goes into which jar, and which
-comparisons are primary, is still open (verification §8, open item 3).
+comparisons are primary, is still open (verification §8, open item 3). *Evening: W1 and W3 are in W2, so they share one jar; Part B keeps the E6 mark selectable (`ape.mopScoring=flag`) so that one jar can run both the "E6 mark + ordered shortcut" arm and the "distance + ordered shortcut" arm (§0).*
 
 ### 1.1 W1: what the code does today
 
@@ -72,7 +124,7 @@ comparisons are primary, is still open (verification §8, open item 3).
 
 `openspec validate llm-coordinate-single-base --strict` passes; 0/48 tasks [verified, 2026-10-07].
 Not scheduled. Whether the four repairs of verification §7.1 all landed in `a695709e` was not
-rechecked.
+rechecked. *Superseded in the evening: 0/50 tasks, and three of the four had landed; see §0.*
 
 ## 2. Out of scope
 
@@ -140,12 +192,12 @@ component otherwise) [verified]; fail-fast when a MOP arm's artifact does not lo
 
 | Change | Can open now? | What blocks it |
 |---|---|---|
-| W2 | yes; artifacts complete and valid | the author's scheduling and the jar-composition decision |
-| W1 | yes; no machine needed | the author's release (06/10: no change opened) and open question 1 |
-| W3 | no | C0 → 7.5; decision 10; INV-DRV-06 amendment |
-| W4 | no | C0 → E2; bind direction after 7.5; INV-RUN-06 |
+| W2 (now with W1, W3) | yes; artifacts complete and valid (Part A + Part B) | Part A: the author's scheduling. Part B: the gh120 analysis of every APK, and the rv-android `gh<N>` producing format 2 |
+| W1 | folded into W2 (§0) | open question 1 (capped key in the least-visited tiebreak) is still unanswered |
+| W3 | folded into W2 (§0) | the derive to format 2 (rv-android `gh<N>`); decision 10 and the INV-DRV-06 amendment are now written in W2 |
+| W4 | folded into the stamp consumer (§0) | the stamp consumer; Compose coverage of the distances unmeasured |
 
-**Recommendation:** release only the opening of W1, artifacts only. It would carry the cap-leak
+*Superseded in the evening (§0): W1 and W3 were folded into W2.* **Recommendation (morning):** release only the opening of W1, artifacts only. It would carry the cap-leak
 analysis in detail (as decided), the answer to open question 1, the step-0 spec repair, and a
 comparator whose secondary key can move from `mopBoost` to the distance score. Its first task: an
 offline E6 replay that sizes how often the new order changes the pick (§1.1).

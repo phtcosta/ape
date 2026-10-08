@@ -8,6 +8,8 @@ This delta moves the normalization out of the agent. The entry carries the execu
 
 The entry's result also moves to the action it describes. `recordActionHistory` runs right after the next action is selected, before it is dispatched, and it stored in that action's entry the comparison of `newState` with `_lastState` (`StatefulAgent.java:828-829, 850-853, 1848-1854`): the outcome of the action before, since `newState` is the screen the previous action produced. No later step corrected it. Every entry therefore showed its predecessor's outcome, and the most recent action's own outcome appeared nowhere: after a click that opened a new screen and a click that did nothing, the prompt read `→ new screen` for both. This requirement has said since gh6 that the entry is appended after its action executes, and its scenarios pair a click with that click's outcome; the code never did. The comparison is unchanged. The entry is appended without a result when its action is selected, and the next state update fills the result before any prompt is built (design D12).
 
+The entry's class and text also come to match the field table, which they never did. The table has said since gh6 that `widgetClass` is the class simple name and `widgetText` the widget's text or content-description. The code stores `node.getClassName()`, the full name, and `node.getText()` only (`StatefulAgent.java:1825-1826`). In E6 arm 4 all 555,981 node-action entries carried the full name, and 55.2 % carried no text (`evidence/history_fields_e6.out`). The scenario "Action history populated after action" has asked for `widgetClass="Button"` all along. The fields are now produced by the element list's own helpers, so a widget is named once, in one way (design D13).
+
 ## MODIFIED Requirements
 
 ### Requirement: StatefulAgent — Action History Ring Buffer
@@ -28,6 +30,8 @@ The entry's result also moves to the action it describes. `recordActionHistory` 
 `StatefulAgent` SHALL NOT normalize and SHALL NOT read `AndroidDevice.getDisplayBounds()` for the history. `ApePromptBuilder` derives the displayed coordinate at build time (the centre of the bounds' part inside the display) with the dimensions the decision was captured at (`llm-prompt` "Action History"), so the list and the history of one prompt share one base.
 
 An action with no resolved node SHALL record what ran: a `MODEL_LLM_TAP` records `click`, or `long_click` when `LlmTapAction.isLongClick()` is true, with the one-pixel rectangle at the tap's own pixel, and no class or text; a `MODEL_MENU` press records `menu` with no bounds. A node action whose bounds cannot be read records null bounds, never a `(0,0)` placeholder.
+
+For a node action, `widgetClass` SHALL be produced by the helper the element list uses for the class simple name, and `widgetText` by the text-then-content-description steps of the list's identifier fallback (`llm-prompt` "Widget List Generation", INV-PRM-05), not by reading `getClassName()` or `getText()` directly. The list's `id=<shortId>` step is not applied (`pending.md` P2).
 
 **Result determination**: In `updateStateInternal()`, after the new state is resolved and `_lastState`/`_stateBeforeLast` have moved, and before `resolveNewAction()` runs, the last entry of the buffer, if its result is still empty, receives the outcome of its action. At that point `newState` is the screen that action produced, `_lastState` the state it was taken from, and `_stateBeforeLast` the state before that:
 - If `newState == _lastState` → `"same"`
@@ -83,5 +87,9 @@ The buffer is passed to `ApePromptBuilder.build()` via `LlmEngine.selectAction()
 #### Scenario: menu press recorded as menu
 - **WHEN** a `MODEL_MENU` action is selected
 - **THEN** the entry SHALL carry `actionType="menu"`, no bounds and no widget class
+
+#### Scenario: icon with only a content-description
+- **WHEN** a click is selected on a node of class `android.widget.ImageButton` with empty text and content-description `"Settings"`
+- **THEN** the entry SHALL carry `widgetClass="ImageButton"` and `widgetText="Settings"`
 
 ---
