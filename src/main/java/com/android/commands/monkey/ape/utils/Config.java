@@ -183,18 +183,22 @@ public class Config {
     // carry. Wiring it means deriving the fact host-side first.
     public static final double llmPercentageNoSubstrate =
             clampLlmPercentageNoSubstrate(Config.getDouble("ape.llmPercentageNoSubstrate", -1.0));
-    // llm-native-toolcall-repair J1b/J1c: four previously hard-coded LLM values exposed as config keys
-    // with defaults reproducing the prior behavior bit-for-bit (INV-RTR-14). No clamping (researcher-
-    // facing knobs, like llmTimeoutMs/llmTopK); the B1 arm runs all four at defaults so the experimental
-    // contrast isolates the J1a parser fix. Exposure exists only so a future probe needs no jar rebuild.
-    //   llmMaxTokens         — max_tokens for the chat request; not causal for truncation (tokens_out ≈ 25).
-    //   llmSnapTolerancePx   — floor of the euclidean snap tolerance max(floor, min(w,h)/2) in mapToModelAction.
-    //   llmBoundaryTopPct    — top boundary reject band as a fraction of screen height.
-    //   llmBoundaryBottomPct — bottom boundary reject band as a fraction of screen height.
+    // llm-native-toolcall-repair J1b/J1c: previously hard-coded LLM values exposed as config keys. No
+    // clamping (researcher-facing knobs, like llmTimeoutMs/llmTopK). Exposure exists only so a future
+    // probe needs no jar rebuild. Three keys remain:
+    //   llmMaxTokens       — max_tokens for the chat request; not causal for truncation (tokens_out ≈ 25).
+    //                        Default reproduces the prior hard-coded value.
+    //   llmSnapTolerancePx — floor of the euclidean snap tolerance max(floor, min(w,h)/2) in mapToModelAction.
+    //                        Default reproduces the prior hard-coded value.
+    //   llmBoundaryTopPct  — the status-bar boundary reject band as a fraction of the display height
+    //                        (llm-routing INV-RTR-22): 0.035 is the campaign AVD's 63 px status bar over
+    //                        its 1794 px display. There is no bottom band (KeyOwnership.RETIRED): the
+    //                        display excludes the navigation bar.
+    // These fields are not read at runtime: the effective default is KeyOwnership's, through
+    // KeyOwnership.defaultOf, and KeyOwnershipTotalityTest keeps the two equal.
     public static final int llmMaxTokens = Config.getInteger("ape.llmMaxTokens", 1024);
     public static final int llmSnapTolerancePx = Config.getInteger("ape.llmSnapTolerancePx", 50);
-    public static final double llmBoundaryTopPct = Config.getDouble("ape.llmBoundaryTopPct", 0.05);
-    public static final double llmBoundaryBottomPct = Config.getDouble("ape.llmBoundaryBottomPct", 0.94);
+    public static final double llmBoundaryTopPct = Config.getDouble("ape.llmBoundaryTopPct", 0.035);
 
     // gh9-exploration-refactor: UI coverage, activity budget, WTG, dynamic epsilon, heuristic input.
     public static final int coverageBoostWeight = Config.getInteger("ape.coverageBoostWeight", 100);

@@ -41,6 +41,7 @@ import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.GraphListener;
+import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.Model;
 import com.android.commands.monkey.ape.model.Model.RecoveryPoint;
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -827,6 +828,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         preEvolveModel();
         _stateBeforeLast = _lastState;
         _lastState = currentState;
+        fillLastHistoryResult();
         _isNewState = (newState.getVisitedCount() == 0);
         getGraph().markVisited(newState, getTimestamp());
         saveGUI();
@@ -1790,8 +1792,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     protected abstract Action selectNewActionNonnull();
 
     /**
-     * Records the most recently executed action into the LLM action history ring buffer (max 5 entries).
-     * Called after resolveNewAction() when the action is a ModelAction.
+     * Records the action just selected into the LLM action history ring buffer (max 5 entries),
+     * with an empty result: the action has not run yet. Called after resolveNewAction() when the
+     * action is a ModelAction; {@link #fillLastHistoryResult} fills the result at the next update.
+     *
+     * <p>The entry carries the executed widget's pixel bounds, never a normalized pair: the prompt
+     * builder normalizes them with the dimensions of the decision that shows them, the same call
+     * that renders the element list (llm-prompt INV-PRM-06). An action with no resolved node records
+     * what ran: an off-tree LLM tap at its own pixel, a menu press as {@code menu}.
      */
     protected void recordActionHistory(ModelAction action) {
         // The ring buffer feeds the LLM prompt and nothing else, so a run with no LLM would fill it
@@ -1802,7 +1810,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         }
         try {
             String actionType = "click";
-            if (action.getType() != null) {
+            String widgetClass = null;
+            String widgetText = null;
+            Rect bounds = null;
+            String typedText = null;
+            if (action instanceof LlmTapAction) {
+                LlmTapAction tap = (LlmTapAction) action;
+                actionType = tap.isLongClick() ? "long_click" : "click";
+                // The one-pixel rectangle at the tap's own pixel, whose visible centre is the pixel
+                bounds = new Rect(tap.getPixelX(), tap.getPixelY(),
+                        tap.getPixelX() + 1, tap.getPixelY() + 1);
+            } else if (action.getType() != null) {
                 switch (action.getType()) {
                     case MODEL_LONG_CLICK:
                         actionType = "long_click";
@@ -1810,33 +1828,21 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                     case MODEL_BACK:
                         actionType = "back";
                         break;
+                    case MODEL_MENU:
+                        actionType = "menu";
+                        break;
                     default:
                         actionType = "click";
                         break;
                 }
             }
-            String widgetClass = null;
-            String widgetText = null;
-            int normX = 0;
-            int normY = 0;
-            String typedText = null;
-            com.android.commands.monkey.ape.tree.GUITreeNode node = action.getResolvedNode();
+            GUITreeNode node = action.getResolvedNode();
             if (node != null) {
-                try { widgetClass = node.getClassName(); } catch (Exception ignored) {}
-                try { widgetText = node.getText(); } catch (Exception ignored) {}
-                try {
-                    android.graphics.Rect bounds = node.getBoundsInScreen();
-                    if (bounds != null) {
-                        int cx = (bounds.left + bounds.right) / 2;
-                        int cy = (bounds.top + bounds.bottom) / 2;
-                        // Normalize to [0, 1000)
-                        android.graphics.Rect display = com.android.commands.monkey.ape.AndroidDevice.getDisplayBounds();
-                        int w = display != null && display.right > 0 ? display.right : 1080;
-                        int h = display != null && display.bottom > 0 ? display.bottom : 1920;
-                        normX = (int)((cx * 1000.0) / w);
-                        normY = (int)((cy * 1000.0) / h);
-                    }
-                } catch (Exception ignored) {}
+                // Named as the element list names it (design D13): one definition per field
+                widgetClass = ApePromptBuilder.simpleClassName(node);
+                widgetText = ApePromptBuilder.textOrContentDescription(node);
+                // The entry keeps its own copy of the Rect; a throwing read records null bounds
+                try { bounds = node.getBoundsInScreen(); } catch (Exception ignored) {}
                 try {
                     typedText = node.getInputText();
                     if (typedText != null && !typedText.isEmpty()) {
@@ -1844,16 +1850,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                     }
                 } catch (Exception ignored) {}
             }
-            String result;
-            if (newState != null && _lastState != null && newState.equals(_lastState)) {
-                result = "same";
-            } else if (newState != null && _stateBeforeLast != null && newState.equals(_stateBeforeLast)) {
-                result = "previous screen";
-            } else {
-                result = "new screen";
-            }
             ApePromptBuilder.ActionHistoryEntry entry = new ApePromptBuilder.ActionHistoryEntry(
-                    actionType, widgetClass, widgetText, normX, normY, typedText, result);
+                    actionType, widgetClass, widgetText, bounds, typedText, "");
             _actionHistory.add(entry);
             if (_actionHistory.size() > 5) {
                 _actionHistory.remove(0);
@@ -1861,6 +1859,57 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         } catch (Exception e) {
             Logger.println("[APE-RV] recordActionHistory error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Gives the last history entry the outcome of its own action (design D12). Called by
+     * updateStateInternal once the new state is resolved and {@code _lastState}/{@code
+     * _stateBeforeLast} have moved, and before resolveNewAction() runs any LLM stage. At that point
+     * {@code newState} is the screen the entry's action produced, {@code _lastState} the state it was
+     * taken from, and {@code _stateBeforeLast} the state before that.
+     *
+     * <p>A filled result is never overwritten: a step that selected no model action appended
+     * nothing, so the next update finds the last entry filled and leaves it alone. The entry is
+     * immutable and is replaced by a copy carrying the result.
+     */
+    protected void fillLastHistoryResult() {
+        if (_actionHistory == null || _actionHistory.isEmpty()) {
+            return;
+        }
+        int last = _actionHistory.size() - 1;
+        ApePromptBuilder.ActionHistoryEntry entry = _actionHistory.get(last);
+        if (!entry.result.isEmpty()) {
+            return;
+        }
+        String result;
+        if (newState != null && _lastState != null && newState.equals(_lastState)) {
+            result = "same";
+        } else if (newState != null && _stateBeforeLast != null && newState.equals(_stateBeforeLast)) {
+            result = "previous screen";
+        } else {
+            result = "new screen";
+        }
+        _actionHistory.set(last, entry.withResult(result));
+    }
+
+    /**
+     * A model action the restart check replaces is never dispatched, so the entry
+     * updateStateInternal recorded for it is removed rather than filled with the restart's outcome
+     * (design D12). The entry is the last one with an empty result: the update fills every earlier
+     * entry before resolveNewAction runs, so a recording that failed, or a run without the LLM,
+     * leaves nothing to remove. The other startNewEpisode callers do not come through here.
+     */
+    @Override
+    protected Action checkRestart(Action origin) {
+        Action action = super.checkRestart(origin);
+        if (action != origin && origin.isModelAction() && _actionHistory != null
+                && !_actionHistory.isEmpty()) {
+            int last = _actionHistory.size() - 1;
+            if (_actionHistory.get(last).result.isEmpty()) {
+                _actionHistory.remove(last);
+            }
+        }
+        return action;
     }
 
     /**

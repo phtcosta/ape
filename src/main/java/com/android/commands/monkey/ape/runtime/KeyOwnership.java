@@ -213,8 +213,7 @@ public final class KeyOwnership {
         feature(Feature.LLM, "ape.llmPromptVariant", ValueType.STRING, "ape_current");
         feature(Feature.LLM, "ape.llmMaxTokens", ValueType.INT, "1024");
         feature(Feature.LLM, "ape.llmSnapTolerancePx", ValueType.INT, "50");
-        feature(Feature.LLM, "ape.llmBoundaryTopPct", ValueType.DOUBLE, "0.05");
-        feature(Feature.LLM, "ape.llmBoundaryBottomPct", ValueType.DOUBLE, "0.94");
+        feature(Feature.LLM, "ape.llmBoundaryTopPct", ValueType.DOUBLE, "0.035");
 
         feature(Feature.LLM_NEW_STATE, "ape.llmOnNewState", ValueType.BOOLEAN, "true");
         feature(Feature.LLM_STAGNATION, "ape.llmOnStagnation", ValueType.BOOLEAN, "true");
@@ -276,6 +275,10 @@ public final class KeyOwnership {
                 "dead since mop-fairtest: the weight it named was deleted from the scorer. Use "
                         + "ape.mopWeightOpenMenu, or the frontier weights, to steer toward "
                         + "activities.");
+        RETIRED.put("ape.llmBoundaryBottomPct",
+                "the answer is mapped on the display, which excludes the navigation bar, so a bottom "
+                        + "band only rejected app content (llm-coordinate-single-base). "
+                        + "ape.llmBoundaryTopPct, the status bar, is the only boundary band.");
         RETIRED.put("ape.agentType",
                 "the agent type is a command-line value (--ape sata|random|replay). Accepting it "
                         + "from a file let a stray /sdcard/ape.properties change the agent of a "

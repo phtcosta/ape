@@ -93,4 +93,46 @@ public class CoordinateNormalizerTest {
         assertTrue("pixelX must be within device width", result[0] >= 0 && result[0] < 1080);
         assertTrue("pixelY must be within device height", result[1] >= 0 && result[1] < 1920);
     }
+
+    // ---------------------------------------------------------------------------
+    // Forward conversion: toNormalized (pixel -> [0, 1000)), INV-LLM-13
+    // ---------------------------------------------------------------------------
+
+    /** Scenario "forward conversion on the campaign display". */
+    @Test
+    public void toNormalizedOnCampaignDisplay() {
+        int[] result = CoordinateNormalizer.toNormalized(540, 178, 1080, 1794);
+        assertArrayEquals(new int[]{500, 99}, result);
+    }
+
+    /** Scenario "forward conversion clamps a pixel past the display edge". */
+    @Test
+    public void toNormalizedClampsPastDisplayEdge() {
+        int[] result = CoordinateNormalizer.toNormalized(1080, 1857, 1080, 1794);
+        assertArrayEquals(new int[]{999, 999}, result);
+    }
+
+    @Test
+    public void toNormalizedClampsNegativePixelToZero() {
+        int[] result = CoordinateNormalizer.toNormalized(-5, -1, 1080, 1794);
+        assertArrayEquals(new int[]{0, 0}, result);
+    }
+
+    /**
+     * INV-LLM-13: for every dimension d and every pixel 0 <= p < d, the round trip
+     * normalize(toNormalized(p)) on one axis lies in [p - 2, p], on both axes.
+     */
+    @Test
+    public void roundTripStaysWithinTwoPixelsTowardOrigin() {
+        for (int d : new int[]{1080, 1794, 1920, 1999}) {
+            for (int p = 0; p < d; p++) {
+                int nx = CoordinateNormalizer.toNormalized(p, 0, d, 1794)[0];
+                int qx = CoordinateNormalizer.normalize(nx, 0, d, 1794)[0];
+                assertTrue("x d=" + d + " p=" + p + " q=" + qx, qx >= p - 2 && qx <= p);
+                int ny = CoordinateNormalizer.toNormalized(0, p, 1080, d)[1];
+                int qy = CoordinateNormalizer.normalize(0, ny, 1080, d)[1];
+                assertTrue("y d=" + d + " p=" + p + " q=" + qy, qy >= p - 2 && qy <= p);
+            }
+        }
+    }
 }

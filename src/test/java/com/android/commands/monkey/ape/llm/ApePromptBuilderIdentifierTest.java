@@ -57,7 +57,7 @@ public class ApePromptBuilderIdentifierTest {
     /** The element list as the model receives it. */
     private static String userText(List<ModelAction> actions) {
         List<SglangClient.ContentPart> parts = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                .build(null, null, actions, null, "data", null).get(1).getContentParts();
+                .build(1080, 1920, null, actions, null, "data", null).get(1).getContentParts();
         for (SglangClient.ContentPart part : parts) {
             if ("text".equals(part.getType())) return part.getText();
         }
@@ -116,5 +116,26 @@ public class ApePromptBuilderIdentifierTest {
     public void resourceIdWithoutTheIdSegmentYieldsNoIdentifier() {
         // extractShortId only recognizes the ":id/" form; anything else is not an identifier.
         assertTrue(userText(imageView(null, null, "com.example.something")).contains("ImageView \"\""));
+    }
+
+    /**
+     * llm-coordinate-single-base D13: the identifier composes {@code textOrContentDescription}, which
+     * the history shares, with the {@code id=<shortId>} step, which only the list applies. The
+     * list's identifier is unchanged by the split: text, else content-description, else id.
+     */
+    @Test
+    public void historyHelperIsTheIdentifierWithoutItsResourceIdStep() {
+        List<ModelAction> all = imageView("Encrypt", "Encrypt button", "com.example:id/fab_encrypt");
+        List<ModelAction> cd = imageView(null, "Add\naccount", "com.example:id/fab_add");
+        List<ModelAction> id = imageView(null, null, "com.example:id/fab_add");
+
+        assertEquals("Encrypt", ApePromptBuilder.textOrContentDescription(all.get(0).getResolvedNode()));
+        assertEquals("Add account", ApePromptBuilder.textOrContentDescription(cd.get(0).getResolvedNode()));
+        assertEquals("", ApePromptBuilder.textOrContentDescription(id.get(0).getResolvedNode()));
+        assertEquals("ImageView", ApePromptBuilder.simpleClassName(id.get(0).getResolvedNode()));
+
+        assertTrue(userText(all).contains("ImageView \"Encrypt\" @("));
+        assertTrue(userText(cd).contains("ImageView \"Add account\" @("));
+        assertTrue(userText(id).contains("ImageView \"id=fab_add\" @("));
     }
 }

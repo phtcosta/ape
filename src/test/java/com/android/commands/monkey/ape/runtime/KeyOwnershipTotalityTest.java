@@ -164,6 +164,18 @@ public class KeyOwnershipTotalityTest {
                 Collections.emptyList(), mismatches);
     }
 
+    /**
+     * The LLM feature's neutral value of the status-bar band is its default, 0.035. No test compares
+     * {@code Feature.own} with the table in general, so this pins the band in the table and in the
+     * feature; {@code ConfigTest} pins the {@code Config} field.
+     */
+    @Test
+    public void theTopBandsNeutralValueIsItsDefault() {
+        String key = "ape.llmBoundaryTopPct";
+        assertEquals(0.035, (Double) KeyOwnership.typeOf(key).parse(key, KeyOwnership.defaultOf(key)), 1e-9);
+        assertEquals(0.035, (Double) KeyOwnership.typeOf(key).parse(key, Feature.LLM.neutralValue(key)), 1e-9);
+    }
+
     @Test
     public void theResolverOwnsExactlyPresetRunIdAndCorpusBasis() {
         assertEquals(new LinkedHashSet<>(java.util.Arrays.asList(
@@ -177,7 +189,8 @@ public class KeyOwnershipTotalityTest {
         Set<String> expected = new LinkedHashSet<>(java.util.Arrays.asList(
                 "ape.apePureMode", "ape.modelFile", "ape.saveObjModel", "ape.saveDotGraph",
                 "ape.saveVisGraph", "ape.saveStates", "ape.enableXPathAction",
-                "ape.mopWeightActivity", "ape.agentType", "ape.replayLog"));
+                "ape.mopWeightActivity", "ape.agentType", "ape.replayLog",
+                "ape.llmBoundaryBottomPct"));
         assertEquals(expected, KeyOwnership.retiredKeys());
         for (String key : expected) {
             String reason = KeyOwnership.retiredReason(key);

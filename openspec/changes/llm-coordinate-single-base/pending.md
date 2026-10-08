@@ -1,6 +1,6 @@
 # Pending improvements: llm-coordinate-single-base
 
-**Status: P1 confirmed and moved back into the change (2026-10-07); P2 and P3 pending the author's confirmation.** No requirement of a pending item is in `specs/`, and no task of one is in `tasks.md`. `openspec archive` does not read this file. Each item has to be moved back into the artifacts on purpose before it is implemented.
+**Status: P1 confirmed and moved back into the change (2026-10-07); P2 and P3 pending the author's confirmation; P4 recorded from the code review on 2026-10-08, pending.** No requirement of a pending item is in `specs/`, and no task of one is in `tasks.md`. `openspec archive` does not read this file. Each item has to be moved back into the artifacts on purpose before it is implemented.
 
 The split was decided by the author on 2026-10-07:
 
@@ -46,6 +46,18 @@ The verbatim requirement and tasks that were kept here are superseded by those a
 **Size.** `type_text` entries appear in 8.8 % of E6 prompts (15,385 entries) and 7.9 % of E5b prompts (991) (`evidence/history_fields_e6.out`, `evidence/history_fields_e5b.out`).
 
 **Artifacts it would touch.** `llm-prompt` "Action History": the `type_text` format line and its scenario. `exploration` delta: the `widgetClass` and `widgetText` rows, which today say nothing about `type_text`. Tasks 3.3 and 3.5.
+
+## P4. Text typed by SATA is recorded as `click`
+
+**Found by** the code review of task 8.6 (NT-02, 2026-10-08). Recorded here by the author's decision, not implemented.
+
+**What happens.** `recordActionHistory` reads `node.getInputText()` to tell a `type_text` from a `click` (`StatefulAgent.recordActionHistory`). It runs inside `updateStateInternal`, but the text of a SATA-selected input action is set later, by `ApeAgent.checkInput` (`ApeAgent.java:187-204`), which `updateStateWrapper` applies to the action `updateStateInternal` returns (`:362`). At recording time the node has no text yet, so the entry reads `click EditText "Email"` while `MonkeySourceApe` types into the field after the click (`MonkeySourceApe.java:921`). The same holds for an LLM click that `fixTextEdit` turns into a text entry: its text also comes from `checkInput`. Only an LLM `type_text` answer is recorded as `type_text`, because `LlmEngine.applyTypedText` sets the text before the record (`LlmEngine.java:286`). The behavior predates this change.
+
+**Repair or improvement.** By the rule of this change, a **repair**: the `exploration` field table defines `type_text` as an action whose `typedText` is "the text that was typed", and the history of a SATA input action says only that a click happened, omitting the text the screen now shows. It is kept out of this change because the author chose to record it, not because it is an improvement.
+
+**Size.** Not measured. `evidence/history_fields_e6.out` counts the `type_text` entries the trace shows (15,385 in E6), which are the LLM's; the SATA input actions recorded as `click` are not separated there.
+
+**Fix, if confirmed.** Read the typed text after `checkInput`: for example, `StatefulAgent` overrides `checkInput` as it overrides `checkRestart` for WR-01 (design D12), and when the action it returns is the one recorded at this step (last entry, empty result) and its node now carries input text, replaces that entry by a `type_text` copy with `typedText`. **Artifacts it would touch:** `exploration` delta (the recording point of `actionType`/`typedText`, one scenario for a SATA input action), design D12 or a new decision, tasks group 3.
 
 ## Not pending here, recorded elsewhere
 

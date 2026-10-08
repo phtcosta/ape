@@ -174,8 +174,7 @@ public enum Feature {
         LLM.own("ape.llmPromptVariant", "ape_current");
         LLM.own("ape.llmMaxTokens", "1024");
         LLM.own("ape.llmSnapTolerancePx", "50");
-        LLM.own("ape.llmBoundaryTopPct", "0.05");
-        LLM.own("ape.llmBoundaryBottomPct", "0.94");
+        LLM.own("ape.llmBoundaryTopPct", "0.035");
 
         // The -1 sentinel means "no override"; it is the value every baseline arm pushes on a run
         // with no LLM, and the reason the inert rule exists at all.

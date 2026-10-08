@@ -195,7 +195,7 @@ public class LlmClientTest {
         assertTrue(ApePromptBuilder.hasInputField(actions));
 
         String systemMessage = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                .build(null, null, actions, null, null, null).get(0).getTextContent();
+                .build(1080, 1920, null, actions, null, null, null).get(0).getTextContent();
         List<String> wire = toolNames(sglang().buildRequestBody(messages(),
                 LlmClient.buildToolsSchema(ApePromptBuilder.hasInputField(actions),
                         ApePromptBuilder.VARIANT_APE_CURRENT)));
@@ -211,7 +211,7 @@ public class LlmClientTest {
         assertFalse(ApePromptBuilder.hasInputField(actions));
 
         String systemMessage = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                .build(null, null, actions, null, null, null).get(0).getTextContent();
+                .build(1080, 1920, null, actions, null, null, null).get(0).getTextContent();
         List<String> wire = toolNames(sglang().buildRequestBody(messages(),
                 LlmClient.buildToolsSchema(ApePromptBuilder.hasInputField(actions),
                         ApePromptBuilder.VARIANT_APE_CURRENT)));

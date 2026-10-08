@@ -139,10 +139,6 @@ public class SglangLiveTest {
     private int toPixelX(int qwenX) { return (int)((qwenX / 1000.0) * DEVICE_W); }
     private int toPixelY(int qwenY) { return (int)((qwenY / 1000.0) * DEVICE_H); }
 
-    /** Device pixel → Qwen [0,1000) */
-    private int toQwenX(int px) { return (int)((px / (double) DEVICE_W) * 1000); }
-    private int toQwenY(int py) { return (int)((py / (double) DEVICE_H) * 1000); }
-
     /** Check if pixel coords fall within any interactive widget bounds */
     private PromptIntegrationTest.WidgetInfo findHitWidget(int pixelX, int pixelY,
             List<PromptIntegrationTest.WidgetInfo> widgets) {
@@ -202,8 +198,10 @@ public class SglangLiveTest {
                 simpleClass = simpleClass.substring(simpleClass.lastIndexOf('.') + 1);
             }
 
-            int normX = toQwenX(w.centerX());
-            int normY = toQwenY(w.centerY());
+            // DEVICE_H is 1920 because the fixture screenshots are full 1080 x 1920 captures
+            int[] norm = CoordinateNormalizer.toNormalized(w.centerX(), w.centerY(), DEVICE_W, DEVICE_H);
+            int normX = norm[0];
+            int normY = norm[1];
 
             text.append("[").append(i).append("] ").append(simpleClass);
             if (w.text != null && !w.text.isEmpty()) {

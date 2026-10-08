@@ -540,7 +540,7 @@ public class LlmTelemetryTest {
         LlmTelemetry telemetry = telemetry();
         JSONObject record = stepAround(() -> {
             telemetry.logPrompt(new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                    .build(null, null, null, null, "AAAABBBBCCCC", null));
+                    .build(1080, 1920, null, null, null, "AAAABBBBCCCC", null));
             telemetry.logResponse(response("m"));
             telemetry.decision("new-state", parsed("click", null, "none"), 540, 958, "matched",
                     null, "Button", nearest(), response("m"), 10L);
@@ -564,7 +564,7 @@ public class LlmTelemetryTest {
         LlmTelemetry telemetry = telemetry();
         JSONObject record = stepAround(() -> {
             telemetry.logPrompt(new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                    .build(null, null, null, null, "AAAABBBBCCCC", null));
+                    .build(1080, 1920, null, null, null, "AAAABBBBCCCC", null));
             telemetry.transportFailed("timeout");
         });
 
@@ -581,7 +581,7 @@ public class LlmTelemetryTest {
         LlmTelemetry telemetry = new LlmTelemetry(() -> 0, sink, false);
         JSONObject record = stepAround(() -> {
             telemetry.logPrompt(new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                    .build(null, null, null, null, "AAAABBBBCCCC", null));
+                    .build(1080, 1920, null, null, null, "AAAABBBBCCCC", null));
             telemetry.logResponse(response("m"));
             telemetry.decision("new-state", parsed("click", null, "none"), 540, 958, "matched",
                     null, "Button", nearest(), response("m"), 10L);

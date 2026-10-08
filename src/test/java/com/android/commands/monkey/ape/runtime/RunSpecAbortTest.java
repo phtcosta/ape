@@ -80,6 +80,17 @@ public class RunSpecAbortTest {
         }
     }
 
+    /** Scenario "retired bottom boundary band aborts with its reason" (llm-coordinate-single-base D7). */
+    @Test
+    public void theRetiredBottomBandAbortsNamingTheStatusBarBand() {
+        RunSpecException failure = abort(entries("ape.llmBoundaryBottomPct", "0.94"));
+        assertEquals(RunSpecException.Reason.RETIRED_KEY, failure.getReason());
+        assertEquals("ape.llmBoundaryBottomPct", failure.getKey());
+        assertTrue(failure.getDetail(), failure.getDetail().contains("excludes the navigation bar"));
+        assertTrue(failure.getDetail(), failure.getDetail().contains("ape.llmBoundaryTopPct"));
+        assertTrue(failure.getDetail(), failure.getDetail().contains("only boundary band"));
+    }
+
     @Test
     public void theKillSwitchAbortsAtEitherValue() {
         // After the harness edit no arm pushes the key at all. A hand-written file might, and

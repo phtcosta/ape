@@ -74,7 +74,8 @@ public class LlmEngine {
      * would mean holding the agent or its step view, which is exactly the coupling design D2 exists
      * to prevent.
      *
-     * @param tree the current tree, for the device dimensions and the prompt
+     * @param tree the current tree, the dimension fallback of {@code ScreenshotStep.deviceDimensions}
+     *        when the display cannot be read; not a prompt input
      * @param state the current abstract state
      * @param actions the candidate actions the state offers
      * @param mopData MOP reachability data for the prompt; may be null
@@ -121,7 +122,8 @@ public class LlmEngine {
             }
 
             // Step 4: build the prompt and record it
-            messages = promptBuilder.build(tree, state, actions, mopData, base64, recentActions);
+            messages = promptBuilder.build(deviceWidth, deviceHeight, state, actions, mopData, base64,
+                    recentActions);
             telemetry.logPrompt(messages);
 
             // Step 5: ask the model. The wire schema is chosen by the same hasInputField predicate
@@ -154,9 +156,15 @@ public class LlmEngine {
             // whether that action is still worth executing. A banned answer is a refused answer: it
             // leaves by the same null path as no_match and the breaker still records success below,
             // because the pipeline did not fail — only its answer was declined (INV-RTR-15/16).
+            // An answer outside the [0,1000) answer space points past the image. toPixels would clamp
+            // it to the screen's edge, so it is not mapped: the match stays null and classify calls it
+            // boundary. Its clamped pixel is still computed, for the sub-event's px and the nearest
+            // fields only — never matched or tapped. back carries no coordinate (INV-RTR-22).
             int[] pixels = mapper.toPixels(parsed.getX(), parsed.getY(), deviceWidth, deviceHeight);
-            ModelAction match = mapper.map(pixels[0], pixels[1], parsed.getActionType(),
-                    parsed.getText(), actions, state, deviceWidth, deviceHeight);
+            boolean pastTheImage = !"back".equals(parsed.getActionType())
+                    && !CoordinateMapper.inAnswerSpace(parsed.getX(), parsed.getY());
+            ModelAction match = pastTheImage ? null : mapper.map(pixels[0], pixels[1],
+                    parsed.getActionType(), parsed.getText(), actions, state, deviceWidth, deviceHeight);
             boolean banned = false;
             if (match != null && mapper.isDeadPair(mapper.banKey(match))) {
                 banned = true;
@@ -227,7 +235,8 @@ public class LlmEngine {
      *
      * <p>The three {@code no_match} reasons are what an offline reader separates the mechanisms by:
      * a ban refused an answer that mapped, a {@code (0,0)} emission is the model degenerating, and
-     * everything else is a coordinate the boundary bands or the snap tolerance turned down.
+     * everything else is a coordinate the status-bar band, the answer-space check or the snap
+     * tolerance turned down.
      *
      * @param match what the mapping returned, already nulled if the ban refused it
      * @param banned whether that null came from the ban rather than from the mapping

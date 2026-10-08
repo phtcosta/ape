@@ -264,12 +264,8 @@ public class ConfigTest {
     }
 
     @Test
-    public void testLlmBoundaryTopPct_defaultIs0_05() {
-        assertEquals(0.05, Config.llmBoundaryTopPct, 1e-9);
-    }
-
-    @Test
-    public void testLlmBoundaryBottomPct_defaultIs0_94() {
-        assertEquals(0.94, Config.llmBoundaryBottomPct, 1e-9);
+    public void testLlmBoundaryTopPct_defaultIs0_035() {
+        // The campaign AVD's 63 px status bar over its 1794 px display (llm-routing INV-RTR-22)
+        assertEquals(0.035, Config.llmBoundaryTopPct, 1e-9);
     }
 }

@@ -1,5 +1,8 @@
 package com.android.commands.monkey.ape.llm;
 
+import android.graphics.Rect;
+
+import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.utils.MopData;
 
 import org.junit.Test;
@@ -39,13 +42,16 @@ public class ApePromptBuilderTest {
     @Test
     public void actionHistoryEntry_fieldsStoredCorrectly() {
         ApePromptBuilder.ActionHistoryEntry entry =
-                new ApePromptBuilder.ActionHistoryEntry("click", "Button", "OK", 500, 750, null, "ok");
+                new ApePromptBuilder.ActionHistoryEntry("click", "Button", "OK",
+                        new Rect(0, 105, 1080, 252), null, "ok");
 
         assertEquals("click",  entry.actionType);
         assertEquals("Button", entry.widgetClass);
         assertEquals("OK",     entry.widgetText);
-        assertEquals(500,      entry.normX);
-        assertEquals(750,      entry.normY);
+        assertEquals(0,        entry.bounds.left);
+        assertEquals(105,      entry.bounds.top);
+        assertEquals(1080,     entry.bounds.right);
+        assertEquals(252,      entry.bounds.bottom);
         assertEquals("",       entry.typedText);   // null → ""
         assertEquals("ok",     entry.result);
     }
@@ -53,36 +59,68 @@ public class ApePromptBuilderTest {
     @Test
     public void actionHistoryEntry_nullsReplaceWithEmptyString() {
         ApePromptBuilder.ActionHistoryEntry entry =
-                new ApePromptBuilder.ActionHistoryEntry(null, null, null, 0, 0, null, null);
+                new ApePromptBuilder.ActionHistoryEntry(null, null, null, null, null, null);
 
         assertEquals("", entry.actionType);
         assertEquals("", entry.widgetClass);
         assertEquals("", entry.widgetText);
         assertEquals("", entry.typedText);
         assertEquals("", entry.result);
+        assertNull(entry.bounds);
     }
 
     @Test
     public void actionHistoryEntry_typeTextWithText() {
         ApePromptBuilder.ActionHistoryEntry entry =
                 new ApePromptBuilder.ActionHistoryEntry(
-                        "type_text", "EditText", "", 300, 400, "hello@example.com", "ok");
+                        "type_text", "EditText", "", new Rect(0, 800, 1080, 948), "hello@example.com", "ok");
 
         assertEquals("type_text",         entry.actionType);
         assertEquals("EditText",          entry.widgetClass);
         assertEquals("hello@example.com", entry.typedText);
-        assertEquals(300,                 entry.normX);
-        assertEquals(400,                 entry.normY);
+        assertEquals(800,                 entry.bounds.top);
+        assertEquals(948,                 entry.bounds.bottom);
+    }
+
+    @Test
+    public void actionHistoryEntry_withResultCopiesEverythingElse() {
+        ApePromptBuilder.ActionHistoryEntry entry = new ApePromptBuilder.ActionHistoryEntry(
+                "click", "Button", "OK", new Rect(0, 105, 1080, 252), null, "");
+        ApePromptBuilder.ActionHistoryEntry filled = entry.withResult("same");
+
+        assertEquals("", entry.result);
+        assertEquals("same", filled.result);
+        assertEquals("click", filled.actionType);
+        assertEquals("Button", filled.widgetClass);
+        assertEquals("OK", filled.widgetText);
+        assertNotSame(entry.bounds, filled.bounds);
+        assertEquals(105, filled.bounds.top);
+        assertEquals(252, filled.bounds.bottom);
+    }
+
+    /** The entry owns its bounds: a later change to the caller's Rect does not reach it. */
+    @Test
+    public void actionHistoryEntry_copiesItsBounds() {
+        Rect bounds = new Rect(0, 105, 1080, 252);
+        ApePromptBuilder.ActionHistoryEntry entry =
+                new ApePromptBuilder.ActionHistoryEntry("click", "Button", "OK", bounds, null, "");
+        bounds.left = 1;
+        bounds.top = 2;
+
+        assertNotSame(bounds, entry.bounds);
+        assertEquals(0, entry.bounds.left);
+        assertEquals(105, entry.bounds.top);
+        assertEquals(1080, entry.bounds.right);
+        assertEquals(252, entry.bounds.bottom);
     }
 
     @Test
     public void actionHistoryEntry_backAction() {
         ApePromptBuilder.ActionHistoryEntry entry =
-                new ApePromptBuilder.ActionHistoryEntry("back", "", "", 0, 0, null, "ok");
+                new ApePromptBuilder.ActionHistoryEntry("back", "", "", null, null, "ok");
 
         assertEquals("back", entry.actionType);
-        assertEquals(0,      entry.normX);
-        assertEquals(0,      entry.normY);
+        assertNull(entry.bounds);
     }
 
     // -------------------------------------------------------------------------
@@ -93,7 +131,7 @@ public class ApePromptBuilderTest {
     public void build_withAllNulls_returnsExactlyTwoMessages() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null, null);
 
         assertNotNull("messages must not be null", messages);
         assertEquals("must produce exactly 2 messages", 2, messages.size());
@@ -103,7 +141,7 @@ public class ApePromptBuilderTest {
     public void build_withAllNulls_firstMessageIsSystem() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null, null);
 
         SglangClient.Message systemMsg = messages.get(0);
         assertEquals("system", systemMsg.getRole());
@@ -116,7 +154,7 @@ public class ApePromptBuilderTest {
     public void build_withAllNulls_secondMessageIsUser() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null, null);
 
         SglangClient.Message userMsg = messages.get(1);
         assertEquals("user", userMsg.getRole());
@@ -129,7 +167,7 @@ public class ApePromptBuilderTest {
     public void build_userMessage_imagePartFirst_textPartSecond() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null, null);
 
         List<SglangClient.ContentPart> parts = messages.get(1).getContentParts();
         assertEquals("image_url", parts.get(0).getType());
@@ -140,7 +178,7 @@ public class ApePromptBuilderTest {
     public void build_withNullBase64Image_imageUrlStillEmitsPrefix() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null, null);
 
         String imageUrl = messages.get(1).getContentParts().get(0).getImageUrl();
         assertNotNull(imageUrl);
@@ -153,7 +191,7 @@ public class ApePromptBuilderTest {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         String fakeBase64 = "abc123";
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, fakeBase64, null);
+                builder.build(1080, 1920, null, null, null, fakeBase64, null);
 
         String imageUrl = messages.get(1).getContentParts().get(0).getImageUrl();
         assertTrue("image URL must embed the base64 data",
@@ -169,7 +207,7 @@ public class ApePromptBuilderTest {
         // build() with null actions → hasInputField returns false → type_text omitted
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null, null);
 
         String systemText = messages.get(0).getTextContent();
         assertFalse("type_text should be absent when no input fields present",
@@ -180,11 +218,55 @@ public class ApePromptBuilderTest {
     public void systemMessage_alwaysContainsCoreTools() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null, null);
 
         String systemText = messages.get(0).getTextContent();
         assertTrue("system message must mention click",  systemText.contains("click(x, y)"));
         assertTrue("system message must mention back",   systemText.contains("back()"));
+    }
+
+    // -------------------------------------------------------------------------
+    // llm-prompt "System Message of the v13 Variant" (design D14)
+    // -------------------------------------------------------------------------
+
+    private static final String V13_SYSTEM_HEAD =
+            "You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.\n"
+            + "DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.\n"
+            + "  If you see an error or modal dialog, dismiss it before any other action.\n"
+            + "PRIORITY: [DM]/[M] elements > navigation to new screens.\n"
+            + "Available actions:\n"
+            + "  click(x, y) \u2014 tap an element at normalized coordinates [0,1000)\n"
+            + "  long_click(x, y) \u2014 long press at normalized coordinates\n";
+    private static final String V13_SYSTEM_TYPE_TEXT =
+            "  type_text(x, y, text) \u2014 type text into an input field\n";
+    private static final String V13_SYSTEM_TAIL =
+            "  back() \u2014 press the system back button\n"
+            + "RULE: Do not click the same position twice in a row.\n"
+            + "Respond with exactly one action as JSON: {\"name\": \"<action>\", \"arguments\": {<args>}}";
+
+    /** Scenario "v13 PRIORITY line has no visit ranks". */
+    @Test
+    public void v13SystemMessage_priorityLineHasNoVisitRanks() {
+        String system = PromptFixtures.systemText(ApePromptBuilder.VARIANT_V13, null);
+        assertTrue(system, system.contains("PRIORITY: [DM]/[M] elements > navigation to new screens.\n"));
+        assertFalse(system, system.contains("visited"));
+    }
+
+    /** Scenario "v13 system message offers type_text only with an input widget": the whole text. */
+    @Test
+    public void v13SystemMessage_wholeTextWithoutInputWidget() {
+        List<ModelAction> actions = PromptFixtures.list(
+                PromptFixtures.click("android.widget.Button", "OK", new Rect(0, 105, 1080, 252)));
+        assertEquals(V13_SYSTEM_HEAD + V13_SYSTEM_TAIL,
+                PromptFixtures.systemText(ApePromptBuilder.VARIANT_V13, actions));
+    }
+
+    @Test
+    public void v13SystemMessage_wholeTextWithInputWidget() {
+        List<ModelAction> actions = PromptFixtures.list(
+                PromptFixtures.click("android.widget.EditText", "Email", new Rect(0, 480, 1080, 596)));
+        assertEquals(V13_SYSTEM_HEAD + V13_SYSTEM_TYPE_TEXT + V13_SYSTEM_TAIL,
+                PromptFixtures.systemText(ApePromptBuilder.VARIANT_V13, actions));
     }
 
     // -------------------------------------------------------------------------
@@ -196,10 +278,10 @@ public class ApePromptBuilderTest {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         ApePromptBuilder.ActionHistoryEntry histEntry =
                 new ApePromptBuilder.ActionHistoryEntry("click", "Button", "Login",
-                        500, 600, null, "ok");
+                        new Rect(0, 105, 1080, 252), null, "ok");
 
         List<SglangClient.Message> messages =
-                builder.build(null, null, null, null, null,
+                builder.build(1080, 1920, null, null, null, null,
                         Collections.singletonList(histEntry));
 
         String userText = messages.get(1).getContentParts().get(1).getText();

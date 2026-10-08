@@ -26,8 +26,8 @@ import static org.junit.Assert.*;
 public class CoordinateMapperOffTreeTapTest {
 
     /**
-     * A mapper wired from a plan carrying only the LLM feature, so the snap floor and the two
-     * boundary bands are the jar defaults every assertion here was written against.
+     * A mapper wired from a plan carrying only the LLM feature, so the snap floor and the status-bar
+     * boundary band are the jar defaults every assertion here was written against.
      */
     private static CoordinateMapper newMapper() {
         return new CoordinateMapper(
@@ -77,23 +77,25 @@ public class CoordinateMapperOffTreeTapTest {
     }
 
     @Test
-    public void boundaryRejectSynthesizesNoTap() {
+    public void bottomOfTheDisplayBecomesATap() {
         CoordinateMapper mapper = newMapper();
-        // Nav-band coordinate: pixelY > H*0.94 (1794*0.94 = 1686). Boundary reject runs before the
-        // off-tree branch, so null is returned and NO tap is constructed.
+        // y=1750 lies in the bottom 6% of the 1794 px display. The display excludes the navigation
+        // bar, so this is app content and no band covers it (llm-routing INV-RTR-22): with no widget
+        // here the point reaches the off-tree branch and becomes a tap.
         ModelAction result = mapper.map(
                 600, 1750, "click", null, unresolvedActions(), null, W, H);
-        assertNull("boundary-band coordinate must not become a tap", result);
+        assertTrue("a point at the bottom of the display must become a tap", result instanceof LlmTapAction);
+        assertEquals(1750, ((LlmTapAction) result).getPixelY());
     }
 
     @Test
     public void topBandRejectSynthesizesNoTap() {
         CoordinateMapper mapper = newMapper();
-        // Status-band coordinate: pixelY < H*0.05 (1794*0.05 = 89.7). The candidate is unresolved,
+        // Status-band coordinate: pixelY < H*0.035 (1794*0.035 = 62.79). The candidate is unresolved,
         // so without the reject this point would reach the off-tree branch and become a tap — which
         // is what makes the null here attributable to the top band and not to an absent match.
         ModelAction result = mapper.map(
-                600, 80, "click", null, unresolvedActions(), null, W, H);
+                600, 40, "click", null, unresolvedActions(), null, W, H);
         assertNull("top-band coordinate must not become a tap", result);
     }
 

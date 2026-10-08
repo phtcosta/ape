@@ -6,7 +6,7 @@
 
 This delta moves the normalization out of the agent. The entry carries the executed widget's pixel bounds, and `ApePromptBuilder` renders them at build time with the decision's dimensions and the same visible-centre rule as the element list (`llm-prompt` "Action History", INV-PRM-06). Entries for actions without a resolved node record what ran. The requirement also corrects a stale name: the buffer reaches the builder through `LlmEngine.selectAction()`, not `LlmRouter.selectAction()`.
 
-The entry's result also moves to the action it describes. `recordActionHistory` runs right after the next action is selected, before it is dispatched, and it stored in that action's entry the comparison of `newState` with `_lastState` (`StatefulAgent.java:828-829, 850-853, 1848-1854`): the outcome of the action before, since `newState` is the screen the previous action produced. No later step corrected it. Every entry therefore showed its predecessor's outcome, and the most recent action's own outcome appeared nowhere: after a click that opened a new screen and a click that did nothing, the prompt read `→ new screen` for both. This requirement has said since gh6 that the entry is appended after its action executes, and its scenarios pair a click with that click's outcome; the code never did. The comparison is unchanged. The entry is appended without a result when its action is selected, and the next state update fills the result before any prompt is built (design D12).
+The entry's result also moves to the action it describes. `recordActionHistory` runs right after the next action is selected, before it is dispatched, and it stored in that action's entry the comparison of `newState` with `_lastState` (`StatefulAgent.java:828-829, 850-853, 1848-1854`): the outcome of the action before, since `newState` is the screen the previous action produced. No later step corrected it. Every entry therefore showed its predecessor's outcome, and the most recent action's own outcome appeared nowhere: after a click that opened a new screen and a click that did nothing, the prompt read `→ new screen` for both. This requirement has said since gh6 that the entry is appended after its action executes, and its scenarios pair a click with that click's outcome; the code never did. The comparison is unchanged. The entry is appended without a result when its action is selected, and the next state update fills the result before any prompt is built (design D12). A model action that the restart check replaces before dispatch never runs, so its entry is removed rather than filled with the restart's outcome.
 
 The entry's class and text also come to match the field table, which they never did. The table has said since gh6 that `widgetClass` is the class simple name and `widgetText` the widget's text or content-description. The code stores `node.getClassName()`, the full name, and `node.getText()` only (`StatefulAgent.java:1825-1826`). In E6 arm 4 all 555,981 node-action entries carried the full name, and 55.2 % carried no text (`evidence/history_fields_e6.out`). The scenario "Action history populated after action" has asked for `widgetClass="Button"` all along. The fields are now produced by the element list's own helpers, so a widget is named once, in one way (design D13).
 
@@ -39,6 +39,8 @@ For a node action, `widgetClass` SHALL be produced by the helper the element lis
 - Else → `"new screen"`
 
 The entry is immutable: the agent replaces it with a copy carrying the result. A filled result is never overwritten. When the step after an entry's action selects no model action, nothing is appended, and the next update finds the last entry already filled, so an outcome is never assigned to an action it does not belong to.
+
+**Restart**: When the restart check replaces the selected model action with a start action before it is dispatched (`ApeAgent.checkRestart`), the entry recorded for that model action SHALL be removed: the last entry, if its result is still empty. The action never runs, so no outcome belongs to it. A restart that replaces no model action removes nothing, and `startNewEpisode` called on any other path removes nothing.
 
 The buffer is passed to `ApePromptBuilder.build()` via `LlmEngine.selectAction()` as the `recentActions` parameter.
 
@@ -74,6 +76,18 @@ The buffer is passed to `ApePromptBuilder.build()` via `LlmEngine.selectAction()
 - **AND** that step selects an action that is not a model action, so no entry is appended
 - **AND** the update after it resolves a different state
 - **THEN** A1's result SHALL keep the value filled first
+
+#### Scenario: a model action replaced by a restart leaves no entry
+- **WHEN** click A1 is selected and the next update fills its result
+- **AND** click A2 is selected and recorded with an empty result
+- **AND** the restart check replaces A2 with a start action
+- **THEN** A2's entry SHALL be removed
+- **AND** A1's entry SHALL remain the last entry, with the result filled first
+
+#### Scenario: a restart that replaces no model action removes nothing
+- **WHEN** click A1 is selected and the next update fills its result
+- **AND** that step's action is not a model action, and the restart check replaces it with a start action
+- **THEN** A1's entry SHALL remain, with its result
 
 #### Scenario: entry carries the pixel bounds
 - **WHEN** a click on a widget with bounds `[0,105][1080,252]` is selected

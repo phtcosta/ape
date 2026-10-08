@@ -118,7 +118,7 @@ public class LlmEngineTest {
 
     @Test
     public void anAnswerAtTheOriginIsDegenerateRatherThanOutOfBounds() {
-        // A (0,0) emission is the model collapsing, not a coordinate the bands turned down, and the
+        // A (0,0) emission is the model collapsing, not a coordinate the band turned down, and the
         // two are counted apart because only one of them says anything about the model.
         LlmEngine.Verdict verdict = LlmEngine.classify(null, false, parsed("click", 0, 0, null));
 

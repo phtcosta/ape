@@ -28,8 +28,8 @@ import static org.junit.Assert.*;
 public class CoordinateMapperMappingTest {
 
     /**
-     * A mapper wired from a plan carrying only the LLM feature, so the snap floor and the two
-     * boundary bands are the jar defaults every assertion here was written against.
+     * A mapper wired from a plan carrying only the LLM feature, so the snap floor and the status-bar
+     * boundary band are the jar defaults every assertion here was written against.
      */
     private static CoordinateMapper newMapper() {
         return new CoordinateMapper(

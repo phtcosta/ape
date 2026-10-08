@@ -5,14 +5,17 @@ import android.graphics.Rect;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.tree.GUITree;
+import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.MopData;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -21,8 +24,11 @@ import java.util.Set;
  * <p>Produces exactly 2 messages: [system, user].
  * The user message has 2 content parts: [image, text] in that order.
  *
- * <p>Coordinate space: [0, 1000) normalized (matching Qwen3-VL conventions).
- * Conversion formula: normX = (int)((centerPixelX / deviceWidth) * 1000).
+ * <p>Coordinate space: [0, 1000) normalized (matching Qwen3-VL conventions). Every coordinate the
+ * prompt shows is the centre of the widget's visible part, converted by
+ * {@link CoordinateNormalizer#toNormalized} with the display dimensions {@link #build} received:
+ * the pair the caller determined for the decision, which the screenshot was captured at and the
+ * answer is mapped with. Never the root node's bounds (INV-PRM-06).
  */
 public class ApePromptBuilder {
 
@@ -78,32 +84,40 @@ public class ApePromptBuilder {
      *
      * <p>Fields:
      * <ul>
-     *   <li>{@code actionType} — LLM tool name: "click", "long_click", "type_text", "back"</li>
-     *   <li>{@code widgetClass} — simple class name of the target widget (may be null for back)</li>
-     *   <li>{@code widgetText} — visible text / content description of the widget (may be null)</li>
-     *   <li>{@code normX}, {@code normY} — normalized [0,1000) coordinates (0 for back)</li>
+     *   <li>{@code actionType} — "click", "long_click", "type_text", "back", "menu"</li>
+     *   <li>{@code widgetClass} — simple class name of the target widget (empty for back, menu and
+     *       an off-tree LLM tap)</li>
+     *   <li>{@code widgetText} — the widget's text, else its content-description (may be empty)</li>
+     *   <li>{@code bounds} — a copy of the executed widget's bounds in screen pixels, owned by the
+     *       entry; for an off-tree LLM tap the one-pixel rectangle at the tap's own pixel; null for
+     *       back and menu. Normalized only when a prompt is built, with that prompt's dimensions, so
+     *       the list and the history of one prompt share one base (INV-PRM-06)</li>
      *   <li>{@code typedText} — text that was typed (only relevant for type_text)</li>
-     *   <li>{@code result} — outcome description, e.g. "ok", "new state", "same state"</li>
+     *   <li>{@code result} — the outcome of this entry's own action: "same", "new screen" or
+     *       "previous screen"; empty until the next state update fills it</li>
      * </ul>
      */
     public static class ActionHistoryEntry {
         public final String actionType;
         public final String widgetClass;
         public final String widgetText;
-        public final int    normX;
-        public final int    normY;
+        public final Rect   bounds;
         public final String typedText;
         public final String result;
 
         public ActionHistoryEntry(String actionType, String widgetClass, String widgetText,
-                                  int normX, int normY, String typedText, String result) {
+                                  Rect bounds, String typedText, String result) {
             this.actionType  = actionType  != null ? actionType  : "";
             this.widgetClass = widgetClass != null ? widgetClass : "";
             this.widgetText  = widgetText  != null ? widgetText  : "";
-            this.normX       = normX;
-            this.normY       = normY;
+            this.bounds      = bounds != null ? new Rect(bounds) : null;
             this.typedText   = typedText   != null ? typedText   : "";
             this.result      = result      != null ? result      : "";
+        }
+
+        /** A copy of this entry carrying {@code result}; the entry itself stays immutable. */
+        public ActionHistoryEntry withResult(String result) {
+            return new ActionHistoryEntry(actionType, widgetClass, widgetText, bounds, typedText, result);
         }
     }
 
@@ -114,7 +128,10 @@ public class ApePromptBuilder {
     /**
      * Build the 2-message multimodal prompt for the LLM decision step.
      *
-     * @param tree          current GUITree (used for device dimensions via root node bounds)
+     * @param deviceWidth   display width in pixels, the one the caller determined for this decision
+     *                      ({@code ScreenshotStep.deviceDimensions}); every listed and history
+     *                      coordinate is normalized against it, never against the root node
+     * @param deviceHeight  display height in pixels, from the same pair
      * @param state         current abstract state (for activity name and visit count)
      * @param actions       candidate ModelActions to present to the LLM
      * @param mopData       MOP reachability data (may be null → MOP markers omitted)
@@ -122,23 +139,13 @@ public class ApePromptBuilder {
      * @param recentActions up to MAX_HISTORY past actions (oldest first); may be null/empty
      * @return list of exactly 2 messages: [system, user]
      */
-    public List<SglangClient.Message> build(GUITree tree,
+    public List<SglangClient.Message> build(int deviceWidth,
+                                            int deviceHeight,
                                             State state,
                                             List<ModelAction> actions,
                                             MopData mopData,
                                             String base64Image,
                                             List<ActionHistoryEntry> recentActions) {
-        // Determine device dimensions from root-node screen bounds (defensive fallback 1080x1920)
-        int deviceWidth  = 1080;
-        int deviceHeight = 1920;
-        try {
-            if (tree != null && tree.getRootNode() != null) {
-                Rect rootBounds = tree.getRootNode().getBoundsInScreen();
-                if (rootBounds.right > 0)  deviceWidth  = rootBounds.right;
-                if (rootBounds.bottom > 0) deviceHeight = rootBounds.bottom;
-            }
-        } catch (Exception ignored) { /* never throw */ }
-
         // Derive activity names safely
         String activity      = safeGetActivity(state);        // full class name
         String activitySimple = simpleActivityName(activity); // simple name for display
@@ -163,11 +170,12 @@ public class ApePromptBuilder {
                 break;
             case VARIANT_VISUAL_ONLY:
                 userText = buildVisualOnlyUserText(
-                        state, actions, mopData, recentActions, activity, activitySimple);
+                        state, actions, mopData, recentActions, activity, activitySimple,
+                        deviceWidth, deviceHeight);
                 break;
             default:
                 userText = buildUserText(
-                        tree, state, actions, mopData, recentActions,
+                        state, actions, mopData, recentActions,
                         activity, activitySimple, deviceWidth, deviceHeight);
                 break;
         }
@@ -247,7 +255,7 @@ public class ApePromptBuilder {
         sb.append("You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.\n");
         sb.append("DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.\n");
         sb.append("  If you see an error or modal dialog, dismiss it before any other action.\n");
-        sb.append("PRIORITY: [DM]/[M] elements > navigation to new screens > unvisited elements > visited elements.\n");
+        sb.append("PRIORITY: [DM]/[M] elements > navigation to new screens.\n");
         sb.append("Available actions:\n");
         sb.append("  click(x, y) — tap an element at normalized coordinates [0,1000)\n");
         sb.append("  long_click(x, y) — long press at normalized coordinates\n");
@@ -323,8 +331,7 @@ public class ApePromptBuilder {
     // User text
     // -------------------------------------------------------------------------
 
-    private String buildUserText(GUITree tree,
-                                 State state,
+    private String buildUserText(State state,
                                  List<ModelAction> actions,
                                  MopData mopData,
                                  List<ActionHistoryEntry> recentActions,
@@ -351,7 +358,8 @@ public class ApePromptBuilder {
             sb.append("Recent:\n");
             int start = Math.max(0, recentActions.size() - MAX_HISTORY);
             for (int i = start; i < recentActions.size(); i++) {
-                sb.append("- ").append(formatHistoryEntry(recentActions.get(i))).append('\n');
+                sb.append("- ").append(formatHistoryEntry(recentActions.get(i), deviceWidth, deviceHeight, false))
+                        .append('\n');
             }
         }
 
@@ -389,26 +397,13 @@ public class ApePromptBuilder {
         GUITreeNode node = safeGetResolvedNode(action);
 
         // Widget class (simple name)
-        String className = safeGetSimpleClassName(node);
+        String className = simpleClassName(node);
 
         // Visible text / content description
         String displayText = safeGetDisplayText(node);
 
-        // Coordinates
-        int normX = 0;
-        int normY = 0;
-        if (node != null) {
-            try {
-                Rect bounds = node.getBoundsInScreen();
-                int centerX = (bounds.left + bounds.right) / 2;
-                int centerY = (bounds.top  + bounds.bottom) / 2;
-                normX = (int) ((centerX / (double) deviceWidth)  * 1000);
-                normY = (int) ((centerY / (double) deviceHeight) * 1000);
-                // Clamp to [0, 999]
-                normX = Math.max(0, Math.min(normX, 999));
-                normY = Math.max(0, Math.min(normY, 999));
-            } catch (Exception ignored) { /* never throw */ }
-        }
+        // Coordinates: null when the node is unresolved or wholly off screen
+        int[] norm = normalizedCentre(safeGetBounds(node), deviceWidth, deviceHeight);
 
         // Visit count
         int visitCount = action.getVisitedCount();
@@ -435,7 +430,9 @@ public class ApePromptBuilder {
             }
         }
 
-        sb.append(" @(").append(normX).append(',').append(normY).append(')');
+        if (norm != null) {
+            sb.append(' ').append(at(norm));
+        }
 
         if (!mopMarker.isEmpty()) {
             sb.append(' ').append(mopMarker);
@@ -533,20 +530,35 @@ public class ApePromptBuilder {
     // Action history formatting (3.5)
     // -------------------------------------------------------------------------
 
-    private String formatHistoryEntry(ActionHistoryEntry entry) {
+    /**
+     * The only place a history entry becomes text, for every variant (llm-prompt "Action History").
+     * The coordinate is the entry's bounds rendered by the list's own rule ({@link #normalizedCentre})
+     * with the dimensions {@link #build} received; {@code back} and {@code menu}, and an entry whose
+     * bounds are null or wholly off screen, render without one.
+     *
+     * @param compact {@code v17}'s inline token, {@code <type>@(x,y)} or {@code <type>}; otherwise the
+     *        full line {@code <type> @(x,y) <Class> "<text>" → <result>}
+     */
+    private String formatHistoryEntry(ActionHistoryEntry entry, int deviceWidth, int deviceHeight,
+                                      boolean compact) {
         if (entry == null) return "";
         String type = entry.actionType;
-        StringBuilder sb = new StringBuilder();
-        if ("back".equals(type)) {
-            sb.append("back");
-        } else if ("type_text".equals(type)) {
-            sb.append("type_text @(").append(entry.normX).append(',').append(entry.normY).append(')');
+        boolean keyPress = "back".equals(type) || "menu".equals(type);
+        int[] norm = keyPress ? null : normalizedCentre(entry.bounds, deviceWidth, deviceHeight);
+        StringBuilder sb = new StringBuilder(type);
+        if (compact) {
+            if (norm != null) sb.append(at(norm));
+            return sb.toString();
+        }
+        if (norm != null) {
+            sb.append(' ').append(at(norm));
+        }
+        if ("type_text".equals(type)) {
             if (!entry.typedText.isEmpty()) {
                 sb.append(" \"").append(truncate(entry.typedText, MAX_TEXT_LEN)).append("\"");
             }
-        } else {
+        } else if (!keyPress) {
             // click or long_click
-            sb.append(type).append(" @(").append(entry.normX).append(',').append(entry.normY).append(')');
             if (!entry.widgetClass.isEmpty()) {
                 sb.append(' ').append(entry.widgetClass);
             }
@@ -612,7 +624,73 @@ public class ApePromptBuilder {
     }
 
     // -------------------------------------------------------------------------
-    // RVSmart V13 user text — simple numbered element list
+    // v13 / v17 element list: one line per widget (design D10)
+    // -------------------------------------------------------------------------
+
+    /**
+     * What makes two target-requiring actions one widget of the {@code v13}/{@code v17} list: the
+     * same target {@code Name} and resolved nodes with the same four bound edges. Names are interned
+     * by {@code NameManager.getCachedName}, so equal targets are one instance; the edges are compared
+     * as ints rather than through {@code Rect.equals}.
+     */
+    private static final class WidgetKey {
+        private final Name target;
+        private final int left, top, right, bottom;
+
+        WidgetKey(Name target, Rect bounds) {
+            this.target = target;
+            this.left = bounds.left;
+            this.top = bounds.top;
+            this.right = bounds.right;
+            this.bottom = bounds.bottom;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof WidgetKey)) return false;
+            WidgetKey k = (WidgetKey) o;
+            return Objects.equals(target, k.target)
+                    && left == k.left && top == k.top && right == k.right && bottom == k.bottom;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(target, left, top, right, bottom);
+        }
+    }
+
+    /**
+     * The target-requiring actions of {@code actions} grouped into widgets, one group per line, in
+     * the order of each widget's first action. An action whose node is unresolved, or whose bounds
+     * cannot be read, is a group of its own. The line is rendered from the group's first action.
+     */
+    private static List<List<ModelAction>> widgetGroups(List<ModelAction> actions) {
+        List<List<ModelAction>> groups = new ArrayList<>();
+        if (actions == null) return groups;
+        Map<WidgetKey, List<ModelAction>> byKey = new LinkedHashMap<>();
+        for (ModelAction action : actions) {
+            if (action == null || !action.getType().requireTarget()) continue;
+            Rect bounds = safeGetBounds(safeGetResolvedNode(action));
+            List<ModelAction> group = null;
+            if (bounds != null) {
+                WidgetKey key = new WidgetKey(action.getTarget(), bounds);
+                group = byKey.get(key);
+                if (group == null) {
+                    group = new ArrayList<>();
+                    byKey.put(key, group);
+                    groups.add(group);
+                }
+            } else {
+                group = new ArrayList<>();
+                groups.add(group);
+            }
+            group.add(action);
+        }
+        return groups;
+    }
+
+    // -------------------------------------------------------------------------
+    // RVSmart V13 user text — simple element list
     // -------------------------------------------------------------------------
 
     private String buildRvsmartV13UserText(List<ModelAction> actions, MopData mopData,
@@ -623,40 +701,31 @@ public class ApePromptBuilder {
         sb.append("Current activity: ").append(activitySimple).append("\n\n");
         sb.append("UI elements:\n");
 
-        int index = 1;
-        if (actions != null) {
-            for (ModelAction action : actions) {
-                if (action == null || !action.getType().requireTarget()) continue;
-                GUITreeNode node = safeGetResolvedNode(action);
-                String className = safeGetSimpleClassName(node);
-                String displayText = safeGetDisplayText(node);
-                String mopMarker = buildMopMarker(node, mopData, activity);
-                int normX = 0, normY = 0;
-                if (node != null) {
-                    try {
-                        Rect bounds = node.getBoundsInScreen();
-                        normX = Math.max(0, Math.min((int)((((bounds.left + bounds.right) / 2) / (double) deviceWidth) * 1000), 999));
-                        normY = Math.max(0, Math.min((int)((((bounds.top + bounds.bottom) / 2) / (double) deviceHeight) * 1000), 999));
-                    } catch (Exception ignored) {}
-                }
-                sb.append("  ").append(index++).append(". ").append(className);
-                if (!displayText.isEmpty()) {
-                    sb.append(" \"").append(truncate(displayText, 40)).append("\"");
-                }
-                sb.append(" @(").append(normX).append(",").append(normY).append(")");
-                if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
-                sb.append(buildWidgetMetadata(node, mopData, activity));
-                sb.append("\n");
+        List<List<ModelAction>> widgets = widgetGroups(actions);
+        for (List<ModelAction> widget : widgets) {
+            GUITreeNode node = safeGetResolvedNode(widget.get(0));
+            String className = simpleClassName(node);
+            String displayText = safeGetDisplayText(node);
+            String mopMarker = buildMopMarker(node, mopData, activity);
+            int[] norm = normalizedCentre(safeGetBounds(node), deviceWidth, deviceHeight);
+            sb.append("  ").append(className);
+            if (!displayText.isEmpty()) {
+                sb.append(" \"").append(truncate(displayText, 40)).append("\"");
             }
+            if (norm != null) sb.append(" ").append(at(norm));
+            if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
+            sb.append(buildWidgetMetadata(node, mopData, activity));
+            sb.append("\n");
         }
-        if (index == 1) sb.append("  (no elements)\n");
+        if (widgets.isEmpty()) sb.append("  (no elements)\n");
 
         // Action history
         if (recentActions != null && !recentActions.isEmpty()) {
             sb.append("\nRecent:\n");
             int start = Math.max(0, recentActions.size() - MAX_HISTORY);
             for (int i = start; i < recentActions.size(); i++) {
-                sb.append("- ").append(formatHistoryEntry(recentActions.get(i))).append('\n');
+                sb.append("- ").append(formatHistoryEntry(recentActions.get(i), deviceWidth, deviceHeight, false))
+                        .append('\n');
             }
         }
 
@@ -682,61 +751,49 @@ public class ApePromptBuilder {
             boolean first = true;
             for (int i = start; i < recentActions.size(); i++) {
                 if (!first) sb.append(", ");
-                ActionHistoryEntry e = recentActions.get(i);
-                sb.append(e.actionType).append("@(").append(e.normX).append(",").append(e.normY).append(")");
+                sb.append(formatHistoryEntry(recentActions.get(i), deviceWidth, deviceHeight, true));
                 first = false;
             }
             sb.append("\n");
         }
 
         sb.append("\nELEMENTS:\n");
-        int index = 1;
         int testedCount = 0;
-        int totalTargets = 0;
-        if (actions != null) {
-            for (ModelAction action : actions) {
-                if (action == null || !action.getType().requireTarget()) continue;
-                totalTargets++;
-                GUITreeNode node = safeGetResolvedNode(action);
-                String className = safeGetSimpleClassName(node);
-                String displayText = safeGetDisplayText(node);
-                String mopMarker = buildMopMarker(node, mopData, activity);
-                int visitCount = action.getVisitedCount();
-                if (visitCount > 0) testedCount++;
+        List<List<ModelAction>> widgets = widgetGroups(actions);
+        for (List<ModelAction> widget : widgets) {
+            GUITreeNode node = safeGetResolvedNode(widget.get(0));
+            String className = simpleClassName(node);
+            String displayText = safeGetDisplayText(node);
+            String mopMarker = buildMopMarker(node, mopData, activity);
+            int visitCount = 0;
+            for (ModelAction action : widget) visitCount += action.getVisitedCount();
+            if (visitCount > 0) testedCount++;
 
-                // Status tag
-                String statusTag;
-                if (visitCount == 0) statusTag = "[UNTESTED]";
-                else if (visitCount < 5) statusTag = "[TESTED-" + visitCount + "x]";
-                else statusTag = "[WELL-TESTED]";
+            // Status tag, from the widget's visits over all its actions
+            String statusTag;
+            if (visitCount == 0) statusTag = "[UNTESTED]";
+            else if (visitCount < 5) statusTag = "[TESTED-" + visitCount + "x]";
+            else statusTag = "[WELL-TESTED]";
 
-                int normX = 0, normY = 0;
-                if (node != null) {
-                    try {
-                        Rect bounds = node.getBoundsInScreen();
-                        normX = Math.max(0, Math.min((int)((((bounds.left + bounds.right) / 2) / (double) deviceWidth) * 1000), 999));
-                        normY = Math.max(0, Math.min((int)((((bounds.top + bounds.bottom) / 2) / (double) deviceHeight) * 1000), 999));
-                    } catch (Exception ignored) {}
-                }
+            int[] norm = normalizedCentre(safeGetBounds(node), deviceWidth, deviceHeight);
 
-                sb.append("  ").append(index++).append(". ").append(className);
-                if (!displayText.isEmpty()) {
-                    sb.append(" \"").append(truncate(displayText, 40)).append("\"");
-                }
-                sb.append(" @(").append(normX).append(",").append(normY).append(")");
-                sb.append(" ").append(statusTag);
-                if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
-                sb.append(buildWidgetMetadata(node, mopData, activity));
-                sb.append("\n");
+            sb.append("  ").append(className);
+            if (!displayText.isEmpty()) {
+                sb.append(" \"").append(truncate(displayText, 40)).append("\"");
             }
+            if (norm != null) sb.append(" ").append(at(norm));
+            sb.append(" ").append(statusTag);
+            if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
+            sb.append(buildWidgetMetadata(node, mopData, activity));
+            sb.append("\n");
         }
-        if (index == 1) sb.append("  (no elements)\n");
+        if (widgets.isEmpty()) sb.append("  (no elements)\n");
 
-        // Screen info line
+        // Screen info line, counted in widgets on both sides
         int stateVisits = (state != null) ? state.getVisitedCount() : 0;
         sb.append("\nSCREEN: ").append(activitySimple)
-                .append(" | ").append(testedCount).append("/").append(totalTargets)
-                .append(" actions tested | visits: ").append(stateVisits).append("\n");
+                .append(" | ").append(testedCount).append("/").append(widgets.size())
+                .append(" elements tested | visits: ").append(stateVisits).append("\n");
 
         // MOP navigation context
         String explorationCtx = buildExplorationContext(state, actions, mopData, activity);
@@ -757,7 +814,9 @@ public class ApePromptBuilder {
                                             MopData mopData,
                                             List<ActionHistoryEntry> recentActions,
                                             String activity,
-                                            String activitySimple) {
+                                            String activitySimple,
+                                            int deviceWidth,
+                                            int deviceHeight) {
         StringBuilder sb = new StringBuilder();
         sb.append("Screen \"").append(activitySimple).append("\".\n");
 
@@ -765,7 +824,8 @@ public class ApePromptBuilder {
             sb.append("Recent:\n");
             int start = Math.max(0, recentActions.size() - MAX_HISTORY);
             for (int i = start; i < recentActions.size(); i++) {
-                sb.append("- ").append(formatHistoryEntry(recentActions.get(i))).append('\n');
+                sb.append("- ").append(formatHistoryEntry(recentActions.get(i), deviceWidth, deviceHeight, false))
+                        .append('\n');
             }
         }
 
@@ -817,6 +877,42 @@ public class ApePromptBuilder {
         try { return action.getResolvedNode(); } catch (Exception ignored) { return null; }
     }
 
+    /** The node's screen bounds, or null when the node is null or its bounds cannot be read. */
+    private static Rect safeGetBounds(GUITreeNode node) {
+        if (node == null) return null;
+        try { return node.getBoundsInScreen(); } catch (Exception ignored) { return null; }
+    }
+
+    /**
+     * The pixel a widget is shown at: the centre of its bounds intersected with the display
+     * {@code [0,width) x [0,height)}, the part the screenshot shows and the jar would tap. Null when
+     * {@code bounds} is null or {@link Rect#intersect} finds no intersection (the widget is wholly
+     * off screen). {@code Rect.intersect} compares edges, so a zero-width or zero-height rect inside
+     * the display intersects it and keeps its centre. {@code bounds} is not modified.
+     */
+    private static int[] visibleCentre(Rect bounds, int width, int height) {
+        if (bounds == null) return null;
+        Rect visible = new Rect(bounds);
+        if (!visible.intersect(0, 0, width, height)) return null;
+        return new int[]{visible.centerX(), visible.centerY()};
+    }
+
+    /**
+     * The [0,1000) coordinate a widget is shown at, or null when it has none: the visible centre
+     * through {@link CoordinateNormalizer#toNormalized}, with the dimensions {@link #build} received.
+     * Every list site and the history formatter go through it (INV-PRM-06).
+     */
+    private static int[] normalizedCentre(Rect bounds, int width, int height) {
+        int[] centre = visibleCentre(bounds, width, height);
+        if (centre == null) return null;
+        return CoordinateNormalizer.toNormalized(centre[0], centre[1], width, height);
+    }
+
+    /** {@code @(x,y)} for a normalized coordinate. */
+    private static String at(int[] norm) {
+        return "@(" + norm[0] + "," + norm[1] + ")";
+    }
+
     private String safeGetActivity(State state) {
         if (state == null) return "";
         try { return state.getActivity(); } catch (Exception ignored) { return ""; }
@@ -834,9 +930,11 @@ public class ApePromptBuilder {
     }
 
     /**
-     * Simple class name from a GUITreeNode (last component after '.').
+     * Simple class name from a GUITreeNode (last component after '.'); {@code "View"} for a null
+     * node, a null or empty class, or a throwing read. The element list and the action history
+     * name a widget's class through this one definition (design D13).
      */
-    private String safeGetSimpleClassName(GUITreeNode node) {
+    public static String simpleClassName(GUITreeNode node) {
         if (node == null) return "View";
         try {
             String cn = node.getClassName();
@@ -848,8 +946,9 @@ public class ApePromptBuilder {
 
     /**
      * The node's identifier for the element line, by fallback: visible text, then
-     * content-description, then the short resource id rendered as {@code id=<shortId>} (INV-PRM-05).
-     * Only a node carrying none of the three yields an empty identifier.
+     * content-description ({@link #textOrContentDescription}), then the short resource id rendered
+     * as {@code id=<shortId>} (INV-PRM-05). Only a node carrying none of the three yields an empty
+     * identifier.
      *
      * <p>The resource-id step is what N1 adds. Without it, 35.8% of grounding tests rendered
      * elements the model had nothing to anchor on, and it hit 33.1% on those lines against 71.4%
@@ -857,14 +956,27 @@ public class ApePromptBuilder {
      * buttons routinely carry a content-description or a resource id and no text at all.
      */
     private String safeGetDisplayText(GUITreeNode node) {
+        String label = textOrContentDescription(node);
+        if (!label.isEmpty() || node == null) return label;
+        try {
+            String shortId = MopData.extractShortId(node.getResourceID());
+            if (!shortId.isEmpty()) return "id=" + shortId;
+        } catch (Exception ignored) { /* fall through */ }
+        return "";
+    }
+
+    /**
+     * The node's text, else its content-description, flattened to one line; {@code ""} when it has
+     * neither, and never {@code id=…}. The first two steps of the element list's identifier, shared
+     * with the action history so that both name a widget the same way (design D13).
+     */
+    public static String textOrContentDescription(GUITreeNode node) {
         if (node == null) return "";
         try {
             String text = node.getText();
             if (text != null && !text.isEmpty()) return flatten(text);
             String cd = node.getContentDesc();
             if (cd != null && !cd.isEmpty()) return flatten(cd);
-            String shortId = MopData.extractShortId(node.getResourceID());
-            if (!shortId.isEmpty()) return "id=" + shortId;
         } catch (Exception ignored) { /* fall through */ }
         return "";
     }

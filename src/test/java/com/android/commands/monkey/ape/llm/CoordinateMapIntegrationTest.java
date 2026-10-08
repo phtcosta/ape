@@ -20,20 +20,20 @@ import static org.junit.Assert.*;
  * Tests the round-trip: widget center pixel → normalize to [0,1000) → denormalize back →
  * verify the result falls within the original widget bounds.
  *
- * Also tests boundary rejection logic (status bar / navigation bar zones) that mirrors
- * CoordinateMapper.map().
+ * The fixtures are UIAutomator dumps of the campaign display (root {@code [0,0][1080,1794]}), so
+ * the base is the display pair the pipeline uses (llm-routing INV-RTR-21). The boundary band is
+ * tested through the mapper itself in {@link CoordinateMapperBoundaryTest}.
  *
  * No APE/Android runtime required: all parsing uses javax.xml and CoordinateNormalizer only.
  */
 public class CoordinateMapIntegrationTest {
 
-    // Device dimensions matching the cryptoapp fixtures
+    // Device dimensions matching the cryptoapp fixtures: the 1080 x 1794 display
     private static final int DEVICE_WIDTH  = 1080;
-    private static final int DEVICE_HEIGHT = 1920;
+    private static final int DEVICE_HEIGHT = 1794;
 
-    // Boundary thresholds from CoordinateMapper (5% top, 6% bottom = 94% max)
-    private static final double STATUS_BAR_RATIO = 0.05;
-    private static final double NAV_BAR_RATIO    = 0.94;
+    // The status-bar band's default fraction (ape.llmBoundaryTopPct; llm-routing INV-RTR-22)
+    private static final double STATUS_BAR_RATIO = 0.035;
 
     // -------------------------------------------------------------------------
     // XML parsing helpers (duplicated from PromptIntegrationTest to keep tests
@@ -116,20 +116,8 @@ public class CoordinateMapIntegrationTest {
     }
 
     // -------------------------------------------------------------------------
-    // Helper: normalize pixel to Qwen [0,1000) then denormalize back
+    // Helper: denormalize Qwen [0,1000) back to pixels (forward: CoordinateNormalizer.toNormalized)
     // -------------------------------------------------------------------------
-
-    /**
-     * Convert a center pixel coordinate to Qwen [0,1000) normalized space.
-     * Mirrors ApePromptBuilder.formatActionLine coordinate computation.
-     */
-    private int toNormX(int pixelX) {
-        return Math.max(0, Math.min((int) ((pixelX / (double) DEVICE_WIDTH) * 1000), 999));
-    }
-
-    private int toNormY(int pixelY) {
-        return Math.max(0, Math.min((int) ((pixelY / (double) DEVICE_HEIGHT) * 1000), 999));
-    }
 
     /**
      * Denormalize Qwen [0,1000) coords back to pixels via CoordinateNormalizer.
@@ -147,9 +135,9 @@ public class CoordinateMapIntegrationTest {
         // CIPHER button bounds: [0,336][1080,462]
         // center: (540, 399)
         // normX = (int)(540/1080 * 1000) = 500
-        // normY = (int)(399/1920 * 1000) = 207
+        // normY = (int)(399 * 1000 / 1794) = 222
         // denormalize: pixelX = (int)(500/1000 * 1080) = 540
-        //              pixelY = (int)(207/1000 * 1920) = 397 (close to 399 due to int truncation)
+        //              pixelY = (int)(222/1000 * 1794) = 398 (close to 399 due to int truncation)
 
         List<WidgetBounds> widgets = parseWidgets("001.uiautomator");
         WidgetBounds cipher = null;
@@ -163,15 +151,16 @@ public class CoordinateMapIntegrationTest {
         assertEquals("CIPHER center X must be 540", 540, cx);
         assertEquals("CIPHER center Y must be 399", 399, cy);
 
-        int normX = toNormX(cx);
-        int normY = toNormY(cy);
+        int[] norm = CoordinateNormalizer.toNormalized(cx, cy, DEVICE_WIDTH, DEVICE_HEIGHT);
+        int normX = norm[0];
+        int normY = norm[1];
         assertEquals("CIPHER normX must be 500", 500, normX);
-        // normY = (int)(399/1920 * 1000) = (int)(207.8125) = 207
-        assertEquals("CIPHER normY must be 207", 207, normY);
+        // normY = (int)(399 * 1000 / 1794) = (int)(222.41) = 222
+        assertEquals("CIPHER normY must be 222", 222, normY);
 
         int[] backPixels = toPixels(normX, normY);
         // backPixelX = (int)(500/1000 * 1080) = 540
-        // backPixelY = (int)(207/1000 * 1920) = (int)(397.44) = 397
+        // backPixelY = (int)(222/1000 * 1794) = (int)(398.27) = 398
         assertEquals("denormalized X must be 540", 540, backPixels[0]);
 
         // The denormalized pixel must be within the widget bounds (integer rounding may shift by 1-2px)
@@ -186,7 +175,7 @@ public class CoordinateMapIntegrationTest {
         // GENERATE HASH button: bounds [0,442][1080,568]
         // center: (540, 505)
         // normX = (int)(540/1080 * 1000) = 500
-        // normY = (int)(505/1920 * 1000) = 263
+        // normY = (int)(505 * 1000 / 1794) = 281
         List<WidgetBounds> widgets = parseWidgets("010.uiautomator");
         WidgetBounds btn = null;
         for (WidgetBounds w : widgets) {
@@ -197,8 +186,9 @@ public class CoordinateMapIntegrationTest {
         int cx = btn.centerX();
         int cy = btn.centerY();
 
-        int normX = toNormX(cx);
-        int normY = toNormY(cy);
+        int[] norm = CoordinateNormalizer.toNormalized(cx, cy, DEVICE_WIDTH, DEVICE_HEIGHT);
+        int normX = norm[0];
+        int normY = norm[1];
 
         int[] backPixels = toPixels(normX, normY);
 
@@ -222,8 +212,9 @@ public class CoordinateMapIntegrationTest {
         int cx = btn.centerX();
         int cy = btn.centerY();
 
-        int normX = toNormX(cx);
-        int normY = toNormY(cy);
+        int[] norm = CoordinateNormalizer.toNormalized(cx, cy, DEVICE_WIDTH, DEVICE_HEIGHT);
+        int normX = norm[0];
+        int normY = norm[1];
 
         int[] backPixels = toPixels(normX, normY);
 
@@ -250,8 +241,9 @@ public class CoordinateMapIntegrationTest {
                 // Skip widgets where center might be out of [0,deviceHeight-1] due to odd bounds
                 if (w.centerX() < 0 || w.centerY() < 0) continue;
 
-                int normX = toNormX(w.centerX());
-                int normY = toNormY(w.centerY());
+                int[] norm = CoordinateNormalizer.toNormalized(w.centerX(), w.centerY(), DEVICE_WIDTH, DEVICE_HEIGHT);
+                int normX = norm[0];
+                int normY = norm[1];
                 int[] back = toPixels(normX, normY);
 
                 // The round-tripped X pixel must be within the widget's horizontal bounds
@@ -269,75 +261,23 @@ public class CoordinateMapIntegrationTest {
     }
 
     // -------------------------------------------------------------------------
-    // 7.1.2-C  Boundary rejection: status bar and navigation bar zones
+    // 7.1.2-C  The fixture's app widgets lie below the status-bar band
     // -------------------------------------------------------------------------
 
     @Test
-    public void statusBarZone_rejected() {
-        // Status bar: y < 5% of 1920 = 96 px
-        // Construct a Qwen coord that maps to y = 50 (well inside status bar)
-        // normY = (int)(50/1920 * 1000) = 26
-        int statusBarPixelY = 50;
-        int statusBarNormY  = (int) ((statusBarPixelY / (double) DEVICE_HEIGHT) * 1000);
-        int[] px = CoordinateNormalizer.normalize(500, statusBarNormY, DEVICE_WIDTH, DEVICE_HEIGHT);
-
-        double statusBarThreshold = DEVICE_HEIGHT * STATUS_BAR_RATIO; // 96
-        assertTrue("status-bar Y pixel must be < threshold (96)",
-                px[1] < statusBarThreshold);
-        // Verify that CoordinateMapper's rejection condition would fire
-        assertTrue("status bar pixelY=" + px[1] + " must trigger boundary rejection (< " + (int)statusBarThreshold + ")",
-                px[1] < DEVICE_HEIGHT * STATUS_BAR_RATIO);
-    }
-
-    @Test
-    public void navBarZone_rejected() {
-        // Navigation bar: y > 94% of 1920 = 1804.8 px
-        // Construct a coord that maps to y = 1850 (inside nav bar)
-        // normY = (int)(1850/1920 * 1000) = 963
-        int navBarPixelY = 1850;
-        int navBarNormY  = (int) ((navBarPixelY / (double) DEVICE_HEIGHT) * 1000);
-        int[] px = CoordinateNormalizer.normalize(500, navBarNormY, DEVICE_WIDTH, DEVICE_HEIGHT);
-
-        double navBarThreshold = DEVICE_HEIGHT * NAV_BAR_RATIO; // 1804.8
-        assertTrue("nav-bar Y pixel must be > threshold (1804)",
-                px[1] > navBarThreshold);
-        assertTrue("nav bar pixelY=" + px[1] + " must trigger boundary rejection (> " + (int)navBarThreshold + ")",
-                px[1] > DEVICE_HEIGHT * NAV_BAR_RATIO);
-    }
-
-    @Test
-    public void statusBarBoundaryExact_atThreshold() {
-        // Exact threshold: 5% of 1920 = 96
-        // A widget at y=96 should NOT be rejected (it's exactly at the boundary)
-        int boundaryY = (int)(DEVICE_HEIGHT * STATUS_BAR_RATIO); // 96
-        assertFalse("y=96 must NOT be rejected as status bar (boundary is exclusive)",
-                boundaryY < DEVICE_HEIGHT * STATUS_BAR_RATIO);
-    }
-
-    @Test
-    public void navBarBoundaryExact_atThreshold() {
-        // Exact threshold: 94% of 1920 = 1804.8 → boundary is ~1804
-        int boundaryY = (int)(DEVICE_HEIGHT * NAV_BAR_RATIO); // 1804
-        assertFalse("y=1804 must NOT be rejected as nav bar",
-                boundaryY > DEVICE_HEIGHT * NAV_BAR_RATIO);
-    }
-
-    @Test
-    public void tuple001_allClickableWidgets_notInStatusOrNavBar() throws Exception {
-        // Verify that clickable app widgets in tuple 001 are in the safe zone
+    public void tuple001_allClickableWidgets_belowTheStatusBarBand() throws Exception {
+        // Clickable app widgets in tuple 001 lie below the status-bar band, the only boundary band:
+        // the display excludes the navigation bar, so there is no lower one
         List<WidgetBounds> widgets = parseWidgets("001.uiautomator");
-        int statusBarMax = (int)(DEVICE_HEIGHT * STATUS_BAR_RATIO); // 96
-        int navBarMin    = (int)(DEVICE_HEIGHT * NAV_BAR_RATIO);    // 1804
+        double statusBarMax = DEVICE_HEIGHT * STATUS_BAR_RATIO; // 62.79
 
         for (WidgetBounds w : widgets) {
             if (!w.clickable) continue;
             int cy = w.centerY();
-            // All app buttons in the main screen should be well within safe zone
-            // (not in status bar or nav bar area)
-            assertTrue("Widget '" + w.text + "' center Y=" + cy + " must be above status bar (>" + statusBarMax + ")",
-                    cy > statusBarMax);
-            assertTrue("Widget '" + w.text + "' center Y=" + cy + " must be below nav bar (<" + navBarMin + ")",
-                    cy < navBarMin);
+            assertTrue("Widget '" + w.text + "' center Y=" + cy + " must be below the status bar (>=" + statusBarMax + ")",
+                    cy >= statusBarMax);
+            assertTrue("Widget '" + w.text + "' center Y=" + cy + " must be inside the display",
+                    cy < DEVICE_HEIGHT);
         }
     }
 
@@ -350,7 +290,7 @@ public class CoordinateMapIntegrationTest {
         // MESSAGE DIGEST button: bounds [0,210][1080,336]
         // center: (540, 273)
         // normX = 500
-        // normY = (int)(273/1920 * 1000) = 142
+        // normY = (int)(273 * 1000 / 1794) = 152
         List<WidgetBounds> widgets = parseWidgets("001.uiautomator");
         WidgetBounds btn = null;
         for (WidgetBounds w : widgets) {
@@ -366,10 +306,11 @@ public class CoordinateMapIntegrationTest {
         assertEquals("center X must be 540", 540, btn.centerX());
         assertEquals("center Y must be 273", 273, btn.centerY());
 
-        int normX = toNormX(btn.centerX());
-        int normY = toNormY(btn.centerY());
+        int[] norm = CoordinateNormalizer.toNormalized(btn.centerX(), btn.centerY(), DEVICE_WIDTH, DEVICE_HEIGHT);
+        int normX = norm[0];
+        int normY = norm[1];
         assertEquals("normX must be 500", 500, normX);
-        assertEquals("normY must be 142", 142, normY);
+        assertEquals("normY must be 152", 152, normY);
     }
 
     @Test
@@ -377,7 +318,7 @@ public class CoordinateMapIntegrationTest {
         // EXECUTE button: bounds [42,1411][1038,1537]
         // center: (540, 1474)
         // normX = (int)(540/1080 * 1000) = 500
-        // normY = (int)(1474/1920 * 1000) = 767
+        // normY = (int)(1474 * 1000 / 1794) = 821
         List<WidgetBounds> widgets = parseWidgets("015.uiautomator");
         WidgetBounds btn = null;
         for (WidgetBounds w : widgets) {
@@ -393,11 +334,12 @@ public class CoordinateMapIntegrationTest {
         assertEquals("center X must be 540",  540,  btn.centerX());
         assertEquals("center Y must be 1474", 1474, btn.centerY());
 
-        int normX = toNormX(btn.centerX());
-        int normY = toNormY(btn.centerY());
+        int[] norm = CoordinateNormalizer.toNormalized(btn.centerX(), btn.centerY(), DEVICE_WIDTH, DEVICE_HEIGHT);
+        int normX = norm[0];
+        int normY = norm[1];
         assertEquals("normX must be 500", 500, normX);
-        // normY = (int)(1474/1920 * 1000) = (int)(767.7) = 767
-        assertEquals("normY must be 767", 767, normY);
+        // normY = (int)(1474 * 1000 / 1794) = (int)(821.63) = 821
+        assertEquals("normY must be 821", 821, normY);
     }
 
     @Test
@@ -427,24 +369,24 @@ public class CoordinateMapIntegrationTest {
     @Test
     public void coordinateNormalizer_cipherButtonCenter() {
         // CIPHER center: (540, 399)
-        // normalize(500, 207, 1080, 1920) → (540, 397)
-        // (207/1000 * 1920 = 397.44 → 397 by int truncation)
-        int[] px = CoordinateNormalizer.normalize(500, 207, DEVICE_WIDTH, DEVICE_HEIGHT);
+        // normalize(500, 222, 1080, 1794) → (540, 398)
+        // (222/1000 * 1794 = 398.27 → 398 by int truncation)
+        int[] px = CoordinateNormalizer.normalize(500, 222, DEVICE_WIDTH, DEVICE_HEIGHT);
         assertEquals("denorm X must be 540", 540, px[0]);
-        assertEquals("denorm Y must be 397", 397, px[1]);
+        assertEquals("denorm Y must be 398", 398, px[1]);
 
-        // 397 is within [336, 462] (CIPHER button bounds)
-        assertTrue("denorm Y 397 must be within CIPHER button top (336)", px[1] >= 336);
-        assertTrue("denorm Y 397 must be within CIPHER button bottom (462)", px[1] <= 462);
+        // 398 is within [336, 462] (CIPHER button bounds)
+        assertTrue("denorm Y 398 must be within CIPHER button top (336)", px[1] >= 336);
+        assertTrue("denorm Y 398 must be within CIPHER button bottom (462)", px[1] <= 462);
     }
 
     @Test
     public void coordinateNormalizer_executeButtonCenter() {
         // EXECUTE button center: (540, 1474)
-        // normX = 500, normY = 767
+        // normX = 500, normY = 821
         // denorm: X = (int)(500/1000 * 1080) = 540
-        //         Y = (int)(767/1000 * 1920) = (int)(1472.64) = 1472
-        int[] px = CoordinateNormalizer.normalize(500, 767, DEVICE_WIDTH, DEVICE_HEIGHT);
+        //         Y = (int)(821/1000 * 1794) = (int)(1472.87) = 1472
+        int[] px = CoordinateNormalizer.normalize(500, 821, DEVICE_WIDTH, DEVICE_HEIGHT);
         assertEquals("denorm X must be 540", 540, px[0]);
         assertEquals("denorm Y must be 1472", 1472, px[1]);
 

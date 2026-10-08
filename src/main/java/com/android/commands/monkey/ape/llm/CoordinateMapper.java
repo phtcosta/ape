@@ -42,7 +42,6 @@ public final class CoordinateMapper {
 
     private final int snapTolerancePx;
     private final double boundaryTopPct;
-    private final double boundaryBottomPct;
 
     // Per-run, in-memory strike record of the dead-pair ban: ban key → unproductive executions of
     // that pair. No persistence and no cross-run state — a run's bans die with the run — and no size
@@ -50,13 +49,12 @@ public final class CoordinateMapper {
     private final Map<String, Integer> deadPairStrikes = new HashMap<>();
 
     /**
-     * @param llm the plan's LLM parameters, from which the snap floor and the two boundary bands
-     *        come; nothing here reads static configuration during the run
+     * @param llm the plan's LLM parameters, from which the snap floor and the status-bar boundary
+     *        band come; nothing here reads static configuration during the run
      */
     public CoordinateMapper(RunSpec.LlmParams llm) {
         this.snapTolerancePx = llm.integer("ape.llmSnapTolerancePx");
         this.boundaryTopPct = llm.dbl("ape.llmBoundaryTopPct");
-        this.boundaryBottomPct = llm.dbl("ape.llmBoundaryBottomPct");
     }
 
     /**
@@ -72,6 +70,16 @@ public final class CoordinateMapper {
         return CoordinateNormalizer.normalize(x, y, deviceWidth, deviceHeight);
     }
 
+    /**
+     * Whether an answer lies in the [0,1000) space the prompt and the screenshot define. An answer
+     * outside it points past the image; {@link #toPixels} would clamp it to the screen's edge, so
+     * the caller does not map it (llm-routing INV-RTR-22, design D8).
+     */
+    public static boolean inAnswerSpace(int x, int y) {
+        return x >= 0 && x <= CoordinateNormalizer.MAX_NORMALIZED
+                && y >= 0 && y <= CoordinateNormalizer.MAX_NORMALIZED;
+    }
+
     // -------------------------------------------------------------------------
     // Action mapping
     // -------------------------------------------------------------------------
@@ -82,7 +90,9 @@ public final class CoordinateMapper {
      * <p>Matching strategy (in order):
      * <ol>
      *   <li>back → return state.getBackAction()</li>
-     *   <li>Boundary reject: y in the configured top or bottom band</li>
+     *   <li>Boundary reject: y in the status-bar band ({@code ape.llmBoundaryTopPct}); there is no
+     *       lower band, because the display {@code deviceHeight} measures excludes the navigation
+     *       bar (llm-routing INV-RTR-22)</li>
      *   <li>type_text: filter to input-field widgets only</li>
      *   <li>Bounds containment: smallest widget whose bounds contain (pixelX, pixelY)</li>
      *   <li>Edge-distance fallback: nearest widget by point-to-rectangle distance,
@@ -125,10 +135,10 @@ public final class CoordinateMapper {
             }
         }
 
-        // Boundary reject: top and bottom bands of the screen, keeping the model off the status and
-        // navigation bars — and off any degenerate (0,0) emission, which the top band catches.
-        if (pixelY < deviceHeight * boundaryTopPct
-                || pixelY > deviceHeight * boundaryBottomPct) {
+        // Boundary reject: the status-bar band, keeping the model off system UI — and off any
+        // degenerate (0,0) emission, which the band catches. deviceHeight is the display, which
+        // already excludes the navigation bar, so there is no lower band (INV-RTR-22).
+        if (pixelY < deviceHeight * boundaryTopPct) {
             Logger.println("[APE-RV] LLM coordinate rejected (boundary): pixelY=" + pixelY
                     + " deviceHeight=" + deviceHeight);
             return null;
@@ -241,8 +251,9 @@ public final class CoordinateMapper {
         }
 
         // --- Off-tree coordinate tap (dynamic element) ---
-        // No widget contains the point and none is within edge-distance tolerance. The boundary reject
-        // ran first, so a coordinate reaching here is guaranteed in-bounds and non-degenerate. For a
+        // No widget contains the point and none is within edge-distance tolerance. A coordinate reaching
+        // here is in-bounds, because the caller refused answers outside the answer space and normalize
+        // clamps to the display, and non-degenerate, because the status-bar band ran first. For a
         // click/long_click, synthesize a targetless MODEL_LLM_TAP carrying the LLM coordinate so APE
         // can act on elements invisible to UIAutomator (game canvas, custom view, Compose-without-
         // semantics). type_text and any other type stay null — a raw coordinate has no node to

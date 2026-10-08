@@ -1,5 +1,9 @@
 package com.android.commands.monkey.ape.llm;
 
+import android.graphics.Rect;
+
+import com.android.commands.monkey.ape.model.ModelAction;
+
 import org.junit.Test;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -16,6 +20,8 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.Assert.*;
 
@@ -23,8 +29,10 @@ import static org.junit.Assert.*;
  * Integration tests for prompt construction logic using real cryptoapp UIAutomator fixtures.
  *
  * These tests parse the UIAutomator XML files directly — no APE/Android runtime needed.
- * They verify the data that ApePromptBuilder WOULD include in the prompt, independently
- * of ApePromptBuilder itself (which requires Android GUITree/ModelAction objects).
+ * Most verify the data that ApePromptBuilder WOULD include in the prompt. The coordinate
+ * tests (7.1.1-C) build the prompt itself from GUITreeNode/ModelAction fixtures of the
+ * parsed widgets and read the coordinates back from its output, so no copy of the
+ * normalization formula lives here (llm-prompt INV-PRM-06).
  *
  * Fixture tuples tested:
  *   001 — MainActivity: 3 buttons, no EditText
@@ -243,59 +251,63 @@ public class PromptIntegrationTest {
     // 7.1.1-C  Coordinate normalization for clickable widgets
     // -------------------------------------------------------------------------
 
+    /** The clickable widgets of a tuple as resolved actions, in document order. */
+    private List<ModelAction> clickableActions(List<WidgetInfo> widgets) {
+        List<ModelAction> actions = new ArrayList<>();
+        for (WidgetInfo w : widgets) {
+            if (!w.clickable && !w.longClickable) continue;
+            if (w.bounds == null || w.bounds.isEmpty()) continue;
+            int[] b = w.parsedBounds();
+            actions.add(PromptFixtures.click(w.className, w.text, new Rect(b[0], b[1], b[2], b[3])));
+        }
+        return actions;
+    }
+
+    /**
+     * Every coordinate the builder lists for the real widgets of each tuple is in the answer space.
+     * The fixtures are UIAutomator dumps of the campaign display (root {@code [0,0][1080,1794]}), so
+     * the prompt is built with that pair.
+     */
     @Test
     public void allTuples_normalizedCoordsInRange() throws Exception {
         String[] tuples = {"001.uiautomator", "004.uiautomator", "010.uiautomator",
                            "015.uiautomator", "020.uiautomator"};
-        int deviceWidth  = 1080;
-        int deviceHeight = 1920;
+        Pattern coordinate = Pattern.compile("@\\((-?\\d+),(-?\\d+)\\)");
 
         for (String tuple : tuples) {
-            List<WidgetInfo> widgets = parseWidgets(fixture(tuple));
-            for (WidgetInfo w : widgets) {
-                if (!w.clickable && !w.longClickable) continue;
-                if (w.bounds == null || w.bounds.isEmpty()) continue;
-
-                int cx = w.centerX();
-                int cy = w.centerY();
-                int normX = (int) ((cx / (double) deviceWidth)  * 1000);
-                int normY = (int) ((cy / (double) deviceHeight) * 1000);
-                normX = Math.max(0, Math.min(normX, 999));
-                normY = Math.max(0, Math.min(normY, 999));
-
-                assertTrue(tuple + " widget " + w.className + " normX out of [0,999]: " + normX,
-                        normX >= 0 && normX <= 999);
-                assertTrue(tuple + " widget " + w.className + " normY out of [0,999]: " + normY,
-                        normY >= 0 && normY <= 999);
+            List<ModelAction> actions = clickableActions(parseWidgets(fixture(tuple)));
+            String user = PromptFixtures.userText(ApePromptBuilder.VARIANT_APE_CURRENT,
+                    PromptFixtures.W, PromptFixtures.H, actions, null);
+            Matcher m = coordinate.matcher(user);
+            int listed = 0;
+            while (m.find()) {
+                int normX = Integer.parseInt(m.group(1));
+                int normY = Integer.parseInt(m.group(2));
+                assertTrue(tuple + " normX out of [0,999]: " + m.group(), normX >= 0 && normX <= 999);
+                assertTrue(tuple + " normY out of [0,999]: " + m.group(), normY >= 0 && normY <= 999);
+                listed++;
             }
+            assertEquals(tuple + ": every on-screen widget is listed with a coordinate",
+                    actions.size(), listed);
         }
     }
 
     @Test
     public void tuple001_cipherButtonNormalizedCoords() throws Exception {
-        // CIPHER button: bounds [0,336][1080,462]
-        // center: (540, 399)
-        // normX = (int)(540/1080 * 1000) = 500
-        // normY = (int)(399/1920 * 1000) = 207
+        // CIPHER button: bounds [0,336][1080,462], centre (540, 399)
+        // on the 1080 x 1794 display: normX = 540*1000/1080 = 500, normY = 399*1000/1794 = 222
         List<WidgetInfo> widgets = parseWidgets(fixture("001.uiautomator"));
         WidgetInfo cipher = null;
         for (WidgetInfo w : widgets) {
             if ("CIPHER".equals(w.text)) { cipher = w; break; }
         }
         assertNotNull(cipher);
+        assertEquals("center X must be 540", 540, cipher.centerX());
+        assertEquals("center Y must be 399", 399, cipher.centerY());
 
-        int cx = cipher.centerX();
-        int cy = cipher.centerY();
-        assertEquals("center X must be 540", 540, cx);
-        assertEquals("center Y must be 399", 399, cy);
-
-        int normX = (int) ((cx / 1080.0) * 1000);
-        int normY = (int) ((cy / 1920.0) * 1000);
-        normX = Math.max(0, Math.min(normX, 999));
-        normY = Math.max(0, Math.min(normY, 999));
-
-        assertEquals("normX for CIPHER button must be 500", 500, normX);
-        assertTrue("normY for CIPHER button must be in [200,215]", normY >= 200 && normY <= 215);
+        String user = PromptFixtures.userText(ApePromptBuilder.VARIANT_APE_CURRENT,
+                PromptFixtures.W, PromptFixtures.H, clickableActions(widgets), null);
+        assertTrue(user, PromptFixtures.lineWith(user, "\"CIPHER\"").contains("@(500,222)"));
     }
 
     // -------------------------------------------------------------------------
