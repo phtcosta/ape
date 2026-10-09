@@ -278,3 +278,12 @@ Surefire excludes the framework jar (`pom.xml` `classpathDependencyExcludes`), s
 ### Wave 1 suite
 
 `mvn clean test`: 1231 run, 0 failures, 0 errors, 24 skipped (baseline 1180 / 19; +15 loader, +13 stamp of which 5 `@Ignore`d, +23 run-spec).
+
+## Part B, wave 2 (group 12), 2026-10-08
+
+- **Lookup** (`MopDataLookupTest`, 12): every "Handler Stamp Lookup" scenario; a listed class whose record lacks the event reads `none` with no pair and no aggregate fallback (a mutation that reads the fallback fails it).
+- **Containment over nodes** (`MopScorerContainmentTest`, 13): walk order unchanged from `containmentShortIds` (node, two ancestors, each child then its children); a stamp on a parent or grandchild is found, one three levels up is not; under `flag` the largest flag weight wins, ties to the earlier node.
+- **Behavior under `flag` with unstamped nodes is unchanged**: `MopScorerTest` keeps every asserted value (its calls go through the lookup); the MOP parity goldens (`ParityOracleMopTest`, `ParityOracleLlmMopTest`, `PreemptionGoldenTest`, `GoldenFileTest`) pass unchanged.
+- **Grep gate 12.3**: `git grep -n 'getWidget(' -- src/main` → `ApeAgent.java:244` (typed input), `ApePromptBuilder.java:459` (`buildMopMarker`, group 15), `:480` (`buildWidgetMetadata`), `:600` (`buildExplorationContext`, group 15), `MopData.java` (definition and the id-key step of `lookup`). `containmentShortIds` has no hit.
+- **Amended on the author's decisions**: API Design `MopScorer.score(MopContext, State, ModelAction)`; mop-guidance "MopScorer — Priority Boost" and "Parent/child widget granularity reconciliation", design D17: under `flag` the largest flag weight, which is the strongest flag whenever `mopWeightDirect >= mopWeightTransitive`; `ScoringParams` drops the two MOP-widget weights.
+- Suite `mvn clean test`: 1261 / 0 / 0 / 24.

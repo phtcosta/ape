@@ -237,11 +237,12 @@ public abstract class ApeAgent implements Agent {
             MopData md = getMopData();
             if (md != null) {
                 String activity = ape.getTopActivityClassName();
-                // INV-MOP-23: resolve the static widget via the same ±2-level containment
-                // policy as the MOP scoring pass (design D3), not an exact-id-only lookup.
-                // The node's own short id is tried first (list order guarantees this).
-                for (String shortId : MopScorer.containmentShortIds(node)) {
-                    MopData.Widget w = md.getWidget(activity, shortId);
+                // INV-MOP-23 (amended): walk the same containment nodes as the MOP scoring pass,
+                // not an exact-id-only lookup. Typed input reads the id key on each node, because
+                // the static metadata is keyed by id; the node itself is tried first.
+                for (GUITreeNode candidate : MopScorer.containmentNodes(node)) {
+                    MopData.Widget w = md.getWidget(activity,
+                            MopData.extractShortId(candidate.getResourceID()));
                     if (w != null && (notEmpty(w.inputType) || notEmpty(w.hint))) {
                         return TypedInputGenerator.generateForType(w.inputType, w.hint, RandomHelper.getRandom());
                     }

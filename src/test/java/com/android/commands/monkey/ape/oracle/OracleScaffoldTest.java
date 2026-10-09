@@ -143,7 +143,7 @@ public class OracleScaffoldTest {
             ScriptedLlm llm = preset.hasLlm() ? new ScriptedLlm(script) : null;
             OracleSataAgent agent = OracleScaffold.newAgent(preset, script, llm);
 
-            MopData mopData = (MopData) OracleScaffold.getField(agent, "_mopData");
+            MopData mopData = agent.mopData(); // derived from the injected _mopContext
             if (preset.hasMopData()) {
                 assertNotNull(preset + " wires MopData", mopData);
                 assertEquals(preset + " loads the committed fixture",

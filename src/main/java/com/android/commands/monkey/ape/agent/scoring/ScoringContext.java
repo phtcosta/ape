@@ -1,13 +1,14 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
 import com.android.commands.monkey.ape.model.Graph;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 /**
  * rv-scoring-pipeline. The seam through which every {@link ScoringPass} reads the collaborators the
- * inline scoring blocks used to reach off {@code StatefulAgent} directly: the run-fixed {@link MopData}
- * (nullable — MOP disabled), the {@link UICoverageTracker}, the exploration {@link Graph}, the current
+ * inline scoring blocks used to reach off {@code StatefulAgent} directly: the run-fixed
+ * {@link MopContext} and its {@link MopData} (nullable — MOP disabled), the {@link UICoverageTracker}, the exploration {@link Graph}, the current
  * step timestamp, and the per-run BACK/MENU pick eligibility (the one pick-counter query the scoring
  * path makes — the counter itself lives on the agent, consulted here through {@link #menuPickEligible}).
  *
@@ -17,8 +18,20 @@ import com.android.commands.monkey.ape.utils.UICoverageTracker;
  */
 public interface ScoringContext {
 
-    /** The run's static-analysis data, or {@code null} when MOP guidance is disabled. */
-    MopData getMopData();
+    /**
+     * The run's MOP context — the loaded artifact, the scoring mode, the weights and the
+     * retirement (design D17, Plumbing) — or {@code null} when MOP guidance is disabled.
+     */
+    MopContext getMopContext();
+
+    /**
+     * The run's static-analysis data, or {@code null} when MOP guidance is disabled: the artifact
+     * of {@link #getMopContext()}, derived rather than held a second time.
+     */
+    default MopData getMopData() {
+        MopContext mop = getMopContext();
+        return mop == null ? null : mop.data();
+    }
 
     /** The activity-scoped UI coverage tracker. */
     UICoverageTracker getCoverageTracker();

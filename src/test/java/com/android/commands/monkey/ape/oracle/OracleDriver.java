@@ -199,7 +199,7 @@ public final class OracleDriver {
     private static List<DecisionRecord> run(OracleSataAgent agent, ScenarioScript script,
             ScriptedLlm llm, boolean driveSink) throws Exception {
         Graph graph = ((Model) OracleScaffold.getField(agent, "model")).getGraph();
-        MopData mopData = (MopData) OracleScaffold.getField(agent, "_mopData");
+        MopData mopData = agent.mopData(); // derived from the injected _mopContext
         EventSink sink = driveSink ? RunContext.current().sink() : null;
 
         Map<String, State> statesByScreen = new HashMap<>();

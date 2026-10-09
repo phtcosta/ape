@@ -1,26 +1,25 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
-import java.util.List;
-
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.telemetry.EventSink;
-import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
-import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopScorer;
 
 /**
  * rv-scoring-pipeline: the MOP-widget boost, extracted verbatim from the inline block in
  * {@code StatefulAgent.adjustActionsByGUITree()}. Scoring semantics owned by {@code mop-guidance}
  * (MopScorer — Priority Boost); this pass only re-homes the wiring. Enabled whenever MOP data is
- * present ({@code mopData != null}).
+ * present ({@code mopContext != null}).
+ *
+ * <p>The mode and the widget weights come from the run's {@link MopContext}
+ * ({@link ScoringContext#getMopContext()}, design D17 "Plumbing"), which also carries what the
+ * {@code distance} mode reads; {@link ScoringParams} still supplies every other pass's weights.
  */
 public final class MopWidgetPass implements ScoringPass {
 
     private final boolean enabled;
-    private final int weightDirect;
-    private final int weightTransitive;
 
     /**
      * Where the exposure pair goes. Handed in like every other collaborator rather than reached for
@@ -29,10 +28,9 @@ public final class MopWidgetPass implements ScoringPass {
      */
     private final EventSink sink;
 
-    public MopWidgetPass(ScoringContext ctx, ScoringParams params, EventSink sink) {
-        this.enabled = ctx.getMopData() != null;
-        this.weightDirect = params.mopWeightDirect();
-        this.weightTransitive = params.mopWeightTransitive();
+    /** This pass's weights are the {@link MopContext}'s, read at {@link #apply}. */
+    public MopWidgetPass(ScoringContext ctx, EventSink sink) {
+        this.enabled = ctx.getMopContext() != null;
         this.sink = sink;
     }
 
@@ -48,7 +46,7 @@ public final class MopWidgetPass implements ScoringPass {
 
     @Override
     public void apply(State state, ModelAction[] actions, ScoringContext ctx) {
-        MopData mopData = ctx.getMopData();
+        MopContext mop = ctx.getMopContext();
         int timestamp = ctx.getTimestamp();
         String activity = state.getActivity();
         int boostedCount = 0;
@@ -59,16 +57,16 @@ public final class MopWidgetPass implements ScoringPass {
             if (!action.requireTarget() || !action.isValid()) continue;
             if (!action.isResolvedAt(timestamp)) continue;
             totalTarget++;
-            GUITreeNode node = action.getResolvedNode();
-            if (node == null) continue;
-            boolean[] containmentHit = new boolean[]{false};
-            int boost = mopBoostWithContainment(activity, node, MopScorer.eventTypeOf(action),
-                    containmentHit, mopData, weightDirect, weightTransitive);
+            if (action.getResolvedNode() == null) continue;
+            // B3, INV-MOP-23: the lookup runs on the node, up to two ancestors and two levels of
+            // descendants; the winning lookup's position says whether containment won the boost.
+            MopScorer.Scored scored = MopScorer.weigh(mop, state, action);
+            int boost = scored.weight;
             if (boost > 0) {
                 action.setPriority(action.getPriority() + boost);
                 action.setMopBoost(boost);
                 boostedCount++;
-                if (containmentHit[0]) containmentBoostedCount++;
+                if (scored.index > 0) containmentBoostedCount++;
                 if (boost > maxBoost) maxBoost = boost;
             }
         }
@@ -81,29 +79,5 @@ public final class MopWidgetPass implements ScoringPass {
         // MOP scorer fired on 0.4 % of decisions" into a statement about opportunity rather than
         // about luck, and it is per-step — a state can realise more than one pair within a run.
         sink.mopExposure(boostedCount, totalTarget);
-    }
-
-    /**
-     * MOP boost for an action's node, reconciling parent/child widget granularity (B3, INV-MOP):
-     * scores the node's own short id plus its ancestors (≤ 2 up) and descendants (≤ 2 down) via
-     * {@link MopScorer#score}, returning the maximum. {@code containmentHit[0]} is set true when the
-     * winning boost came from an ancestor/descendant rather than the exact id (hit-rate telemetry).
-     */
-    private static int mopBoostWithContainment(String activity, GUITreeNode node,
-                                               String eventType, boolean[] containmentHit,
-                                               MopData mopData, int weightDirect,
-                                               int weightTransitive) {
-        List<String> ids = MopScorer.containmentShortIds(node);
-        int best = MopScorer.score(
-                activity, ids.get(0), mopData, eventType, weightDirect, weightTransitive);
-        for (int i = 1; i < ids.size(); i++) {
-            int b = MopScorer.score(
-                    activity, ids.get(i), mopData, eventType, weightDirect, weightTransitive);
-            if (b > best) {
-                best = b;
-                containmentHit[0] = true;
-            }
-        }
-        return best;
     }
 }

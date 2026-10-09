@@ -13,7 +13,9 @@ import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.TestMopContexts;
 
 /**
  * A step, stated as values, for the stage tests.
@@ -49,7 +51,7 @@ class FakeStepContext implements StepContext {
     @Override public int graphStableCounter() { return graphStableCounter; }
     @Override public int timestamp() { return timestamp; }
     @Override public Random random() { return random; }
-    @Override public MopData mopData() { return mopData; }
+    @Override public MopContext mopContext() { return TestMopContexts.defaults(mopData); }
     @Override public Graph graph() { return graph; }
     @Override public ActivityBudgetTracker budgetTracker() { return budgetTracker; }
     @Override public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() { return actionHistory; }

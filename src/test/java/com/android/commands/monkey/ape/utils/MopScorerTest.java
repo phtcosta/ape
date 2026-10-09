@@ -32,7 +32,8 @@ import static org.junit.Assert.*;
  * {@code activityHasMop}-false early-outs (INV-MOP-24) and for the activity-substrate floor
  * plus flagged-widget count (INV-MOP-24 amended): {@code resolvedStateOnActivity} injects
  * resolved {@code GUITreeNode}s into each action via the same Unsafe seam {@code stateOnActivity}
- * uses, so the short-id → {@code getWidget} resolution runs without an Android runtime.
+ * uses, so the node → {@code MopData.lookup} resolution (unstamped, so the id key) runs without
+ * an Android runtime.
  */
 public class MopScorerTest {
 
@@ -52,6 +53,24 @@ public class MopScorerTest {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /** The run context these tests score under: {@code flag}, with the injected weights above. */
+    private static MopContext ctx(MopData data) {
+        return TestMopContexts.flag(data, W_DIRECT, W_TRANSITIVE);
+    }
+
+    /**
+     * The boost of a node whose resource id is {@code shortId}, on {@code activity}, for
+     * {@code eventType} — what the removed string-keyed {@code score(activity, shortId, data,
+     * eventType, wD, wT)} answered, now asked through the lookup and the mode's best-of-containment
+     * (the node has no relatives, so its own lookup is the only one).
+     */
+    private static int scoreOf(MopData data, String activity, String shortId, String eventType) {
+        GUITreeNode node = new GUITreeNode(null);
+        node.setResourceID("p:id/" + shortId);
+        return MopScorer.best(ctx(data),
+                MopScorer.containmentLookups(data, activity, node, eventType)).weight;
+    }
 
     /**
      * Build a MopData with WTG transitions and MOP activity markers.
@@ -303,16 +322,16 @@ public class MopScorerTest {
     @Test // 17.3
     public void testScoreEventTypeAwareMatchesClick() throws Exception {
         MopData d = loadEventTypeFixture();
-        assertEquals(W_DIRECT, MopScorer.score("C", "b", d, "click", W_DIRECT, W_TRANSITIVE));
+        assertEquals(W_DIRECT, scoreOf(d, "C", "b", "click"));
         // longClick is unflagged on widget b; with the activity-level fallback removed the
         // event-type-specific miss scores 0 (discriminative-only).
-        assertEquals(0, MopScorer.score("C", "b", d, "longClick", W_DIRECT, W_TRANSITIVE));
+        assertEquals(0, scoreOf(d, "C", "b", "longClick"));
     }
 
     @Test // 17.4
     public void testScoreEventTypeNullFallsBackToAggregate() throws Exception {
         MopData d = loadEventTypeFixture();
-        assertEquals(W_DIRECT, MopScorer.score("C", "b", d, null, W_DIRECT, W_TRANSITIVE));
+        assertEquals(W_DIRECT, scoreOf(d, "C", "b", null));
     }
 
     @Test // 17.5
@@ -326,10 +345,10 @@ public class MopScorerTest {
 
     @Test // 17.6
     public void testScoreReturnsZeroWhenMopDataNull() {
-        assertEquals(0, MopScorer.score("a", "b", null, "click", W_DIRECT, W_TRANSITIVE));
+        assertEquals(0, MopScorer.score(null, null, null));
         assertEquals(0, MopScorer.scoreOpenMenu("a", null, W_OPEN_MENU));
         assertEquals(0, MopScorer.scoreWtg("a", "b", null, W_WTG));
-        assertEquals(0, MopScorer.stateMopDensity(null, null, 0));
+        assertEquals(0, MopScorer.stateMopDensity(null, ctx(null), 0));
     }
 
     @Test // 17.7
@@ -341,7 +360,7 @@ public class MopScorerTest {
     @Test // 17.8 — density null guard (JVM-testable; populated-State path is unchanged legacy code, covered by §22 integration)
     public void testStateMopDensityNullSafe() {
         // data==null short-circuits before touching the State (the regression-relevant guard I added).
-        assertEquals(0, MopScorer.stateMopDensity(null, null, 0));
+        assertEquals(0, MopScorer.stateMopDensity(null, ctx(null), 0));
     }
 
     // =========================================================================
@@ -375,10 +394,10 @@ public class MopScorerTest {
         ids.put("flagged", true);  // direct MOP
         MopData data = buildWidgetData("A", ids);
 
-        assertEquals(0, MopScorer.score("A", "plain", data, null, W_DIRECT, W_TRANSITIVE));
-        assertEquals(0, MopScorer.score("A", "absent", data, null, W_DIRECT, W_TRANSITIVE));
-        assertEquals(W_DIRECT, MopScorer.score("A", "flagged", data, null, W_DIRECT, W_TRANSITIVE));
-        assertEquals(0, MopScorer.score("B", "plain", data, null, W_DIRECT, W_TRANSITIVE));
+        assertEquals(0, scoreOf(data, "A", "plain", null));
+        assertEquals(0, scoreOf(data, "A", "absent", null));
+        assertEquals(W_DIRECT, scoreOf(data, "A", "flagged", null));
+        assertEquals(0, scoreOf(data, "B", "plain", null));
     }
 
     /**
@@ -396,8 +415,8 @@ public class MopScorerTest {
         ids.put("inner", false);  // child the runtime resolves, unflagged
         MopData data = buildWidgetData("A", ids);
 
-        assertEquals(W_DIRECT, MopScorer.score("A", "card", data, null, W_DIRECT, W_TRANSITIVE));
-        assertEquals(0, MopScorer.score("A", "inner", data, null, W_DIRECT, W_TRANSITIVE));
+        assertEquals(W_DIRECT, scoreOf(data, "A", "card", null));
+        assertEquals(0, scoreOf(data, "A", "inner", null));
     }
 
     // -------------------------------------------------------------------------
@@ -443,7 +462,7 @@ public class MopScorerTest {
     @Test
     public void testStateMopDensityNullDataIsZero() throws Exception {
         State dense = stateOnActivity("com.example.MopActivity", 10);
-        assertEquals(0, MopScorer.stateMopDensity(dense, null, 1));
+        assertEquals(0, MopScorer.stateMopDensity(dense, ctx(null), 1));
     }
 
     /**
@@ -457,7 +476,7 @@ public class MopScorerTest {
         MopData data = buildWidgetData("com.example.MopActivity",
                 Collections.singletonMap("flagged", Boolean.TRUE));
         State denseNonMop = stateOnActivity("com.example.PlainActivity", 10);
-        assertEquals(0, MopScorer.stateMopDensity(denseNonMop, data, 1));
+        assertEquals(0, MopScorer.stateMopDensity(denseNonMop, ctx(data), 1));
     }
 
     // -------------------------------------------------------------------------
@@ -465,7 +484,7 @@ public class MopScorerTest {
     // These drive the flagged-count path at the JVM level by injecting resolved
     // GUITreeNodes (resolvedNode + resovledTimestamp) into each action, the same
     // Unsafe seam stateOnActivity already uses — so getResolvedNode → extractShortId
-    // → getWidget runs without an Android device.
+    // → MopData.lookup (id key) runs without an Android device.
     // -------------------------------------------------------------------------
 
     /**
@@ -526,7 +545,7 @@ public class MopScorerTest {
         MopData data = densityData("com.example.MopActivity");
         State aPrimeOnly = resolvedStateOnActivity(
                 "com.example.MopActivity", "plain", "plain", "plain");
-        assertEquals(1, MopScorer.stateMopDensity(aPrimeOnly, data, 1));
+        assertEquals(1, MopScorer.stateMopDensity(aPrimeOnly, ctx(data), 1));
     }
 
     /** 1.1(b): 2 flagged widgets on a MOP activity → 1 + 2 = 3. */
@@ -535,7 +554,7 @@ public class MopScorerTest {
         MopData data = densityData("com.example.MopActivity");
         State st = resolvedStateOnActivity(
                 "com.example.MopActivity", "flagged", "plain", "flagged");
-        assertEquals(3, MopScorer.stateMopDensity(st, data, 1));
+        assertEquals(3, MopScorer.stateMopDensity(st, ctx(data), 1));
     }
 
     /** 1.1(c): non-MOP activity → 0 via the early-out (no widget resolution), even if a
@@ -545,7 +564,7 @@ public class MopScorerTest {
         MopData data = densityData("com.example.MopActivity");
         State nonMop = resolvedStateOnActivity(
                 "com.example.PlainActivity", "flagged", "flagged");
-        assertEquals(0, MopScorer.stateMopDensity(nonMop, data, 1));
+        assertEquals(0, MopScorer.stateMopDensity(nonMop, ctx(data), 1));
     }
 
     /** 1.1(d): ordering guard — widget-flagged (2) > A′-only floor (1) > non-MOP (0). */
@@ -553,11 +572,11 @@ public class MopScorerTest {
     public void testStateMopDensityOrderingWidgetAboveFloorAboveZero() throws Exception {
         MopData data = densityData("com.example.MopActivity");
         int widget = MopScorer.stateMopDensity(
-                resolvedStateOnActivity("com.example.MopActivity", "flagged"), data, 1);
+                resolvedStateOnActivity("com.example.MopActivity", "flagged"), ctx(data), 1);
         int aPrime = MopScorer.stateMopDensity(
-                resolvedStateOnActivity("com.example.MopActivity", "plain"), data, 1);
+                resolvedStateOnActivity("com.example.MopActivity", "plain"), ctx(data), 1);
         int nonMop = MopScorer.stateMopDensity(
-                resolvedStateOnActivity("com.example.PlainActivity", "flagged"), data, 1);
+                resolvedStateOnActivity("com.example.PlainActivity", "flagged"), ctx(data), 1);
         assertEquals(2, widget);
         assertEquals(1, aPrime);
         assertEquals(0, nonMop);

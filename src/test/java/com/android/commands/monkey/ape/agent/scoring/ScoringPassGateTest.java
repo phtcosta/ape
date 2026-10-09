@@ -30,8 +30,6 @@ import static org.junit.Assert.*;
  */
 public class ScoringPassGateTest {
 
-    private static final int W_DIRECT = 917;
-    private static final int W_TRANSITIVE = 613;
     private static final int W_OPEN_MENU = 271;
     private static final int W_WTG = 419;
     private static final int W_FRONTIER = 331;
@@ -40,13 +38,13 @@ public class ScoringPassGateTest {
 
     /** Every weight positive and every flag on — the shape of a fully-armed MOP arm. */
     private static ScoringParams allOn() {
-        return new ScoringParams(W_DIRECT, W_TRANSITIVE, W_OPEN_MENU, W_WTG, W_FRONTIER,
+        return new ScoringParams(W_OPEN_MENU, W_WTG, W_FRONTIER,
                 W_MOP_FRONTIER, W_COVERAGE, true);
     }
 
     /** Every weight and flag off — what a plan carrying no scoring feature resolves to. */
     private static ScoringParams allOff() {
-        return new ScoringParams(0, 0, 0, 0, 0, 0, 0, false);
+        return new ScoringParams(0, 0, 0, 0, 0, false);
     }
 
     private static StubScoringContext ctxWithMop(MopData mopData) {
@@ -70,8 +68,8 @@ public class ScoringPassGateTest {
 
     @Test
     public void mopWidgetPassEnabledIffMopDataPresent() {
-        assertFalse(new MopWidgetPass(ctxWithMop(null), allOn(), new NoopSink()).isEnabled());
-        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOn(), new NoopSink()).isEnabled());
+        assertFalse(new MopWidgetPass(ctxWithMop(null), new NoopSink()).isEnabled());
+        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), new NoopSink()).isEnabled());
     }
 
     @Test
@@ -146,7 +144,7 @@ public class ScoringPassGateTest {
      */
     @Test
     public void theMopDataGatedPassesIgnoreTheWeights() {
-        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOff(), new NoopSink()).isEnabled());
+        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), new NoopSink()).isEnabled());
         assertTrue(new MenuGatewayPass(ctxWithMop(mopNoWtg()), allOff()).isEnabled());
     }
 
@@ -156,7 +154,7 @@ public class ScoringPassGateTest {
     public void passReadsMopDataFromContextNotItsOwnState() {
         // Same pass type, two contexts -> two different enabled states, proving the pass holds no
         // MopData of its own and reads it from the ScoringContext at construction.
-        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), allOn(), new NoopSink()).isEnabled());
-        assertFalse(new MopWidgetPass(ctxWithMop(null), allOn(), new NoopSink()).isEnabled());
+        assertTrue(new MopWidgetPass(ctxWithMop(mopNoWtg()), new NoopSink()).isEnabled());
+        assertFalse(new MopWidgetPass(ctxWithMop(null), new NoopSink()).isEnabled());
     }
 }

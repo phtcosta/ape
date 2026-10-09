@@ -14,7 +14,7 @@ import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
-import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopContext;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -89,7 +89,7 @@ public class BudgetStageTest {
         }
 
         @Override
-        public MopData mopData() {
+        public MopContext mopContext() {
             throw new UnsupportedOperationException("the budget gate does not read MOP data");
         }
 

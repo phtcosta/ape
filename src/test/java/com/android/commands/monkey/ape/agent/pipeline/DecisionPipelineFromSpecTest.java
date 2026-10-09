@@ -25,7 +25,7 @@ import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
-import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopContext;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
@@ -175,7 +175,7 @@ public class DecisionPipelineFromSpecTest {
         @Override public int graphStableCounter() { return 0; }
         @Override public int timestamp() { return 1; }
         @Override public Random random() { return null; }
-        @Override public MopData mopData() { return null; }
+        @Override public MopContext mopContext() { return null; }
         @Override public Graph graph() { return null; }
         @Override public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() { return null; }
         @Override public void resetGraphStableCounter() { }

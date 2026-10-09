@@ -34,12 +34,12 @@ public class ScoringPipelineTest {
 
     /** A fully-armed MOP arm, at values that are not the jar's, so a roster cannot be a default. */
     private static ScoringParams allOn() {
-        return new ScoringParams(917, 613, 271, 419, 331, 233, 101, true);
+        return new ScoringParams(271, 419, 331, 233, 101, true);
     }
 
     /** The MOP arm as a plan states it by default: every weight but the MOP-frontier one. */
     private static ScoringParams withoutMopFrontier() {
-        return new ScoringParams(917, 613, 271, 419, 331, 0, 101, true);
+        return new ScoringParams(271, 419, 331, 0, 101, true);
     }
 
 
@@ -185,7 +185,7 @@ public class ScoringPipelineTest {
     public void aPlanWithNoScoringFeatureAssemblesNothing() {
         StubScoringContext ctx = new StubScoringContext(); // no substrate
         ScoringPipeline p = ScoringPipeline.fromParams(
-                new ScoringParams(0, 0, 0, 0, 0, 0, 0, false), ctx, new NoopSink());
+                new ScoringParams(0, 0, 0, 0, 0, false), ctx, new NoopSink());
 
         assertEquals(Collections.<String>emptyList(), p.passNames());
         assertEquals(0, p.size());
@@ -200,7 +200,7 @@ public class ScoringPipelineTest {
         ctx.mopData = mopWithWtg();
 
         ScoringPipeline p = ScoringPipeline.fromParams(
-                new ScoringParams(0, 0, 0, 0, 0, 0, 0, false), ctx, new NoopSink());
+                new ScoringParams(0, 0, 0, 0, 0, false), ctx, new NoopSink());
 
         assertEquals(Arrays.asList("MopWidgetPass", "MenuGatewayPass"), p.passNames());
     }

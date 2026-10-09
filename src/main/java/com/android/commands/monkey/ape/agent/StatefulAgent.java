@@ -69,6 +69,7 @@ import com.android.commands.monkey.ape.AndroidDevice;
 import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.Logger;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.SystemBroadcastCatalog;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
@@ -126,7 +127,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
 
     protected GUITreeWidgetDiffer widgetDiffer = new GUITreeWidgetDiffer();
 
-    private final MopData _mopData;
+    /**
+     * The run's MOP context (design D17, Plumbing): the loaded artifact with the scoring mode, the
+     * weights and the retirement; null when no artifact is loaded. The artifact itself is read
+     * through {@link #getMopData()}, derived from this field rather than held a second time.
+     */
+    private final MopContext _mopContext;
     private final UICoverageTracker _coverageTracker;
     private final ActivityBudgetTracker _budgetTracker;
 
@@ -178,10 +184,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // and an absent feature are the same statement, and requireMopArm below reads the null as
         // "this run declares no MOP arm" exactly as it read an unset Config field.
         String mopDataPath = spec.has(Feature.MOP) ? spec.mop().dataPath() : null;
-        this._mopData = requireMopArm(
+        MopData mopData = requireMopArm(
                 MopData.load(mopDataPath, mainApp.getPackageName(), mainApp.getClassName(),
                         RunContext.current().sink()),
                 mopDataPath);
+        // Built once, right after the artifact loads (design D17, Plumbing); null with no artifact.
+        this._mopContext = MopContext.fromSpec(mopData, spec.mop());
         this._coverageTracker = new UICoverageTracker();
         // rv-scoring-pipeline (activityBudgetEnabled): the activity budget is a fork addition; upstream
         // has none. Off -> no tracker is built and the budget check is skipped (INV-ARCH-01).
@@ -189,13 +197,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 ? new ActivityBudgetTracker(exploration.integer("ape.activityBaseBudget"),
                         exploration.integer("ape.activityBudgetPerWidget"))
                 : null;
-        this._broadcastCatalog = _mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
+        this._broadcastCatalog = mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
-        // and assemble the pipeline once, now that _mopData/_coverageTracker/graph/timestamp are set.
-        // Pass isEnabled() reads only its injected weight and getMopData() here (run-fixed) — never
+        // and assemble the pipeline once, now that _mopContext/_coverageTracker/graph/timestamp are set.
+        // Pass isEnabled() reads only its injected weight and getMopContext() here (run-fixed) — never
         // menuPickEligible — so no subclass field is touched before the subclass constructor runs.
         this.scoringContext = new ScoringContext() {
-            @Override public MopData getMopData() { return StatefulAgent.this.getMopData(); }
+            @Override public MopContext getMopContext() { return StatefulAgent.this.getMopContext(); }
             @Override public UICoverageTracker getCoverageTracker() { return StatefulAgent.this.getCoverageTracker(); }
             @Override public Graph getGraph() { return StatefulAgent.this.getGraph(); }
             @Override public int getTimestamp() { return StatefulAgent.this.getTimestamp(); }
@@ -221,8 +229,18 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         return names;
     }
 
+    /** The run's static-analysis data, or null when MOP is disabled: the context's artifact. */
+    @Override
     protected MopData getMopData() {
-        return _mopData;
+        return _mopContext == null ? null : _mopContext.data();
+    }
+
+    /**
+     * The run's MOP context (design D17, Plumbing), or null when no artifact is loaded. What a MOP
+     * reader needs beyond the artifact — the mode, the weights, the retirement — comes from here.
+     */
+    protected MopContext getMopContext() {
+        return _mopContext;
     }
 
     /**
@@ -313,8 +331,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     @Override
-    public MopData mopData() {
-        return getMopData();
+    public MopContext mopContext() {
+        return getMopContext();
     }
 
     @Override
@@ -1340,8 +1358,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      */
     public int mopComponentTargetCount() {
         if (!_tuplesBuilt) {
-            _triggerTuples = buildTriggerTuples(_mopData);
-            _providerTuples = buildProviderTuples(_mopData);
+            _triggerTuples = buildTriggerTuples(getMopData());
+            _providerTuples = buildProviderTuples(getMopData());
             _tuplesBuilt = true;
         }
         return _triggerTuples.size() + _providerTuples.size();
@@ -1394,7 +1412,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     private boolean dispatchTrigger(TriggerTuple t) {
         ComponentInfo c = t.component;
         Intent intent = new Intent();
-        intent.setComponent(new ComponentName(_mopData.getPackageName(), c.className));
+        intent.setComponent(new ComponentName(getMopData().getPackageName(), c.className));
         if (t.action != null) {
             intent.setAction(t.action);
         }

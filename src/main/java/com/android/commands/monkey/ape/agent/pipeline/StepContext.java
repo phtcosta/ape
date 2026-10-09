@@ -23,6 +23,7 @@ import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 
 /**
@@ -83,8 +84,21 @@ public interface StepContext {
      */
     Random random();
 
-    /** The run's static-analysis data, or {@code null} when the plan carries no MOP feature. */
-    MopData mopData();
+    /**
+     * The run's MOP context — the loaded artifact, the scoring mode, the weights and the
+     * retirement (design D17, Plumbing) — or {@code null} when the plan carries no MOP feature.
+     * Handed in, never reached for through a static (INV-DP-12).
+     */
+    MopContext mopContext();
+
+    /**
+     * The run's static-analysis data, or {@code null} when the plan carries no MOP feature: the
+     * artifact of {@link #mopContext()}, derived rather than held a second time.
+     */
+    default MopData mopData() {
+        MopContext mop = mopContext();
+        return mop == null ? null : mop.data();
+    }
 
     /** The exploration graph. */
     Graph graph();

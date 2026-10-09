@@ -24,6 +24,7 @@ import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.Config;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.RandomHelper;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
@@ -74,7 +75,7 @@ import java.util.Set;
  *   <tr><td>{@code newGUITree}</td><td>StatefulAgent</td><td>passed to the LLM hooks and nowhere else in the ladder — stays null, see finding 2.1-a</td></tr>
  *   <tr><td>{@code timestamp}</td><td>ApeAgent</td><td>{@code getTimestamp()}, form-completion probes</td></tr>
  *   <tr><td>{@code model}</td><td>StatefulAgent</td><td>{@code getGraph()} — the global-action scan, the launcher's visited set, path search</td></tr>
- *   <tr><td>{@code _mopData}</td><td>StatefulAgent</td><td>preset axis; launcher and component-trigger gates</td></tr>
+ *   <tr><td>{@code _mopContext}</td><td>StatefulAgent</td><td>preset axis; launcher and component-trigger gates</td></tr>
  * *   <tr><td>{@code _coverageTracker}</td><td>StatefulAgent</td><td>{@code computeDynamicEpsilon()} ({@code Config.dynamicEpsilon} defaults true)</td></tr>
  *   <tr><td>{@code _budgetTracker}</td><td>StatefulAgent</td><td>the first block dereferences it unconditionally — {@code Config.activityBudgetEnabled} defaults <b>true</b>, so null is not the "budget off" wiring, it is a crash</td></tr>
  *   <tr><td>{@code scoringContext}, {@code scoringPipeline}</td><td>StatefulAgent</td><td>not read by the ladder itself; wired because the profile mirrors the constructor</td></tr>
@@ -248,7 +249,7 @@ import java.util.Set;
  * {@code modelMenuEnabled=true}, {@code useActionDiffer=true},
  * {@code leastVisitedPriorityTiebreak=true}, {@code backMenuPickCap=3},
  * {@code dynamicEpsilon=true}, {@code defaultEpsilon=0.05}, {@code minEpsilon=0.02},
- * {@code maxEpsilon=0.15}. Read only where {@code _mopData} is present:
+ * {@code maxEpsilon=0.15}. Read only where {@code _mopContext} is present:
  * {@code activityTriggerEnabled=true}, {@code activityTriggerStagnationStep=50},
  * {@code activityTriggerMaxPerRun=0}, {@code mopTargetPickCap=3}. Each preset test guard-asserts
  * the half it depends on (design D2). Scoring weights are deliberately <b>not</b> among them: they
@@ -281,7 +282,7 @@ public final class OracleScaffold {
 
     /**
      * The four target presets. A preset is realized by the plan it states and the injection profile
-     * that follows from it: the presence or absence of {@code _mopData} and of the LLM feature are
+     * that follows from it: the presence or absence of {@code _mopContext} and of the LLM feature are
      * its only axes (design D2), which is what {@code StatefulAgent}'s constructor used to decide
      * from {@code Config.mopDataPath} and {@code Config.llmUrl} and what {@code RunSpec} decides
      * now.
@@ -570,14 +571,17 @@ public final class OracleScaffold {
         setField(agent, "newGUITree", null); // finding 2.1-a
 
         // --- the collaborators the constructor builds (StatefulAgent.java:179-208)
-        setField(agent, "_mopData", mopData);
+        // The artifact reaches the agent inside its MOP context (design D17, Plumbing), built from
+        // the plan installed above exactly as the constructor builds it — the injection profile
+        // adapting to a relocated collaborator (INV-ORA-07); the agent derives getMopData() from it.
+        final MopContext mopContext = MopContext.fromSpec(mopData, spec.mop());
+        setField(agent, "_mopContext", mopContext);
         setField(agent, "_coverageTracker", coverageTracker);
         // Config.activityBudgetEnabled defaults true, so the constructor builds a real tracker and
         // the ladder's first block dereferences it unconditionally (SataAgent.java:468).
         setField(agent, "_budgetTracker", budgetTracker(script));
-        final MopData contextMopData = mopData;
         ScoringContext scoringContext = new ScoringContext() {
-            @Override public MopData getMopData() { return contextMopData; }
+            @Override public MopContext getMopContext() { return mopContext; }
             @Override public UICoverageTracker getCoverageTracker() { return coverageTracker; }
             @Override public Graph getGraph() { return graph; }
             @Override public int getTimestamp() { return agent.getTimestamp(); }

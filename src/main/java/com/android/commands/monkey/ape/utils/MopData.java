@@ -21,6 +21,7 @@ import java.util.Set;
 
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.telemetry.EventSink;
+import com.android.commands.monkey.ape.tree.GUITreeNode;
 
 /**
  * Typed model of the compact MOP artifact, plus the activity → shortWidgetId index that
@@ -840,6 +841,67 @@ public class MopData {
         return binaryClassName == null ? null : handlers.get(binaryClassName);
     }
 
+    /**
+     * What MOP knows about one node for one event (mop-guidance "Handler Stamp Lookup", design
+     * D17, INV-MOP-36). Every reader of MOP flags or distances for a node goes through here.
+     *
+     * <ol>
+     *   <li><b>Stamp.</b> For {@code click} and {@code longClick} only, the node's stamp for that
+     *       event ({@link GUITreeNode#getHandlerClick()} answers the wire key {@code click},
+     *       {@link GUITreeNode#getHandlerLongClick()} the wire key {@code longclick}), when
+     *       {@code handlers} lists its class: that class's record for the event, source
+     *       {@code STAMP}, even when it reaches nothing. The record is read for the event alone —
+     *       an event missing from it reads as {@code none} with no pair, with no aggregate fallback.
+     *   <li><b>Id key.</b> Otherwise the widget of {@code (activity, shortId)}: its flags for the
+     *       event with today's per-event → aggregate fallback (INV-MOP-14), and its pairs under the
+     *       event's key only, source {@code ID}.
+     *   <li>Otherwise {@link Lookup#NONE}.
+     * </ol>
+     *
+     * <p>A stamp naming a class {@code handlers} does not list (a library dispatcher such as
+     * {@code AppCompatViewInflater$DeclaredOnClickListener}) falls back to the id key. Never null;
+     * pure — it reads the artifact and the node, never the retirement state.
+     *
+     * @param eventType the event as {@code MopScorer.eventTypeOf} spells it; null skips the stamp
+     *                  and reads the id key's aggregate flags with no pair
+     */
+    public Lookup lookup(String activity, GUITreeNode node, String eventType) {
+        if (node == null) {
+            return Lookup.NONE;
+        }
+        String event = normalizeEventType(eventType);
+        Handler stamped = getHandler(stampFor(node, event));
+        if (stamped != null) {
+            return new Lookup(stamped.isDirectMopForEvent(event),
+                    stamped.isTransitiveMopForEvent(event), stamped.dist(event),
+                    Lookup.Source.STAMP);
+        }
+        Widget widget = getWidget(activity, extractShortId(node.getResourceID()));
+        if (widget != null) {
+            return new Lookup(widget.isDirectMop(event), widget.isTransitiveMop(event),
+                    widget.dist(event), Lookup.Source.ID);
+        }
+        return Lookup.NONE;
+    }
+
+    /**
+     * The node's stamp for a normalized event, or null: gh121 stamps click and long-click handlers
+     * only, so every other event (and a null one) has no stamp to consult.
+     */
+    private static String stampFor(GUITreeNode node, String normalizedEvent) {
+        if (EVENT_CLICK.equals(normalizedEvent)) {
+            return node.getHandlerClick();
+        }
+        if (EVENT_LONG_CLICK.equals(normalizedEvent)) {
+            return node.getHandlerLongClick();
+        }
+        return null;
+    }
+
+    /** The normalized wire keys of the two stamped events (D17: {@code click}, {@code longclick}). */
+    private static final String EVENT_CLICK = normalizeEventType("click");
+    private static final String EVENT_LONG_CLICK = normalizeEventType("longClick");
+
     /** True if the (base) activity has at least one MOP-reachable widget. */
     public boolean activityHasMop(String activity) {
         return mopActivities.contains(activity);
@@ -1021,20 +1083,37 @@ public class MopData {
 
         /** Direct-MOP flag for the given event type, falling back to the aggregate (match-any). */
         public boolean isDirectMop(String eventType) {
-            String key = normalizeEventType(eventType);
-            if (key != null && directMopByEventType.containsKey(key)) {
-                return Boolean.TRUE.equals(directMopByEventType.get(key));
-            }
-            return directMop;
+            return flag(directMopByEventType, eventType, directMop);
         }
 
         /** Transitive-MOP flag for the given event type, falling back to the aggregate. */
         public boolean isTransitiveMop(String eventType) {
+            return flag(transitiveMopByEventType, eventType, transitiveMop);
+        }
+
+        /**
+         * Direct-MOP flag for the given event type alone: an event with no key reads as
+         * {@code none}. The stamp step of {@link MopData#lookup} reads a handler record this way
+         * (design D17), because the aggregate of a handler class would answer an event its stamp
+         * never named.
+         */
+        public boolean isDirectMopForEvent(String eventType) {
+            return flag(directMopByEventType, eventType, false);
+        }
+
+        /** Transitive-MOP flag for the given event type alone; see {@link #isDirectMopForEvent}. */
+        public boolean isTransitiveMopForEvent(String eventType) {
+            return flag(transitiveMopByEventType, eventType, false);
+        }
+
+        /** The per-event flag when the map has the event's key, else {@code absent}. */
+        private static boolean flag(Map<String, Boolean> byEvent, String eventType,
+                boolean absent) {
             String key = normalizeEventType(eventType);
-            if (key != null && transitiveMopByEventType.containsKey(key)) {
-                return Boolean.TRUE.equals(transitiveMopByEventType.get(key));
+            if (key != null && byEvent.containsKey(key)) {
+                return Boolean.TRUE.equals(byEvent.get(key));
             }
-            return transitiveMop;
+            return absent;
         }
     }
 
@@ -1050,6 +1129,50 @@ public class MopData {
 
         public Handler(String className) {
             this.className = className;
+        }
+    }
+
+    /**
+     * The answer of {@link MopData#lookup} for one node and one event (design D17, API Design
+     * "Part B: {@code MopData.Lookup}"): the direct and transitive flags, the distance pairs
+     * {@code {targetIndex, distance}} (possibly empty, never null) and where they came from.
+     * Immutable; {@link #dist} is the artifact's stored array, which callers read only.
+     */
+    public static final class Lookup {
+
+        /** Which step of the lookup answered. */
+        public enum Source {
+            /** The node's handler stamp named a class {@code handlers} lists. */
+            STAMP,
+            /** The id key {@code (activity, shortId)} resolved a widget. */
+            ID,
+            /** Neither: no flag and no pair. */
+            NONE
+        }
+
+        /** The lookup that found nothing. */
+        public static final Lookup NONE = new Lookup(false, false, NO_PAIRS, Source.NONE);
+
+        public final boolean direct;
+        public final boolean transitive;
+        public final int[][] dist;
+        public final Source source;
+
+        Lookup(boolean direct, boolean transitive, int[][] dist, Source source) {
+            this.direct = direct;
+            this.transitive = transitive;
+            this.dist = dist != null ? dist : NO_PAIRS;
+            this.source = source;
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder("Lookup{").append(source)
+                    .append(direct ? ",direct" : "").append(transitive ? ",transitive" : "");
+            for (int[] pair : dist) {
+                sb.append(",[").append(pair[0]).append(',').append(pair[1]).append(']');
+            }
+            return sb.append('}').toString();
         }
     }
 

@@ -68,7 +68,7 @@ final class LadderConfigGuard {
     }
 
     /**
-     * The launcher and MOP-pick defaults, read only where {@code _mopData} is present — the cadence
+     * The launcher and MOP-pick defaults, read only where {@code _mopContext} is present — the cadence
      * the scenario's declared {@code _stepsSinceLauncherFiring} is seeded against, and the cap on
      * the deterministic MOP short-circuit.
      */

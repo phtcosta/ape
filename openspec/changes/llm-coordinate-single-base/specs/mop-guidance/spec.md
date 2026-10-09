@@ -294,9 +294,9 @@ Unknown JSON keys within `formatVersion: 2` are ignored (INV-MOP-11). This toler
 
 ### Requirement: MopScorer — Priority Boost
 
-`MopScorer.score(MopData, State, ModelAction, ScoringParams, MopRetirement)` SHALL return an integer priority boost for one valid, target-requiring action (INV-MOP-02), computed from `MopData.lookup` (INV-MOP-36) over the action's containment nodes ("Parent/child widget granularity reconciliation") for the action's event (`MopScorer.eventTypeOf`). The boost is additive: `MopWidgetPass` adds it to `ModelAction.priority`, never replacing it (INV-MOP-03), and stores it as the action's `mopBoost`. The mode is the plan key `ape.mopScoring` (`run-spec`), `flag` or `distance`, default `flag` (design D18).
+`MopScorer.score(MopContext, State, ModelAction)` SHALL return an integer priority boost for one valid, target-requiring action (INV-MOP-02), computed from `MopData.lookup` (INV-MOP-36) over the action's containment nodes ("Parent/child widget granularity reconciliation") for the action's event (`MopScorer.eventTypeOf`). The boost is additive: `MopWidgetPass` adds it to `ModelAction.priority`, never replacing it (INV-MOP-03), and stores it as the action's `mopBoost`. The mode is the plan key `ape.mopScoring` (`run-spec`), `flag` or `distance`, default `flag` (design D18); the `MopContext` carries the data, the mode, the weights and the run's retirement (design D17, Plumbing).
 
-**`flag` mode.** The boost comes from the strongest flag over the containment lookups:
+**`flag` mode.** The boost comes from the largest flag weight over the containment lookups, ties to the earlier lookup in containment order; this is the strongest flag (direct > transitive > none) whenever `mopWeightDirect >= mopWeightTransitive`, as with the defaults:
 
 | Best containment lookup | Boost |
 |-----------|-------|
@@ -365,7 +365,7 @@ The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged
 
 ### Requirement: Parent/child widget granularity reconciliation
 
-The MOP scoring pass SHALL reconcile parent/child granularity over **nodes**, not over resource ids (design D17). For an action's resolved node it SHALL run `MopData.lookup` on the node itself, on up to two ancestors (`getParent`), and on its descendants down to two levels (children, then grandchildren), and SHALL keep the best result: under `flag` the strongest flag (direct > transitive > none), under `distance` the smallest unretired distance. The node's own lookup is not privileged; the best result wins wherever it comes from, as `MopWidgetPass.mopBoostWithContainment` (`:92-108`) already takes the maximum today. Each containment node is looked up with its own stamp and its own resource id, so a stamped ancestor or descendant contributes its handler's record.
+The MOP scoring pass SHALL reconcile parent/child granularity over **nodes**, not over resource ids (design D17). For an action's resolved node it SHALL run `MopData.lookup` on the node itself, on up to two ancestors (`getParent`), and on its descendants down to two levels (children, then grandchildren), and SHALL keep the best result: under `flag` the largest flag weight (the strongest flag, direct > transitive > none, whenever `mopWeightDirect >= mopWeightTransitive`), under `distance` the smallest unretired distance. The node's own lookup is not privileged; the best result wins wherever it comes from, as `MopWidgetPass.mopBoostWithContainment` (`:92-108`) already takes the maximum today. Each containment node is looked up with its own stamp and its own resource id, so a stamped ancestor or descendant contributes its handler's record.
 
 This addresses the case where static analysis flags a container id (e.g., a `CardView`) while the runtime resolves a child (e.g., the inner `LinearLayout`), or vice versa, and the case where the stamped handler sits on a node the action does not target. The depth bound guards against over-boost (a root container marked by a single MOP child). A boost won by a node other than the action's own is counted as a containment hit on the pass's log line, as today.
 

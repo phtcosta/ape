@@ -10,7 +10,9 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.TestMopContexts;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import org.junit.Test;
@@ -103,13 +105,15 @@ public class PipelineParityTest {
     private static final int MENU_GATEWAY_BOOST = 250;
 
     private static ScoringParams defaultMopArm() {
-        return new ScoringParams(500, 300, MENU_GATEWAY_BOOST, 200, 200, 0, 100, true);
+        return new ScoringParams(MENU_GATEWAY_BOOST, 200, 200, 0, 100, true);
     }
 
     /** A ScoringContext wired the way {@code StatefulAgent}'s constructor wires it. */
     private static ScoringContext ctxFor(final MopData mopData, final UICoverageTracker tracker) {
         return new ScoringContext() {
-            @Override public MopData getMopData() { return mopData; }
+            @Override public MopContext getMopContext() {
+                return TestMopContexts.flag(mopData, 500, 300); // the weights of defaultMopArm()
+            }
             @Override public UICoverageTracker getCoverageTracker() { return tracker; }
             @Override public Graph getGraph() { return null; }
             @Override public int getTimestamp() { return 1; }

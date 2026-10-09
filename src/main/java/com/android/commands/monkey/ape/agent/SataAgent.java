@@ -1023,7 +1023,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                             lastTarget = target; // prefer colder state
                         } else if (target.getVisitedCount() == lastTarget.getVisitedCount()
                                 && getMopData() != null
-                                && MopScorer.stateMopDensity(target, getMopData(), getTimestamp()) > MopScorer.stateMopDensity(lastTarget, getMopData(), getTimestamp())) {
+                                && MopScorer.stateMopDensity(target, getMopContext(), getTimestamp()) > MopScorer.stateMopDensity(lastTarget, getMopContext(), getTimestamp())) {
                             lastIndex = i;
                             lastTarget = target; // MOP density tiebreaker
                         }
@@ -1035,7 +1035,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                             lastTarget = target;
                         } else if (an1.getVisitedCount() == an2.getVisitedCount()
                                 && getMopData() != null
-                                && MopScorer.stateMopDensity(target, getMopData(), getTimestamp()) > MopScorer.stateMopDensity(lastTarget, getMopData(), getTimestamp())) {
+                                && MopScorer.stateMopDensity(target, getMopContext(), getTimestamp()) > MopScorer.stateMopDensity(lastTarget, getMopContext(), getTimestamp())) {
                             lastIndex = i;
                             lastTarget = target; // MOP density tiebreaker
                         }
@@ -1285,10 +1285,10 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                 if (getMopData() != null && selectedPaths.size() > 1) {
                     // Prefer path to state with highest MOP density
                     Subsequence best = selectedPaths.get(0);
-                    int bestDensity = MopScorer.stateMopDensity(best.getLastState(), getMopData(), getTimestamp());
+                    int bestDensity = MopScorer.stateMopDensity(best.getLastState(), getMopContext(), getTimestamp());
                     for (int pi = 1; pi < selectedPaths.size(); pi++) {
                         Subsequence candidate = selectedPaths.get(pi);
-                        int density = MopScorer.stateMopDensity(candidate.getLastState(), getMopData(), getTimestamp());
+                        int density = MopScorer.stateMopDensity(candidate.getLastState(), getMopContext(), getTimestamp());
                         if (density > bestDensity) {
                             best = candidate;
                             bestDensity = density;
@@ -1297,7 +1297,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                     // If all densities equal, fall back to random
                     int finalDensity = bestDensity;
                     boolean allEqual = selectedPaths.stream()
-                            .allMatch(p -> MopScorer.stateMopDensity(p.getLastState(), getMopData(), getTimestamp()) == finalDensity);
+                            .allMatch(p -> MopScorer.stateMopDensity(p.getLastState(), getMopContext(), getTimestamp()) == finalDensity);
                     path = allEqual ? RandomHelper.randomPick(selectedPaths) : best;
                     // INV-MOP-33: log only when density actually decided the path (not the
                     // all-equal random fallback). Never alters the selection above.

@@ -72,7 +72,7 @@ public final class ScoringPipeline {
     public static ScoringPipeline fromParams(ScoringParams params, ScoringContext ctx,
             EventSink sink) {
         List<ScoringPass> candidates = new ArrayList<>();
-        candidates.add(new MopWidgetPass(ctx, params, sink));
+        candidates.add(new MopWidgetPass(ctx, sink));
         candidates.add(new MenuGatewayPass(ctx, params));
         candidates.add(new WtgPass(ctx, params));
         candidates.add(new FrontierPass(ctx, params));

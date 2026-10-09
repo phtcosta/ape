@@ -1,0 +1,125 @@
+package com.android.commands.monkey.ape.utils;
+
+import java.util.Objects;
+
+import com.android.commands.monkey.ape.runtime.MopScoring;
+import com.android.commands.monkey.ape.runtime.RunSpec;
+
+/**
+ * Everything a MOP reader needs about the run, as one immutable value (design D17 "Plumbing", API
+ * Design "Part B: {@code MopContext}"): the loaded {@link MopData}, the scoring mode
+ * ({@code ape.mopScoring}), the weights of both modes, and the run's {@link MopRetirement}.
+ *
+ * <p>Built once by {@code StatefulAgent}, right after the artifact loads, and null when no artifact
+ * is loaded — so a null context and a MOP-off arm are the same statement, as a null
+ * {@code MopData} was. It is passed wherever {@code MopData} was: in {@code ScoringContext} for
+ * {@code MopWidgetPass}, and in the decision {@code StepContext}, whose {@code mopData()} is derived
+ * from it.
+ *
+ * <p>Both modes' weights are held whatever the mode; a reader honors the mode, and the keys the
+ * selected mode does not read are inert (INV-RUN-09, {@link MopScoring#modeKeys()}).
+ */
+public final class MopContext {
+
+    private final MopData data;
+    private final MopScoring scoring;
+    private final int weightDirect;
+    private final int weightTransitive;
+    private final int weightD1;
+    private final int weightD2;
+    private final int weightD3;
+    private final int retireAfter;
+    private final int launcherDmax;
+    private final MopRetirement retirement;
+
+    /**
+     * @param retirement the run's retirement; null under {@code flag} (INV-MOP-37), and null under
+     *                   {@code distance} until task 13.6 builds it
+     * @throws IllegalArgumentException when a retirement is given under {@code flag}
+     */
+    public MopContext(MopData data, MopScoring scoring, int weightDirect, int weightTransitive,
+            int weightD1, int weightD2, int weightD3, int retireAfter, int launcherDmax,
+            MopRetirement retirement) {
+        this.data = Objects.requireNonNull(data, "data");
+        this.scoring = Objects.requireNonNull(scoring, "scoring");
+        if (scoring == MopScoring.FLAG && retirement != null) {
+            throw new IllegalArgumentException("no retirement exists under flag (INV-MOP-37)");
+        }
+        this.weightDirect = weightDirect;
+        this.weightTransitive = weightTransitive;
+        this.weightD1 = weightD1;
+        this.weightD2 = weightD2;
+        this.weightD3 = weightD3;
+        this.retireAfter = retireAfter;
+        this.launcherDmax = launcherDmax;
+        this.retirement = retirement;
+    }
+
+    /**
+     * The context of a run whose artifact loaded as {@code data}, under the plan's MOP parameters;
+     * null when {@code data} is null (no artifact). A loaded artifact implies the plan carries the
+     * MOP feature (INV-MOP-22), so {@code params} is then non-null.
+     *
+     * <p>The retirement is null in both modes for now: task 13.6 builds it here under
+     * {@code distance}.
+     */
+    public static MopContext fromSpec(MopData data, RunSpec.MopParams params) {
+        if (data == null) {
+            return null;
+        }
+        Objects.requireNonNull(params, "a loaded artifact needs the plan's MOP parameters");
+        return new MopContext(data, params.scoring(), params.weightDirect(),
+                params.weightTransitive(), params.weightD1(), params.weightD2(),
+                params.weightD3(), params.retireAfter(), params.launcherDmax(), null);
+    }
+
+    /** The loaded artifact; never null. */
+    public MopData data() {
+        return data;
+    }
+
+    /** {@code ape.mopScoring}. */
+    public MopScoring scoring() {
+        return scoring;
+    }
+
+    /** {@code ape.mopWeightDirect}: the {@code flag} weight of a direct flag. */
+    public int weightDirect() {
+        return weightDirect;
+    }
+
+    /** {@code ape.mopWeightTransitive}: the {@code flag} weight of a transitive flag. */
+    public int weightTransitive() {
+        return weightTransitive;
+    }
+
+    /** {@code ape.mopWeightD1}: the {@code distance} weight for {@code d <= 1}. */
+    public int weightD1() {
+        return weightD1;
+    }
+
+    /** {@code ape.mopWeightD2}: the {@code distance} weight for {@code d = 2}. */
+    public int weightD2() {
+        return weightD2;
+    }
+
+    /** {@code ape.mopWeightD3}: the {@code distance} weight for {@code d = 3}. */
+    public int weightD3() {
+        return weightD3;
+    }
+
+    /** {@code ape.mopRetireAfter}: first interactions after which a target retires. */
+    public int retireAfter() {
+        return retireAfter;
+    }
+
+    /** {@code ape.mopLauncherDmax}: the largest distance the launcher orders activities by. */
+    public int launcherDmax() {
+        return launcherDmax;
+    }
+
+    /** The run's retirement, or null (always under {@code flag}). */
+    public MopRetirement retirement() {
+        return retirement;
+    }
+}

@@ -34,7 +34,7 @@ import static org.junit.Assert.assertTrue;
 public class ScoringParamsDefaultsTest {
 
     /**
-     * A MOP arm is what a scoring default has to be read through: the six MOP-family weights only
+     * A MOP arm is what a scoring default has to be read through: the four MOP-family weights only
      * belong to a plan that carries the MOP feature, and the feature is activated by the presence
      * of the data path. Nothing is installed into {@link com.android.commands.monkey.ape.runtime.RunContext}
      * — the plan is a value here, and the mapping under test is a pure function of it.
@@ -45,8 +45,6 @@ public class ScoringParamsDefaultsTest {
 
         ScoringParams params = ScoringParams.fromSpec(spec);
 
-        assertEquals("ape.mopWeightDirect", 500, params.mopWeightDirect());
-        assertEquals("ape.mopWeightTransitive", 300, params.mopWeightTransitive());
         assertEquals("ape.mopWeightOpenMenu", 250, params.mopWeightOpenMenu());
         assertEquals("ape.mopWeightWtg", 200, params.mopWeightWtg());
         assertEquals("ape.frontierBoostWeight", 200, params.frontierBoostWeight());
@@ -57,7 +55,7 @@ public class ScoringParamsDefaultsTest {
 
     /**
      * The other half of the mapping, and the half a wrong default cannot be blamed for: with no
-     * MOP feature there is no {@code MopParams} to read, and all six MOP-family weights have to
+     * MOP feature there is no {@code MopParams} to read, and all four MOP-family weights have to
      * come back as zero rather than as an exception. This is the plan the {@code aperv} preset
      * resolves to, so it is the shape most runs of the corpus actually score under.
      */
@@ -65,8 +63,6 @@ public class ScoringParamsDefaultsTest {
     public void aPlanWithoutMopZeroesEveryMopWeightAndKeepsTheRest() {
         ScoringParams params = ScoringParams.fromSpec(TestRunSpecs.spec());
 
-        assertEquals("ape.mopWeightDirect without MOP", 0, params.mopWeightDirect());
-        assertEquals("ape.mopWeightTransitive without MOP", 0, params.mopWeightTransitive());
         assertEquals("ape.mopWeightOpenMenu without MOP", 0, params.mopWeightOpenMenu());
         assertEquals("ape.mopWeightWtg without MOP", 0, params.mopWeightWtg());
         assertEquals("ape.frontierBoostWeight without MOP", 0, params.frontierBoostWeight());
@@ -98,7 +94,6 @@ public class ScoringParamsDefaultsTest {
         assertFalse("ape.formCompletionEnabled stated off", params.formCompletionEnabled());
         // The weights the plan did not mention keep the jar's values: stating one gate off is not
         // a kill-switch for the others (the switch that used to do that is retired).
-        assertEquals("ape.mopWeightDirect", 500, params.mopWeightDirect());
         assertEquals("ape.mopWeightOpenMenu", 250, params.mopWeightOpenMenu());
     }
 }
