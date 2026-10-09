@@ -595,8 +595,10 @@ public class MopDataTest {
 
     /**
      * The format-2 members of the cryptoapp fixture, as the scenario states them: 27 targets, the
-     * three flagged widgets' {@code click} pairs in wire order, and no pair on any other event —
-     * only a click reads an aggregate of pairs, and only on a widget with no {@code click} key.
+     * three flagged widgets' {@code click} pairs in wire order — none for {@code btn_cipher_encrypt},
+     * whose nearest targets lie at {@code d = 4}, beyond the generator's {@code d <= 3} cut (design
+     * D15 as amended 2026-10-09) — and no pair on any other event: only a click reads an aggregate
+     * of pairs, and only on a widget with no {@code click} key.
      */
     @Test
     public void testCompactFixtureTargetsAndWidgetPairs() {
@@ -604,8 +606,8 @@ public class MopDataTest {
         assertEquals("23 direct targets, then 4 boundary targets", 27, d.targetCount());
 
         assertEquals("[[22,2]]", pairs(d.getWidget(MDA, "buttonGenerateHash").dist("click")));
-        assertEquals("[[0,4],[1,4]]",
-                pairs(d.getWidget(CIPHER, "btn_cipher_encrypt").dist("click")));
+        assertEquals("d = 4 is beyond the cut", 0,
+                d.getWidget(CIPHER, "btn_cipher_encrypt").dist("click").length);
         assertEquals("[[16,3],[17,3],[18,3]]",
                 pairs(d.getWidget(CRYPTO, "executeButton").dist("click")));
 
@@ -617,7 +619,8 @@ public class MopDataTest {
 
     /**
      * The handler table lists exactly the two classes of the fixture that declare
-     * {@code onClick(android.view.View)}, each {@code click}-transitive with its widget's pairs.
+     * {@code onClick(android.view.View)}, each {@code click}-transitive with its widget's pairs (none
+     * for {@code CipherActivity$1}, whose targets lie at {@code d = 4}).
      * "Exactly" is asserted through the census, which counts the table, and through the wire, which
      * names its keys; a class the table does not list answers null.
      */
