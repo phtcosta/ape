@@ -62,8 +62,8 @@ Two things the AVD imposes (found in the llm-coordinate-single-base smoke, 2026-
 | File | Description |
 |------|-------------|
 | `test-apks/cryptoapp.apk` | Instrumented APK from rv-android experiment `cli_experiment_20260305_155802_9bd8c909` |
-| `test-apks/cryptoapp.apk.json` | Full static-analysis JSON — the generator's **input**, never pushed to a device |
-| `test-apks/cryptoapp.apk.mop.json` | Compact MOP artifact derived from it — what `ape.mopDataPath` points at |
+| `test-apks/cryptoapp.apk.json` | Full static-analysis JSON — the generator's **input**, never pushed to a device. Since llm-coordinate-single-base it is the gh120 document (`rv-android/modules/rv-static-analysis/tests/resources/cryptoapp.apk.json`, with `distanceTargets`) |
+| `test-apks/cryptoapp.apk.mop.json` | Compact MOP artifact (format 2) derived from it — what `ape.mopDataPath` points at |
 
 Source:
 ```
@@ -73,6 +73,10 @@ rv-android/results/cli_experiment_20260305_155802_9bd8c909/instrumented_apks/cry
 
 The `.mop.json` is not copied — it is **derived** from the `.json` beside it by rv-android's
 `aperv_tool/tools/aperv/derive_mop_artifact.py`, which is where every derivation rule now lives.
+`openspec/changes/llm-coordinate-single-base/evidence/derive_fixtures.py <rv-android root>` (run with
+`python3 -I -B`) re-derives this pair and the two test fixtures (`src/test/resources/cryptoapp.apk.mop.json`,
+`src/test/resources/synthetic-activity-selection.mop.json`, the latter from the synthetic
+`.apk.json` beside it) through the same library calls `tool.py` uses.
 Regenerate it from that repository rather than editing it: it is canonical JSON (sorted keys, no
 spaces) and a hand edit breaks the `source.digest` chain that joins a run to its analysis input.
 
@@ -196,15 +200,26 @@ externally supplied replay log through it.
 - `takeScreenshot` / `saveGUITreeToXmlEveryStep` — debug output
 - `takeScreenshotForEveryStep` / `saveGUITreeToXmlEveryStep` — per-step PNG/XML artifacts; **both default `false`** for throughput (INV-EXPL-17). The aperv-tool deployment pulls neither artifact and the LLM path uses its own on-demand `ScreenshotCapture`; re-enable for local debugging with `ape.takeScreenshotForEveryStep=true` / `ape.saveGUITreeToXmlEveryStep=true` in `ape.properties`
 - `defaultGUIThrottle` — delay between actions
-- `mopDataPath` — path to the compact MOP artifact on device, `/data/local/tmp/mop-artifact.json` as aperv-tool pushes it (null = MOP scoring disabled). The full static-analysis JSON is never pushed and is rejected if it is (`version-mismatch`)
-- `mopWeightDirect` / `mopWeightTransitive` — MOP scoring weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost)
+- `mopDataPath` — path to the compact MOP artifact on device, `/data/local/tmp/mop-artifact.json` as aperv-tool pushes it (null = MOP scoring disabled). The jar reads only **format 2** (`formatVersion: 2`, generator `aperv-derive/2`, rv-android gh122): format 1 and the full static-analysis JSON are rejected (`version-mismatch`). Format 2 adds `targets` (the producer's target count), per-widget `dist` pairs `[i, d]`, per-activity `activityDist` and a `handlers` table keyed by binary class name; `MOP_DATA` reports `targets`, `handlers` and `droppedPairs`. An artifact with `targets: 0` loads and runs without distance data
+- `mopWeightDirect` / `mopWeightTransitive` — `flag`-mode MOP weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost). They reach scoring through the run's `MopContext` (`utils/MopContext`, built from `spec().mop()`), not through `ScoringParams`
+- **Handler stamp and lookup** (llm-coordinate-single-base Part B, D16–D17): `GUITreeBuilder.fillNode` copies the gh121 extras `rvsec.click`/`rvsec.longClick` (an APK instrumented with `--instrumentation-variant dexlib2 --stamp-handlers`) into `GUITreeNode.getHandlerClick()/getHandlerLongClick()`. Every MOP reader goes through `MopData.lookup(activity, node, event)`: a stamp naming a class listed in `handlers` wins (source `STAMP`, even when it reaches nothing), else the id key (source `ID`), else `NONE`; containment walks the node, two ancestors and two levels of descendants (`MopScorer.containmentNodes`). `getWidget` remains only for `buildWidgetMetadata` and typed input
+- **Scoring modes** (`ape.mopScoring`, D18): `flag` (default) is the E6 mark; `distance` weighs an action by its nearest unretired target (`mopWeightD1..3` = 500/400/300 for d ≤ 1 / 2 / 3, 0 beyond), splits ties at the state's best level as `max(W/n, W_next)` into `mopBoost`, and keeps the undivided `ModelAction.mopWeight` for the shortcut, the prompt marker and retirement
+- **Retirement** (D19, `distance` only): the first interaction (per activity, per `xpath|ActionType`) of an action with a positive weight counts the targets of its weight's lookup at selection (`StatefulAgent.moveForward`); a target retires at `ape.mopRetireAfter` (3) and stops weighting, marking and ordering the launcher. `ape.mopRetireAfter <= 0` is accepted: every target reads as retired and the run explores unguided
+- **Launcher and shortcut** (D20–D21): under `distance` `MopLauncherStage` orders eligible activities by their nearest unretired `activityDist` (≤ `ape.mopLauncherDmax`, 6), then manifest order, rotating past a refused launch; in both modes the MOP shortcut ranks activity-novel actions first, then `mopWeight`, then (distance) the unretired target count, then priority
+- **Telemetry** (D23): `dec.mopd` (distance behind a `distance` weight; `0` is written), `dec.mops` (`s` stamp / `i` id key), `dec.ret` (targets retired by the step); `RUN_END.counters` gains `stampNodes`, `stampHits`, `retired`
 
-Five keys are owned by the plan rather than by `Config`, and are read through `RunContext.current().spec()`:
+Eleven keys are owned by the plan rather than by `Config`, and are read through `RunContext.current().spec()`:
 - `ape.mopWeightOpenMenu` → `spec().mop().weightOpenMenu()` — boost on the MODEL_MENU action when the activity's OPTIONSMENU is a MOP gateway (default 250; gh13 T1.2)
 - `ape.fuzzInputTyped` → `spec().exploration().fuzzInputTyped()` — type-aware EditText fuzzing from static `inputType`/`hint` (default true; set false for the random-string generator — gh13 T1.3 rollback knob)
 - `ape.mopStrictPackageMatch` → `spec().mop().strictPackageMatch()` — reject `MopData.load` when the artifact's package/mainActivity diverges from the runtime values (default false = warn-only; gh13 T1.7)
 - `ape.activityTriggerEnabled` → `spec().mop().activityTriggerEnabled()` — include activities in component triggering (default **true**)
 - `ape.mopFrontierWeight` → `spec().mop().frontierWeight()` — boost for unvisited actions on MOP-reachable widgets (default 0 = pass disabled)
+- `ape.mopScoring` → `spec().mop().scoring()` — `flag` (default) or `distance` (enum `runtime/MopScoring`; any other value aborts resolution with `invalid_type`)
+- `ape.mopWeightD1` / `D2` / `D3` → `weightD1()`…`weightD3()` — `distance` weights (500/400/300)
+- `ape.mopRetireAfter` → `retireAfter()` — first interactions after which a target retires (3)
+- `ape.mopLauncherDmax` → `launcherDmax()` — largest distance the launcher orders by (6)
+
+The keys the selected mode does not read (`mopWeightDirect`/`Transitive` under `distance`; the five distance keys under `flag`) are accepted at any well-typed value, keep their value in the plan digest, and are listed in `RUN_START.inert` (INV-RUN-09).
 
 `MopParams` is absent on an arm whose plan carries no MOP feature; the two sites reachable on such an arm read that absence as "off".
 
@@ -220,7 +235,7 @@ Five keys are owned by the plan rather than by `Config`, and are read through `R
 
 ## Notes
 
-- Unit + integration test suite: `mvn test` (1180 tests, 19 skipped — 13 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
+- Unit + integration test suite: `mvn test` (1349 tests, 24 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
 - Known issue: `OutOfMemoryError` is possible on long runs, because every `State` keeps its `GUITree`s in `treeHistory` and the `Graph` keeps every `State` — the heap grows with the number of distinct states a run reaches. That is the only retention by design. The `GUITreeBuilder` naming caches and a `ModelAction`'s resolved references are cleared when their tree is released, and the diagnostic action history holds primitive snapshots plus a single depth-1 recovery point, whose tree a live state owns anyway. Nothing bounds or evicts `Graph`, `treeHistory` or the naming structures: such a bound changes exploration behavior, so it waits on a heap profile by retention root. `OutOfMemoryError` is not caught — the process dies and the supervisor marks the task FAILED and retries it
 - Pre-compiled `ape.jar` is included in repo for convenience

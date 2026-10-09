@@ -311,3 +311,9 @@ Surefire excludes the framework jar (`pom.xml` `classpathDependencyExcludes`), s
 - **Grep gate 12.3, final**: `getWidget(` in `src/main` only at `ApeAgent.java:244` (typed input), `ApePromptBuilder.java:520` (`buildWidgetMetadata`) and `MopData.java` (definition, id-key step of `lookup`).
 - **MOP parity goldens**: identical after the shortcut ordering (D21) and the marker (D22); no golden reaches a reordering case.
 - Suite `mvn clean test` (integrated): 1349 / 0 / 0 / 24.
+
+## Part B, wave 5 (tasks 17.1, 17.3, 17.4), 2026-10-09
+
+- **17.1**: `-Dape.oracle.regenerate=true` on `ParityOracleMopTest`, `ParityOracleLlmMopTest`, `PreemptionGoldenTest` at `adc194f0`: 0 decision lines differ from the goldens of 10.4 (only `capturedAt`); reverted and kept, as decided for 10.4. Under `flag` with the unstamped scripted fixtures, neither the shortcut ordering (D21) nor the marker (D22) reaches a golden decision.
+- **Package**: `mvn package -DskipTests` → `target/ape-rv.jar` (303,720 bytes), `BuildInfo.GIT_SHA` `adc194f`.
+- **17.4**: `openspec validate --strict` valid; `/sdd-verify` PASS: `mvn clean test` 1349 run, 0 failures, 0 errors, 24 skipped (18 `@Ignore`, 6 `Assume`); lint skipped (`.sdd/sdd-config.yaml` `linter: none`, `checkstyle` not on PATH); complexity: no tool for Java.

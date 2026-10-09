@@ -170,10 +170,10 @@ Runs after group 5, because the `v13`/`v17` lines it marks are the collapsed one
 
 ## 17. Part B: regression and device
 
-- [ ] 17.1 Regenerate the MOP parity goldens (`src/test/resources/goldens/mop/baseline.ndjson`, `goldens/llm_mop/baseline.ndjson`, `goldens/llm_mop/preemption.ndjson`) and review the diff against the goldens of 10.4: under `flag` with unstamped fixtures, differences must come only from the shortcut ordering (D21) and the marker (D22). Record the diff summary in `verification.md`
+- [x] 17.1 Regenerate the MOP parity goldens (`src/test/resources/goldens/mop/baseline.ndjson`, `goldens/llm_mop/baseline.ndjson`, `goldens/llm_mop/preemption.ndjson`) and review the diff against the goldens of 10.4: under `flag` with unstamped fixtures, differences must come only from the shortcut ordering (D21) and the marker (D22). Record the diff summary in `verification.md` *Done 2026-10-09:* regenerated against the 10.4 goldens: no decision line differs, only the header's `capturedAt` would; kept unchanged, as in 10.4 (`verification.md`)
 - [ ] 17.2 Device smoke on the RVSec AVD: `cryptoapp` instrumented with `--instrumentation-variant dexlib2 --stamp-handlers` (rv-android gh121; the default `ajc` variant refuses the flag, `rv_experiment/__main__.py:835-842`), a format-2 artifact from `gh122`, `ape.preset=mop`, `ape.mopScoring=distance`, `ape.activityTriggerEnabled=true`, 5 min. Check: `RUN_END.stampNodes > 0`; `dec.mops` = `s` on a stamped pick; `dec.mopd` on MOP picks; at least one `dec.ret`; launcher picks in `activityDist` order. Then 5 min under `ape.mopScoring=flag` on the same APK: no `dec.mopd`, no `dec.ret`
-- [ ] 17.3 Update CLAUDE.md: the format-2 artifact, the stamp, `ape.mopScoring` and the new keys (the "Central Configuration" list), and the retirement
-- [ ] 17.4 `openspec validate llm-coordinate-single-base --strict`; `/sdd-verify` for the module
+- [x] 17.3 Update CLAUDE.md: the format-2 artifact, the stamp, `ape.mopScoring` and the new keys (the "Central Configuration" list), and the retirement *Done:* the test-APK table and derive script, the format-2 `mopDataPath` note, the stamp and lookup, the scoring modes, retirement, launcher and shortcut, telemetry, the six plan keys and mode-inert rule, test count 1349 / 24
+- [x] 17.4 `openspec validate llm-coordinate-single-base --strict`; `/sdd-verify` for the module *Done:* valid; `/sdd-verify` PASS (1325 passed, 0 failed, 24 skipped; lint skipped, `linter: none` and no checkstyle; no complexity tool for Java)
 
 ## R. rv-android (tracked in its own Fast-Forward change `gh122`, not here)
 
