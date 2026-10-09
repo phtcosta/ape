@@ -78,6 +78,19 @@ public class MopData {
     /** Activities whose OPTIONSMENU is a MOP gateway (T1.2, D13). */
     private final Set<String> activitiesWithMopOptionsMenu;
 
+    /** The shared empty answer of every distance accessor: no pair. Callers read only. */
+    static final int[][] NO_PAIRS = new int[0][];
+
+    /**
+     * Length of the producer's target list (format 2 {@code targets}, design D15): the bound every
+     * stored pair index lies below. 0 when the artifact has no target.
+     */
+    private final int targetCount;
+    /** Map: base activity → distance pairs of the activity's class and widgets (D15, D20). */
+    private final Map<String, int[][]> activityDist;
+    /** Map: handler binary class name → its flags and pairs (format 2 {@code handlers}, D15). */
+    private final Map<String, Handler> handlers;
+
     /**
      * Count of MOP-flagged widgets the generator dropped for having no resource id (INV-MOP-20).
      * Observability only — echoed from the artifact's {@code stats}, never recomputed here.
@@ -91,7 +104,9 @@ public class MopData {
                     List<ComponentInfo.ServiceInfo> services,
                     List<ComponentInfo.ActivityInfo> activities,
                     List<ComponentInfo.ProviderInfo> providers,
-                    Set<String> activitiesWithMopOptionsMenu) {
+                    Set<String> activitiesWithMopOptionsMenu,
+                    int targetCount, Map<String, int[][]> activityDist,
+                    Map<String, Handler> handlers) {
         this.packageName = packageName;
         this.mainActivity = mainActivity;
         this.widgetData = widgetData;
@@ -102,6 +117,9 @@ public class MopData {
         this.activities = activities;
         this.providers = providers;
         this.activitiesWithMopOptionsMenu = activitiesWithMopOptionsMenu;
+        this.targetCount = targetCount;
+        this.activityDist = activityDist;
+        this.handlers = handlers;
     }
 
     // -------------------------------------------------------------------------
@@ -138,15 +156,20 @@ public class MopData {
                 services != null ? services : new ArrayList<ComponentInfo.ServiceInfo>(),
                 activities != null ? activities : new ArrayList<ComponentInfo.ActivityInfo>(),
                 providers != null ? providers : new ArrayList<ComponentInfo.ProviderInfo>(),
-                new HashSet<String>());
+                new HashSet<String>(),
+                0, new HashMap<String, int[][]>(), new HashMap<String, Handler>());
     }
 
     // -------------------------------------------------------------------------
-    // Compact MOP artifact (formatVersion 1)
+    // Compact MOP artifact (formatVersion 2)
     // -------------------------------------------------------------------------
 
-    /** The only compact-artifact wire version this jar reads (INV-MOP-34). */
-    private static final int SUPPORTED_FORMAT_VERSION = 1;
+    /**
+     * The only compact-artifact wire version this jar reads (INV-MOP-34). Format 2 keeps every
+     * member of format 1 with its meaning and adds {@code targets}, per-widget {@code dist},
+     * {@code activityDist} and {@code handlers} (design D15). There is no reader for format 1.
+     */
+    private static final int SUPPORTED_FORMAT_VERSION = 2;
 
     /**
      * Load MOP data from the derived compact MOP artifact that {@code aperv-tool} generates
@@ -162,7 +185,12 @@ public class MopData {
      * <p>A legacy full static-analysis JSON reaching this method is rejected, not tolerated: it
      * carries no {@code formatVersion}, so it takes the {@code version-mismatch} branch and the
      * null it returns aborts the arm (INV-MOP-22). There is no second format and no fallback
-     * (design D8).
+     * (design D8): a format-1 artifact takes the same branch.
+     *
+     * <p>Format 2's {@code targets} and {@code handlers} are always emitted by the generator, so a
+     * format-2 artifact lacking either, or whose {@code targets} is not a non-negative integer, is a
+     * generator↔jar skew and a {@code parse-error}. A malformed distance pair, by contrast, is
+     * dropped and counted ({@code MOP_DATA.droppedPairs}) and the load continues.
      *
      * @param path                  device-local path, or null
      * @param expectedPackage       package to compare against (T1.7), or null to skip
@@ -216,8 +244,16 @@ public class MopData {
             String packageName = optStringOrNull(root, "package");
             String mainActivity = optStringOrNull(root, "mainActivity");
 
+            // Format 2's two mandatory members (design D15). `get`/`getJSONObject` throw when the
+            // member is absent or of the wrong kind, which lands in the parse-error branch below.
+            PairReader pairs = new PairReader(requireTargetCount(root));
+            Map<String, Handler> handlers = parseCompactHandlers(root.getJSONObject("handlers"),
+                    pairs);
+
             Map<String, Map<String, Widget>> widgetData =
-                    parseCompactWidgets(root.optJSONObject("widgets"));
+                    parseCompactWidgets(root.optJSONObject("widgets"), pairs);
+            Map<String, int[][]> activityDist =
+                    parseCompactActivityDist(root.optJSONObject("activityDist"), pairs);
             Set<String> widgetDerivedActivities = stringSet(root.optJSONArray("mopActivities"));
             Set<String> augmentedActivities =
                     stringSet(root.optJSONArray("mopActivitiesAugmented"));
@@ -244,7 +280,8 @@ public class MopData {
                     receivers, services, activities, providers,
                     recomputeMopOptionsMenus(
                             parseCompactOptionsMenus(root.optJSONArray("optionsMenus")),
-                            wtgTransitions, selectedActivities));
+                            wtgTransitions, selectedActivities),
+                    pairs.targets, activityDist, handlers);
 
             // Sanity check (T1.7) — the generator copies both scalars verbatim from the full JSON,
             // so a mismatch means the wrong artifact was derived or pushed for this APK.
@@ -287,7 +324,8 @@ public class MopData {
                     stats.optInt("syntheticLambda", 0), stats.optInt("recovered", 0),
                     data.mopActivities.size(),
                     countOnlyIn(augmentedActivities, widgetDerivedActivities),
-                    receivers.size() + services.size() + activities.size() + providers.size());
+                    receivers.size() + services.size() + activities.size() + providers.size(),
+                    pairs.targets, handlers.size(), pairs.dropped);
             return data;
         } catch (JSONException e) {
             Logger.wprintln("MopData: malformed artifact structure at " + path + ": "
@@ -303,8 +341,8 @@ public class MopData {
      * resource id: base-activity scoping, the collision policy and the empty-id drop all ran
      * host-side, so a key present here is a widget the query side can reach.
      */
-    private static Map<String, Map<String, Widget>> parseCompactWidgets(JSONObject widgetsObj)
-            throws JSONException {
+    private static Map<String, Map<String, Widget>> parseCompactWidgets(JSONObject widgetsObj,
+            PairReader pairs) throws JSONException {
         Map<String, Map<String, Widget>> widgetData = new HashMap<>();
         if (widgetsObj == null) {
             return widgetData;
@@ -320,7 +358,7 @@ public class MopData {
                 String shortId = wi.next();
                 JSONObject wo = byId.optJSONObject(shortId);
                 if (wo != null) {
-                    widgets.put(shortId, parseCompactWidget(shortId, wo));
+                    widgets.put(shortId, parseCompactWidget(shortId, wo, pairs));
                 }
             }
             widgetData.put(activity, widgets);
@@ -329,18 +367,12 @@ public class MopData {
     }
 
     /**
-     * Decode one wire widget: the consumed metadata fields (absent ⇒ null/empty) and the
-     * {@code mop} map of normalized eventType → {@code none|direct|transitive|both}.
-     *
-     * <p>The four tokens decode positionally into the two bits the query side reads
-     * ({@code none}=00, {@code direct}=10, {@code transitive}=01, {@code both}=11), so the map
-     * is lossless with respect to the two per-eventType maps the full-JSON derivation built. An
-     * entry is created for <em>every</em> wire key, {@code none} included: key presence is what
-     * makes {@code isDirectMop}/{@code isTransitiveMop} answer per-event instead of falling back
-     * to the aggregate (INV-MOP-14), so omitting a {@code none} would change the answer. The
-     * aggregates are the OR across the map, which is INV-MOP-17 by construction.
+     * Decode one wire widget: the consumed metadata fields (absent ⇒ null/empty), then its
+     * {@code mop} and {@code dist} maps through {@link #decodeEntry}, the reader the handler table
+     * shares.
      */
-    private static Widget parseCompactWidget(String shortId, JSONObject wo) throws JSONException {
+    private static Widget parseCompactWidget(String shortId, JSONObject wo, PairReader pairs)
+            throws JSONException {
         Widget w = new Widget();
         w.idName = shortId;
         w.hint = optStringOrNull(wo, "hint");
@@ -355,26 +387,178 @@ public class MopData {
                 w.entries.add(entries.optString(i, ""));
             }
         }
-        JSONObject mop = wo.optJSONObject("mop");
-        if (mop == null) {
-            return w;
-        }
-        for (Iterator<String> it = mop.keys(); it.hasNext(); ) {
-            String eventType = it.next();
-            String encoded = mop.optString(eventType, "none");
-            boolean direct = "direct".equals(encoded) || "both".equals(encoded);
-            boolean transitive = "transitive".equals(encoded) || "both".equals(encoded);
-            // Normalize on ingest rather than trust the generator to have done it: the query side
-            // normalizes (INV-MOP-08), so a key that arrived unnormalized would be present in the
-            // map and unreachable through every accessor. orInto also merges two wire keys that
-            // collapse onto the same normalized event.
-            String key = normalizeEventType(eventType);
-            orInto(w.directMopByEventType, key, direct);
-            orInto(w.transitiveMopByEventType, key, transitive);
-            w.directMop |= direct;
-            w.transitiveMop |= transitive;
-        }
+        decodeEntry(wo, w, pairs);
         return w;
+    }
+
+    /**
+     * Decode the per-event maps every format-2 entry carries — a widget of {@code widgets} and a
+     * class of {@code handlers} alike: the {@code mop} map of normalized eventType →
+     * {@code none|direct|transitive|both}, and the {@code dist} map of normalized eventType →
+     * {@code [[i, d], …]}.
+     *
+     * <p>The four tokens decode positionally into the two bits the query side reads
+     * ({@code none}=00, {@code direct}=10, {@code transitive}=01, {@code both}=11), so the map
+     * is lossless with respect to the two per-eventType maps the full-JSON derivation built. An
+     * entry is created for <em>every</em> wire key, {@code none} included: key presence is what
+     * makes {@code isDirectMop}/{@code isTransitiveMop} answer per-event instead of falling back
+     * to the aggregate (INV-MOP-14), so omitting a {@code none} would change the answer. The
+     * aggregates are the OR across the map, which is INV-MOP-17 by construction.
+     *
+     * <p>The pairs keep wire order and have no aggregate: an event without a {@code dist} entry
+     * has no pair. Malformed pairs are dropped and counted by {@code pairs}.
+     */
+    private static void decodeEntry(JSONObject wire, MopEntry into, PairReader pairs)
+            throws JSONException {
+        JSONObject mop = wire.optJSONObject("mop");
+        if (mop != null) {
+            for (Iterator<String> it = mop.keys(); it.hasNext(); ) {
+                String eventType = it.next();
+                String encoded = mop.optString(eventType, "none");
+                boolean direct = "direct".equals(encoded) || "both".equals(encoded);
+                boolean transitive = "transitive".equals(encoded) || "both".equals(encoded);
+                // Normalize on ingest rather than trust the generator to have done it: the query
+                // side normalizes (INV-MOP-08), so a key that arrived unnormalized would be present
+                // in the map and unreachable through every accessor. orInto also merges two wire
+                // keys that collapse onto the same normalized event.
+                String key = normalizeEventType(eventType);
+                orInto(into.directMopByEventType, key, direct);
+                orInto(into.transitiveMopByEventType, key, transitive);
+                into.directMop |= direct;
+                into.transitiveMop |= transitive;
+            }
+        }
+        JSONObject dist = wire.optJSONObject("dist");
+        if (dist != null) {
+            for (Iterator<String> it = dist.keys(); it.hasNext(); ) {
+                String eventType = it.next();
+                int[][] read = pairs.read(dist.optJSONArray(eventType));
+                if (read.length > 0) {
+                    // Same normalization as the flags; two wire keys collapsing onto one event
+                    // merge by the minimum per target, the collision rule of the distances (D15).
+                    String key = normalizeEventType(eventType);
+                    int[][] prev = into.distByEventType.get(key);
+                    into.distByEventType.put(key, prev == null ? read : mergeByMinimum(prev, read));
+                }
+            }
+        }
+    }
+
+    /**
+     * Decode the format-2 {@code handlers} table (binary class name → record). Every listed class
+     * is kept, including one that reaches nothing: the table's membership is itself a statement
+     * the stamp-first lookup reads (design D17).
+     */
+    private static Map<String, Handler> parseCompactHandlers(JSONObject handlersObj,
+            PairReader pairs) throws JSONException {
+        Map<String, Handler> handlers = new HashMap<>();
+        for (Iterator<String> it = handlersObj.keys(); it.hasNext(); ) {
+            String className = it.next();
+            JSONObject ho = handlersObj.optJSONObject(className);
+            if (ho != null) {
+                Handler h = new Handler(className);
+                decodeEntry(ho, h, pairs);
+                handlers.put(className, h);
+            }
+        }
+        return handlers;
+    }
+
+    /** Decode the format-2 {@code activityDist} map (base activity → pairs), absent ⇒ empty. */
+    private static Map<String, int[][]> parseCompactActivityDist(JSONObject activityDistObj,
+            PairReader pairs) {
+        Map<String, int[][]> activityDist = new HashMap<>();
+        if (activityDistObj == null) {
+            return activityDist;
+        }
+        for (Iterator<String> it = activityDistObj.keys(); it.hasNext(); ) {
+            String activity = it.next();
+            int[][] read = pairs.read(activityDistObj.optJSONArray(activity));
+            if (read.length > 0) {
+                activityDist.put(activity, read);
+            }
+        }
+        return activityDist;
+    }
+
+    /**
+     * The format-2 {@code targets} member: mandatory, a JSON integer, not negative. Anything else
+     * is a generator↔jar skew, thrown as a {@link JSONException} so the load is a
+     * {@code parse-error} (design, Error Handling). {@code "27"} is refused although
+     * {@code optInt} would coerce it: the generator writes a number, and a string is a different
+     * writer.
+     */
+    private static int requireTargetCount(JSONObject root) throws JSONException {
+        Object targets = root.get("targets");
+        if (!(targets instanceof Integer) || (Integer) targets < 0) {
+            throw new JSONException("targets is not a non-negative integer: " + targets);
+        }
+        return (Integer) targets;
+    }
+
+    /**
+     * Two pair lists of one key merged by the minimum distance per target, sorted by distance and
+     * then index — the order the wire gives. Reached only when two wire event keys normalize onto
+     * one event, which a conforming generator, normalizing itself, never emits.
+     */
+    private static int[][] mergeByMinimum(int[][] a, int[][] b) {
+        Map<Integer, Integer> best = new HashMap<>();
+        for (int[][] list : new int[][][]{a, b}) {
+            for (int[] p : list) {
+                Integer prev = best.get(p[0]);
+                if (prev == null || p[1] < prev) {
+                    best.put(p[0], p[1]);
+                }
+            }
+        }
+        List<int[]> merged = new ArrayList<>();
+        for (Map.Entry<Integer, Integer> e : best.entrySet()) {
+            merged.add(new int[]{e.getKey(), e.getValue()});
+        }
+        Collections.sort(merged, (x, y) -> x[1] != y[1]
+                ? Integer.compare(x[1], y[1]) : Integer.compare(x[0], y[0]));
+        return merged.toArray(new int[0][]);
+    }
+
+    /**
+     * The one reader of format-2 distance pairs, shared by a widget's {@code dist}, the
+     * {@code activityDist} map and a handler's {@code dist}. It holds the artifact's target count,
+     * which bounds every index, and counts what it drops for the load record's
+     * {@code droppedPairs}.
+     */
+    private static final class PairReader {
+        final int targets;
+        int dropped;
+
+        PairReader(int targets) {
+            this.targets = targets;
+        }
+
+        /**
+         * The well-formed pairs of a wire list, in wire order: each a two-integer array whose index
+         * lies in {@code [0, targets)} and whose distance is not negative. Every other element is
+         * dropped and counted, and the read goes on. A null list (absent, or not an array) has no
+         * pair.
+         */
+        int[][] read(JSONArray list) {
+            if (list == null) {
+                return NO_PAIRS;
+            }
+            List<int[]> kept = new ArrayList<>(list.length());
+            for (int i = 0; i < list.length(); i++) {
+                JSONArray pair = list.optJSONArray(i);
+                Object index = pair == null || pair.length() != 2 ? null : pair.opt(0);
+                Object distance = index == null ? null : pair.opt(1);
+                if (index instanceof Integer && distance instanceof Integer
+                        && (Integer) index >= 0 && (Integer) index < targets
+                        && (Integer) distance >= 0) {
+                    kept.add(new int[]{(Integer) index, (Integer) distance});
+                } else {
+                    dropped++;
+                }
+            }
+            return kept.isEmpty() ? NO_PAIRS : kept.toArray(new int[0][]);
+        }
     }
 
     /**
@@ -630,6 +814,32 @@ public class MopData {
         return widgets.get(shortId);
     }
 
+    /**
+     * The number of targets every distance pair indexes (format 2 {@code targets}, design D15). 0
+     * for an artifact with no target, which loads and runs without distance data.
+     */
+    public int targetCount() {
+        return targetCount;
+    }
+
+    /**
+     * The distance pairs {@code {targetIndex, distance}} of a base activity (format 2
+     * {@code activityDist}, design D15; read by the launcher, D20), in wire order, or an empty
+     * array when the activity has none. The array is the stored one; callers read only.
+     */
+    public int[][] activityDist(String activity) {
+        int[][] pairs = activity == null ? null : activityDist.get(activity);
+        return pairs != null ? pairs : NO_PAIRS;
+    }
+
+    /**
+     * The {@code handlers} record of a binary class name, or null when the table does not list the
+     * class (design D15). For the stamp-first lookup (D17), which falls back to the id key on null.
+     */
+    public Handler getHandler(String binaryClassName) {
+        return binaryClassName == null ? null : handlers.get(binaryClassName);
+    }
+
     /** True if the (base) activity has at least one MOP-reachable widget. */
     public boolean activityHasMop(String activity) {
         return mopActivities.contains(activity);
@@ -749,7 +959,8 @@ public class MopData {
         // A rejected load has no census to report: every counter is zero and the provenance pair is
         // absent, including on version-mismatch, where a formatVersion was read but is by
         // definition not one this jar can vouch for. The reason is the record's whole content.
-        sink.mopData("rejected", reason, 0, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        sink.mopData("rejected", reason, 0, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0);
     }
 
     // -------------------------------------------------------------------------
@@ -758,12 +969,13 @@ public class MopData {
 
     /**
      * One addressable widget of the wire's {@code widgets} map: the metadata the prompt builder
-     * and the typed-input path consume, plus the MOP flags scoring reads. The fields are exactly
+     * and the typed-input path consume, plus, through {@link MopEntry}, the MOP flags scoring
+     * reads and the format-2 distance pairs. The fields are exactly
      * what the artifact carries — the producer's raw {@code id}, {@code type}, {@code text} and
      * {@code listeners[]} are inputs to a derivation that now happens host-side, so they never
      * reach the device.
      */
-    public static class Widget {
+    public static class Widget extends MopEntry {
         public String idName;
         public String hint;
         public String inputType;
@@ -772,11 +984,40 @@ public class MopData {
         public String spinnerMode;
         public String contentDescription;
         public String tooltipText;
+    }
+
+    /**
+     * What the artifact knows about one entry, per normalized event: the MOP flags of its
+     * {@code mop} map and the distance pairs of its {@code dist} map. Both entry kinds of format 2
+     * carry this pair of maps under the same keys — a {@link Widget} of the {@code widgets} map
+     * and a {@link Handler} of the {@code handlers} table — so they decode through one reader and
+     * answer through one set of accessors.
+     */
+    public static class MopEntry {
         // Decoded from the wire's per-eventType `mop` map — INV-MOP-17.
         public boolean directMop;
         public boolean transitiveMop;
         public final Map<String, Boolean> directMopByEventType = new HashMap<>();
         public final Map<String, Boolean> transitiveMopByEventType = new HashMap<>();
+        /**
+         * Decoded from the wire's per-eventType {@code dist} map (format 2, design D15): normalized
+         * event → pairs {@code {targetIndex, distance}}, in wire order (ascending distance, then
+         * index; at most three). Every stored index lies in {@code [0, targetCount())}: a
+         * malformed pair is dropped at load and counted ({@code MOP_DATA.droppedPairs}).
+         * Callers read only.
+         */
+        public final Map<String, int[][]> distByEventType = new HashMap<>();
+
+        /**
+         * The distance pairs {@code {targetIndex, distance}} for the given event type, or an empty
+         * array. Unlike the flags, distances have no aggregate fallback: an event with no
+         * {@code dist} entry has no pair. The array is the stored one; callers read only.
+         */
+        public int[][] dist(String eventType) {
+            String key = normalizeEventType(eventType);
+            int[][] pairs = key == null ? null : distByEventType.get(key);
+            return pairs != null ? pairs : NO_PAIRS;
+        }
 
         /** Direct-MOP flag for the given event type, falling back to the aggregate (match-any). */
         public boolean isDirectMop(String eventType) {
@@ -794,6 +1035,21 @@ public class MopData {
                 return Boolean.TRUE.equals(transitiveMopByEventType.get(key));
             }
             return transitiveMop;
+        }
+    }
+
+    /**
+     * One record of the format-2 {@code handlers} table: the flags and distance pairs of a handler
+     * class, keyed on the wire by its binary class name, the form gh121's stamp and
+     * {@code reachability[].className} use (design D15). A listed class whose {@code mop} is
+     * {@code none} and that carries no pair is kept on purpose: it states that this handler
+     * reaches no target, which the stamp-first lookup relies on (D17).
+     */
+    public static class Handler extends MopEntry {
+        public final String className;
+
+        public Handler(String className) {
+            this.className = className;
         }
     }
 

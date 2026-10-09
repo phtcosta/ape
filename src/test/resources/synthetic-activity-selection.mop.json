@@ -1,17 +1,1 @@
-{
-  "formatVersion": 1,
-  "package": "p",
-  "mainActivity": "p.A",
-  "widgets": {},
-  "mopActivities": ["A"],
-  "mopActivitiesAugmented": ["A", "B"],
-  "optionsMenus": [
-    {"activity": "G", "hasFlaggedWidget": false},
-    {"activity": "H", "hasFlaggedWidget": true}
-  ],
-  "wtg": {
-    "G": [{"widget": "w", "target": "B"}]
-  },
-  "components": {},
-  "stats": {}
-}
+{"activityDist":{"A":[[0,2]],"B":[[0,3]],"H":[[0,2]]},"components":{"activities":[],"providers":[],"receivers":[],"services":[]},"formatVersion":2,"handlers":{"p.L":{"dist":{"click":[[0,2]]},"mop":{"click":"transitive"}}},"mainActivity":"p.A","mopActivities":["A","H"],"mopActivitiesAugmented":["A","B","H"],"optionsMenus":[{"activity":"G","hasFlaggedWidget":false},{"activity":"H","hasFlaggedWidget":true}],"package":"p","source":{"digest":"sha256:8bbb1c8ad9868caf4664b521fbf8a4ceadd0070f092f659a1510472a5f28fcc7","file":"synthetic-activity-selection.apk.json","generator":"aperv-derive/2"},"stats":{"dedupedTransitions":0,"droppedFlaggedNoId":0,"flagged":2,"handlersUnmatched":0,"orphanDialogs":0,"recovered":0,"syntheticLambda":0,"widgetsTotal":3,"windows":6,"wtgEdges":1},"targets":1,"widgets":{"A":{"go":{"dist":{"click":[[0,2]]},"mop":{"click":"transitive"}}},"H":{"m":{"dist":{"click":[[0,2]]},"mop":{"click":"transitive"}}}},"wtg":{"G":[{"target":"B","widget":"w"}]}}

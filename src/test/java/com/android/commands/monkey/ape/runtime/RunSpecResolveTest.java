@@ -85,6 +85,166 @@ public class RunSpecResolveTest {
     }
 
     // -----------------------------------------------------------------------------------------
+    // The MOP scoring mode (llm-coordinate-single-base Part B, D18–D20, INV-RUN-09)
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    public void theSixMopScoringKeysResolveToTheirDefaults() {
+        RunSpec spec = resolve(entries("ape.mopDataPath", MOP_PATH));
+        Map<String, String> mop = spec.mop().values();
+        assertEquals("flag", mop.get("ape.mopScoring"));
+        assertEquals("500", mop.get("ape.mopWeightD1"));
+        assertEquals("400", mop.get("ape.mopWeightD2"));
+        assertEquals("300", mop.get("ape.mopWeightD3"));
+        assertEquals("3", mop.get("ape.mopRetireAfter"));
+        assertEquals("6", mop.get("ape.mopLauncherDmax"));
+        assertTrue("the plan states none of them, so none is inert", spec.inertKeys().isEmpty());
+    }
+
+    @Test
+    public void mopParamsReadsTheSixKeysThroughTypedAccessors() {
+        RunSpec.MopParams defaults = resolve(entries("ape.mopDataPath", MOP_PATH)).mop();
+        assertEquals(MopScoring.FLAG, defaults.scoring());
+        assertEquals(500, defaults.weightD1());
+        assertEquals(400, defaults.weightD2());
+        assertEquals(300, defaults.weightD3());
+        assertEquals(3, defaults.retireAfter());
+        assertEquals(6, defaults.launcherDmax());
+
+        RunSpec.MopParams stated = resolve(entries(
+                "ape.mopDataPath", MOP_PATH,
+                "ape.mopScoring", "distance",
+                "ape.mopWeightD1", "600",
+                "ape.mopWeightD2", "450",
+                "ape.mopWeightD3", "350",
+                "ape.mopRetireAfter", "5",
+                "ape.mopLauncherDmax", "4")).mop();
+        assertEquals(MopScoring.DISTANCE, stated.scoring());
+        assertEquals(600, stated.weightD1());
+        assertEquals(450, stated.weightD2());
+        assertEquals(350, stated.weightD3());
+        assertEquals(5, stated.retireAfter());
+        assertEquals(4, stated.launcherDmax());
+    }
+
+    @Test
+    public void theTwoModesReadDisjointKeySets() {
+        assertEquals(new java.util.LinkedHashSet<>(Arrays.asList(
+                        "ape.mopWeightDirect", "ape.mopWeightTransitive")),
+                MopScoring.DISTANCE.unreadKeys());
+        assertEquals(new java.util.LinkedHashSet<>(Arrays.asList(
+                        "ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3",
+                        "ape.mopRetireAfter", "ape.mopLauncherDmax")),
+                MopScoring.FLAG.unreadKeys());
+        for (MopScoring mode : MopScoring.values()) {
+            assertFalse(mode.unreadKeys().contains(MopScoring.KEY));
+            for (String key : mode.modeKeys()) {
+                assertEquals(key + " is a MOP key", Feature.MOP, KeyOwnership.spec(key).feature());
+            }
+        }
+    }
+
+    @Test
+    public void theDistanceArmFromTheMopPresetMarksTheFlagWeightsInert() {
+        RunSpec spec = resolve(entries(
+                "ape.preset", Presets.MOP,
+                "ape.mopDataPath", MOP_PATH,
+                "ape.mopScoring", "distance"));
+        assertTrue(spec.has(Feature.MOP));
+        assertEquals("distance", spec.mop().values().get("ape.mopScoring"));
+        assertTrue(spec.inertKeys().contains("ape.mopWeightDirect"));
+        assertTrue(spec.inertKeys().contains("ape.mopWeightTransitive"));
+        assertFalse("the mode key itself is never inert while MOP is in the plan",
+                spec.inertKeys().contains("ape.mopScoring"));
+        // Inert by mode is not inert by absence: the keys keep their place in the plan.
+        assertEquals("500", spec.effectiveValues().get("ape.mopWeightDirect"));
+        assertEquals("300", spec.effectiveValues().get("ape.mopWeightTransitive"));
+    }
+
+    @Test
+    public void theFlagArmFromTheMopPresetHasNoModeInertKey() {
+        RunSpec spec = resolve(entries("ape.preset", Presets.MOP, "ape.mopDataPath", MOP_PATH));
+        assertFalse(spec.inertKeys().contains("ape.mopWeightDirect"));
+        assertFalse(spec.inertKeys().contains("ape.mopWeightTransitive"));
+    }
+
+    @Test
+    public void distanceKeysStatedUnderFlagAreInertNotRejected() {
+        RunSpec spec = resolve(entries(
+                "ape.mopDataPath", MOP_PATH,
+                "ape.mopScoring", "flag",
+                "ape.mopWeightD2", "450",
+                "ape.mopRetireAfter", "5"));
+        assertEquals(Arrays.asList("ape.mopRetireAfter", "ape.mopWeightD2"), spec.inertKeys());
+        assertEquals("450", spec.effectiveValues().get("ape.mopWeightD2"));
+    }
+
+    @Test
+    public void everyDistanceKeyStatedUnderFlagIsListedAndNoOtherMopKey() {
+        RunSpec spec = resolve(entries(
+                "ape.mopDataPath", MOP_PATH,
+                "ape.mopWeightDirect", "500",
+                "ape.mopWeightTransitive", "300",
+                "ape.mopTargetPickCap", "3",
+                "ape.mopWeightD1", "500",
+                "ape.mopWeightD2", "400",
+                "ape.mopWeightD3", "300",
+                "ape.mopRetireAfter", "3",
+                "ape.mopLauncherDmax", "6"));
+        assertEquals(Arrays.asList("ape.mopLauncherDmax", "ape.mopRetireAfter",
+                "ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3"), spec.inertKeys());
+    }
+
+    @Test
+    public void aNonNeutralModeInertValueIsAcceptedAndStillEntersTheDigest() {
+        // Unlike a key of an absent feature, a key the mode does not read is accepted at any value
+        // of its type (INV-RUN-09): the plan may state both modes' weights.
+        Map<String, String> arm = entries(
+                "ape.mopDataPath", MOP_PATH,
+                "ape.mopScoring", "distance",
+                "ape.mopWeightDirect", "777");
+        RunSpec spec = resolve(arm);
+        assertEquals(Arrays.asList("ape.mopWeightDirect"), spec.inertKeys());
+        assertEquals("777", spec.effectiveValues().get("ape.mopWeightDirect"));
+
+        Map<String, String> other = new LinkedHashMap<>(arm);
+        other.put("ape.mopWeightDirect", "500");
+        assertNotEquals("the key keeps its value in the plan, so it enters the digest",
+                spec.digest(), resolve(other).digest());
+    }
+
+    @Test
+    public void theModeSplitsTheFiveDistanceKeysFromTheTwoFlagWeights() {
+        Map<String, String> all = entries(
+                "ape.mopDataPath", MOP_PATH,
+                "ape.mopWeightDirect", "500",
+                "ape.mopWeightTransitive", "300",
+                "ape.mopWeightD1", "500",
+                "ape.mopWeightD2", "400",
+                "ape.mopWeightD3", "300",
+                "ape.mopRetireAfter", "3",
+                "ape.mopLauncherDmax", "6");
+        all.put("ape.mopScoring", "distance");
+        assertEquals(Arrays.asList("ape.mopWeightDirect", "ape.mopWeightTransitive"),
+                resolve(all).inertKeys());
+    }
+
+    @Test
+    public void theModeKeyOfAnAbsentMopIsInertAtFlag() {
+        RunSpec spec = resolve(entries("ape.mopScoring", "flag"));
+        assertNull(spec.mop());
+        assertEquals(Arrays.asList("ape.mopScoring"), spec.inertKeys());
+        assertFalse(spec.effectiveValues().containsKey("ape.mopScoring"));
+    }
+
+    @Test
+    public void theDistanceModeOfAnAbsentMopAborts() {
+        RunSpecException failure = abort(entries("ape.mopScoring", "distance"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
+        assertEquals("ape.mopScoring", failure.getKey());
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Presets
     // -----------------------------------------------------------------------------------------
 

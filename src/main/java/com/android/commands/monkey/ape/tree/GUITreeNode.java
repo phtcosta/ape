@@ -62,6 +62,11 @@ public class GUITreeNode implements Serializable {
     private boolean patchedClickable;
     private int scrollable;
     private boolean isPassword;
+    // ui-tree INV-TREE-14 (design D16): the binary class name of the click / long-click handler
+    // that rv-android gh121 (--stamp-handlers) writes into the node's extras under rvsec.click /
+    // rvsec.longClick, or null. Not a naming attribute and not part of the structural hash.
+    private String handlerClick;
+    private String handlerLongClick;
 
     private int descendantCount = 1; // inclusive, include itself
     private boolean focused;
@@ -365,6 +370,24 @@ public class GUITreeNode implements Serializable {
 
     public void setIsPassword(boolean value) {
         this.isPassword = value;
+    }
+
+    /** The binary class name gh121 wrote under {@code rvsec.click}, or null (INV-TREE-14). */
+    public String getHandlerClick() {
+        return handlerClick;
+    }
+
+    public void setHandlerClick(String handlerClick) {
+        this.handlerClick = handlerClick;
+    }
+
+    /** The binary class name gh121 wrote under {@code rvsec.longClick}, or null (INV-TREE-14). */
+    public String getHandlerLongClick() {
+        return handlerLongClick;
+    }
+
+    public void setHandlerLongClick(String handlerLongClick) {
+        this.handlerLongClick = handlerLongClick;
     }
 
     public boolean isClickable() {

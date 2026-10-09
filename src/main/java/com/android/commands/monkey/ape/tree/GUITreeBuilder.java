@@ -56,6 +56,7 @@ import com.android.commands.monkey.ape.utils.Utils;
 import android.content.ComponentName;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.os.Bundle;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 public class GUITreeBuilder {
@@ -596,6 +597,7 @@ public class GUITreeBuilder {
         node.setScrollable(info.isScrollable());
         node.setFocusable(info.isFocusable());
         node.setIsPassword(info.isPassword());
+        captureHandlerStamps(node, info);
 
         node.setFocused(info.isFocused());
 
@@ -604,6 +606,47 @@ public class GUITreeBuilder {
         node.setBoundsInScreen(temp);
         info.getBoundsInParent(temp);
         node.setBoundsInParent(temp);
+    }
+
+    /** gh121 extras key of the node's click handler class (INV-INS-178). */
+    static final String EXTRA_HANDLER_CLICK = "rvsec.click";
+    /** gh121 extras key of the node's long-click handler class (INV-INS-178). */
+    static final String EXTRA_HANDLER_LONG_CLICK = "rvsec.longClick";
+
+    /**
+     * Copies the handler stamp of {@code info} into {@code node} (ui-tree INV-TREE-14, design D16).
+     * A {@code getExtras()} that throws counts as no bundle: the stamp fields stay null and tree
+     * building goes on.
+     */
+    static void captureHandlerStamps(GUITreeNode node, AccessibilityNodeInfo info) {
+        Bundle extras;
+        try {
+            extras = info.getExtras();
+        } catch (RuntimeException e) {
+            extras = null;
+        }
+        copyHandlerStamps(node, extras);
+    }
+
+    /**
+     * Sets {@code handlerClick}/{@code handlerLongClick} from {@code rvsec.click}/{@code rvsec.longClick}.
+     * {@code getString} gives null for an absent key or a non-string value. A null bundle, or a read
+     * that throws (an unparcel failure, say), leaves both fields null. No other key is read.
+     */
+    static void copyHandlerStamps(GUITreeNode node, Bundle extras) {
+        String click = null;
+        String longClick = null;
+        if (extras != null) {
+            try {
+                click = extras.getString(EXTRA_HANDLER_CLICK);
+                longClick = extras.getString(EXTRA_HANDLER_LONG_CLICK);
+            } catch (RuntimeException e) {
+                click = null;
+                longClick = null;
+            }
+        }
+        node.setHandlerClick(click);
+        node.setHandlerLongClick(longClick);
     }
 
     private Element getFirstChildElement(Element e) {

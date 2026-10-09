@@ -11,6 +11,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -141,6 +142,34 @@ public class PresetsTest {
             assertFalse(name + " must not carry an agent type",
                     keys.contains("ape.agentType"));
         }
+    }
+
+    @Test
+    public void noPresetStatesAMopScoringModeKey() {
+        // No preset changes in llm-coordinate-single-base Part B (design D18): mop and llm_mop
+        // define the E6 arms at the flag default, and the distance arm is the harness stating
+        // ape.mopScoring=distance over ape.preset=mop. A preset that stated a distance key would
+        // put it in every flag arm's RUN_START.inert.
+        for (String name : Presets.names()) {
+            Set<String> keys = Presets.resolve(name).keySet();
+            for (String key : new String[] {"ape.mopScoring", "ape.mopWeightD1",
+                    "ape.mopWeightD2", "ape.mopWeightD3", "ape.mopRetireAfter",
+                    "ape.mopLauncherDmax"}) {
+                assertFalse(name + " must not carry " + key, keys.contains(key));
+            }
+        }
+    }
+
+    @Test
+    public void theMopPresetResolvesUnderBothScoringModes() {
+        Map<String, String> flag = vector("ape.preset", Presets.MOP, "ape.mopDataPath", MOP_DATA_PATH);
+        Map<String, String> distance = new LinkedHashMap<>(flag);
+        distance.put("ape.mopScoring", "distance");
+        RunSpec flagSpec = RunSpec.resolve(flag, RunSpec.CliValues.of("sata", 42L, null));
+        RunSpec distanceSpec = RunSpec.resolve(distance, RunSpec.CliValues.of("sata", 42L, null));
+        assertEquals(flagSpec.features(), distanceSpec.features());
+        assertNotEquals("the mode is part of what the arm is", flagSpec.digest(),
+                distanceSpec.digest());
     }
 
     @Test

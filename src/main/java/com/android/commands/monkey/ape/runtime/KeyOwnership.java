@@ -191,6 +191,15 @@ public final class KeyOwnership {
         feature(Feature.MOP, "ape.mopWeightTransitive", ValueType.INT, "300");
         feature(Feature.MOP, "ape.mopTargetPickCap", ValueType.INT, "3");
         feature(Feature.MOP, "ape.mopStrictPackageMatch", ValueType.BOOLEAN, "false");
+        // The scoring mode and the distance mode's keys (llm-coordinate-single-base, D18–D20).
+        // Plan-owned: no Config field mirrors them, so the default drift guard does not see them
+        // and KeyOwnershipTotalityTest pins them against the run-spec delta instead.
+        feature(Feature.MOP, MopScoring.KEY, ValueType.MOP_SCORING, "flag");
+        feature(Feature.MOP, "ape.mopWeightD1", ValueType.INT, "500");
+        feature(Feature.MOP, "ape.mopWeightD2", ValueType.INT, "400");
+        feature(Feature.MOP, "ape.mopWeightD3", ValueType.INT, "300");
+        feature(Feature.MOP, "ape.mopRetireAfter", ValueType.INT, "3");
+        feature(Feature.MOP, "ape.mopLauncherDmax", ValueType.INT, "6");
 
         feature(Feature.WTG, "ape.mopWeightWtg", ValueType.INT, "200");
         feature(Feature.MENU_GATEWAY, "ape.mopWeightOpenMenu", ValueType.INT, "250");

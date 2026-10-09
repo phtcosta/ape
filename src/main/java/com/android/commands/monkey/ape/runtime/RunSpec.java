@@ -190,6 +190,10 @@ public final class RunSpec {
         //    feature is accepted only at its neutral value. You may state OFF for a mechanism that
         //    does not exist; you may not state ON.
         List<String> inert = applyInertRule(explicit, effective, features);
+        // 5b. The second cause of inertness (INV-RUN-09): with MOP in the plan, the keys the
+        //     selected scoring mode does not read are accepted at any value of their type, keep
+        //     that value in the plan, and are reported as parameterizing nothing.
+        inert = addModeInertKeys(inert, explicit, effective, features);
 
         Map<String, String> planValues = planValues(effective, features, inert);
 
@@ -330,6 +334,33 @@ public final class RunSpec {
         }
         Collections.sort(inert);
         return inert;
+    }
+
+    /**
+     * Adds to {@code inert} the stated {@code MOP} keys the selected {@code ape.mopScoring} mode
+     * does not read (INV-RUN-09), and returns the sorted union.
+     *
+     * <p>"Stated" is the same test the absent-feature rule uses — present in the properties files
+     * or in the preset vector — so the distance arm written as {@code ape.preset=mop} plus
+     * {@code ape.mopScoring=distance} reports the preset's flag weights. Unlike that rule, no
+     * value is judged here: the type was checked at step 3, and any value of it is accepted,
+     * because one plan may state both modes' weights. With {@code MOP} absent the six Part B keys
+     * are already under the absent-feature rule and nothing is added.
+     */
+    private static List<String> addModeInertKeys(List<String> inert, Map<String, String> explicit,
+            Map<String, String> effective, Set<Feature> features) {
+        if (!features.contains(Feature.MOP)) {
+            return inert;
+        }
+        MopScoring mode = MopScoring.fromWire(effective.get(MopScoring.KEY));
+        List<String> out = new ArrayList<>(inert);
+        for (String key : mode.unreadKeys()) {
+            if (explicit.containsKey(key)) {
+                out.add(key);
+            }
+        }
+        Collections.sort(out);
+        return out;
     }
 
     /**
@@ -538,7 +569,12 @@ public final class RunSpec {
         return effective;
     }
 
-    /** The keys accepted at their neutral value for a feature the plan does not carry. */
+    /**
+     * The stated keys that parameterize nothing, sorted: those accepted at their neutral value for
+     * a feature the plan does not carry (INV-RUN-05), and the {@code MOP} keys the selected
+     * {@code ape.mopScoring} mode does not read (INV-RUN-09). The former are not plan values; the
+     * latter keep their value in {@link #effectiveValues()} and in the digest.
+     */
     public List<String> inertKeys() {
         return inert;
     }
@@ -676,6 +712,12 @@ public final class RunSpec {
 
         public final double dbl(String key) {
             return (Double) ValueType.DOUBLE.parse(key, require(key, ValueType.DOUBLE));
+        }
+
+        /** A {@link ValueType#MOP_SCORING} key's value as its mode. */
+        public final MopScoring mopScoring(String key) {
+            return MopScoring.fromWire(
+                    (String) ValueType.MOP_SCORING.parse(key, require(key, ValueType.MOP_SCORING)));
         }
 
         private String require(String key, ValueType expected) {
@@ -961,6 +1003,41 @@ public final class RunSpec {
          */
         public int targetPickCap() {
             return integer("ape.mopTargetPickCap");
+        }
+
+        /**
+         * The scoring mode (design D18): {@code FLAG}, the E6 mark and the default, or
+         * {@code DISTANCE}. Read in both modes. The accessors below return the plan's value
+         * whatever the mode; under a mode that does not read a key, that key is inert
+         * (INV-RUN-09), and honoring that is the reader's job — see {@link MopScoring#modeKeys()}.
+         */
+        public MopScoring scoring() {
+            return mopScoring(MopScoring.KEY);
+        }
+
+        /** {@code distance} weight for a nearest unretired target at {@code d <= 1} (D18). */
+        public int weightD1() {
+            return integer("ape.mopWeightD1");
+        }
+
+        /** {@code distance} weight for a nearest unretired target at {@code d = 2} (D18). */
+        public int weightD2() {
+            return integer("ape.mopWeightD2");
+        }
+
+        /** {@code distance} weight for a nearest unretired target at {@code d = 3} (D18). */
+        public int weightD3() {
+            return integer("ape.mopWeightD3");
+        }
+
+        /** First interactions after which a target retires under {@code distance} (D19). */
+        public int retireAfter() {
+            return integer("ape.mopRetireAfter");
+        }
+
+        /** The largest distance the launcher orders activities by under {@code distance} (D20). */
+        public int launcherDmax() {
+            return integer("ape.mopLauncherDmax");
         }
     }
 

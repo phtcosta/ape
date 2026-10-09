@@ -369,7 +369,7 @@ public final class NdjsonSink implements EventSink {
     public void mopData(String status, String reason, int formatVersion, String sourceDigest,
             String pkg, int windows, int widgets, int flagged, int droppedNoId, int wtgEdges,
             int handlersUnmatched, int syntheticLambda, int recovered, int mopActivities,
-            int mopActsAugmented, int components) {
+            int mopActsAugmented, int components, int targets, int handlers, int droppedPairs) {
         if (disabled) {
             return;
         }
@@ -401,6 +401,12 @@ public final class NdjsonSink implements EventSink {
             sideBuf.name("mopActivities").value(mopActivities);
             sideBuf.name("mopActsAugmented").value(mopActsAugmented);
             sideBuf.name("components").value(components);
+            // Format 2 (design D23). Written on every record, zero included, like the census
+            // above: a run whose artifact has no target says targets:0, and that is the field the
+            // analysis excludes such runs by.
+            sideBuf.name("targets").value(targets);
+            sideBuf.name("handlers").value(handlers);
+            sideBuf.name("droppedPairs").value(droppedPairs);
             write(sideBuf.endObject().toLine());
         } catch (Throwable failure) {
             latch("mopData", failure);

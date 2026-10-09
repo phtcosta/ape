@@ -312,6 +312,51 @@ public class RunSpecEchoTest {
     }
 
     @Test
+    public void weightsTheModeDoesNotReadAreMarkedInert() throws Exception {
+        // The run-spec scenario: llm_mop with the distance mode. The mode is read from params, and
+        // the flag weights the preset vector states are listed as parameterizing nothing.
+        Map<String, String> plan = presetPlan(Presets.LLM_MOP);
+        plan.put("ape.mopScoring", "distance");
+        JSONObject json = record(resolve(plan));
+
+        assertEquals("distance", json.getJSONObject("params").getString("ape.mopScoring"));
+        Set<String> inert = names(json.getJSONArray("inert"));
+        assertTrue(inert.contains("ape.mopWeightDirect"));
+        assertTrue(inert.contains("ape.mopWeightTransitive"));
+        assertFalse(inert.contains("ape.mopScoring"));
+    }
+
+    @Test
+    public void theFlagModeIsReadByItsAbsenceFromParams() throws Exception {
+        // flag is the jar default, so the record omits it, and the weights in force are the flag
+        // weights; distance keys stated alongside are reported as inert.
+        JSONObject json = record(resolve(entries(
+                "ape.mopDataPath", MOP_PATH,
+                "ape.mopWeightD2", "450",
+                "ape.mopRetireAfter", "5")));
+        JSONObject params = json.getJSONObject("params");
+        assertFalse(params.has("ape.mopScoring"));
+        Set<String> inert = names(json.getJSONArray("inert"));
+        assertTrue(inert.contains("ape.mopWeightD2"));
+        assertTrue(inert.contains("ape.mopRetireAfter"));
+        assertFalse(inert.contains("ape.mopWeightDirect"));
+    }
+
+    @Test
+    public void theDistanceArmIsReconstructibleFromItsOwnRecord() throws Exception {
+        Map<String, String> plan = presetPlan(Presets.MOP);
+        plan.put("ape.mopScoring", "distance");
+        plan.put("ape.mopWeightD2", "450");
+        RunSpec original = resolve(plan);
+        JSONObject json = record(original);
+
+        RunSpec rebuilt = RunSpec.resolve(paramsAsEntries(json),
+                RunSpec.CliValues.of(json.getString("agent"), json.getLong("seed"), null));
+        assertEquals(original.digest(), rebuilt.digest());
+        assertEquals(original.effectiveValues(), rebuilt.effectiveValues());
+    }
+
+    @Test
     public void corpusBasisIsEchoedWhenSuppliedAndOmittedWhenNot() throws Exception {
         String basis = "subset40:9f2c8b1e4d6a0c3f5e7b9d1a2c4e6f80";
         assertEquals(basis, record(resolve(entries("ape.corpusBasis", basis)))
@@ -445,17 +490,27 @@ public class RunSpecEchoTest {
             String key = keys.next();
             entries.put(key, String.valueOf(params.get(key)));
         }
-        // The inert list is the record saying "these keys were stated and parameterized nothing",
-        // and a key is inert at exactly one value — its neutral one — so the name plus the jar
-        // gives the value back. Restoring them is not optional bookkeeping: an arm that turns a
-        // MOP-family mechanism off (ape.frontierBoostWeight=0, ape.activityTriggerEnabled=false)
-        // states a key whose *jar default* is on, and a reconstruction that dropped it would
-        // switch the mechanism back on. This uses the same jar the record names by build.sha that
-        // the omitted defaults already require.
+        // The inert list is the record saying "these keys were stated and parameterized nothing".
+        // A key of an absent feature is inert at exactly one value — its neutral one — so the name
+        // plus the jar gives the value back. Restoring them is not optional bookkeeping: an arm
+        // that turns a MOP-family mechanism off (ape.frontierBoostWeight=0,
+        // ape.activityTriggerEnabled=false) states a key whose *jar default* is on, and a
+        // reconstruction that dropped it would switch the mechanism back on. This uses the same
+        // jar the record names by build.sha that the omitted defaults already require.
+        //
+        // A key whose feature IS in the plan is inert for the other reason, INV-RUN-09: the MOP
+        // scoring mode does not read it. It kept its value in the plan, so that value is already
+        // in params when non-default and is the jar default otherwise — restoring it at the
+        // neutral value would change the arm.
+        Set<String> features = names(json.getJSONArray("features"));
         JSONArray inert = json.getJSONArray("inert");
         for (int i = 0; i < inert.length(); i++) {
             String key = inert.getString(i);
-            entries.put(key, KeyOwnership.spec(key).feature().neutralValue(key));
+            Feature owner = KeyOwnership.spec(key).feature();
+            if (features.contains(owner.name())) {
+                continue;
+            }
+            entries.put(key, owner.neutralValue(key));
         }
         return entries;
     }

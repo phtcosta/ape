@@ -378,7 +378,8 @@ public class NdjsonSinkTest {
 
     @Test
     public void everyRecordLineBeginsWithABrace() throws Exception {
-        sink.mopData("loaded", null, 1, "sha256:ab", "com.foo", 12, 340, 8, 2, 7, 1, 0, 3, 4, 5, 9);
+        sink.mopData("loaded", null, 2, "sha256:ab", "com.foo", 12, 340, 8, 2, 7, 1, 0, 3, 4, 5, 9,
+                9, 57, 0);
         sink.beginStep(1, 1L, "com.foo/.Main", true, "S1");
         sink.decision("model=CLICK@x", "SATA", "sata_other", 1,
                 0, 0, 0, 0, 0, 0, null, EventSink.ABSENT, EventSink.ABSENT, null);
@@ -412,7 +413,8 @@ public class NdjsonSinkTest {
 
     @Test
     public void theLoadCensusCarriesTheNumberTheFrontierPassesGateOn() throws Exception {
-        sink.mopData("loaded", null, 1, "sha256:ab", "com.foo", 12, 340, 8, 2, 0, 1, 0, 3, 4, 5, 9);
+        sink.mopData("loaded", null, 2, "sha256:ab", "com.foo", 12, 340, 8, 2, 0, 1, 0, 3, 4, 5, 9,
+                9, 57, 0);
 
         JSONObject census = records().get(0);
         assertEquals("MOP_DATA", census.getString("type"));
@@ -426,11 +428,12 @@ public class NdjsonSinkTest {
 
     @Test
     public void theLoadCensusNamesTheContractAndTheDocumentItWasDerivedFrom() throws Exception {
-        sink.mopData("loaded", null, 1, "sha256:beef", "com.foo", 5, 30, 3, 0, 16, 5, 1, 1, 3, 2, 5);
+        sink.mopData("loaded", null, 2, "sha256:beef", "com.foo", 5, 30, 3, 0, 16, 5, 1, 1, 3, 2, 5,
+                27, 2, 0);
 
         JSONObject census = records().get(0);
         assertEquals("a trace that cannot name its wire contract cannot be read by a later jar",
-                1, census.getInt("formatVersion"));
+                2, census.getInt("formatVersion"));
         assertEquals("the digest is what joins a run to the exact static analysis that steered it",
                 "sha256:beef", census.getString("sourceDigest"));
         assertEquals(5, census.getInt("components"));
@@ -444,7 +447,7 @@ public class NdjsonSinkTest {
     @Test
     public void aRejectedLoadReportsItsReasonAndClaimsNoProvenance() throws Exception {
         sink.mopData("rejected", "version-mismatch", 0, null, null,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
         JSONObject census = records().get(0);
         assertEquals("rejected", census.getString("status"));
@@ -454,6 +457,30 @@ public class NdjsonSinkTest {
         assertFalse(census.has("package"));
         assertEquals("a version this jar rejected is not a version it can vouch for",
                 0, census.getInt("formatVersion"));
+        assertEquals("a rejected load counted nothing, format-2 counts included",
+                0, census.getInt("targets"));
+        assertEquals(0, census.getInt("handlers"));
+        assertEquals(0, census.getInt("droppedPairs"));
+    }
+
+    /**
+     * The three counts wire format 2 adds (design D23): the target list's length, the handler
+     * table's size and the malformed pairs dropped at load. Each value is distinct so a field
+     * written from the wrong argument cannot pass.
+     */
+    @Test
+    public void theLoadCensusCarriesTheFormatTwoCounts() throws Exception {
+        sink.mopData("loaded", null, 2, "sha256:ab", "com.foo", 12, 340, 8, 2, 0, 1, 0, 3, 4, 5, 9,
+                9, 57, 4);
+
+        JSONObject census = records().get(0);
+        assertEquals(2, census.getInt("formatVersion"));
+        assertEquals(12, census.getInt("windows"));
+        assertEquals(340, census.getInt("widgets"));
+        assertEquals("the bound of every index in dec.ret", 9, census.getInt("targets"));
+        assertEquals(57, census.getInt("handlers"));
+        assertEquals("a non-zero count is a generator-jar skew signal",
+                4, census.getInt("droppedPairs"));
     }
 
     @Test
@@ -512,7 +539,8 @@ public class NdjsonSinkTest {
         latching.outcome(false, "S1", "com.foo/.Main", false, false);
         latching.beginStep(2, 2L, "com.foo/.Other", false, "S2");
         latching.flushPendingStep();
-        latching.mopData("loaded", null, 1, "sha256:ab", "com.foo", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        latching.mopData("loaded", null, 2, "sha256:ab", "com.foo", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0);
         latching.llmAck("qwen3-vl-8b");
         latching.runEnd("timeout", null, null);
 
@@ -688,7 +716,8 @@ public class NdjsonSinkTest {
         noop.llmBreakerOpen(1);
         noop.outcome(true, "S2", "com.foo/.Main", true, true);
         noop.flushPendingStep();
-        noop.mopData("loaded", null, 1, "sha256:ab", "com.foo", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        noop.mopData("loaded", null, 2, "sha256:ab", "com.foo", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0);
         noop.pipeline(Arrays.asList("a"), Arrays.asList("b"), new LinkedHashMap<String, Boolean>());
         noop.llmAck("qwen3-vl-8b");
         noop.runEnd("timeout", null, new RunCounters());

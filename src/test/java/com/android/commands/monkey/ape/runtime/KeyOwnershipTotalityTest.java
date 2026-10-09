@@ -176,6 +176,37 @@ public class KeyOwnershipTotalityTest {
         assertEquals(0.035, (Double) KeyOwnership.typeOf(key).parse(key, Feature.LLM.neutralValue(key)), 1e-9);
     }
 
+    /**
+     * The six MOP scoring keys of llm-coordinate-single-base Part B (design D18–D20), pinned
+     * against the run-spec delta's table: owner, declared type and jar default. The neutral values
+     * are pinned beside the feature in {@code FeatureDerivationTest}. None of the six has a
+     * {@code Config} field, so the default drift guard above cannot see them; this is their guard.
+     */
+    @Test
+    public void theSixMopScoringKeysAreOwnedByMopWithTheDeltasTypesAndDefaults() {
+        String[][] table = {
+                {"ape.mopScoring", "flag"},
+                {"ape.mopWeightD1", "500"},
+                {"ape.mopWeightD2", "400"},
+                {"ape.mopWeightD3", "300"},
+                {"ape.mopRetireAfter", "3"},
+                {"ape.mopLauncherDmax", "6"},
+        };
+        for (String[] row : table) {
+            String key = row[0];
+            assertTrue(key + " must be owned", KeyOwnership.isKnown(key));
+            assertEquals(key + " belongs to MOP", Feature.MOP, KeyOwnership.spec(key).feature());
+            assertEquals(key + "'s jar default", row[1], KeyOwnership.defaultOf(key));
+            if (!"ape.mopScoring".equals(key)) {
+                assertEquals(key + " is an int", ValueType.INT, KeyOwnership.typeOf(key));
+            }
+        }
+        // The mode key is a string whose value set is closed: both members parse, as themselves.
+        ValueType mode = KeyOwnership.typeOf("ape.mopScoring");
+        assertEquals("flag", mode.parse("ape.mopScoring", "flag"));
+        assertEquals("distance", mode.parse("ape.mopScoring", "distance"));
+    }
+
     @Test
     public void theResolverOwnsExactlyPresetRunIdAndCorpusBasis() {
         assertEquals(new LinkedHashSet<>(java.util.Arrays.asList(

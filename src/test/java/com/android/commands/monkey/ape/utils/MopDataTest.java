@@ -266,12 +266,18 @@ public class MopDataTest {
     // =========================================================================
 
     /**
-     * The static-analysis document the compact fixture was derived from. It is on the classpath
-     * for two reasons and neither is that anything loads it: the provenance test digests it to
-     * check the chain source bytes → generator → wire → record, and the rejection scenario needs
-     * a real full JSON to be the document the loader refuses (INV-MOP-34).
+     * A real full static-analysis JSON on the classpath, the September (gh60) cryptoapp document.
+     * Nothing loads it: the rejection scenario needs a real full JSON to be the document the loader
+     * refuses (INV-MOP-34). It is no longer the compact fixture's source; that is {@link #SOURCE}.
      */
     private static final String FRESH = "cryptoapp.apk.gh60-fresh.json";
+    /**
+     * The gh120 static-analysis document the format-2 compact fixture was derived from (task 10.1).
+     * It sits in {@code test-apks/}, not on the classpath, and is read relative to the working
+     * directory, which surefire leaves at {@code ${basedir}} (as {@code GoldenFile} does). The
+     * provenance test digests it to check the chain source bytes → generator → wire → record.
+     */
+    private static final String SOURCE = "test-apks/cryptoapp.apk.json";
     private static final String COMPACT = "cryptoapp.apk.mop.json";
     private static final String PKG = "br.unb.cic.cryptoapp";
     private static final String MAIN = "br.unb.cic.cryptoapp.MainActivity";
@@ -336,8 +342,9 @@ public class MopDataTest {
     public void testCompactLoadRecordCarriesProvenanceAndTheComponentCount() throws Exception {
         JSONObject record = onlyLoadRecord(fixturePath(COMPACT), false);
         assertEquals("loaded", record.getString("status"));
-        assertEquals(1, record.getInt("formatVersion"));
-        assertEquals("sha256:" + sha256Hex(fixturePath(FRESH)), record.getString("sourceDigest"));
+        assertEquals(2, record.getInt("formatVersion"));
+        assertEquals("sha256:" + sha256Hex(new File(SOURCE).getAbsolutePath()),
+                record.getString("sourceDigest"));
         // 4 activities + 1 provider, and no receivers or services: the count is over every list,
         // which is the granularity `hasComponents()` gates on.
         assertEquals(5, record.getInt("components"));
@@ -350,9 +357,11 @@ public class MopDataTest {
         assertEquals(3, record.getInt("flagged"));
         assertEquals(0, record.getInt("droppedNoId"));
         assertEquals(16, record.getInt("wtgEdges"));
-        assertEquals(5, record.getInt("handlersUnmatched"));
-        assertEquals(1, record.getInt("syntheticLambda"));
-        assertEquals(1, record.getInt("recovered"));
+        // gh120 links the D8 wrapper to its lambda body, so the exact join flags executeButton and
+        // the class recovery has nothing left to do: no synthetic lambda, nothing recovered.
+        assertEquals(4, record.getInt("handlersUnmatched"));
+        assertEquals(0, record.getInt("syntheticLambda"));
+        assertEquals(0, record.getInt("recovered"));
         assertEquals(3, record.getInt("mopActivities"));
         // Vacuously 0 on this fixture: cryptoapp's augmented set equals its widget-derived one, so
         // nothing here can distinguish the wire-set reading from the retired applied-augmentation
@@ -360,6 +369,26 @@ public class MopDataTest {
         assertEquals(0, record.getInt("mopActsAugmented"));
         assertFalse("the flat transition list is not reinstated at stage 7 either",
                 record.has("transitions"));
+
+        // The three format-2 counts (design D23): 23 direct targets then 4 boundary ones, the two
+        // handler classes, and no malformed pair from a conforming generator.
+        assertEquals(27, record.getInt("targets"));
+        assertEquals(2, record.getInt("handlers"));
+        assertEquals(0, record.getInt("droppedPairs"));
+    }
+
+    /**
+     * The synthetic fixture is derived too (task 10.1): its digest is the one of the synthetic
+     * analyser document beside it on the classpath, so the chain holds for both fixtures.
+     */
+    @Test
+    public void testSyntheticFixtureIsDerivedFromItsAnalyserDocument() throws Exception {
+        JSONObject record = onlyLoadRecord(fixturePath(SELECTION), false);
+        assertEquals("loaded", record.getString("status"));
+        assertEquals("sha256:" + sha256Hex(fixturePath("synthetic-activity-selection.apk.json")),
+                record.getString("sourceDigest"));
+        assertEquals(1, record.getInt("targets"));
+        assertEquals(1, record.getInt("handlers"));
     }
 
     private static String sha256Hex(String path) throws Exception {
@@ -432,9 +461,11 @@ public class MopDataTest {
 
     /**
      * The artifact whose {@code mopActivitiesAugmented} strictly contains its {@code mopActivities}
-     * — {@code A} in both, {@code B} only in the augmented set — plus a gateway {@code G} whose one
-     * WTG edge lands on {@code B} and a gateway {@code H} that qualifies on its own flagged menu
-     * widget.
+     * — {@code A} and {@code H} in both, {@code B} only in the augmented set — plus a gateway
+     * {@code G} whose one WTG edge lands on {@code B} and a gateway {@code H} that qualifies on its
+     * own flagged menu widget. It is derived by the rv-android generator from
+     * {@code synthetic-activity-selection.apk.json} (task 10.1), which is why {@code H} sits in
+     * {@code mopActivities}: an OPTIONSMENU window with a flagged widget flags its activity.
      *
      * <p>It is a checked-in resource rather than a temp file because two things need it and only
      * one of them is here: task 4.1's equivalence gate reuses it as its INV-DRV-06 member, and a
@@ -442,9 +473,28 @@ public class MopDataTest {
      */
     private static final String SELECTION = "synthetic-activity-selection.mop.json";
 
-    /** A v1 artifact envelope carrying whatever top-level members the caller appends. */
+    /**
+     * A format-2 artifact carrying the two members format 2 makes mandatory — 27 targets, as in the
+     * cryptoapp fixture, and an empty handler table — plus whatever top-level members the caller
+     * appends. A caller that states {@code targets} or {@code handlers} itself uses
+     * {@link #formatTwoEnvelope}, since a JSON object admits one value per key.
+     */
     private static String compactArtifact(String members) {
-        return "{\"formatVersion\":1,\"package\":\"p\",\"mainActivity\":\"p.A\"" + members + "}";
+        return formatTwoEnvelope(",\"targets\":27,\"handlers\":{}" + members);
+    }
+
+    /** The bare format-2 envelope: version, package and main activity, nothing else. */
+    private static String formatTwoEnvelope(String members) {
+        return "{\"formatVersion\":2,\"package\":\"p\",\"mainActivity\":\"p.A\"" + members + "}";
+    }
+
+    /** The pairs as a readable string, so a mismatch shows both sides: {@code [[16,3],[17,3]]}. */
+    private static String pairs(int[][] pairs) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < pairs.length; i++) {
+            sb.append(i == 0 ? "" : ",").append(Arrays.toString(pairs[i]).replace(" ", ""));
+        }
+        return sb.append("]").toString();
     }
 
     private static MopData loadFixture(String name, boolean activitySourceComponents) {
@@ -511,11 +561,12 @@ public class MopDataTest {
     // --- Scenario: Compact cryptoapp fixture loads every consumed field -------
 
     /**
-     * The flag set is three widgets and the third is there only through the D8 synthetic-lambda
-     * recovery: {@code executeButton}'s handler is a {@code $$ExternalSyntheticLambda0} wrapper
-     * that no {@code reachability[]} signature matches, so it is flagged through the enclosing
-     * class's reaching {@code lambda$setupExecuteButton$0} (INV-DRV-01). An artifact asserting two
-     * is asserting that the recovery did not run in the generator.
+     * The flag set is three widgets. The third, {@code executeButton}, has a
+     * {@code $$ExternalSyntheticLambda0} wrapper as its handler; under gh120 the producer lists that
+     * wrapper in {@code reachability[]} as reaching, linked to its own
+     * {@code lambda$setupExecuteButton$0} body, so the exact join flags it and the class recovery
+     * is not consulted (rv-android INV-DRV-09; {@code MOP_DATA.recovered} is 0). An artifact
+     * asserting two is asserting that the wrapper's join failed in the generator.
      */
     @Test
     public void testCompactFixtureFlagsExactlyTheThreeMopWidgets() throws Exception {
@@ -538,6 +589,259 @@ public class MopDataTest {
             assertFalse(pair[1] + " is not a direct JCA caller", w.directMop);
             assertTrue(w.isTransitiveMop("click"));
         }
+    }
+
+    // --- Scenario: Real cryptoapp fixture loads every typed field (format 2) ---
+
+    /**
+     * The format-2 members of the cryptoapp fixture, as the scenario states them: 27 targets, the
+     * three flagged widgets' {@code click} pairs in wire order, and no pair on any other event —
+     * distances have no aggregate fallback.
+     */
+    @Test
+    public void testCompactFixtureTargetsAndWidgetPairs() {
+        MopData d = loadFixture(COMPACT, false);
+        assertEquals("23 direct targets, then 4 boundary targets", 27, d.targetCount());
+
+        assertEquals("[[22,2]]", pairs(d.getWidget(MDA, "buttonGenerateHash").dist("click")));
+        assertEquals("[[0,4],[1,4]]",
+                pairs(d.getWidget(CIPHER, "btn_cipher_encrypt").dist("click")));
+        assertEquals("[[16,3],[17,3],[18,3]]",
+                pairs(d.getWidget(CRYPTO, "executeButton").dist("click")));
+
+        assertEquals("no aggregate fallback for distances", 0,
+                d.getWidget(CRYPTO, "executeButton").dist("longClick").length);
+        assertEquals("an unflagged widget carries no pair", 0,
+                d.getWidget(MDA, "editTextMessageDigest").dist("click").length);
+    }
+
+    /**
+     * The handler table lists exactly the two classes of the fixture that declare
+     * {@code onClick(android.view.View)}, each {@code click}-transitive with its widget's pairs.
+     * "Exactly" is asserted through the census, which counts the table, and through the wire, which
+     * names its keys; a class the table does not list answers null.
+     */
+    @Test
+    public void testCompactFixtureHandlerTable() throws Exception {
+        MopData d = loadFixture(COMPACT, false);
+        String cipherListener = "br.unb.cic.cryptoapp.cipher.CipherActivity$1";
+        String executeLambda =
+                "br.unb.cic.cryptoapp.generated.CryptographyActivity$$ExternalSyntheticLambda0";
+
+        JSONObject wire = new JSONObject(readText(fixturePath(COMPACT))).getJSONObject("handlers");
+        Set<String> wireClasses = new HashSet<>();
+        for (Iterator<String> it = wire.keys(); it.hasNext(); ) {
+            wireClasses.add(it.next());
+        }
+        assertEquals(new HashSet<>(Arrays.asList(cipherListener, executeLambda)), wireClasses);
+        assertEquals(2, onlyLoadRecord(fixturePath(COMPACT), false).getInt("handlers"));
+
+        String[][] expected = {{cipherListener, CIPHER, "btn_cipher_encrypt"},
+                {executeLambda, CRYPTO, "executeButton"}};
+        for (String[] row : expected) {
+            MopData.Handler h = d.getHandler(row[0]);
+            assertNotNull("listed handler class " + row[0], h);
+            assertEquals(row[0], h.className);
+            assertTrue(h.isTransitiveMop("click"));
+            assertFalse(h.isDirectMop("click"));
+            assertEquals("the handler's pairs are its widget's",
+                    pairs(d.getWidget(row[1], row[2]).dist("click")), pairs(h.dist("click")));
+        }
+        assertNull("an unlisted class falls back to the id key",
+                d.getHandler("androidx.appcompat.app.AppCompatViewInflater$DeclaredOnClickListener"));
+        assertNull(d.getHandler(null));
+    }
+
+    /**
+     * The per-activity pairs the launcher reads (design D20), in wire order. {@code MainActivity}
+     * has none: its only reaching method is its constructor, which {@code activityDist} leaves out
+     * (design D15).
+     */
+    @Test
+    public void testCompactFixtureActivityDistances() {
+        MopData d = loadFixture(COMPACT, false);
+        assertEquals("[[22,2]]", pairs(d.activityDist(MDA)));
+        assertEquals("[[0,2],[1,2]]", pairs(d.activityDist(CIPHER)));
+        assertEquals("[[12,0],[13,0],[14,0]]", pairs(d.activityDist(CRYPTO)));
+        assertEquals(0, d.activityDist(MAIN).length);
+        assertEquals(0, d.activityDist(null).length);
+    }
+
+    /**
+     * With {@code mopActivitySourceComponents=true} MainActivity stays out: the A′ source 3 leaves
+     * out a class's own {@code <init>}/{@code <clinit>}, so on this fixture the augmented set
+     * equals the widget-derived one (design D15).
+     */
+    @Test
+    public void testCompactFixtureAugmentedSetLeavesMainActivityOut() {
+        MopData d = loadFixture(COMPACT, true);
+        assertFalse(d.activityHasMop(MAIN));
+        assertEquals(new HashSet<>(Arrays.asList(MDA, CIPHER, CRYPTO)), d.getMopActivities());
+    }
+
+    // --- Scenarios: format-2 distance members --------------------------------
+
+    /**
+     * Per-event pairs, in wire order, with no aggregate fallback: the {@code mop} map's fallback
+     * does not extend to {@code dist}. Event keys are normalized on ingest like the flags are.
+     */
+    @Test
+    public void testPerEventPairsKeepWireOrderAndHaveNoFallback() throws Exception {
+        String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{"
+                + "\"b\":{\"mop\":{\"click\":\"both\",\"scroll\":\"none\"},"
+                + "\"dist\":{\"click\":[[2,0],[5,1]]}},"
+                + "\"c\":{\"mop\":{\"long_click\":\"transitive\"},"
+                + "\"dist\":{\"long_click\":[[7,2]]}}}}"));
+        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData.Widget b = d.getWidget("p.A", "b");
+        assertEquals("[[2,0],[5,1]]", pairs(b.dist("click")));
+        assertEquals(0, b.dist("scroll").length);
+        assertEquals("the flag falls back to the aggregate; the pairs do not",
+                0, b.dist("longClick").length);
+        assertTrue(b.isDirectMop("longClick"));
+        assertEquals("snake_case wire key answers a camelCase query",
+                "[[7,2]]", pairs(d.getWidget("p.A", "c").dist("longClick")));
+        assertEquals(0, b.dist(null).length);
+    }
+
+    /**
+     * Two wire {@code dist} keys that normalize onto one event merge by the minimum per target and
+     * keep the wire's order (distance, then index), as {@code orInto} merges the flags. A
+     * conforming generator normalizes its keys and never emits this; the loader must still not
+     * lose a pair to it.
+     */
+    @Test
+    public void testDistKeysCollapsingOntoOneEventMergeByMinimumPerTarget() throws Exception {
+        String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{\"dist\":"
+                + "{\"long_click\":[[3,1],[5,2]],\"longClick\":[[3,0],[6,2]]}}}}"));
+        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        assertEquals("[[3,0],[5,2],[6,2]]", pairs(d.getWidget("p.A", "b").dist("longclick")));
+    }
+
+    /**
+     * The handler table's event keys are normalized and its flags decoded as the widgets' are. A
+     * listed class with {@code mop} {@code none} and no {@code dist} is kept: it states that the
+     * handler reaches no target (design D15, D17).
+     */
+    @Test
+    public void testHandlerRecordsDecodeLikeWidgetsAndKeepTheNoneClass() throws Exception {
+        String path = writeTempJson(formatTwoEnvelope(",\"targets\":4,\"handlers\":{"
+                + "\"p.Compose$1\":{\"mop\":{\"click\":\"transitive\",\"longclick\":\"transitive\"},"
+                + "\"dist\":{\"click\":[[0,1]],\"long_click\":[[3,2]]}},"
+                + "\"p.Quiet\":{\"mop\":{\"click\":\"none\"}}}"));
+        MopData d = MopData.load(path, null, null, false, new NoopSink());
+
+        MopData.Handler compose = d.getHandler("p.Compose$1");
+        assertTrue(compose.isTransitiveMop("click"));
+        assertTrue(compose.isTransitiveMop("longClick"));
+        assertEquals("[[0,1]]", pairs(compose.dist("click")));
+        assertEquals("[[3,2]]", pairs(compose.dist("longClick")));
+
+        MopData.Handler quiet = d.getHandler("p.Quiet");
+        assertNotNull("a class that reaches nothing is still listed", quiet);
+        assertFalse(quiet.isTransitiveMop("click"));
+        assertFalse(quiet.isDirectMop("click"));
+        assertEquals(0, quiet.dist("click").length);
+    }
+
+    /** The scenario's malformed pairs, verbatim: the index 27 is outside [0, 27), -1 below it. */
+    @Test
+    public void testMalformedDistancePairDroppedAndCounted() throws Exception {
+        String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{"
+                + "\"mop\":{\"click\":\"transitive\"},"
+                + "\"dist\":{\"click\":[[16,3],[27,1],[-1,2]]}}}}"));
+        JSONObject record = onlyLoadRecord(path, false);
+        assertEquals("loaded", record.getString("status"));
+        assertEquals(2, record.getInt("droppedPairs"));
+        assertEquals("[[16,3]]", pairs(MopData.load(path, null, null, false, new NoopSink())
+                .getWidget("p.A", "b").dist("click")));
+    }
+
+    /**
+     * Every malformed shape the loader requirement names — not a two-integer array, an index outside
+     * {@code [0, targets)}, a negative distance — is dropped and counted at all three sites that
+     * carry pairs: a widget's {@code dist}, {@code activityDist} and a handler's {@code dist}.
+     */
+    @Test
+    public void testMalformedPairsAreCountedAtEverySite() throws Exception {
+        String path = writeTempJson(formatTwoEnvelope(",\"targets\":5"
+                + ",\"widgets\":{\"p.A\":{\"b\":{\"dist\":{\"click\":[[1,1],[2],[3,1,1]]}}}}"
+                + ",\"activityDist\":{\"p.A\":[[0,0],[1,\"2\"],[2.5,1],[4,-1]]}"
+                + ",\"handlers\":{\"p.L\":{\"dist\":{\"click\":[[4,1],[5,1],\"x\",null]}}}"));
+        JSONObject record = onlyLoadRecord(path, false);
+        assertEquals("loaded", record.getString("status"));
+        assertEquals("2 on the widget, 3 on the activity, 3 on the handler",
+                8, record.getInt("droppedPairs"));
+
+        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        assertEquals("[[1,1]]", pairs(d.getWidget("p.A", "b").dist("click")));
+        assertEquals("[[0,0]]", pairs(d.activityDist("p.A")));
+        assertEquals("[[4,1]]", pairs(d.getHandler("p.L").dist("click")));
+    }
+
+    /**
+     * {@code targets} and {@code handlers} are always emitted by the generator, so their absence,
+     * or a {@code targets} that is not an integer, is a generator↔jar skew and a
+     * {@code parse-error}, not an empty table.
+     */
+    @Test
+    public void testFormatTwoArtifactMissingAFormatTwoMemberIsRejected() throws Exception {
+        String[] skewed = {
+                formatTwoEnvelope(",\"handlers\":{}"),
+                formatTwoEnvelope(",\"targets\":27"),
+                formatTwoEnvelope(",\"targets\":\"27\",\"handlers\":{}"),
+                formatTwoEnvelope(",\"targets\":27.5,\"handlers\":{}"),
+        };
+        for (String artifact : skewed) {
+            String path = writeTempJson(artifact);
+            assertNull(artifact, MopData.load(path, null, null, false, new NoopSink()));
+            JSONObject record = onlyLoadRecord(path, false);
+            assertEquals(artifact, "rejected", record.getString("status"));
+            assertEquals(artifact, "parse-error", record.getString("reason"));
+        }
+    }
+
+    /**
+     * An artifact with no target (a pre-gh120 document or an empty GATOR result derives to it)
+     * loads and runs without distance data; the census says so with {@code targets: 0}.
+     */
+    @Test
+    public void testArtifactWithNoTargetLoadsWithoutDistanceData() throws Exception {
+        String path = writeTempJson(formatTwoEnvelope(",\"targets\":0,\"handlers\":{}"
+                + ",\"widgets\":{\"p.A\":{\"b\":{\"mop\":{\"click\":\"transitive\"}}}}"
+                + ",\"mopActivities\":[\"p.A\"]"));
+        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        assertNotNull(d);
+        assertEquals(0, d.targetCount());
+        assertTrue("the flags still load", d.getWidget("p.A", "b").isTransitiveMop("click"));
+        assertEquals(0, d.getWidget("p.A", "b").dist("click").length);
+
+        JSONObject record = onlyLoadRecord(path, false);
+        assertEquals("loaded", record.getString("status"));
+        assertEquals(0, record.getInt("targets"));
+        assertEquals(0, record.getInt("handlers"));
+        assertEquals(0, record.getInt("droppedPairs"));
+    }
+
+    /** The gh51-D5 timeout bucket in format 2: every member present and empty, and it loads. */
+    @Test
+    public void testCompleteButEmptyFormatTwoArtifactParsesCleanly() throws Exception {
+        String path = writeTempJson(formatTwoEnvelope(",\"targets\":0,\"handlers\":{}"
+                + ",\"widgets\":{},\"wtg\":{},\"optionsMenus\":[],\"activityDist\":{}"
+                + ",\"mopActivities\":[],\"mopActivitiesAugmented\":[]"
+                + ",\"components\":{\"activities\":[],\"providers\":[],\"receivers\":[],"
+                + "\"services\":[]}"));
+        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        assertNotNull(d);
+        assertTrue(d.getReceivers().isEmpty());
+        assertTrue(d.getServices().isEmpty());
+        assertTrue(d.getActivities().isEmpty());
+        assertTrue(d.getProviders().isEmpty());
+        assertTrue(d.getMopActivities().isEmpty());
+        assertTrue(d.getWtgTransitions("p.A").isEmpty());
+        assertFalse(d.hasWtgData());
+        assertEquals(0, d.activityDist("p.A").length);
+        assertNull(d.getHandler("p.L"));
     }
 
     /**
@@ -629,6 +933,25 @@ public class MopDataTest {
                 record.has("sourceDigest"));
     }
 
+    /**
+     * A format-1 compact artifact is the same rejection (INV-MOP-34): the jar holds no reader for
+     * format 1, so even one that carries every format-2 member is refused by the gate before any
+     * key is read.
+     */
+    @Test
+    public void testFormatOneCompactArtifactIsRejectedAsVersionMismatch() throws Exception {
+        String path = writeTempJson("{\"formatVersion\":1,\"package\":\"p\",\"mainActivity\":\"p.A\""
+                + ",\"targets\":0,\"handlers\":{}"
+                + ",\"widgets\":{\"p.A\":{\"b\":{\"mop\":{\"click\":\"transitive\"}}}}"
+                + ",\"mopActivities\":[\"p.A\"]}");
+        assertNull(MopData.load(path, null, null, false, new NoopSink()));
+        JSONObject record = onlyLoadRecord(path, false);
+        assertEquals("rejected", record.getString("status"));
+        assertEquals("version-mismatch", record.getString("reason"));
+        assertEquals("a rejected version is not one the jar vouches for",
+                0, record.getInt("formatVersion"));
+    }
+
     // --- Scenario: Per-event flag decoding preserves fallback semantics ------
 
     /**
@@ -699,8 +1022,11 @@ public class MopDataTest {
     @Test
     public void testFlagOffSelectsTheWidgetDerivedSetAndLeavesTheGatewayShut() {
         MopData d = loadFixture(SELECTION, false);
-        assertEquals(new HashSet<>(Arrays.asList("A")), d.getMopActivities());
+        // H is in the widget-derived set because the generator derives it: an OPTIONSMENU window
+        // holding a flagged widget makes its activity flagged.
+        assertEquals(new HashSet<>(Arrays.asList("A", "H")), d.getMopActivities());
         assertTrue(d.activityHasMop("A"));
+        assertTrue(d.activityHasMop("H"));
         assertFalse("B is augmented-only", d.activityHasMop("B"));
         assertFalse("G's only edge lands on B, which this selection excludes",
                 d.activityHasMopOptionsMenu("G"));
@@ -712,7 +1038,7 @@ public class MopDataTest {
     @Test
     public void testFlagOnSelectsTheAugmentedSetAndOpensTheGateway() {
         MopData d = loadFixture(SELECTION, true);
-        assertEquals(new HashSet<>(Arrays.asList("A", "B")), d.getMopActivities());
+        assertEquals(new HashSet<>(Arrays.asList("A", "B", "H")), d.getMopActivities());
         assertTrue(d.activityHasMop("B"));
         assertTrue("condition 2 reads the selected set, so G flips with it",
                 d.activityHasMopOptionsMenu("G"));
@@ -732,8 +1058,8 @@ public class MopDataTest {
         JSONObject on = onlyLoadRecord(fixturePath(SELECTION), true);
         assertEquals(1, off.getInt("mopActsAugmented"));
         assertEquals("availability does not vary with the flag", 1, on.getInt("mopActsAugmented"));
-        assertEquals("mopActivities is the selected set", 1, off.getInt("mopActivities"));
-        assertEquals(2, on.getInt("mopActivities"));
+        assertEquals("mopActivities is the selected set", 2, off.getInt("mopActivities"));
+        assertEquals(3, on.getInt("mopActivities"));
     }
 
     // --- Scenario: Deep-link dispatch reads the wire field -------------------
@@ -771,20 +1097,26 @@ public class MopDataTest {
     /**
      * Tolerance here is the absence of a check, not an affordance: rejecting unknown keys would
      * mean writing code. Under the coordinated cut the generator and the jar ship together, so an
-     * unknown key in a v1 artifact is a skew signal to read in the trace, not a version to
-     * accommodate — and the fields around it must still decode.
+     * unknown key in a format-2 artifact is a skew signal to read in the trace, not a version to
+     * accommodate — and the fields around it must still decode. The test name keeps "V1" because
+     * the spec's scenario header does (the archive matches on it).
      */
     @Test
     public void testUnknownKeysInAV1ArtifactAreIgnored() throws Exception {
-        String path = writeTempJson(compactArtifact(",\"futureBlock\":{\"whatever\":[1,2,3]}"
-                + ",\"mopActivities\":[\"A\"]"
+        String path = writeTempJson(formatTwoEnvelope(",\"futureBlock\":{\"whatever\":[1,2,3]}"
+                + ",\"targets\":3,\"mopActivities\":[\"A\"]"
                 + ",\"widgets\":{\"p.A\":{\"b\":{\"hint\":\"h\",\"futureWidgetKey\":7,"
-                + "\"mop\":{\"click\":\"transitive\"}}}}"));
+                + "\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[2,1]]}}}}"
+                + ",\"handlers\":{\"p.L\":{\"futureHandlerKey\":true,"
+                + "\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[1,0]]}}}"));
         MopData d = MopData.load(path, null, null, false, new NoopSink());
         assertNotNull(d);
         assertEquals("h", d.getWidget("p.A", "b").hint);
         assertTrue(d.getWidget("p.A", "b").isTransitiveMop("click"));
+        assertEquals("[[2,1]]", pairs(d.getWidget("p.A", "b").dist("click")));
         assertTrue(d.activityHasMop("A"));
+        assertTrue(d.getHandler("p.L").isTransitiveMop("click"));
+        assertEquals("[[1,0]]", pairs(d.getHandler("p.L").dist("click")));
     }
 
     // --- Scenarios: package / mainActivity sanity check ----------------------
@@ -829,7 +1161,9 @@ public class MopDataTest {
         assertEquals("parse-error", onlyLoadRecord(writeTempJson("{ not json "), false)
                 .getString("reason"));
         assertEquals("version-mismatch", onlyLoadRecord(
-                writeTempJson("{\"formatVersion\":2,\"package\":\"p\"}"), false).getString("reason"));
+                writeTempJson("{\"formatVersion\":1,\"package\":\"p\"}"), false).getString("reason"));
+        assertEquals("version-mismatch", onlyLoadRecord(
+                writeTempJson("{\"formatVersion\":3,\"package\":\"p\"}"), false).getString("reason"));
         assertEquals("an artifact with no version at all is the same rejection",
                 "version-mismatch",
                 onlyLoadRecord(writeTempJson("{\"package\":\"p\"}"), false)

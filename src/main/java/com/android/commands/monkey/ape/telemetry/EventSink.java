@@ -206,11 +206,18 @@ public interface EventSink {
      * {@code null} — a neutral absence, not a claim. Every counter below it is neutral on that path
      * for the same reason: a rejected load counted nothing, so a zero states that rather than
      * asserting an empty app.
+     *
+     * <p>{@code targets}, {@code handlers} and {@code droppedPairs} come with wire format 2
+     * (design D15, D23): the length of the target list every distance pair indexes (the bound of
+     * every index in {@code dec.ret}), the number of classes the artifact's {@code handlers} table
+     * lists, and the number of malformed distance pairs the loader dropped. A conforming
+     * generator emits no malformed pair, so a non-zero {@code droppedPairs} is a generator↔jar
+     * skew signal.
      */
     void mopData(String status, String reason, int formatVersion, String sourceDigest, String pkg,
             int windows, int widgets, int flagged, int droppedNoId, int wtgEdges,
             int handlersUnmatched, int syntheticLambda, int recovered, int mopActivities,
-            int mopActsAugmented, int components);
+            int mopActsAugmented, int components, int targets, int handlers, int droppedPairs);
 
     /**
      * Records pipeline assembly provenance: the stages, the passes that were constructed, and every

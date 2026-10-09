@@ -1,0 +1,47 @@
+{
+  "package": "p",
+  "mainActivity": "p.A",
+  "complete": true,
+  "distanceTargets": [
+    {"signature": "<p.T: void t()>", "kind": "direct"}
+  ],
+  "reachability": [
+    {
+      "className": "p.L",
+      "componentType": null,
+      "isMain": false,
+      "methods": [
+        {"name": "onClick", "signature": "<p.L: void onClick(android.view.View)>", "reachable": true, "reachesTarget": true, "directlyReachesTarget": false, "targetDistances": [[0, 2]]}
+      ]
+    },
+    {
+      "className": "B",
+      "componentType": "activity",
+      "isMain": false,
+      "methods": [
+        {"name": "<init>", "signature": "<B: void <init>()>", "reachable": true, "reachesTarget": true, "directlyReachesTarget": false, "targetDistances": [[0, 0]]},
+        {"name": "run", "signature": "<B: void run()>", "reachable": true, "reachesTarget": true, "directlyReachesTarget": false, "targetDistances": [[0, 3]]}
+      ]
+    }
+  ],
+  "windows": [
+    {"id": 1, "name": "A", "type": "ACTIVITY", "isMain": true, "widgets": [
+      {"id": 10, "idName": "go", "type": "android.widget.Button", "text": "", "hint": "", "inputType": "", "entries": [], "prompt": null, "spinnerMode": null, "contentDescription": null, "tooltipText": null,
+       "listeners": [{"eventType": "click", "handler": "<p.L: void onClick(android.view.View)>"}]}
+    ]},
+    {"id": 2, "name": "B", "type": "ACTIVITY", "isMain": false, "widgets": []},
+    {"id": 3, "name": "G", "type": "ACTIVITY", "isMain": false, "widgets": [
+      {"id": 30, "idName": "w", "type": "android.widget.Button", "text": "", "hint": "", "inputType": "", "entries": [], "prompt": null, "spinnerMode": null, "contentDescription": null, "tooltipText": null, "listeners": []}
+    ]},
+    {"id": 4, "name": "G#OptionsMenu", "type": "OPTIONSMENU", "isMain": false, "widgets": []},
+    {"id": 5, "name": "H", "type": "ACTIVITY", "isMain": false, "widgets": []},
+    {"id": 6, "name": "H#OptionsMenu", "type": "OPTIONSMENU", "isMain": false, "widgets": [
+      {"id": 60, "idName": "m", "type": "android.view.MenuItem", "text": "", "hint": "", "inputType": "", "entries": [], "prompt": null, "spinnerMode": null, "contentDescription": null, "tooltipText": null,
+       "listeners": [{"eventType": "click", "handler": "<p.L: void onClick(android.view.View)>"}]}
+    ]}
+  ],
+  "transitions": [
+    {"sourceId": 3, "targetId": 2, "events": [{"type": "click", "handler": "", "widgetId": 30, "widgetClass": "android.widget.Button", "widgetName": "w"}]}
+  ],
+  "components": {"activities": [], "receivers": [], "services": [], "providers": []}
+}

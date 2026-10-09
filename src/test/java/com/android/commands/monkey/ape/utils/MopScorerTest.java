@@ -273,14 +273,16 @@ public class MopScorerTest {
      * and pretending otherwise would test the generator through the scorer.
      */
     private static MopData loadMenuMopFixture() throws Exception {
-        String artifact = "{\"formatVersion\":1,\"package\":\"p\",\"mainActivity\":\"p.C\","
+        String artifact = "{\"formatVersion\":2,\"targets\":0,\"handlers\":{},"
+                + "\"package\":\"p\",\"mainActivity\":\"p.C\","
                 + "\"optionsMenus\":[{\"activity\":\"C\",\"hasFlaggedWidget\":true}]}";
         return MopData.load(writeTempJson(artifact), null, null, new NoopSink());
     }
 
     /** Widget b with click→MOP-direct and longClick→not (per-event-type maps). */
     private static MopData loadEventTypeFixture() throws Exception {
-        String artifact = "{\"formatVersion\":1,\"package\":\"p\",\"mainActivity\":\"p.C\","
+        String artifact = "{\"formatVersion\":2,\"targets\":0,\"handlers\":{},"
+                + "\"package\":\"p\",\"mainActivity\":\"p.C\","
                 + "\"widgets\":{\"C\":{\"b\":{\"mop\":{\"click\":\"direct\",\"longclick\":\"none\"}}}},"
                 + "\"mopActivities\":[\"C\"]}";
         return MopData.load(writeTempJson(artifact), null, null, new NoopSink());

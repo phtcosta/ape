@@ -27,7 +27,8 @@ public class ComponentInfoTest {
         File f = File.createTempFile("compinfo", ".json");
         f.deleteOnExit();
         try (FileWriter w = new FileWriter(f)) {
-            w.write("{\"formatVersion\":1,\"package\":\"p\",\"mainActivity\":\"p.M\","
+            w.write("{\"formatVersion\":2,\"targets\":0,\"handlers\":{},"
+                    + "\"package\":\"p\",\"mainActivity\":\"p.M\","
                     + "\"components\":" + components + "}");
         }
         return f.getAbsolutePath();

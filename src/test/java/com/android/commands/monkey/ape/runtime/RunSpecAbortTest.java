@@ -230,6 +230,51 @@ public class RunSpecAbortTest {
     }
 
     @Test
+    public void anUnknownMopScoringModeAbortsNamingTheValidSet() {
+        // The run-spec scenario: a mode outside {flag, distance} aborts rather than falling back
+        // to flag, which would run the E6 arm under a name nobody chose.
+        RunSpecException failure = abort(entries(
+                "ape.mopDataPath", "/data/local/tmp/mop-artifact.json",
+                "ape.mopScoring", "nearest"));
+        assertEquals(RunSpecException.Reason.INVALID_TYPE, failure.getReason());
+        assertEquals("ape.mopScoring", failure.getKey());
+        assertTrue("the diagnostic must name the valid set, was: " + failure.getDetail(),
+                failure.getDetail().contains("{flag, distance}"));
+        assertTrue(failure.toDiagnostic().startsWith("reason=invalid_type key=ape.mopScoring "));
+    }
+
+    @Test
+    public void theMopScoringModeMustBeExactlyFlagOrDistance() {
+        // "exactly": the closed set is matched as written, unlike a boolean's case-insensitive
+        // spelling. Each of these is a mode nobody defined.
+        for (String value : new String[] {"bogus", "Flag", "DISTANCE", " distance", "flag ", ""}) {
+            RunSpecException failure = abort(entries(
+                    "ape.mopDataPath", MOP_PATH, "ape.mopScoring", value));
+            assertEquals("'" + value + "' must abort",
+                    RunSpecException.Reason.INVALID_TYPE, failure.getReason());
+        }
+    }
+
+    @Test
+    public void anUnknownMopScoringModeAbortsEvenWithoutMop() {
+        // Types are judged before features, so a bad mode on a plan with no MOP is still a typo,
+        // not an inert value.
+        RunSpecException failure = abort(entries("ape.mopScoring", "bogus"));
+        assertEquals(RunSpecException.Reason.INVALID_TYPE, failure.getReason());
+        assertEquals("ape.mopScoring", failure.getKey());
+    }
+
+    @Test
+    public void aNonIntegerDistanceKeyAborts() {
+        for (String key : new String[] {"ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3",
+                "ape.mopRetireAfter", "ape.mopLauncherDmax"}) {
+            RunSpecException failure = abort(entries("ape.mopDataPath", MOP_PATH, key, "near"));
+            assertEquals(key, RunSpecException.Reason.INVALID_TYPE, failure.getReason());
+            assertEquals(key, failure.getKey());
+        }
+    }
+
+    @Test
     public void aCorrectlySpelledBooleanIsAcceptedInAnyCase() {
         assertEquals(Boolean.FALSE, ValueType.BOOLEAN.parse("ape.doFuzzing", "FALSE"));
         assertEquals(Boolean.TRUE, ValueType.BOOLEAN.parse("ape.doFuzzing", " True "));

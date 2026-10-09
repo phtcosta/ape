@@ -23,7 +23,7 @@ Each value is the binary class name gh121 wrote (`Class.getName()` form, e.g. `b
 
 The fields sit beside `isPassword` (`GUITreeNode.java:64`, INV-TREE-09) and are carried wherever the node's other captured properties are. `fillNode` SHALL read no other key of the bundle. The capture is unconditional: no plan key enables or disables it, and it runs on every arm. The run reports how many captured nodes carried at least one stamp (`RUN_END` counter `stampNodes`, `event-sink`, design D23).
 
-The capture is not reachable in the JVM suite, because surefire excludes the framework stubs (`pom.xml:160-163`). Its scenarios are written as an `@Ignore`d Android-runtime test beside `GUITreeBuilderPasswordTest`, and the device smoke on a stamped `cryptoapp` is their gate (tasks 11.3 and 17.2).
+The `getExtras()` call inside `fillNode` is not reachable in the JVM suite, because surefire excludes the framework stubs (`pom.xml:160-163`). The rules applied to the bundle (string values copied, absent key, non-string value, a read that throws) are reachable: they run on the JVM over a test-side `android.os.Bundle` stub that mimics AOSP `getString`, as the `Rect` and `Log` stubs do. The scenarios are also written as an `@Ignore`d Android-runtime test beside `GUITreeBuilderPasswordTest`, and the device smoke on a stamped `cryptoapp` is the gate for the capture itself (tasks 11.3 and 17.2).
 
 #### Scenario: stamped View node
 - **WHEN** a `GUITreeNode` is built from an `AccessibilityNodeInfo` whose extras hold `rvsec.click = "com.x.Foo$1"` and `rvsec.longClick = "com.x.Foo$2"`

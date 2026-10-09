@@ -212,6 +212,37 @@ public class FeatureDerivationTest {
                 abort(entries("ape.stepTelemetryEnabled", "true")).getReason());
     }
 
+    /**
+     * The neutral values of the six MOP scoring keys (run-spec delta, "The MOP scoring keys"):
+     * zero for a weight, as for {@code ape.mopWeightDirect}, and the default for the mode, the
+     * retirement count and the launcher bound, as for {@code ape.mopTargetPickCap}.
+     */
+    @Test
+    public void theMopFeatureOwnsTheSixScoringKeysWithTheirNeutralValues() {
+        String[][] neutral = {
+                {"ape.mopScoring", "flag"},
+                {"ape.mopWeightD1", "0"},
+                {"ape.mopWeightD2", "0"},
+                {"ape.mopWeightD3", "0"},
+                {"ape.mopRetireAfter", "3"},
+                {"ape.mopLauncherDmax", "6"},
+        };
+        for (String[] row : neutral) {
+            assertTrue("MOP must own " + row[0], Feature.MOP.ownedKeys().contains(row[0]));
+            assertEquals(row[0] + "'s neutral value", row[1], Feature.MOP.neutralValue(row[0]));
+        }
+    }
+
+    @Test
+    public void theSixScoringKeysAddNoFeature() {
+        // The mode is a parameter of MOP, not a mechanism of its own: selecting distance changes
+        // what MOP reads, not which features the plan carries.
+        Map<String, String> flag = entries("ape.mopDataPath", "/data/local/tmp/static_analysis.json");
+        Map<String, String> distance = new LinkedHashMap<>(flag);
+        distance.put("ape.mopScoring", "distance");
+        assertEquals(resolve(flag).features(), resolve(distance).features());
+    }
+
     @Test
     public void theFiveFormerlyMutableConfigValuesAreReadableFromThePlan() {
         // D-11: these five were non-final in Config purely so tests could toggle them. The plan is

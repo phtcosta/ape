@@ -28,13 +28,20 @@ import java.util.Locale;
  *
  * <p>{@link #sameValue} compares by parsed value, not by text, so the neutral-value check treats
  * {@code 0} and {@code 0.0} as the same number and {@code TRUE} as {@code true}.
+ *
+ * <p>{@link #MOP_SCORING} is the one string type whose value set is closed
+ * (llm-coordinate-single-base, design D18): a value other than exactly {@code flag} or
+ * {@code distance} aborts like a non-boolean value of a boolean key, where a plain string would
+ * have let a misspelt mode through to whatever reads it.
  */
 public enum ValueType {
     BOOLEAN,
     INT,
     LONG,
     DOUBLE,
-    STRING;
+    STRING,
+    /** {@code ape.mopScoring}: a string matched exactly against {@link MopScoring}'s wire names. */
+    MOP_SCORING;
 
     /**
      * Parses {@code raw} as this type.
@@ -72,6 +79,13 @@ public enum ValueType {
                 } catch (NumberFormatException e) {
                     throw invalid(key, raw, "expected a number");
                 }
+            case MOP_SCORING:
+                // Exactly as written: no trimming and no case folding, so the value the record
+                // echoes is the value the file states (run-spec "Total Fail-Fast Validation").
+                if (MopScoring.fromWire(raw) == null) {
+                    throw invalid(key, raw, "expected one of " + MopScoring.validSet());
+                }
+                return raw;
             default:
                 return raw;
         }

@@ -92,7 +92,7 @@ public final class NoopSink implements EventSink {
     public void mopData(String status, String reason, int formatVersion, String sourceDigest,
             String pkg, int windows, int widgets, int flagged, int droppedNoId, int wtgEdges,
             int handlersUnmatched, int syntheticLambda, int recovered, int mopActivities,
-            int mopActsAugmented, int components) {
+            int mopActsAugmented, int components, int targets, int handlers, int droppedPairs) {
     }
 
     @Override

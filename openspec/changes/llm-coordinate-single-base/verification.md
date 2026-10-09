@@ -252,3 +252,29 @@ correct copies, and this run is too small to size it.
 zero-area nodes, unresolved list nodes, container/child pairs with identical bounds, answers outside
 [0,999], and AlertDialog states (the only overlay was the Spinner's dropdown popup, whose
 `ListView`/`TextView` lines aligned and passed like the others).
+
+## Part B, wave 1 (tasks 10.1–10.4, 11.1–11.3, 13.1–13.2), 2026-10-08
+
+### Task 10.1: fixture sources
+
+Every format-2 fixture is derived, never edited, by `evidence/derive_fixtures.py <rv-android root>`, which calls the gh122 library exactly as `tool.py` does (`digest_of` on the raw bytes, `derive`, `serialize_canonical`; rv-android `c7da2cec`, `GENERATOR_ID = "aperv-derive/2"`).
+
+| Artifact | Derived from | `source.digest` |
+|---|---|---|
+| `test-apks/cryptoapp.apk.mop.json` | `test-apks/cryptoapp.apk.json`, now a copy of the gh120 document `rv-android/modules/rv-static-analysis/tests/resources/cryptoapp.apk.json` | `sha256:005d6a19…7213` |
+| `src/test/resources/cryptoapp.apk.mop.json` | the same document; byte-identical to the one above | same |
+| `src/test/resources/synthetic-activity-selection.mop.json` | `src/test/resources/synthetic-activity-selection.apk.json`, a minimal analyser document written for it (author, D-2) | `sha256:8bbb1c8a…fcc7` |
+
+Before: the two cryptoapp copies differed from byte 1363; both were format 1 from the September document (`sha256:72f10adf…`, files `cryptoapp.apk.json` and `cryptoapp.apk.gh60-fresh.json`). The synthetic file was hand-written format 1. The derived synthetic artifact differs from it in one fact no derivation can avoid: a flagged OPTIONSMENU widget flags its activity, so `H` is in `mopActivities` (`[A,H]`, augmented `[A,B,H]`); the selection tests assert the derived sets, and their point (gateway `G` opens only under the augmented selection; `H` is the control) is unchanged. `B` reaches only through a non-constructor method (its `<init>` at d = 0 is excluded), so `activityDist.B = [[0,3]]`.
+
+### Task 10.4: MOP parity goldens
+
+`mvn test -Dtest='ParityOracleMopTest,ParityOracleLlmMopTest,PreemptionGoldenTest' -Dape.oracle.regenerate=true -Dape.oracle.capturedAt=f3122cee…` on the integrated wave: the diff of all three goldens is the header's `capturedAt` alone; every decision record is identical. The scenarios script their own widgets and read from the fixture only the activity list and the MOP-activity set, which name the same activities. The regeneration was reverted and the goldens kept (author, 2026-10-08); design Risks "[The parity goldens change twice]" amended.
+
+### Task 11.3: the stamp capture
+
+Surefire excludes the framework jar (`pom.xml` `classpathDependencyExcludes`), so `AccessibilityNodeInfo.getExtras()` inside `fillNode` is not reachable on the JVM. The bundle rules run on the JVM over a test-side `android.os.Bundle` stub (`GUITreeBuilderHandlerStampJvmTest`, 8 cases; a mutation that removes the `catch` fails one); the `@Ignore`d `GUITreeBuilderHandlerStampTest` states the scenarios on the Android runtime. Whether a stamped app's extras reach the explorer is decided by the device smoke 17.2 (`RUN_END.stampNodes > 0`).
+
+### Wave 1 suite
+
+`mvn clean test`: 1231 run, 0 failures, 0 errors, 24 skipped (baseline 1180 / 19; +15 loader, +13 stamp of which 5 `@Ignore`d, +23 run-spec).
