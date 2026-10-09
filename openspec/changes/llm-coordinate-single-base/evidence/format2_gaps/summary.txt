@@ -1,0 +1,50 @@
+documents 163
+json MB median/p90/max 4.6 308.0 8902.8
+artifact KB median/p90/max 34.4 223.7 1973.6 com.celzero.bravedns_619.apk.json
+peak RSS MB median/p90/max 42.1 1271.2 36409.1
+seconds median/p90/max 0.08 5.04 160.74
+   eu.darken.sdmse_10705000.apk.json 8902 MB -> 613 KB, 36409.1 MB RSS, 160.74 s, ratio 4.09
+   org.wikipedia_50595.apk.json 2059 MB -> 627 KB, 14601.8 MB RSS, 48.97 s, ratio 7.09
+   at.techbee.jtx_216000015.apk.json 1924 MB -> 347 KB, 7883.7 MB RSS, 33.07 s, ratio 4.1
+   com.flxrs.dankchat_40038.apk.json 915 MB -> 235 KB, 3748.2 MB RSS, 15.68 s, ratio 4.09
+RSS/JSON ratio over docs >100MB: median 4.13 range 4.08 7.09
+complete flag: {'None': 38, 'True': 125}
+targets==0: 0
+
+== gap 1: lists before the K=3 cut ==
+activity: lists 866; >3 targets total 741; >3 at d<=3 568; >3 at d<=6 642; apps with a >3@d<=3 list 98
+   targets at d<=3 when >3: median 24.0 p90 137 max 1192
+widget: lists 34576; >3 targets total 31683; >3 at d<=3 11684; >3 at d<=6 25845; apps with a >3@d<=3 list 25
+   targets at d<=3 when >3: median 7.0 p90 26 max 263
+handler: lists 46554; >3 targets total 40983; >3 at d<=3 2419; >3 at d<=6 21777; apps with a >3@d<=3 list 72
+   targets at d<=3 when >3: median 11 p90 77 max 798
+activityDist on manifest activities: 847; >3 at d<=3 560; >3 at d<=6 628
+
+== gap 2: flagged widgets whose pairs sit only under events the jar does not read ==
+flagged widgets 32954 in 63 apps
+pairs only under unread events (itemselected counted as READ): 3122
+same, itemselected counted as unread (reported view): 3475
+flags only under unread events: 3104
+flagged events: {'click': 28853, 'longclick': 2941, 'select': 2559, 'drag': 2556, 'itemselected': 399, 'entertext': 292, 'editoraction': 64, 'presskey': 56, 'implicitcreatecontextmenu': 46, 'focuschange': 22, 'itemclick': 19, 'itemlongclick': 3}
+dist events: {'click': 25807, 'longclick': 2670, 'select': 2642, 'drag': 2577, 'itemselected': 398, 'entertext': 279, 'editoraction': 64, 'presskey': 56, 'implicitcreatecontextmenu': 45, 'focuschange': 22, 'itemclick': 13, 'itemlongclick': 3}
+
+== gap 3: WTG ==
+wtgEdges==0: 108 ; of them no transitions: 38 ; implicit only: 64 ; other: 6
+   other: com.nononsenseapps.feeder.play_4025.apk.json {'implicit_home_event': 10, 'implicit_rotate_event': 10, 'implicit_on_activity_result': 8, 'implicit_on_activity_newintent': 8, 'implicit_power_event': 10, 'press_key': 1}
+   other: com.darkrockstudios.app.securecamera_31.apk.json {'implicit_on_activity_result': 3, 'implicit_on_activity_newintent': 3, 'implicit_rotate_event': 3, 'implicit_home_event': 3, 'implicit_power_event': 3, 'press_key': 1}
+   other: com.darkrockstudios.apps.fasttrack_40.apk.json {'implicit_power_event': 8, 'implicit_home_event': 8, 'implicit_rotate_event': 8, 'implicit_on_activity_newintent': 6, 'implicit_back_event': 1, 'implicit_on_activity_result': 2, 'dialog_dismiss': 1, 'select': 1}
+   other: net.phbwt.paperwork_1003007.apk.json {'dialog_cancel': 1, 'implicit_rotate_event': 5, 'implicit_on_activity_result': 4, 'implicit_on_activity_newintent': 4, 'implicit_home_event': 5, 'implicit_power_event': 5, 'press_key': 2}
+   other: io.github.samolego.canta_225.apk.json {'implicit_rotate_event': 4, 'implicit_power_event': 4, 'implicit_home_event': 4, 'implicit_on_activity_newintent': 4, 'implicit_on_activity_result': 3, 'dialog_cancel': 1}
+orphan dialogs: total 729 in 79 apps; in no-WTG apps 326
+complete among no-transition docs: {'None': 38}
+
+== gap 4: apps with no emitted widget ==
+no widget: 76 ; handlers total 62100 with dist 24195
+no-widget apps: handlers 37256 with dist 15825 ; with activityDist 64 ; with neither 7
+no-widget apps with targets==0: 0
+activityDist on launcher census (aug ∩ manifest): 847 >3@d<=3 560 >3@d<=6 628
+census size total 1034
+gap2 per app (blind, flagged): [(1314, 4176, 'org.fossify.calendar_20.apk.json'), (1299, 14090, 'com.celzero.bravedns_619.apk.json'), (150, 1819, 'org.wikipedia_50595.apk.json'), (78, 110, 'com.iyps_158.apk.json'), (52, 2787, 'org.totschnig.myexpenses_858.apk.json'), (48, 272, 'com.micoyc.speakthat_58.apk.json'), (30, 527, 'org.fossify.musicplayer_14.apk.json'), (24, 4814, 'eu.faircode.email_2322.apk.json'), (23, 53, 'com.password.monitor_102.apk.json'), (15, 909, 'org.fossify.messages_20.apk.json')]
+apps with blind>0: 29
+select/drag per app: [(1610, 105, 'com.celzero.bravedns_619.apk.json'), (681, 9, 'eu.faircode.email_2322.apk.json'), (65, 6, 'org.wikipedia_50595.apk.json'), (51, 0, 'org.totschnig.myexpenses_858.apk.json'), (46, 3, 'com.micoyc.speakthat_58.apk.json'), (36, 2430, 'org.fossify.calendar_20.apk.json'), (30, 0, 'org.fossify.musicplayer_14.apk.json'), (13, 0, 'com.iyps_158.apk.json')]
+widget lists >3@d<=3 per app: [(5007, 7682, 'eu.faircode.email_2322.apk.json'), (3195, 14650, 'com.celzero.bravedns_619.apk.json'), (1800, 5364, 'org.fossify.calendar_20.apk.json'), (548, 1914, 'org.wikipedia_50595.apk.json'), (345, 924, 'org.fossify.messages_20.apk.json'), (225, 383, 'org.fossify.notes_13.apk.json'), (153, 204, 'org.fossify.keyboard_14.apk.json'), (140, 240, 'org.fossify.voicerecorder_18.apk.json')]

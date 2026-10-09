@@ -1,0 +1,3 @@
+click [5826, 2608, 2095] apps 22 163
+[(877, 'com.celzero.bravedns_619.apk.j'), (846, 'org.fossify.calendar_20.apk.js'), (95, 'org.wikipedia_50595.apk.json'), (78, 'com.iyps_158.apk.json')]
+longclick [30041, 26764, 22716]

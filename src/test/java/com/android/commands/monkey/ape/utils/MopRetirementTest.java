@@ -129,6 +129,38 @@ public class MopRetirementTest {
         assertFalse(r.retired(16));
     }
 
+    /**
+     * Scenario "only the targets at the weight's distance count" (design D19 as amended
+     * 2026-10-09): a first interaction counts the targets at {@code d*}, the lookup's smallest
+     * unretired distance, and no other.
+     */
+    @Test
+    public void onlyTheTargetsAtTheWeightsDistanceCount() {
+        MopRetirement r = new MopRetirement(30, 1);
+        assertArrayEquals(new int[] {4},
+                r.onFirstInteraction(pairs(pair(4, 1), pair(7, 2), pair(9, 3))));
+        assertEquals(1, r.count(4));
+        assertEquals("d = 2 is not d*", 0, r.count(7));
+        assertEquals("d = 3 is not d*", 0, r.count(9));
+        assertTrue(r.retired(4));
+
+        // Target 4 retired: d* is now 2, held by targets 7 and 11.
+        assertArrayEquals(new int[] {7, 11},
+                r.onFirstInteraction(pairs(pair(4, 1), pair(7, 2), pair(11, 2))));
+        assertEquals("a retired target off d* is not counted", 1, r.count(4));
+        assertEquals(1, r.count(7));
+        assertEquals(1, r.count(11));
+    }
+
+    /** With every target of the lookup retired there is no {@code d*}: nothing is counted. */
+    @Test
+    public void aLookupWhoseTargetsAllRetiredCountsNothing() {
+        MopRetirement r = new MopRetirement(30, 1);
+        r.onFirstInteraction(pairs(pair(4, 1)));
+        assertEquals(0, r.onFirstInteraction(pairs(pair(4, 1))).length);
+        assertEquals(1, r.count(4));
+    }
+
     /** "each index once": an index carried by two pairs of one lookup is counted once. */
     @Test
     public void anIndexIsCountedOncePerCall() {
@@ -162,7 +194,7 @@ public class MopRetirementTest {
     public void indicesRetiredTogetherAreReturnedAscending() {
         MopRetirement r = new MopRetirement(30, 1);
         assertArrayEquals(new int[] {3, 9, 11},
-                r.onFirstInteraction(pairs(pair(11, 1), pair(9, 1), pair(3, 2))));
+                r.onFirstInteraction(pairs(pair(11, 1), pair(9, 1), pair(3, 1))));
         assertEquals(3, r.retiredCount());
     }
 

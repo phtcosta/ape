@@ -12,9 +12,12 @@ import java.util.Arrays;
  * under {@code flag} no counter exists and no target is retired.
  *
  * <p>One counter per target, {@code int[targets]}. Counters change only through
- * {@link #onFirstInteraction}, called from {@code StatefulAgent.moveForward} before the coverage
- * tracker records the selected action, when this is the first interaction of the action's widget in
- * its activity; they never decrease, so a retired target stays retired for the rest of the run. A
+ * {@link #onFirstInteraction}, which counts the targets of the selected action's weight's lookup at
+ * the distance behind its weight, {@code d*} (design D19 as amended 2026-10-09). The count is taken
+ * in {@code StatefulAgent.moveForward}, before the coverage tracker records the selected action,
+ * when this is the first interaction of the action's widget in its activity, and applied once the
+ * action survives {@code StatefulAgent.checkRestart}; counters never decrease, so a retired target
+ * stays retired for the rest of the run. A
  * target whose counter is at least {@code ape.mopRetireAfter} is retired: it no longer counts toward
  * an action's distance, the prompt marker or the launcher order.
  */
@@ -40,13 +43,19 @@ public final class MopRetirement {
     }
 
     /**
-     * Counts one first interaction against the targets of the selected action's weight's lookup.
+     * Counts one first interaction against the targets of the selected action's weight's lookup that
+     * lie at its distance.
      *
-     * <p>Adds one to the counter of each target index of {@code weightLookup.dist}, each index once
-     * even if it appears twice — a target already retired included, which changes nothing it reads
-     * — and returns, ascending, the indices whose counter reached {@code retireAfter} on this call
-     * (empty when none did). A target is therefore returned at most once per run. The caller passes
-     * a non-empty result to {@code EventSink.mopRetired} for the step's {@code dec.ret} (design
+     * <p>{@code d*} is the lookup's smallest unretired distance ({@link #nearest}), the distance
+     * behind the action's weight and {@code dec.mopd}. Adds one to the counter of each target index
+     * of {@code weightLookup.dist} whose pair lies at {@code d*}, each index once even if it appears
+     * twice — a retired target at {@code d*} included, which changes nothing it reads — and returns,
+     * ascending, the indices whose counter reached {@code retireAfter} on this call (empty when none
+     * did). A target is therefore returned at most once per run. The pairs at any other distance are
+     * not counted (design D19 as amended 2026-10-09): a widget's list carries every target at
+     * {@code d <= 3}, and counting the whole list would retire targets the action was not weighted
+     * by. A lookup with no unretired pair has no {@code d*} and counts nothing. The caller passes a
+     * non-empty result to {@code EventSink.mopRetired} for the step's {@code dec.ret} (design
      * D23).
      *
      * @param weightLookup among the selected action's containment lookups
@@ -57,10 +66,15 @@ public final class MopRetirement {
      */
     public int[] onFirstInteraction(MopData.Lookup weightLookup) {
         int[][] dist = weightLookup.dist;
+        int dStar = nearest(this, dist, Integer.MAX_VALUE);
         int[] indices = new int[dist.length];
-        for (int k = 0; k < dist.length; k++) {
-            indices[k] = dist[k][0];
+        int m = 0;
+        for (int[] pair : dist) {
+            if (pair[1] == dStar) {
+                indices[m++] = pair[0];
+            }
         }
+        indices = Arrays.copyOf(indices, m);
         Arrays.sort(indices);
         int[] reached = new int[indices.length];
         int n = 0;
@@ -86,8 +100,8 @@ public final class MopRetirement {
     /**
      * The smallest {@code d} over the pairs {@code [i, d]} of {@code dist} whose target is not
      * retired and whose {@code d <= dmax}, or {@link Integer#MAX_VALUE} when there is none.
-     * Read by the distance weight (D18), the marker (D22) and the launcher order (D20, with
-     * {@code dmax} = {@code ape.mopLauncherDmax}).
+     * Read by the distance weight (D18), the marker (D22), the launcher order (D20, with
+     * {@code dmax} = {@code ape.mopLauncherDmax}) and {@link #onFirstInteraction}'s {@code d*}.
      */
     public int nearest(int[][] dist, int dmax) {
         return nearest(this, dist, dmax);

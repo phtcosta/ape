@@ -1,0 +1,20 @@
+documents 162
+K3: artifact KB median 34.2 p90 213.0 max 1974 (com.celzero.bravedns_619.apk.json) total MB 14.6
+K5: artifact KB median 36.0 p90 224.7 max 2243 (com.celzero.bravedns_619.apk.json) total MB 15.7
+K10: artifact KB median 42.0 p90 253.6 max 2899 (com.celzero.bravedns_619.apk.json) total MB 18.2
+D3: artifact KB median 34.3 p90 218.4 max 1908 (com.celzero.bravedns_619.apk.json) total MB 15.2
+D6: artifact KB median 41.7 p90 496.0 max 13073 (at.techbee.jtx_216000015.apk.json) total MB 60.0
+
+Targets at d<=3 in some list before the cut, absent at d<=3 from every list after K=3:
+  targets near (d<=3) somewhere: 27671; invisible after K=3: 9158 (33.1%) in 98 apps
+    (1143, 2231, 4042, 'at.techbee.jtx_216000015.apk.json')
+    (812, 1171, 4329, 'app.pachli_50.apk.json')
+    (581, 1781, 5207, 'org.wikipedia_50595.apk.json')
+    (457, 1118, 2619, 'com.nononsenseapps.feeder.play_4025.apk.')
+    (422, 1160, 2841, 'io.github.garemat.lunachron_23201.apk.js')
+    (376, 961, 3956, 'com.flxrs.dankchat_40038.apk.json')
+    (361, 759, 1845, 'cc.sovellus.vrcaa_300007.apk.json')
+    (324, 808, 2423, 'com.daniebeler.pfpixelix_40.apk.json')
+    (312, 554, 1570, 'eu.darken.myperm_20101000.apk.json')
+    (291, 1423, 4220, 'com.celzero.bravedns_619.apk.json')
+  action path (widget+handler): near 21485; invisible 4024 (18.7%)

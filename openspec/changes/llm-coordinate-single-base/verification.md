@@ -326,3 +326,12 @@ Surefire excludes the framework jar (`pom.xml` `classpathDependencyExcludes`), s
 - **WR-02** (confirmed): the stamp strings bypassed `StringCache`. Repaired in 17.6. The reviewer's suggested `StringCache.cacheString` throws on null; `cacheStringNullable` composes it.
 - **Notes**: NT-04, NT-05, NT-07, NT-09 applied; NT-01, NT-02, NT-03 documented; NT-06 (event normalization repeated per lookup) and NT-08 (stamp in the XML dump) not applied.
 - Suite `mvn clean test`: 1351 / 0 / 0 / 24.
+
+## Format-2 gaps, group 18 (tasks 18.2–18.4, 18.7), 2026-10-09
+
+- **Scenarios against the code**: the amended "Handler Stamp Lookup", loader, "Event-Type-Aware" and "Target Retirement" scenarios match the code paths they name (`MopData.lookup` step 2, `parseCompactWidget`, `MopRetirement.onFirstInteraction`); no artifact change was needed.
+- **18.2, click aggregate**: `MopData.Widget.clickAggregate()` built at load through `mergeByMinimum`, read by `lookup` for a click when the widget's `mop` map has no `click` key. `Widget.dist(event)` keeps its meaning; its only `src/main` caller is `lookup` (`git grep -n "\.dist(" -- src/main`). A stamp reads its record's event alone. RED: 5 failures (`pair count expected:<1> but was:<0>`, `click under distance expected:<400> but was:<0>`, `expected:<[[9,1],[4,3]]> but was:<[]>`).
+- **18.3, retirement at `d*`**: `onFirstInteraction` counts only the pairs at `nearest(this, dist, Integer.MAX_VALUE)`. RED: 3 failures (`array lengths differed, expected.length=1 actual.length=3`; all-retired `expected:<1> but was:<2>`; agent-level target 4 at `d = 3`). Three test fixtures that put a counted pair at a second distance moved to one distance (tasks.md 18.3); one spec scenario (event-sink "retirement recorded on the step that caused it") states no distance and is unchanged.
+- **18.4**: comments only.
+- **Suite** `mvn clean test`: 1361 run, 0 failures, 0 errors, 24 skipped (1351 + 10). MOP set (`MopData*`, `MopScorer*`, `MopRetirementTest`, `StatefulAgentMop*`, `MopWidgetPassTest`, `MopLauncherStageTest`, `SataAgentMop*`, `ApePromptBuilderMop*`): 206 / 0 / 0 / 0. Parity floor (`ParityOracle*`, `PreemptionGoldenTest`, `GoldenFileTest`): 30 / 0 / 0 / 0, goldens unchanged (they score under `flag`, which neither change reaches).
+- **Open**: 18.5 (gh122's cut) and 18.6 (fixture re-derive) wait on rv-android.

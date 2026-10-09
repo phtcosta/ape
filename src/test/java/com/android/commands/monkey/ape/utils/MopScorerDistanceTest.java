@@ -97,7 +97,11 @@ public class MopScorerDistanceTest {
     }
 
     private static ModelAction click(String shortId) throws Exception {
-        ModelAction a = new ModelAction(null, ActionType.MODEL_CLICK);
+        return action(shortId, ActionType.MODEL_CLICK);
+    }
+
+    private static ModelAction action(String shortId, ActionType type) throws Exception {
+        ModelAction a = new ModelAction(null, type);
         a.setValid(true);
         set(a, ModelAction.class, "resolvedNode", node(shortId));
         Field ts = ModelAction.class.getDeclaredField("resovledTimestamp");
@@ -338,6 +342,33 @@ public class MopScorerDistanceTest {
         assertBoost("direct", 500, 500, a);
         assertBoost("direct", 500, 500, b);
         assertBoost("transitive", 300, 300, c);
+    }
+
+    // -------------------------------------------------------------------------
+    // The click aggregate (design D17, amendment of 2026-10-09)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Scenario "a click on a widget flagged under another event reads its aggregate pairs": a click
+     * on a touch-listener widget weighs {@code mopWeightD2} under {@code distance}, as it weighs
+     * {@code mopWeightTransitive} under {@code flag}; a long-click on it weighs 0 under
+     * {@code distance}, because only a click reads the aggregate of pairs.
+     */
+    @Test
+    public void aClickReadsTheAggregatePairsAndALongClickDoesNot() throws Exception {
+        MopData data = artifact(
+                "\"touch\":{\"mop\":{\"drag\":\"transitive\"},\"dist\":{\"drag\":[[9,2]]}}");
+        MopContext distance = distance(data, null);
+        MopContext flag = TestMopContexts.defaults(data);
+        ModelAction click = click("touch");
+        ModelAction longClick = action("touch", ActionType.MODEL_LONG_CLICK);
+        assertEquals("click under distance", 400,
+                MopScorer.score(distance, state(ACT, click), click));
+        assertEquals("click under flag", 300, MopScorer.score(flag, state(ACT, click), click));
+        assertEquals("long-click under distance", 0,
+                MopScorer.score(distance, state(ACT, longClick), longClick));
+        assertEquals("long-click under flag: the flags' aggregate, unchanged", 300,
+                MopScorer.score(flag, state(ACT, longClick), longClick));
     }
 
     // -------------------------------------------------------------------------

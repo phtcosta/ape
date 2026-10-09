@@ -596,7 +596,7 @@ public class MopDataTest {
     /**
      * The format-2 members of the cryptoapp fixture, as the scenario states them: 27 targets, the
      * three flagged widgets' {@code click} pairs in wire order, and no pair on any other event —
-     * distances have no aggregate fallback.
+     * only a click reads an aggregate of pairs, and only on a widget with no {@code click} key.
      */
     @Test
     public void testCompactFixtureTargetsAndWidgetPairs() {
@@ -609,7 +609,7 @@ public class MopDataTest {
         assertEquals("[[16,3],[17,3],[18,3]]",
                 pairs(d.getWidget(CRYPTO, "executeButton").dist("click")));
 
-        assertEquals("no aggregate fallback for distances", 0,
+        assertEquals("a long-click reads its own key alone", 0,
                 d.getWidget(CRYPTO, "executeButton").dist("longClick").length);
         assertEquals("an unflagged widget carries no pair", 0,
                 d.getWidget(MDA, "editTextMessageDigest").dist("click").length);
@@ -682,8 +682,10 @@ public class MopDataTest {
     // --- Scenarios: format-2 distance members --------------------------------
 
     /**
-     * Per-event pairs, in wire order, with no aggregate fallback: the {@code mop} map's fallback
-     * does not extend to {@code dist}. Event keys are normalized on ingest like the flags are.
+     * Scenario "Per-event-type reachability maps built", the pairs: per-event pairs in wire order.
+     * The {@code mop} map's fallback does not extend to {@code dist}: a long-click reads its own key
+     * alone, and the click aggregate is read only for a widget with no {@code click} key. Event
+     * keys are normalized on ingest like the flags are.
      */
     @Test
     public void testPerEventPairsKeepWireOrderAndHaveNoFallback() throws Exception {
@@ -702,6 +704,30 @@ public class MopDataTest {
         assertEquals("snake_case wire key answers a camelCase query",
                 "[[7,2]]", pairs(d.getWidget("p.A", "c").dist("longClick")));
         assertEquals(0, b.dist(null).length);
+    }
+
+    /**
+     * The widget keeps its click aggregate (design D17 as amended 2026-10-09): the merge by the
+     * minimum per target of the pairs of every event but {@code longclick}, {@code itemlongclick},
+     * {@code implicitcreatecontextmenu} and {@code scroll}, in wire order. {@code dist(event)} keeps
+     * its meaning: an event's own key alone.
+     */
+    @Test
+    public void testWidgetKeepsItsClickAggregate() throws Exception {
+        String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{"
+                + "\"t\":{\"mop\":{\"drag\":\"transitive\",\"select\":\"transitive\","
+                + "\"long_click\":\"transitive\",\"scroll\":\"transitive\"},"
+                + "\"dist\":{\"drag\":[[9,2],[4,3]],\"select\":[[9,1]],\"long_click\":[[3,0]],"
+                + "\"scroll\":[[2,0]],\"item_long_click\":[[5,0]],"
+                + "\"implicit_create_context_menu\":[[6,0]]}},"
+                + "\"n\":{\"mop\":{\"longclick\":\"direct\"}}}}"));
+        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData.Widget t = d.getWidget("p.A", "t");
+        assertEquals("[[9,1],[4,3]]", pairs(t.clickAggregate()));
+        assertEquals("dist(click) keeps its meaning", 0, t.dist("click").length);
+        assertEquals("[[3,0]]", pairs(t.dist("longClick")));
+        assertEquals("a widget with no click-firing pair has an empty aggregate",
+                0, d.getWidget("p.A", "n").clickAggregate().length);
     }
 
     /**

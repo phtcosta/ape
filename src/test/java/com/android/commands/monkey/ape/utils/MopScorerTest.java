@@ -334,6 +334,27 @@ public class MopScorerTest {
         assertEquals(W_DIRECT, scoreOf(d, "C", "b", null));
     }
 
+    /**
+     * Scenario "Null eventType falls back to aggregate (match-any)": the flags fall back to the
+     * aggregate, the pairs do not — only a click reads an aggregate of pairs, so pairs under a
+     * click-firing event ({@code select}) do not reach a null event.
+     */
+    @Test
+    public void testNullEventTypeReadsTheAggregateFlagsAndNoPair() throws Exception {
+        String artifact = "{\"formatVersion\":2,\"targets\":10,\"handlers\":{},"
+                + "\"package\":\"p\",\"mainActivity\":\"p.C\","
+                + "\"widgets\":{\"C\":{\"b\":{\"mop\":{\"select\":\"direct\"},"
+                + "\"dist\":{\"select\":[[4,2]]}}}},\"mopActivities\":[\"C\"]}";
+        MopData d = MopData.load(writeTempJson(artifact), null, null, new NoopSink());
+        GUITreeNode node = new GUITreeNode(null);
+        node.setResourceID("p:id/b");
+        MopData.Lookup l = d.lookup("C", node, null);
+        assertEquals(MopData.Lookup.Source.ID, l.source);
+        assertTrue(l.direct);
+        assertEquals("no pair for a null event", 0, l.dist.length);
+        assertEquals(W_DIRECT, scoreOf(d, "C", "b", null));
+    }
+
     @Test // 17.5
     public void testEventTypeOfMapsActionTypes() {
         assertEquals("click", MopScorer.eventTypeOf(ActionType.MODEL_CLICK, null));

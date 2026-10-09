@@ -13,7 +13,9 @@ import static org.junit.Assert.*;
 /**
  * mop-guidance "Handler Stamp Lookup" (llm-coordinate-single-base, design D17, task 12.1): one
  * lookup per (node, event) — the handler stamp's class when {@code handlers} lists it, else the id
- * key with today's per-event → aggregate fallback, else {@code NONE}.
+ * key with today's per-event → aggregate fallback for the flags and, for a click on a widget with no
+ * {@code click} key, the widget's click aggregate of pairs (amendment of 2026-10-09), else
+ * {@code NONE}.
  *
  * <p>The cryptoapp scenarios read the format-2 fixture derived from the gh120 document (task 10.1);
  * the synthetic ones ({@code com.x.*}) author the smallest format-2 artifact that states them.
@@ -229,7 +231,82 @@ public class MopDataLookupTest {
         MopData.Lookup l = data.lookup(ACT, node("btn", "com.x.Foo$1", null), null);
         assertEquals(MopData.Lookup.Source.ID, l.source);
         assertTrue("null event uses the aggregate", l.direct);
-        // Pairs have no aggregate: a null event carries none.
+        // Only a click reads an aggregate of pairs: a null event carries none.
+        assertPairs(new int[0][], l.dist);
+    }
+
+    // -------------------------------------------------------------------------
+    // The click aggregate of the id key (design D17, amendment of 2026-10-09)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Scenario "a click on a widget flagged under another event reads its aggregate pairs": a touch
+     * listener (GATOR's {@code drag}) with no {@code click} key. The click reads the drag pairs; a
+     * long-click keeps the flags' aggregate fallback but gets no pair.
+     */
+    @Test
+    public void clickOnAWidgetFlaggedUnderAnotherEventReadsItsAggregatePairs() throws Exception {
+        MopData data = synthetic(
+                "\"touch\":{\"mop\":{\"drag\":\"transitive\"},\"dist\":{\"drag\":[[9,2]]}}", "");
+        MopData.Lookup click = data.lookup(ACT, node("touch", null, null), "click");
+        assertEquals(MopData.Lookup.Source.ID, click.source);
+        assertTrue(click.transitive);
+        assertFalse(click.direct);
+        assertPairs(new int[][] {{9, 2}}, click.dist);
+
+        MopData.Lookup longClick = data.lookup(ACT, node("touch", null, null), "longClick");
+        assertEquals(MopData.Lookup.Source.ID, longClick.source);
+        assertTrue("the flags' aggregate fallback", longClick.transitive);
+        assertPairs(new int[0][], longClick.dist);
+    }
+
+    /** Scenario "the click aggregate leaves out long-press events". */
+    @Test
+    public void theClickAggregateLeavesOutLongPressEvents() throws Exception {
+        MopData data = synthetic("\"w\":{\"mop\":{\"longclick\":\"transitive\","
+                + "\"select\":\"transitive\",\"itemlongclick\":\"transitive\","
+                + "\"implicitcreatecontextmenu\":\"transitive\",\"scroll\":\"transitive\"},"
+                + "\"dist\":{\"longclick\":[[3,1]],\"select\":[[9,2]],\"itemlongclick\":[[4,0]],"
+                + "\"implicitcreatecontextmenu\":[[5,0]],\"scroll\":[[6,0]]}}", "");
+        assertPairs(new int[][] {{9, 2}}, data.lookup(ACT, node("w", null, null), "click").dist);
+    }
+
+    /**
+     * The click aggregate merges the events a click fires by the minimum per target
+     * ({@code MopData.mergeByMinimum}), in wire order.
+     */
+    @Test
+    public void theClickAggregateMergesByTheMinimumPerTarget() throws Exception {
+        MopData data = synthetic("\"w\":{\"mop\":{\"select\":\"transitive\","
+                + "\"itemclick\":\"transitive\"},"
+                + "\"dist\":{\"select\":[[9,2],[4,3]],\"itemclick\":[[9,1],[7,3]]}}", "");
+        assertPairs(new int[][] {{9, 1}, {4, 3}, {7, 3}},
+                data.lookup(ACT, node("w", null, null), "click").dist);
+    }
+
+    /** Scenario "an explicit event key blocks the aggregate pairs". */
+    @Test
+    public void anExplicitEventKeyBlocksTheAggregatePairs() throws Exception {
+        MopData data = synthetic("\"w\":{\"mop\":{\"click\":\"none\",\"select\":\"transitive\"},"
+                + "\"dist\":{\"select\":[[9,2]]}}", "");
+        MopData.Lookup l = data.lookup(ACT, node("w", null, null), "click");
+        assertEquals(MopData.Lookup.Source.ID, l.source);
+        assertFalse(l.direct);
+        assertFalse(l.transitive);
+        assertPairs(new int[0][], l.dist);
+    }
+
+    /**
+     * A stamp never reads an aggregate (D17, step 1): a listed record with no {@code click} key
+     * answers none, although its other event carries pairs.
+     */
+    @Test
+    public void aStampNeverReadsTheClickAggregate() throws Exception {
+        MopData data = synthetic("",
+                "\"com.x.Foo$1\":{\"mop\":{\"longclick\":\"transitive\"},"
+                        + "\"dist\":{\"longclick\":[[3,1]]}}");
+        MopData.Lookup l = data.lookup(ACT, node(null, "com.x.Foo$1", null), "click");
+        assertEquals(MopData.Lookup.Source.STAMP, l.source);
         assertPairs(new int[0][], l.dist);
     }
 

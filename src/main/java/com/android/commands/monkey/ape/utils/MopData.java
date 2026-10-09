@@ -10,6 +10,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -231,8 +232,11 @@ public class MopData {
 
         // Version gate (INV-MOP-34). This is also the branch a legacy full static-analysis JSON
         // takes: it carries no formatVersion, so the mismatch names it. The version replaces the
-        // full-JSON era's "complete": true sentinel — the generator derives only from complete
-        // analyses, so a versioned artifact is complete by construction.
+        // full-JSON era's "complete": true sentinel as the load gate, but it says nothing about
+        // the analysis: the generator does not read the sentinel and has no guard (design D15,
+        // gh120 D9), so an artifact derived from an incomplete or pre-gh120 analysis passes here
+        // (38 of the 163 round-A documents lack "complete" and derive and load; empty WTG,
+        // stats.wtgEdges == 0).
         int formatVersion = root.optInt("formatVersion", -1);
         if (formatVersion != SUPPORTED_FORMAT_VERSION) {
             Logger.wprintln("MopData: unsupported formatVersion " + formatVersion + " at " + path
@@ -303,9 +307,10 @@ public class MopData {
                 return null;
             }
 
-            // The stats block is echoed, never recomputed: droppedFlaggedNoId, the handler-join
-            // counters and the orphan-dialog count are facts about a derivation this jar no longer
-            // performs, so the only honest source for them is the generator that did.
+            // The stats block is echoed, never recomputed: droppedFlaggedNoId and the handler-join
+            // counters are facts about a derivation this jar no longer performs, so the only honest
+            // source for them is the generator that did. stats.orphanDialogs is not echoed into
+            // MOP_DATA; it stays in the artifact.
             JSONObject stats = root.optJSONObject("stats");
             if (stats == null) {
                 stats = new JSONObject();
@@ -389,8 +394,34 @@ public class MopData {
             }
         }
         decodeEntry(wo, w, pairs);
+        w.clickAggregate = clickAggregate(w.distByEventType);
         return w;
     }
+
+    /**
+     * The pairs of the events a click fires, merged by the minimum per target (design D17 as
+     * amended 2026-10-09): every event of {@code byEvent} but the long-press events and
+     * {@code scroll} ({@link #NOT_FIRED_BY_A_CLICK}). With one such event its stored array is
+     * returned as is; with none, {@link #NO_PAIRS}.
+     */
+    private static int[][] clickAggregate(Map<String, int[][]> byEvent) {
+        int[][] aggregate = NO_PAIRS;
+        for (Map.Entry<String, int[][]> e : byEvent.entrySet()) {
+            if (!NOT_FIRED_BY_A_CLICK.contains(e.getKey())) {
+                aggregate = aggregate.length == 0 ? e.getValue()
+                        : mergeByMinimum(aggregate, e.getValue());
+            }
+        }
+        return aggregate;
+    }
+
+    /**
+     * The normalized events a click does not fire, which the click aggregate leaves out: the
+     * long-press events and {@code scroll} (design D17 as amended 2026-10-09).
+     */
+    private static final Set<String> NOT_FIRED_BY_A_CLICK = new HashSet<>(Arrays.asList(
+            normalizeEventType("longClick"), normalizeEventType("itemLongClick"),
+            normalizeEventType("implicitCreateContextMenu"), normalizeEventType("scroll")));
 
     /**
      * Decode the per-event maps every format-2 entry carries — a widget of {@code widgets} and a
@@ -406,8 +437,9 @@ public class MopData {
      * to the aggregate (INV-MOP-14), so omitting a {@code none} would change the answer. The
      * aggregates are the OR across the map, which is INV-MOP-17 by construction.
      *
-     * <p>The pairs keep wire order and have no aggregate: an event without a {@code dist} entry
-     * has no pair. Malformed pairs are dropped and counted by {@code pairs}.
+     * <p>The pairs keep wire order: an event without a {@code dist} entry has no pair under its own
+     * key. A widget's click aggregate is built from them afterwards ({@link #parseCompactWidget}).
+     * Malformed pairs are dropped and counted by {@code pairs}.
      */
     private static void decodeEntry(JSONObject wire, MopEntry into, PairReader pairs)
             throws JSONException {
@@ -498,9 +530,10 @@ public class MopData {
     }
 
     /**
-     * Two pair lists of one key merged by the minimum distance per target, sorted by distance and
-     * then index — the order the wire gives. Reached only when two wire event keys normalize onto
-     * one event, which a conforming generator, normalizing itself, never emits.
+     * Two pair lists merged by the minimum distance per target, sorted by distance and then index —
+     * the order the wire gives. The one merge rule of the distances: it merges two wire event keys
+     * that normalize onto one event (which a conforming generator, normalizing itself, never emits)
+     * and the events of a widget's click aggregate (design D17 as amended 2026-10-09).
      */
     private static int[][] mergeByMinimum(int[][] a, int[][] b) {
         Map<Integer, Integer> best = new HashMap<>();
@@ -854,7 +887,10 @@ public class MopData {
      *       an event missing from it reads as {@code none} with no pair, with no aggregate fallback.
      *   <li><b>Id key.</b> Otherwise the widget of {@code (activity, shortId)}: its flags for the
      *       event with today's per-event → aggregate fallback (INV-MOP-14), and its pairs under the
-     *       event's key only, source {@code ID}.
+     *       event's key, source {@code ID} — except that a click on a widget whose {@code mop} map
+     *       has no {@code click} key reads the widget's {@linkplain Widget#clickAggregate() click
+     *       aggregate} (amended 2026-10-09). Every other event, a null one included, reads its own
+     *       key alone.
      *   <li>Otherwise {@link Lookup#NONE}.
      * </ol>
      *
@@ -878,8 +914,13 @@ public class MopData {
         }
         Widget widget = getWidget(activity, extractShortId(node.getResourceID()));
         if (widget != null) {
+            // A click on a widget with no click key reads the click aggregate: the flags'
+            // condition (key absence; an explicit key, none included, blocks it), not their scope.
+            boolean clickAggregate = EVENT_CLICK.equals(event)
+                    && !widget.directMopByEventType.containsKey(event);
             return new Lookup(widget.isDirectMop(event), widget.isTransitiveMop(event),
-                    widget.dist(event), Lookup.Source.ID);
+                    clickAggregate ? widget.clickAggregate() : widget.dist(event),
+                    Lookup.Source.ID);
         }
         return Lookup.NONE;
     }
@@ -1046,6 +1087,20 @@ public class MopData {
         public String spinnerMode;
         public String contentDescription;
         public String tooltipText;
+        /** See {@link #clickAggregate()}; set once at load. */
+        int[][] clickAggregate = NO_PAIRS;
+
+        /**
+         * The widget's click aggregate (mop-guidance "Handler Stamp Lookup", design D17 as amended
+         * 2026-10-09): its pairs of every event a click fires, every event but
+         * {@code longclick}, {@code itemlongclick}, {@code implicitcreatecontextmenu} and
+         * {@code scroll}, merged by the minimum per target ({@link MopData#mergeByMinimum}) and
+         * in wire order. {@link MopData#lookup} reads it for a click when the widget's {@code mop}
+         * map has no {@code click} key. Never null; the array is the stored one, callers read only.
+         */
+        public int[][] clickAggregate() {
+            return clickAggregate;
+        }
     }
 
     /**
@@ -1064,16 +1119,19 @@ public class MopData {
         /**
          * Decoded from the wire's per-eventType {@code dist} map (format 2, design D15): normalized
          * event → pairs {@code {targetIndex, distance}}, in wire order (ascending distance, then
-         * index; at most three). Every stored index lies in {@code [0, targetCount())}: a
+         * index; the generator keeps every target at {@code d <= 3}, and the loader reads any
+         * length). Every stored index lies in {@code [0, targetCount())}: a
          * malformed pair is dropped at load and counted ({@code MOP_DATA.droppedPairs}).
          * Callers read only.
          */
         public final Map<String, int[][]> distByEventType = new HashMap<>();
 
         /**
-         * The distance pairs {@code {targetIndex, distance}} for the given event type, or an empty
-         * array. Unlike the flags, distances have no aggregate fallback: an event with no
-         * {@code dist} entry has no pair. The array is the stored one; callers read only.
+         * The distance pairs {@code {targetIndex, distance}} for the given event type alone, or an
+         * empty array: an event with no {@code dist} entry has no pair here. Unlike the flags, this
+         * accessor has no aggregate fallback; the one aggregate of pairs, a widget's click
+         * aggregate, is {@link Widget#clickAggregate()}, which {@link MopData#lookup} chooses. The
+         * array is the stored one; callers read only.
          */
         public int[][] dist(String eventType) {
             String key = normalizeEventType(eventType);

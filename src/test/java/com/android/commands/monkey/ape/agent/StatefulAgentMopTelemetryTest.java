@@ -280,7 +280,7 @@ public class StatefulAgentMopTelemetryTest {
         distance();
         context(artifact("\"a\":{\"dist\":{\"click\":[[11,2],[4,2]]}},"
                 + "\"b\":{\"dist\":{\"click\":[[4,2],[11,2]]}},"
-                + "\"c\":{\"dist\":{\"click\":[[4,2],[11,3]]}}", ""));
+                + "\"c\":{\"dist\":{\"click\":[[4,2],[11,2]]}}", ""));
         State st = state();
         select(st, click("//a", node("a", null), 400));
         select(st, click("//b", node("b", null), 400));
@@ -310,7 +310,7 @@ public class StatefulAgentMopTelemetryTest {
         StatefulAgentTearDownTest.ThrowingAgent teardown =
                 allocate(StatefulAgentTearDownTest.ThrowingAgent.class);
         MopContext mop = MopContext.fromSpec(
-                artifact("\"w\":{\"dist\":{\"click\":[[7,1],[8,2]]}}", ""),
+                artifact("\"w\":{\"dist\":{\"click\":[[7,1],[8,1]]}}", ""),
                 RunContext.current().spec().mop());
         MopData.Lookup lookup = mop.data().lookup(ACT, node("w", null), "click");
         for (int i = 0; i < 3; i++) {

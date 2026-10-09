@@ -252,6 +252,7 @@ public class StatefulAgentMopRetirementTest {
         assertArrayEquals(new int[] {22}, retiredCalls.get(0));
         assertTrue(r.retired(22));
         assertEquals(1, r.retiredCount());
+        assertEquals("target 4 lies at d = 3, not at d* = 2", 0, count(r, 4));
     }
 
     /** When no containment lookup has an unretired pair, nothing is counted. */
