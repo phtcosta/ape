@@ -22,8 +22,11 @@ import java.util.Set;
 import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.runtime.MopScoring;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.Logger;
+import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopRetirement;
 
 /**
  * Launch the next unvisited activity of the arm's MOP census, on a fixed cadence.
@@ -50,6 +53,15 @@ import com.android.commands.monkey.ape.utils.Logger;
  * with no MOP data advanced a counter that could never fire, was never logged, and died with the
  * process. That counter is gone rather than relocated: this stage exists only where a launcher does
  * (INV-DP-03).
+ *
+ * <p><b>Which eligible activity, by scoring mode</b> (component-triggering "Cadence-Based MOP
+ * Activity Launch", design D20, INV-CT-15). Under {@code flag} the walk is the manifest round-robin
+ * of {@link #selectTriggerCandidate}. Under {@code distance} it is {@link #selectByDistance}: a
+ * rotation over the eligible activities ordered by their nearest unretired {@code activityDist}
+ * target within {@code ape.mopLauncherDmax}, then manifest order. The mode and the bound are
+ * injected at assembly; the artifact and the run's retirement, which the stage reads and never
+ * writes, arrive through {@link StepContext#mopContext()} (INV-DP-12). Eligibility is the same in
+ * both modes, and neither reads the launch result (INV-CT-14).
  */
 public final class MopLauncherStage implements DecisionStage {
 
@@ -66,14 +78,25 @@ public final class MopLauncherStage implements DecisionStage {
             "junit.", "org.junit.", "leakcanary.",
     };
 
+    /** {@link #selectByDistance}'s answer when no activity is eligible, and the cursor's start. */
+    public static final long NO_SELECTION = -1L;
+
     private final int cadence;
     private final int maxPerRun;
+    private final MopScoring scoring;
+    private final int launcherDmax;
 
     /** Selection passes since the last firing point; reset there, whatever the scan found. */
     private int stepsSinceFiring;
 
-    /** Where the next census walk starts; persisted across firings (INV-CT-06). */
-    private int roundRobinIndex;
+    /**
+     * The round-robin cursor, persisted across firings (INV-CT-06, INV-DP-07); its content changes
+     * kind with the mode. Under {@code flag}, where the next census walk starts: advanced by one at
+     * every firing, candidate or not. Under {@code distance}, the sort position
+     * ({@link #sortPosition}) of the last selection, {@link #NO_SELECTION} before the first: moved
+     * at every selection, whatever the launch result (design D20).
+     */
+    private long roundRobinIndex;
 
     /** Launches actually performed this run; the budget the cap bounds (INV-CT-12). */
     private int launchCount;
@@ -81,10 +104,16 @@ public final class MopLauncherStage implements DecisionStage {
     /**
      * @param cadence selection passes between firings
      * @param maxPerRun per-run launch budget; zero means unlimited
+     * @param scoring {@code ape.mopScoring}: which eligible activity is chosen (design D20)
+     * @param launcherDmax {@code ape.mopLauncherDmax}: the largest distance the {@code distance}
+     *                     order counts; inert under {@code flag}
      */
-    public MopLauncherStage(int cadence, int maxPerRun) {
+    public MopLauncherStage(int cadence, int maxPerRun, MopScoring scoring, int launcherDmax) {
         this.cadence = cadence;
         this.maxPerRun = maxPerRun;
+        this.scoring = scoring;
+        this.launcherDmax = launcherDmax;
+        this.roundRobinIndex = scoring == MopScoring.DISTANCE ? NO_SELECTION : 0;
     }
 
     @Override
@@ -103,10 +132,23 @@ public final class MopLauncherStage implements DecisionStage {
         for (ActivityNode an : ctx.graph().getActivityNodes()) {
             visited.add(an.activity);
         }
-        ComponentInfo candidate = selectTriggerCandidate(ctx.mopData().getActivities(),
-                visited, ctx.mopData().getMainActivity(), roundRobinIndex,
-                ctx.mopData().getMopActivities());
-        roundRobinIndex++;
+        MopData data = ctx.mopData();
+        ComponentInfo candidate;
+        if (scoring == MopScoring.DISTANCE) {
+            long position = selectByDistance(data.getActivities(), visited,
+                    data.getMainActivity(), data.getMopActivities(), data,
+                    ctx.mopContext().retirement(), launcherDmax, roundRobinIndex);
+            if (position == NO_SELECTION) {
+                candidate = null;
+            } else {
+                roundRobinIndex = position; // the last selection, whatever the launch result
+                candidate = data.getActivities().get(manifestIndex(position));
+            }
+        } else {
+            candidate = selectTriggerCandidate(data.getActivities(), visited,
+                    data.getMainActivity(), (int) roundRobinIndex, data.getMopActivities());
+            roundRobinIndex++;
+        }
         if (candidate == null) {
             return StageResult.continueChain();
         }
@@ -170,19 +212,91 @@ public final class MopLauncherStage implements DecisionStage {
         for (int i = 0; i < n; i++) {
             int idx = (((rrIndex + i) % n) + n) % n; // safe modulo for any rrIndex
             ComponentInfo c = activities.get(idx);
-            if (!mopActivities.contains(c.className)) {
-                continue; // census-only: never launch outside the arm's MOP census (no fallback)
-            }
-            if (isFrameworkActivity(c.className)) {
-                continue;
-            }
-            if (c.permission == null && !c.isMain
-                    && !c.className.equals(mainActivity)
-                    && !visitedActivities.contains(c.className)) {
+            if (isEligible(c, visitedActivities, mainActivity, mopActivities)) {
                 return c;
             }
         }
         return null;
+    }
+
+    /**
+     * The {@code distance} walk (pure, design D20, INV-CT-15): the rotation over the eligible
+     * activities in distance order. An activity's key is
+     * {@link MopRetirement#nearest(MopRetirement, int[][], int)} over its {@code activityDist}
+     * pairs with {@code dmax}: the smallest unretired distance within the bound, or
+     * {@link Integer#MAX_VALUE} when it has none, so keyless activities sort after every keyed one.
+     * The order is ascending {@link #sortPosition}, key then manifest index, recomputed at each
+     * call. The candidate is the first eligible activity whose position comes after
+     * {@code lastPosition}, wrapping to the head of the order when none does. Eligibility is
+     * exactly {@link #selectTriggerCandidate}'s; the launch result is never an input.
+     *
+     * @param activities the arm's declared activities, in manifest order
+     * @param visitedActivities activity names the run has already reached
+     * @param mainActivity the app's launcher activity, never a candidate
+     * @param mopActivities the arm's MOP census
+     * @param data the artifact whose {@code activityDist} keys the order
+     * @param retirement the run's retirement, read only; null retires nothing
+     * @param dmax {@code ape.mopLauncherDmax}
+     * @param lastPosition the sort position of the last selection, or {@link #NO_SELECTION}
+     * @return the selected activity's sort position ({@link #manifestIndex} recovers it), or
+     *         {@link #NO_SELECTION} when none is eligible
+     */
+    public static long selectByDistance(List<? extends ComponentInfo> activities,
+            Set<String> visitedActivities, String mainActivity, Set<String> mopActivities,
+            MopData data, MopRetirement retirement, int dmax, long lastPosition) {
+        if (activities == null || mopActivities == null) {
+            return NO_SELECTION;
+        }
+        long head = Long.MAX_VALUE;
+        long after = Long.MAX_VALUE;
+        for (int idx = 0; idx < activities.size(); idx++) {
+            ComponentInfo c = activities.get(idx);
+            if (!isEligible(c, visitedActivities, mainActivity, mopActivities)) {
+                continue;
+            }
+            long position = sortPosition(
+                    MopRetirement.nearest(retirement, data.activityDist(c.className), dmax), idx);
+            head = Math.min(head, position);
+            if (position > lastPosition) {
+                after = Math.min(after, position);
+            }
+        }
+        if (after != Long.MAX_VALUE) {
+            return after;
+        }
+        return head == Long.MAX_VALUE ? NO_SELECTION : head;
+    }
+
+    /**
+     * The sort position {@code (key, manifest index)} of the {@code distance} order as one
+     * non-negative {@code long} whose natural order is the lexicographic one: the key (a distance,
+     * or {@link Integer#MAX_VALUE} for none) in the high half, the manifest index in the low half.
+     */
+    static long sortPosition(int key, int manifestIndex) {
+        return ((long) key << 32) | manifestIndex;
+    }
+
+    /** The manifest index a {@link #sortPosition} holds. */
+    public static int manifestIndex(long position) {
+        return (int) position;
+    }
+
+    /**
+     * The eligibility conjunction both walks share (INV-CT-06/10): a member of the arm's MOP census
+     * (no fallback outside it), not framework/tooling-namespaced, no permission gate, not the main
+     * activity (by {@code isMain} flag or by name), and currently unvisited.
+     */
+    private static boolean isEligible(ComponentInfo c, Set<String> visitedActivities,
+            String mainActivity, Set<String> mopActivities) {
+        if (!mopActivities.contains(c.className)) {
+            return false; // census-only: never launch outside the arm's MOP census (no fallback)
+        }
+        if (isFrameworkActivity(c.className)) {
+            return false;
+        }
+        return c.permission == null && !c.isMain
+                && !c.className.equals(mainActivity)
+                && !visitedActivities.contains(c.className);
     }
 
     /**

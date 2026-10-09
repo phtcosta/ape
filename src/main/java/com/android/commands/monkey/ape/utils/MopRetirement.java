@@ -108,6 +108,30 @@ public final class MopRetirement {
         return best;
     }
 
+    /**
+     * The number of distinct targets over the pairs {@code [i, d]} of {@code dist} that are not
+     * retired and lie at {@code d <= dmax}; a null retirement retires nothing. The MOP shortcut's
+     * target count (design D21, key 3), read over the weight's lookup with {@code dmax} its
+     * distance plus one.
+     */
+    public static int countWithin(MopRetirement retirement, int[][] dist, int dmax) {
+        int[] counted = new int[dist.length];
+        int n = 0;
+        outer:
+        for (int[] pair : dist) {
+            if (pair[1] > dmax || (retirement != null && retirement.retired(pair[0]))) {
+                continue;
+            }
+            for (int k = 0; k < n; k++) {
+                if (counted[k] == pair[0]) {
+                    continue outer; // each target once
+                }
+            }
+            counted[n++] = pair[0];
+        }
+        return n;
+    }
+
     /** The number of targets retired so far in the run (the {@code RUN_END} count, task 16.2). */
     public int retiredCount() {
         return retiredCount;

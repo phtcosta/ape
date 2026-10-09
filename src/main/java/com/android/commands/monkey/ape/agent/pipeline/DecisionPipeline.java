@@ -171,7 +171,8 @@ public final class DecisionPipeline {
                     break;
                 case MOP_LAUNCHER:
                     stages.add(new MopLauncherStage(spec.mop().activityTriggerStagnationStep(),
-                            spec.mop().activityTriggerMaxPerRun()));
+                            spec.mop().activityTriggerMaxPerRun(), spec.mop().scoring(),
+                            spec.mop().launcherDmax()));
                     break;
                 case COMPONENT_TRIGGER:
                     stages.add(new ComponentTriggerStage(spec.mop().componentPercentage(),

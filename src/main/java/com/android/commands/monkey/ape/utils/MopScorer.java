@@ -94,6 +94,20 @@ public class MopScorer {
      * @param mop the run's MOP context; null (no artifact) weighs 0
      */
     public static Scored weigh(MopContext mop, State state, ModelAction action) {
+        if (mop == null || action == null || action.getResolvedNode() == null) {
+            return Scored.NOTHING;
+        }
+        return weigh(mop, state.getActivity(), action);
+    }
+
+    /**
+     * {@link #weigh(MopContext, State, ModelAction)} for an action of {@code activity}: the state
+     * contributes only its activity. For the MOP shortcut's ranking, which knows the activity and
+     * not the state (design D21).
+     *
+     * @param mop the run's MOP context; null (no artifact) weighs 0
+     */
+    public static Scored weigh(MopContext mop, String activity, ModelAction action) {
         if (mop == null || action == null) {
             return Scored.NOTHING;
         }
@@ -101,8 +115,7 @@ public class MopScorer {
         if (node == null) {
             return Scored.NOTHING;
         }
-        return best(mop, containmentLookups(mop.data(), state.getActivity(), node,
-                eventTypeOf(action)));
+        return best(mop, containmentLookups(mop.data(), activity, node, eventTypeOf(action)));
     }
 
     /**

@@ -103,7 +103,7 @@ public class LlmTelemetryTest {
      * name was written.
      */
     private JSONObject llmCounters(LlmTelemetry telemetry) throws Exception {
-        sink.runEnd("timeout", null, telemetry.counters());
+        sink.runEnd("timeout", null, 0, 0, telemetry.counters());
         for (String line : new String(captured.toByteArray(), StandardCharsets.UTF_8).split("\n")) {
             JSONObject record = new JSONObject(line);
             if ("RUN_END".equals(record.optString("type"))) {

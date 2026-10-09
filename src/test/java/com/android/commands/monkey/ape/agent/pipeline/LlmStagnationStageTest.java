@@ -14,7 +14,7 @@ import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.model.StateTransitionVisitType;
 import com.android.commands.monkey.ape.tree.GUITree;
-import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopContext;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -61,7 +61,7 @@ public class LlmStagnationStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                MopContext mop, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             modeSeen = mode;
             return answer;

@@ -371,7 +371,13 @@ public class PromptIntegrationTest {
     }
 
     // -------------------------------------------------------------------------
-    // 7.1.1-E  MOP annotation: resource-ids that would get [DM]/[M] markers
+    // 7.1.1-E  MOP reachability of the gh60 analysis input, per resource id
+    //
+    // These tests state facts of the full static-analysis document of the gh60 fixture
+    // (`/fixtures/cryptoapp/cryptoapp.apk.json`), not of the prompt: they never call the
+    // builder. The prompt's [DM]/[M] marker is the scoring's verdict over a line's actions
+    // (llm-prompt "MOP Marker Annotation", design D22), read from the format-2 artifact
+    // through MopData.lookup, and ApePromptBuilderMopMarkerTest pins it.
     // -------------------------------------------------------------------------
 
     /**

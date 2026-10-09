@@ -5,7 +5,7 @@ import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
-import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopContext;
 
 import java.util.List;
 import java.util.function.BooleanSupplier;
@@ -197,7 +197,7 @@ public class ScriptedLlm {
         public ModelAction selectAction(GUITree tree,
                                         State state,
                                         List<ModelAction> actions,
-                                        MopData mopData,
+                                        MopContext mop,
                                         List<ApePromptBuilder.ActionHistoryEntry> recentActions,
                                         String mode) {
             if (entry == null) {

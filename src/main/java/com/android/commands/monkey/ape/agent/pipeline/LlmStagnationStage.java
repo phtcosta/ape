@@ -109,7 +109,7 @@ public final class LlmStagnationStage implements DecisionStage {
         }
         firedThisEpisode = true;
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
-                ctx.newState().getActions(), ctx.mopData(), ctx.actionHistory(), "stagnation");
+                ctx.newState().getActions(), ctx.mopContext(), ctx.actionHistory(), "stagnation");
         if (result == null) {
             return StageResult.continueChain();
         }

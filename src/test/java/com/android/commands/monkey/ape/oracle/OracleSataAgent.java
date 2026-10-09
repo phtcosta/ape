@@ -2,12 +2,15 @@ package com.android.commands.monkey.ape.oracle;
 
 import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.model.Action;
+import com.android.commands.monkey.ape.model.ModelAction;
+import com.android.commands.monkey.ape.model.State;
 
 import java.util.Random;
 
 /**
  * rearch-01 task 2.2 — the agent under oracle. It does two things and no more: it pins the
- * agent-side RNG stream, and it is the entry point into the selection ladder.
+ * agent-side RNG stream, and it is the entry point into the selection ladder (and into the
+ * decision record the driver places around it when it loads the sink).
  *
  * <p><b>The RNG seam (design D5).</b> APE draws from two streams seeded from one seed
  * ({@code Monkey.java:697,731}): the {@code RandomHelper} statics, seeded by
@@ -60,5 +63,13 @@ public class OracleSataAgent extends SataAgent {
     /** The compiled entry point into the protected selection ladder. */
     Action ladder() {
         return selectNewActionNonnull();
+    }
+
+    /**
+     * The compiled entry point into the production decision record, which the driver places around
+     * the ladder when it loads the sink ({@code OracleDriver.runUnderSinkLoad}).
+     */
+    void recordDecision(State state, ModelAction action) {
+        recordModelDecision(state, action);
     }
 }

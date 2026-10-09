@@ -45,7 +45,8 @@ public final class NoopSink implements EventSink {
     @Override
     public void decision(String action, String decisionSource, String pickChannel, int priority,
             int mop, int mopFrontier, int wtg, int coverage, int menu, int form,
-            String wtgSource, int patched, int cfChanged, String cfAction) {
+            String wtgSource, int patched, int cfChanged, String cfAction, int mopDistance,
+            String mopSource) {
     }
 
     @Override
@@ -108,6 +109,7 @@ public final class NoopSink implements EventSink {
     }
 
     @Override
-    public void runEnd(String reason, String detail, RunCounters counters) {
+    public void runEnd(String reason, String detail, int stampNodes, int retired,
+            RunCounters counters) {
     }
 }

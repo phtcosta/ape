@@ -51,6 +51,7 @@ import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
 import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.MopScoring;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.telemetry.EventSink;
@@ -135,6 +136,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * through {@link #getMopData()}, derived from this field rather than held a second time.
      */
     private final MopContext _mopContext;
+
+    /**
+     * {@code RUN_END.counters.stampNodes} (design D23): the nodes, over every GUI tree this agent
+     * captured, that carried at least one handler stamp. Counted in {@link #buildState}, the one
+     * place every capture passes through; telemetry only, read by teardown and nothing else.
+     */
+    private int stampNodes;
+
     private final UICoverageTracker _coverageTracker;
     private final ActivityBudgetTracker _budgetTracker;
 
@@ -1058,8 +1067,20 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         }
     }
 
+    /**
+     * Captures a GUI tree from the window and files it under its abstract state — the one funnel
+     * of every capture: the step's own ({@link #buildAndValidateNewState}) and the trivial-state
+     * re-captures of {@link #refreshNewState} and {@link #checkAndRefreshNewState}. It is
+     * {@code Model.getState(activity, rootInfo, bitmap)} split in its two halves so the freshly
+     * built tree can be counted for {@code RUN_END.counters.stampNodes} (design D23, ui-tree
+     * "Handler Stamp Capture"): each node with at least one handler stamp counts once per capture
+     * it appears in, a re-capture later discarded included. The count reads the tree and changes
+     * nothing in it.
+     */
     protected State buildState(ComponentName topComp, AccessibilityNodeInfo rootInfo, Bitmap bitmap) {
-        return model.getState(topComp, rootInfo, bitmap);
+        GUITree tree = model.buildGUITree(topComp, rootInfo, bitmap);
+        stampNodes += GUITreeNode.countStampedNodes(tree.getRootNode());
+        return model.getState(tree);
     }
 
     public void onAppActivityStarted(ComponentName app, boolean clean) {
@@ -1633,20 +1654,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             newAction = (ModelAction) action;
             newGUITreeAction = newAction.getResolvedGUITreeAction();
             Utils.assertNotNull(newGUITreeAction);
-            // A-5: one decision per finally-selected action (INV-SEL-04), filling the `dec` section
-            // of the record this step opened. The boosts arrive as their raw values and the record
-            // decides what to omit; the two tri-states arrive as themselves, because for them an
-            // absent field is a different statement from a zero.
-            RunContext.current().sink().decision(newAction.toString(),
-                    newAction.getDecisionSource().name(),
-                    newAction.getPickChannel().getLabel(),
-                    newAction.getPriority(),
-                    newAction.getMopBoost(), newAction.getMopFrontierBoost(),
-                    newAction.getWtgBoost(), newAction.getCoverageBoost(),
-                    newAction.getMenuBoost(), newAction.getFormBoost(),
-                    newAction.getWtgSource(),
-                    patchedValue(newAction),
-                    counterfactualChanged(newAction), counterfactualAction(newAction));
+            recordModelDecision(newState, newAction);
             // Buffer this model decision so the record closes on the outcome that belongs to it, and
             // so the dead-pair ban receives the decision's outcome. The buffer is the closure guard
             // as much as the join key: a step whose buffered action is replaced never resolves.
@@ -1667,6 +1675,60 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         }
     }
 
+    /**
+     * A-5: one decision per finally-selected action (INV-SEL-04), filling the {@code dec} section
+     * of the record this step opened. The boosts arrive as their raw values and the record decides
+     * what to omit; the two tri-states arrive as themselves, because for them an absent field is a
+     * different statement from a zero.
+     *
+     * <p>{@code dec.mopd} and {@code dec.mops} (design D23) come from one {@link MopScorer#weigh} of
+     * the chosen action: the lookup it returns is the one that gave the action its MOP weight, the
+     * same one the scoring pass weighed and {@code moveForward} retires against, because nothing
+     * between the pass and this call changes the retirement it reads. Telemetry only: the result is
+     * handed to the sink and read by nothing else (INV-SNK-07).
+     */
+    protected void recordModelDecision(State state, ModelAction action) {
+        MopScorer.Scored scored = MopScorer.weigh(_mopContext, state, action);
+        RunContext.current().sink().decision(action.toString(),
+                action.getDecisionSource().name(),
+                action.getPickChannel().getLabel(),
+                action.getPriority(),
+                action.getMopBoost(), action.getMopFrontierBoost(),
+                action.getWtgBoost(), action.getCoverageBoost(),
+                action.getMenuBoost(), action.getFormBoost(),
+                action.getWtgSource(),
+                patchedValue(action),
+                counterfactualChanged(action), counterfactualAction(action),
+                mopDistanceValue(_mopContext, scored), mopSourceValue(scored));
+    }
+
+    /**
+     * The {@code dec.mopd} value (design D23): under {@code ape.mopScoring=distance}, the distance
+     * of the nearest unretired target behind the action's MOP weight; {@link EventSink#ABSENT} when
+     * the weight is 0 and always under {@code flag}, which weighs by flag and reads no distance.
+     */
+    static int mopDistanceValue(MopContext mop, MopScorer.Scored scored) {
+        if (mop == null || mop.scoring() != MopScoring.DISTANCE || scored.weight <= 0) {
+            return EventSink.ABSENT;
+        }
+        return scored.distance;
+    }
+
+    /**
+     * The {@code dec.mops} value (design D23): the source of the lookup behind the action's MOP
+     * weight, in both modes and whatever the weight; null on {@code NONE}, which is also what an
+     * action with no resolved target gets.
+     */
+    static String mopSourceValue(MopScorer.Scored scored) {
+        switch (scored.lookup.source) {
+        case STAMP:
+            return EventSink.MOP_SOURCE_STAMP;
+        case ID:
+            return EventSink.MOP_SOURCE_ID;
+        default:
+            return null;
+        }
+    }
 
     /**
      * Empirical priority.
@@ -2010,7 +2072,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         safeStep("modelCounters", () -> model.printCounters());
         safeStep("runEnd", () -> {
             RunContext context = RunContext.current();
+            MopRetirement retirement = _mopContext == null ? null : _mopContext.retirement();
             context.sink().runEnd(context.terminationReason(), context.terminationDetail(),
+                    stampNodes, retirement == null ? 0 : retirement.retiredCount(),
                     context.hasLlm() ? context.llmTelemetry().counters() : null);
         });
     }

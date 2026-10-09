@@ -22,6 +22,7 @@ import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 
 /**
@@ -99,7 +100,7 @@ final class PipelineFixture {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopData mopData, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                MopContext mop, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             return answer;
         }

@@ -242,7 +242,7 @@ public final class OracleDriver {
                 llm.finishStep();
             }
             if (sink != null) {
-                decision(sink, selected);
+                decision(agent, state, sink, selected);
             }
             records.add(record(index, selected, llm));
             if (selected instanceof ModelAction) {
@@ -264,20 +264,20 @@ public final class OracleDriver {
     /**
      * Fills the open record's {@code dec} section, mirroring {@code resolveNewAction}'s two branches.
      *
-     * <p>A {@code ModelAction} carries its own provenance and boosts, so those are read off the
-     * action rather than restated here. A non-model action carries neither — the two labels
-     * production derives from the action type are its rule, not the harness's, so the harness passes
-     * the type it can see and no channel at all. Nothing asserts either string; what they are for is
-     * to make the sink escape and write something of the right shape and size.
+     * <p>A {@code ModelAction} goes through the production decision record itself
+     * ({@code StatefulAgent.recordModelDecision}), which reads provenance and boosts off the action
+     * and weighs it once for {@code dec.mopd}/{@code dec.mops} (design D23) — so the weighing the
+     * decision path gained is under the neutrality gate rather than restated here. It writes to the
+     * run context's sink, which is {@code sink} whenever the driver places the calls. A non-model
+     * action carries neither — the two labels production derives from the action type are its rule,
+     * not the harness's, so the harness passes the type it can see and no channel at all. Nothing
+     * asserts either string; what they are for is to make the sink escape and write something of
+     * the right shape and size.
      */
-    private static void decision(EventSink sink, Action selected) {
+    private static void decision(OracleSataAgent agent, State state, EventSink sink,
+            Action selected) {
         if (selected instanceof ModelAction) {
-            ModelAction picked = (ModelAction) selected;
-            sink.decision(picked.toString(), picked.getDecisionSource().name(),
-                    picked.getPickChannel().getLabel(), picked.getPriority(),
-                    picked.getMopBoost(), picked.getMopFrontierBoost(), picked.getWtgBoost(),
-                    picked.getCoverageBoost(), picked.getMenuBoost(), picked.getFormBoost(),
-                    picked.getWtgSource(), EventSink.ABSENT, EventSink.ABSENT, null);
+            agent.recordDecision(state, (ModelAction) selected);
             return;
         }
         sink.decisionNonModel(selected.toString(), selected.getType().name(), null);

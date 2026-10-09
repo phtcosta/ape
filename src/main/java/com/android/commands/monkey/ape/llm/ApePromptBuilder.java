@@ -7,10 +7,13 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopScorer;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -134,7 +137,8 @@ public class ApePromptBuilder {
      * @param deviceHeight  display height in pixels, from the same pair
      * @param state         current abstract state (for activity name and visit count)
      * @param actions       candidate ModelActions to present to the LLM
-     * @param mopData       MOP reachability data (may be null → MOP markers omitted)
+     * @param mop           the run's MOP context (may be null → MOP markers and the MOP count
+     *                      omitted); both are the scoring's verdict under its mode (design D22)
      * @param base64Image   base-64 encoded JPEG screenshot
      * @param recentActions up to MAX_HISTORY past actions (oldest first); may be null/empty
      * @return list of exactly 2 messages: [system, user]
@@ -143,7 +147,7 @@ public class ApePromptBuilder {
                                             int deviceHeight,
                                             State state,
                                             List<ModelAction> actions,
-                                            MopData mopData,
+                                            MopContext mop,
                                             String base64Image,
                                             List<ActionHistoryEntry> recentActions) {
         // Derive activity names safely
@@ -160,22 +164,22 @@ public class ApePromptBuilder {
         switch (variant) {
             case VARIANT_V13:
                 userText = buildRvsmartV13UserText(
-                        actions, mopData, recentActions, activity, activitySimple,
+                        state, actions, mop, recentActions, activity, activitySimple,
                         deviceWidth, deviceHeight);
                 break;
             case VARIANT_V17:
                 userText = buildRvsmartV17UserText(
-                        state, actions, mopData, recentActions, activity, activitySimple,
+                        state, actions, mop, recentActions, activity, activitySimple,
                         deviceWidth, deviceHeight);
                 break;
             case VARIANT_VISUAL_ONLY:
                 userText = buildVisualOnlyUserText(
-                        state, actions, mopData, recentActions, activity, activitySimple,
+                        state, actions, mop, recentActions, activity, activitySimple,
                         deviceWidth, deviceHeight);
                 break;
             default:
                 userText = buildUserText(
-                        state, actions, mopData, recentActions,
+                        state, actions, mop, recentActions,
                         activity, activitySimple, deviceWidth, deviceHeight);
                 break;
         }
@@ -333,7 +337,7 @@ public class ApePromptBuilder {
 
     private String buildUserText(State state,
                                  List<ModelAction> actions,
-                                 MopData mopData,
+                                 MopContext mop,
                                  List<ActionHistoryEntry> recentActions,
                                  String activity,
                                  String activitySimple,
@@ -348,7 +352,7 @@ public class ApePromptBuilder {
         if (actions != null) {
             for (int i = 0; i < actions.size(); i++) {
                 ModelAction action = actions.get(i);
-                String line = formatActionLine(i, action, mopData, activity, deviceWidth, deviceHeight);
+                String line = formatActionLine(i, action, state, mop, deviceWidth, deviceHeight);
                 sb.append(line).append('\n');
             }
         }
@@ -364,7 +368,7 @@ public class ApePromptBuilder {
         }
 
         // Exploration context
-        String explorationContext = buildExplorationContext(state, actions, mopData, activity);
+        String explorationContext = buildExplorationContext(state, actions, mop);
         if (!explorationContext.isEmpty()) {
             sb.append(explorationContext).append('\n');
         }
@@ -378,8 +382,8 @@ public class ApePromptBuilder {
 
     private String formatActionLine(int index,
                                     ModelAction action,
-                                    MopData mopData,
-                                    String activity,
+                                    State state,
+                                    MopContext mop,
                                     int deviceWidth,
                                     int deviceHeight) {
         if (action == null) {
@@ -408,8 +412,8 @@ public class ApePromptBuilder {
         // Visit count
         int visitCount = action.getVisitedCount();
 
-        // MOP marker
-        String mopMarker = buildMopMarker(node, mopData, activity);
+        // MOP marker: the line's one action (design D22)
+        String mopMarker = buildMopMarker(Collections.singletonList(action), state, mop);
 
         // Determine if this is an input-hint widget
         boolean isInputField = isInputClass(node);
@@ -447,20 +451,56 @@ public class ApePromptBuilder {
     // MOP marker (3.4)
     // -------------------------------------------------------------------------
 
+    /** {@link #mopVerdict}: the action is not MOP (weight 0, no resolved node, or no context). */
+    private static final int MOP_NONE = 0;
+    /** {@link #mopVerdict}: the action has a positive MOP weight ({@code [M]}). */
+    private static final int MOP_WEIGHTED = 1;
+    /** {@link #mopVerdict}: the action has a positive MOP weight and is direct ({@code [DM]}). */
+    private static final int MOP_DIRECT = 2;
+
     /**
-     * Returns "[DM]", "[M]", or "" for the given node / activity.
+     * The MOP verdict of one action under the run's mode (llm-prompt "MOP Marker Annotation",
+     * design D22): the one per-action test behind both the marker ({@link #buildMopMarker}) and
+     * the {@code N/M MOP.} count ({@link #buildExplorationContext}).
+     *
+     * <p>The weight and its lookup are the scoring's own ({@link MopScorer#weigh}: the D17 lookup
+     * over the containment nodes, under {@code distance} ignoring retired targets), before the tie
+     * split. A positive weight is {@link #MOP_WEIGHTED}; it is {@link #MOP_DIRECT} when the action
+     * is also direct under the mode: under {@code flag} the weight's lookup is a direct flag, under
+     * {@code distance} its smallest unretired distance is 0.
      */
-    private String buildMopMarker(GUITreeNode node, MopData mopData, String activity) {
-        if (mopData == null || node == null) return "";
+    private static int mopVerdict(MopContext mop, State state, ModelAction action) {
+        if (mop == null || state == null || action == null) return MOP_NONE;
         try {
-            String resourceId = node.getResourceID();
-            String shortId = MopData.extractShortId(resourceId);
-            if (shortId.isEmpty()) return "";
-            MopData.Widget flags = mopData.getWidget(activity, shortId);
-            if (flags == null) return "";
-            if (flags.directMop)    return "[DM]";
-            if (flags.transitiveMop) return "[M]";
-        } catch (Exception ignored) { /* never throw */ }
+            MopScorer.Scored scored = MopScorer.weigh(mop, state, action);
+            if (scored.weight <= 0) return MOP_NONE;
+            switch (mop.scoring()) {
+                case FLAG:
+                    return scored.lookup.direct ? MOP_DIRECT : MOP_WEIGHTED;
+                case DISTANCE:
+                    return scored.distance == 0 ? MOP_DIRECT : MOP_WEIGHTED;
+                default:
+                    return MOP_WEIGHTED;
+            }
+        } catch (RuntimeException ignored) {
+            return MOP_NONE; // never throw (build's contract)
+        }
+    }
+
+    /**
+     * Returns "[DM]", "[M]", or "" for a line, from the verdicts of the line's actions (design
+     * D22): {@code [DM]} when one of them is {@link #MOP_DIRECT}, else {@code [M]} when one is
+     * {@link #MOP_WEIGHTED}, else "". A line of the shared formatter has one action; a
+     * {@code v13}/{@code v17} line has every target-requiring action of its widget (design D10).
+     */
+    private static String buildMopMarker(List<ModelAction> lineActions, State state,
+                                         MopContext mop) {
+        int verdict = MOP_NONE;
+        for (ModelAction action : lineActions) {
+            verdict = Math.max(verdict, mopVerdict(mop, state, action));
+        }
+        if (verdict == MOP_DIRECT) return "[DM]";
+        if (verdict == MOP_WEIGHTED) return "[M]";
         return "";
     }
 
@@ -472,12 +512,12 @@ public class ApePromptBuilder {
     private static final int META_ENTRY_CAP = 10;
 
     /** Resolve the widget for a node and render its T1.1 metadata suffix, or "". */
-    private String buildWidgetMetadata(GUITreeNode node, MopData mopData, String activity) {
-        if (mopData == null || node == null) return "";
+    private String buildWidgetMetadata(GUITreeNode node, MopContext mop, String activity) {
+        if (mop == null || node == null) return "";
         try {
             String shortId = MopData.extractShortId(node.getResourceID());
             if (shortId.isEmpty()) return "";
-            return widgetMetadata(mopData.getWidget(activity, shortId));
+            return widgetMetadata(mop.data().getWidget(activity, shortId));
         } catch (Exception ignored) { return ""; }
     }
 
@@ -578,30 +618,21 @@ public class ApePromptBuilder {
 
     private String buildExplorationContext(State state,
                                            List<ModelAction> actions,
-                                           MopData mopData,
-                                           String activity) {
+                                           MopContext mop) {
         if (state == null) return "";
 
         int stateVisits = state.getVisitedCount();
-        boolean hasMopData = (mopData != null);
+        boolean hasMopData = (mop != null);
 
-        // Count MOP widgets in actions
+        // Count the MOP actions, per action, with the marker's test (design D22)
         int mopCount = 0;
         int totalTargets = 0;
         if (hasMopData && actions != null) {
             for (ModelAction action : actions) {
                 if (action != null && action.requireTarget()) {
                     totalTargets++;
-                    GUITreeNode node = safeGetResolvedNode(action);
-                    if (node != null) {
-                        String resourceId = node.getResourceID();
-                        String shortId = MopData.extractShortId(resourceId);
-                        if (!shortId.isEmpty()) {
-                            MopData.Widget flags = mopData.getWidget(activity, shortId);
-                            if (flags != null && (flags.directMop || flags.transitiveMop)) {
-                                mopCount++;
-                            }
-                        }
+                    if (mopVerdict(mop, state, action) != MOP_NONE) {
+                        mopCount++;
                     }
                 }
             }
@@ -693,7 +724,7 @@ public class ApePromptBuilder {
     // RVSmart V13 user text — simple element list
     // -------------------------------------------------------------------------
 
-    private String buildRvsmartV13UserText(List<ModelAction> actions, MopData mopData,
+    private String buildRvsmartV13UserText(State state, List<ModelAction> actions, MopContext mop,
                                             List<ActionHistoryEntry> recentActions,
                                             String activity, String activitySimple,
                                             int deviceWidth, int deviceHeight) {
@@ -706,7 +737,7 @@ public class ApePromptBuilder {
             GUITreeNode node = safeGetResolvedNode(widget.get(0));
             String className = simpleClassName(node);
             String displayText = safeGetDisplayText(node);
-            String mopMarker = buildMopMarker(node, mopData, activity);
+            String mopMarker = buildMopMarker(widget, state, mop);
             int[] norm = normalizedCentre(safeGetBounds(node), deviceWidth, deviceHeight);
             sb.append("  ").append(className);
             if (!displayText.isEmpty()) {
@@ -714,7 +745,7 @@ public class ApePromptBuilder {
             }
             if (norm != null) sb.append(" ").append(at(norm));
             if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
-            sb.append(buildWidgetMetadata(node, mopData, activity));
+            sb.append(buildWidgetMetadata(node, mop, activity));
             sb.append("\n");
         }
         if (widgets.isEmpty()) sb.append("  (no elements)\n");
@@ -738,7 +769,7 @@ public class ApePromptBuilder {
     // -------------------------------------------------------------------------
 
     private String buildRvsmartV17UserText(State state, List<ModelAction> actions,
-                                            MopData mopData,
+                                            MopContext mop,
                                             List<ActionHistoryEntry> recentActions,
                                             String activity, String activitySimple,
                                             int deviceWidth, int deviceHeight) {
@@ -764,7 +795,7 @@ public class ApePromptBuilder {
             GUITreeNode node = safeGetResolvedNode(widget.get(0));
             String className = simpleClassName(node);
             String displayText = safeGetDisplayText(node);
-            String mopMarker = buildMopMarker(node, mopData, activity);
+            String mopMarker = buildMopMarker(widget, state, mop);
             int visitCount = 0;
             for (ModelAction action : widget) visitCount += action.getVisitedCount();
             if (visitCount > 0) testedCount++;
@@ -784,7 +815,7 @@ public class ApePromptBuilder {
             if (norm != null) sb.append(" ").append(at(norm));
             sb.append(" ").append(statusTag);
             if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
-            sb.append(buildWidgetMetadata(node, mopData, activity));
+            sb.append(buildWidgetMetadata(node, mop, activity));
             sb.append("\n");
         }
         if (widgets.isEmpty()) sb.append("  (no elements)\n");
@@ -796,7 +827,7 @@ public class ApePromptBuilder {
                 .append(" elements tested | visits: ").append(stateVisits).append("\n");
 
         // MOP navigation context
-        String explorationCtx = buildExplorationContext(state, actions, mopData, activity);
+        String explorationCtx = buildExplorationContext(state, actions, mop);
         if (!explorationCtx.isEmpty()) {
             sb.append("\nMOP NAVIGATION:\n").append(explorationCtx).append("\n");
         }
@@ -811,7 +842,7 @@ public class ApePromptBuilder {
 
     private String buildVisualOnlyUserText(State state,
                                             List<ModelAction> actions,
-                                            MopData mopData,
+                                            MopContext mop,
                                             List<ActionHistoryEntry> recentActions,
                                             String activity,
                                             String activitySimple,
@@ -829,7 +860,7 @@ public class ApePromptBuilder {
             }
         }
 
-        String explorationContext = buildExplorationContext(state, actions, mopData, activity);
+        String explorationContext = buildExplorationContext(state, actions, mop);
         if (!explorationContext.isEmpty()) {
             sb.append(explorationContext).append('\n');
         }

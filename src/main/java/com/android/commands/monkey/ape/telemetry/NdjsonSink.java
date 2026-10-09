@@ -125,6 +125,15 @@ public final class NdjsonSink implements EventSink {
     private int stepRecords;
 
     /**
+     * Written step records whose chosen action's MOP lookup came from a handler stamp
+     * ({@code dec.mops:"s"}), which {@code RUN_END} reports as {@code stampHits} (design D23).
+     * Counted at write, like {@link #stepRecords}: a record is written once, so a step whose
+     * selection was retried counts at most once, and the count is exactly the {@code mops:"s"}
+     * records the trace carries.
+     */
+    private int stampHits;
+
+    /**
      * The {@code t} of the first and last step records written, which {@code RUN_END} carries.
      *
      * <p>Their span against the run's budget is what separates a run that explored for its whole
@@ -212,13 +221,15 @@ public final class NdjsonSink implements EventSink {
     @Override
     public void decision(String action, String decisionSource, String pickChannel, int priority,
             int mop, int mopFrontier, int wtg, int coverage, int menu, int form,
-            String wtgSource, int patched, int cfChanged, String cfAction) {
+            String wtgSource, int patched, int cfChanged, String cfAction, int mopDistance,
+            String mopSource) {
         if (disabled || !pending.isOpen()) {
             return;
         }
         try {
             pending.decision(action, decisionSource, pickChannel, priority, mop, mopFrontier, wtg,
-                    coverage, menu, form, wtgSource, patched, cfChanged, cfAction);
+                    coverage, menu, form, wtgSource, patched, cfChanged, cfAction, mopDistance,
+                    mopSource);
         } catch (Throwable failure) {
             latch("decision", failure);
         }
@@ -249,12 +260,20 @@ public final class NdjsonSink implements EventSink {
     }
 
     /**
-     * Not yet written: task 16.2 puts the indices into the open step record's {@code dec} as
-     * {@code ret} (design D23, event-sink "dec.ret"). Until then the call is accepted and dropped,
-     * so the agent can already make it from {@code moveForward}.
+     * Puts the indices into the open step record's {@code dec} as {@code ret} (design D23,
+     * event-sink "dec.ret"). The record writes {@code dec} when it closes, so the indices survive a
+     * record closed without an {@code out} member.
      */
     @Override
     public void mopRetired(int[] indices) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.mopRetired(indices);
+        } catch (Throwable failure) {
+            latch("mopRetired", failure);
+        }
     }
 
     @Override
@@ -466,7 +485,8 @@ public final class NdjsonSink implements EventSink {
     }
 
     @Override
-    public void runEnd(String reason, String detail, RunCounters counters) {
+    public void runEnd(String reason, String detail, int stampNodes, int retired,
+            RunCounters counters) {
         if (disabled) {
             return;
         }
@@ -488,6 +508,12 @@ public final class NdjsonSink implements EventSink {
             sideBuf.name("counters").beginObject();
             sideBuf.name("acts").value(activityIds.size());
             sideBuf.name("states").value(stateIds.size());
+            // The three MOP-guidance counters (design D23), written on every run and in every arm,
+            // zero included: a zero is the measurement that the APK carried no stamp, that no chosen
+            // lookup came from one, or that nothing retired.
+            sideBuf.name("stampNodes").value(stampNodes);
+            sideBuf.name("stampHits").value(stampHits);
+            sideBuf.name("retired").value(retired);
             if (counters != null) {
                 writeLlmCounters(counters);
             }
@@ -538,6 +564,9 @@ public final class NdjsonSink implements EventSink {
         }
         lastStepT = pending.tRelMs();
         stepRecords++;
+        if (pending.stampHit()) {
+            stampHits++;
+        }
         pending.reset();
     }
 

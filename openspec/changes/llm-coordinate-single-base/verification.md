@@ -295,3 +295,19 @@ Surefire excludes the framework jar (`pom.xml` `classpathDependencyExcludes`), s
 - **Decisions of 2026-10-09**: only a weighted action retires anything (spec "Target Retirement" + new scenario, D19); `ape.mopRetireAfter <= 0` is documented (every target reads as retired, the run explores unguided), never rejected.
 - **Known edge cases, recorded as they are**: with level weights equal or inverted by a plan (e.g. `mopWeightD1 == mopWeightD2`) ties are by weight value, so such levels merge into one tie set; at the d = 3 level the floor is 0, so more than 300 tied actions get a split boost of 0 while `mopWeight` stays 300.
 - Suite `mvn clean test`: 1294 / 0 / 0 / 24; MOP parity goldens unchanged.
+
+## Part B, wave 4 (groups 14–16), 2026-10-09
+
+- **Launcher** (`MopLauncherStageTest`, +7) and **shortcut** (`SataAgentMopShortCircuitTest`, +10): D20 order and rotation, D21 ranking; `flag` launcher identical to the round-robin cursor by cursor.
+- **Marker** (`ApePromptBuilderMopMarkerTest`, 17): one predicate over `MopScorer.weigh` for the marker and the `N/M MOP.` count. `PromptIntegrationTest` 7.1.1-E reads the gh60 full document and never called the builder; it is kept as facts of that analysis input, with its header reworded (author, 2026-10-09).
+- **Telemetry** (`NdjsonSinkTest` +10, `StatefulAgentMopTelemetryTest` 11): `dec.mopd`/`dec.mops` from one `weigh` at the decision call, `dec.ret` through `EventSink.mopRetired`, RUN_END `stampNodes`/`stampHits`/`retired`. `stampNodes` is counted in `StatefulAgent.buildState`, which every capture passes through; that call needs `AccessibilityNodeInfo` and is not JVM-reachable, so 17.2 is its gate. Example records (jshell against `target/classes`):
+
+```
+{"s":120,"t":5321,"act":0,"st":0,"dec":{"a":"model=CLICK@[0,0][1080,200]","src":"MOP","ch":"short_circuit_unvisited","pri":404,"mop":400,"mopx":[3,12],"mopd":2,"mops":"s","ret":[4,11],"patched":0,"cf":{"changed":0}},"out":{"new_state":true,"target":1}}
+{"type":"RUN_END","reason":"timeout","steps":2,"t_first_step":5321,"t_last_step":5400,"counters":{"acts":1,"states":2,"stampNodes":57,"stampHits":2,"retired":2}}
+```
+
+- **Amended (author, 2026-10-09)**: event-sink `mopd` is present when the undivided weight is positive; `mops` records the weight's lookup.
+- **Grep gate 12.3, final**: `getWidget(` in `src/main` only at `ApeAgent.java:244` (typed input), `ApePromptBuilder.java:520` (`buildWidgetMetadata`) and `MopData.java` (definition, id-key step of `lookup`).
+- **MOP parity goldens**: identical after the shortcut ordering (D21) and the marker (D22); no golden reaches a reordering case.
+- Suite `mvn clean test` (integrated): 1349 / 0 / 0 / 24.

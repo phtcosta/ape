@@ -2,18 +2,26 @@ package com.android.commands.monkey.ape.agent.pipeline;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.junit.Test;
 
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
+import com.android.commands.monkey.ape.runtime.MopScoring;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopRetirement;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -77,12 +85,12 @@ public class MopLauncherStageTest {
     @Test
     public void testStageNameIsItsCandidateName() {
         assertEquals(DecisionPipeline.Candidate.MOP_LAUNCHER.stageName(),
-                new MopLauncherStage(50, 0).name());
+                new MopLauncherStage(50, 0, MopScoring.FLAG, 6).name());
     }
 
     @Test
     public void testItFiresExactlyAtTheCadenceAndThenEveryCadencePasses() throws Exception {
-        MopLauncherStage stage = new MopLauncherStage(3, 0);
+        MopLauncherStage stage = new MopLauncherStage(3, 0, MopScoring.FLAG, 6);
         FakeStepContext ctx = stepOver(censusOf("com.example.app.A", "com.example.app.B"));
 
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
@@ -101,7 +109,7 @@ public class MopLauncherStageTest {
 
     @Test
     public void testTheCadenceResetsEvenWhenTheScanFindsNothing() throws Exception {
-        MopLauncherStage stage = new MopLauncherStage(2, 0);
+        MopLauncherStage stage = new MopLauncherStage(2, 0, MopScoring.FLAG, 6);
         FakeStepContext ctx = stepOver(censusOf()); // an empty census: nothing to launch
 
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
@@ -121,7 +129,7 @@ public class MopLauncherStageTest {
     public void testTheBudgetIsSpentOnlyByAnActualLaunch() throws Exception {
         // Cap of 1. The first firing finds nothing (empty census) and must not consume the budget;
         // a stage that decremented at the firing point would never launch anything at all.
-        MopLauncherStage stage = new MopLauncherStage(1, 1);
+        MopLauncherStage stage = new MopLauncherStage(1, 1, MopScoring.FLAG, 6);
         FakeStepContext empty = stepOver(censusOf());
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(empty).kind());
 
@@ -138,7 +146,7 @@ public class MopLauncherStageTest {
 
     @Test
     public void testACapOfZeroIsUnlimited() throws Exception {
-        MopLauncherStage stage = new MopLauncherStage(1, 0);
+        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.FLAG, 6);
 
         for (int i = 0; i < 5; i++) {
             FakeStepContext ctx = stepOver(censusOf("com.example.app.A" + i));
@@ -148,7 +156,7 @@ public class MopLauncherStageTest {
 
     @Test
     public void testTheRoundRobinCursorPersistsAcrossFirings() throws Exception {
-        MopLauncherStage stage = new MopLauncherStage(1, 0);
+        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.FLAG, 6);
         MopData census = censusOf("com.example.app.A", "com.example.app.B", "com.example.app.C");
         FakeStepContext ctx = stepOver(census);
 
@@ -160,5 +168,207 @@ public class MopLauncherStageTest {
         assertNotEquals("the walk resumes where it stopped", first, second);
         assertTrue(Arrays.asList("com.example.app.A", "com.example.app.B", "com.example.app.C")
                 .contains(second));
+    }
+
+    // -------------------------------------------------------------------------
+    // llm-coordinate-single-base Part B, design D20 (task 14.1): the distance order and its
+    // rotation. Under `distance` the eligible activities are ordered by the smallest unretired
+    // activityDist distance <= ape.mopLauncherDmax, then manifest order, those without one last;
+    // the cursor holds the sort position of the last selection and the next candidate is the
+    // first eligible activity after it, wrapping, whatever the launch result. Under `flag` nothing
+    // changes.
+    // -------------------------------------------------------------------------
+
+    private static final String P = "com.example.app.P";
+    private static final String Q = "com.example.app.Q";
+    private static final String R = "com.example.app.R";
+
+    /** The census of {@code classNames} with the given {@code activityDist} entries. */
+    private static MopData withDistances(Map<String, int[][]> activityDist, String... classNames)
+            throws Exception {
+        MopData data = censusOf(classNames);
+        FakeStepContext.setField(data, "activityDist", activityDist);
+        return data;
+    }
+
+    private static Map<String, int[][]> dist(Object... activityThenPairs) {
+        Map<String, int[][]> m = new HashMap<>();
+        for (int i = 0; i < activityThenPairs.length; i += 2) {
+            m.put((String) activityThenPairs[i], (int[][]) activityThenPairs[i + 1]);
+        }
+        return m;
+    }
+
+    private static int[][] pairs(int... flat) {
+        int[][] out = new int[flat.length / 2][];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = new int[] {flat[2 * i], flat[2 * i + 1]};
+        }
+        return out;
+    }
+
+    private static int[] counters(MopRetirement r) throws Exception {
+        java.lang.reflect.Field f = MopRetirement.class.getDeclaredField("counters");
+        f.setAccessible(true);
+        return (int[]) f.get(r);
+    }
+
+    /** Retires {@code targets} of {@code r} (a retirement built to retire at one count). */
+    private static void retire(MopRetirement r, int... targets) throws Exception {
+        for (int i : targets) {
+            counters(r)[i] = 1;
+        }
+    }
+
+    /** Ten targets retiring at one count, {@code retired} already retired. */
+    private static MopRetirement retirement(int... retired) throws Exception {
+        MopRetirement r = new MopRetirement(10, 1);
+        retire(r, retired);
+        return r;
+    }
+
+    private static MopContext distanceContext(MopData data, MopRetirement retirement, int dmax) {
+        return new MopContext(data, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 1, dmax,
+                retirement);
+    }
+
+    /** The class the pure distance walk selects after {@code last}, or null. */
+    private static String byDistance(MopData data, Set<String> visited, MopRetirement retirement,
+            int dmax, long last) {
+        long position = MopLauncherStage.selectByDistance(data.getActivities(), visited,
+                data.getMainActivity(), data.getMopActivities(), data, retirement, dmax, last);
+        return position < 0 ? null
+                : data.getActivities().get(MopLauncherStage.manifestIndex(position)).className;
+    }
+
+    /** Scenario "distance mode launches the nearest eligible activity first". */
+    @Test
+    public void testDistanceOrdersByNearestThenManifestOrderAndVisitedLeave() throws Exception {
+        MopData data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
+                P, Q, R);
+        Set<String> visited = new HashSet<>();
+        long none = MopLauncherStage.NO_SELECTION;
+
+        assertEquals(Q, byDistance(data, visited, null, 6, none));
+        visited.add(Q);
+        assertEquals("same distance 2, later in manifest order",
+                R, byDistance(data, visited, null, 6, none));
+        visited.add(R);
+        assertEquals(P, byDistance(data, visited, null, 6, none));
+        visited.add(P);
+        assertNull(byDistance(data, visited, null, 6, none));
+    }
+
+    /** Scenario "distances beyond the bound and retired targets do not count". */
+    @Test
+    public void testDistancesBeyondDmaxAndRetiredTargetsDoNotCount() throws Exception {
+        MopData data = withDistances(dist(P, pairs(1, 7), Q, pairs(3, 1, 5, 4)), P, Q, R);
+        MopRetirement retirement = retirement(3);
+        Set<String> visited = new HashSet<>();
+        long none = MopLauncherStage.NO_SELECTION;
+
+        assertEquals("Q keyed 4 by its unretired target 5", Q,
+                byDistance(data, visited, retirement, 6, none));
+        visited.add(Q);
+        assertEquals("P (only d = 7 > Dmax) and R (no entry) follow in manifest order", P,
+                byDistance(data, visited, retirement, 6, none));
+        visited.add(P);
+        assertEquals(R, byDistance(data, visited, retirement, 6, none));
+
+        // With Dmax 3 Q's unretired d = 4 no longer counts either: all three are keyless and
+        // manifest order decides.
+        assertEquals(P, byDistance(data, new HashSet<String>(), retirement, 3, none));
+        // Without the retirement Q's key is 1 and it leads under the same bound.
+        assertEquals(Q, byDistance(data, new HashSet<String>(), null, 3, none));
+    }
+
+    /** Ties by manifest order; activities without a distance after every one with one. */
+    @Test
+    public void testTiesGoToManifestOrderAndKeylessActivitiesComeLast() throws Exception {
+        MopData data = withDistances(dist(Q, pairs(1, 3), R, pairs(2, 3)), P, Q, R);
+        Set<String> visited = new HashSet<>();
+        assertEquals("Q and R tie at 3, Q first in the manifest; keyless P is last", Q,
+                byDistance(data, visited, null, 6, MopLauncherStage.NO_SELECTION));
+        visited.add(Q);
+        assertEquals(R, byDistance(data, visited, null, 6, MopLauncherStage.NO_SELECTION));
+        visited.add(R);
+        assertEquals(P, byDistance(data, visited, null, 6, MopLauncherStage.NO_SELECTION));
+    }
+
+    /** Eligibility is unchanged under distance: a distance never makes an activity eligible. */
+    @Test
+    public void testDistanceNeverWidensEligibility() throws Exception {
+        String about = "com.example.app.About";
+        String framework = "androidx.activity.ComponentActivity";
+        MopData data = withDistances(dist(MAIN, pairs(0, 0), about, pairs(1, 0),
+                framework, pairs(2, 0), Q, pairs(3, 5)), MAIN, framework, Q);
+        List<ComponentInfo.ActivityInfo> activities = new ArrayList<>(data.getActivities());
+        activities.add(activity(about)); // declared, outside the census
+        FakeStepContext.setField(data, "activities", activities);
+
+        assertEquals(Q, byDistance(data, new HashSet<String>(), null, 6,
+                MopLauncherStage.NO_SELECTION));
+        assertNull(byDistance(data, new HashSet<>(Collections.singleton(Q)), null, 6,
+                MopLauncherStage.NO_SELECTION));
+    }
+
+    /**
+     * Scenario "a refused launch is not retired under distance": the launch of Q is refused (Q stays
+     * unvisited, so the graph never gains its node), the next firing selects the activity after Q
+     * in the order, and Q comes back only after the rotation wraps.
+     */
+    @Test
+    public void testARefusedLaunchIsPassedByTheRotationAndWraps() throws Exception {
+        MopData data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
+                P, Q, R);
+        MopRetirement retirement = retirement();
+        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.DISTANCE, 6);
+        FakeStepContext ctx = stepOver(data);
+        ctx.mopContext = distanceContext(data, retirement, 6);
+
+        assertEquals(Q, launchedClass(stage.decide(ctx)));
+        assertEquals("the rotation moves past the refused Q", R, launchedClass(stage.decide(ctx)));
+        assertEquals(P, launchedClass(stage.decide(ctx)));
+        assertEquals("wrapped to the head of the order", Q, launchedClass(stage.decide(ctx)));
+
+        int[] counts = counters(retirement);
+        for (int i = 0; i < counts.length; i++) {
+            assertEquals("no target counted by a launch (INV-CT-14)", 0, counts[i]);
+        }
+    }
+
+    /** The order is recomputed at each firing: a target retired since then no longer counts. */
+    @Test
+    public void testTheOrderIsRecomputedAtEachFiring() throws Exception {
+        MopData data = withDistances(dist(P, pairs(1, 1), Q, pairs(2, 2), R, pairs(3, 3)), P, Q, R);
+        MopRetirement retirement = retirement();
+        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.DISTANCE, 6);
+        FakeStepContext ctx = stepOver(data);
+        ctx.mopContext = distanceContext(data, retirement, 6);
+
+        assertEquals(P, launchedClass(stage.decide(ctx))); // position (1, 0)
+        retire(retirement, 2); // Q's only target: Q is keyless now and sorts after R
+        assertEquals(R, launchedClass(stage.decide(ctx))); // position (3, 2)
+        assertEquals("keyless Q comes after R", Q, launchedClass(stage.decide(ctx)));
+    }
+
+    /** Scenario "flag mode keeps the round-robin": activityDist and retirement are not read. */
+    @Test
+    public void testFlagModeKeepsTheRoundRobin() throws Exception {
+        MopData data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
+                P, Q, R);
+        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.FLAG, 6);
+        FakeStepContext ctx = stepOver(data);
+
+        Set<String> none = Collections.emptySet();
+        for (int rr = 0; rr < 4; rr++) {
+            ComponentInfo expected = MopLauncherStage.selectTriggerCandidate(data.getActivities(),
+                    none, MAIN, rr, data.getMopActivities());
+            assertEquals("the pre-change round-robin from the same cursor", expected.className,
+                    launchedClass(stage.decide(ctx)));
+        }
+        assertEquals("the round-robin starts at manifest index 0", P,
+                MopLauncherStage.selectTriggerCandidate(data.getActivities(), none, MAIN, 0,
+                        data.getMopActivities()).className);
     }
 }

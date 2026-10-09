@@ -16,6 +16,7 @@
 package com.android.commands.monkey.ape.tree;
 
 import java.io.Serializable;
+import java.util.ArrayDeque;
 import java.util.Iterator;
 
 import org.w3c.dom.DOMException;
@@ -388,6 +389,36 @@ public class GUITreeNode implements Serializable {
 
     public void setHandlerLongClick(String handlerLongClick) {
         this.handlerLongClick = handlerLongClick;
+    }
+
+    /** Whether the node carries at least one handler stamp, click or long-click (INV-TREE-14). */
+    public boolean hasHandlerStamp() {
+        return handlerClick != null || handlerLongClick != null;
+    }
+
+    /**
+     * The nodes of the tree rooted at {@code root}, the root included, that carry at least one
+     * handler stamp: what one capture adds to {@code RUN_END.counters.stampNodes} (design D23).
+     * Iterative, so a deep hierarchy cannot overflow the stack.
+     */
+    public static int countStampedNodes(GUITreeNode root) {
+        if (root == null) {
+            return 0;
+        }
+        int count = 0;
+        ArrayDeque<GUITreeNode> pending = new ArrayDeque<>();
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            GUITreeNode node = pending.pop();
+            if (node.hasHandlerStamp()) {
+                count++;
+            }
+            Iterator<GUITreeNode> children = node.getChildren();
+            while (children.hasNext()) {
+                pending.push(children.next());
+            }
+        }
+        return count;
     }
 
     public boolean isClickable() {

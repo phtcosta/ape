@@ -6,7 +6,7 @@ import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
-import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopContext;
 
 import java.util.List;
 
@@ -69,7 +69,7 @@ public class LlmEngine {
      * the remainder of the assembled pipeline decides the step (INV-DP-11).
      *
      * <p><b>The five per-step values arrive as arguments and that is deliberate.</b> This object is
-     * built once per run and owned by {@code RunContext}, while {@code mopData} and
+     * built once per run and owned by {@code RunContext}, while {@code mop} and
      * {@code recentActions} belong to the step the calling stage is deciding; sourcing them here
      * would mean holding the agent or its step view, which is exactly the coupling design D2 exists
      * to prevent.
@@ -78,7 +78,7 @@ public class LlmEngine {
      *        when the display cannot be read; not a prompt input
      * @param state the current abstract state
      * @param actions the candidate actions the state offers
-     * @param mopData MOP reachability data for the prompt; may be null
+     * @param mop the run's MOP context for the prompt's markers and context line; may be null
      * @param recentActions the action-history ring the prompt shows; may be null or empty
      * @param mode which hook asked — {@code new-state}, {@code stagnation} or {@code random} — as
      *        the decision sub-event reports it
@@ -87,7 +87,7 @@ public class LlmEngine {
     public ModelAction selectAction(GUITree tree,
                                     State state,
                                     List<ModelAction> actions,
-                                    MopData mopData,
+                                    MopContext mop,
                                     List<ApePromptBuilder.ActionHistoryEntry> recentActions,
                                     String mode) {
         telemetry.countAttempt();
@@ -122,7 +122,7 @@ public class LlmEngine {
             }
 
             // Step 4: build the prompt and record it
-            messages = promptBuilder.build(deviceWidth, deviceHeight, state, actions, mopData, base64,
+            messages = promptBuilder.build(deviceWidth, deviceHeight, state, actions, mop, base64,
                     recentActions);
             telemetry.logPrompt(messages);
 

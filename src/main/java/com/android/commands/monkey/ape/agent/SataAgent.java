@@ -43,6 +43,7 @@ import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.MopScoring;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.model.Graph;
@@ -54,6 +55,8 @@ import com.android.commands.monkey.ape.model.StateActionDiffer;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.utils.Logger;
+import com.android.commands.monkey.ape.utils.MopContext;
+import com.android.commands.monkey.ape.utils.MopRetirement;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.RandomHelper;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -613,8 +616,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     }
 
     /**
-     * The enabled, valid, UNVISITED action with the largest discriminative MOP boost; null
-     * when none exists (the short-circuit is then a no-op — INV-SEL-MOP-02). The unvisited/
+     * The enabled, valid, UNVISITED action carrying a discriminative MOP boost that ranks first
+     * (design D21); null when none exists (the short-circuit is then a no-op — INV-SEL-MOP-02). The unvisited/
      * enabled/valid gating is the {@code ENABLED_VALID_UNVISITED} filter; the ranking is
      * {@link #pickBestMopTarget}.
      */
@@ -628,19 +631,34 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                 excluded, newState.getActivity());
     }
 
-    /** As {@link #pickBestMopTarget(Iterable, ModelAction)} with no exclusion. */
-    static ModelAction pickBestMopTarget(Iterable<ModelAction> candidates) {
-        return pickBestMopTarget(candidates, null);
-    }
-
     /**
-     * The action with the largest discriminative MOP boost ({@code mopBoost > 0}) among the
-     * candidates, ties broken by highest priority; null when none carries a positive boost.
-     * Pure — the caller supplies the already-filtered (unvisited/enabled/valid) candidates.
-     * {@code excluded}, when non-null, is skipped (the INV-FORM-06 form-submit guard).
+     * The MOP shortcut's choice among the candidates carrying a discriminative MOP boost
+     * ({@code mopBoost > 0}); null when none does. The ranking (action-selection "MOP-target greedy
+     * short-circuit", design D21), each key consulted only to break a tie on the keys before it:
+     * <ol>
+     *   <li>an action whose (widget, action type) has no interaction in {@code activity}
+     *       ({@link UICoverageTracker#hasActivityInteraction} of {@link UICoverageTracker#widgetId})
+     *       before every action whose pair has one (INV-SEL-MOP-06);
+     *   <li>the larger undivided weight, {@link ModelAction#getMopWeight()}, not the split boost
+     *       (equal under {@code flag});
+     *   <li>under {@code distance} only, the larger {@link #targetCount};
+     *   <li>the larger priority.
+     * </ol>
+     * Actions equal on every key resolve to the first in candidate order. Pure: the tracker and the
+     * context's retirement are read, never written. The caller supplies the already-filtered
+     * (unvisited/enabled/valid, capped) candidates; {@code excluded}, when non-null, is skipped (the
+     * INV-FORM-06 form-submit guard).
+     *
+     * @param activity the state's activity, the scope of the novelty key and of the lookups
+     * @param tracker the run's coverage tracker, read only
+     * @param mop the run's MOP context; null (no artifact) leaves out the target count
      */
-    static ModelAction pickBestMopTarget(Iterable<ModelAction> candidates, ModelAction excluded) {
+    static ModelAction pickBestMopTarget(Iterable<ModelAction> candidates, ModelAction excluded,
+            String activity, UICoverageTracker tracker, MopContext mop) {
+        boolean byTargets = mop != null && mop.scoring() == MopScoring.DISTANCE;
         ModelAction best = null;
+        boolean bestIsNew = false;
+        int bestTargets = -1; // computed on the first tie that needs it
         for (ModelAction action : candidates) {
             if (action == excluded) {
                 continue;
@@ -648,14 +666,51 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
             if (action.getMopBoost() <= 0) {
                 continue;
             }
-            if (best == null
-                    || action.getMopBoost() > best.getMopBoost()
-                    || (action.getMopBoost() == best.getMopBoost()
-                            && action.getPriority() > best.getPriority())) {
+            boolean isNew = !tracker.hasActivityInteraction(activity,
+                    UICoverageTracker.widgetId(action));
+            if (best == null) {
                 best = action;
+                bestIsNew = isNew;
+                bestTargets = -1;
+                continue;
+            }
+            int cmp = Boolean.compare(isNew, bestIsNew);
+            if (cmp == 0) {
+                cmp = Integer.compare(action.getMopWeight(), best.getMopWeight());
+            }
+            int targets = -1;
+            if (cmp == 0 && byTargets) {
+                if (bestTargets < 0) {
+                    bestTargets = targetCount(mop, activity, best);
+                }
+                targets = targetCount(mop, activity, action);
+                cmp = Integer.compare(targets, bestTargets);
+            }
+            if (cmp == 0) {
+                cmp = Integer.compare(action.getPriority(), best.getPriority());
+            }
+            if (cmp > 0) {
+                best = action;
+                bestIsNew = isNew;
+                bestTargets = targets;
             }
         }
         return best;
+    }
+
+    /**
+     * The shortcut's third key under {@code distance} (design D21): the number of distinct
+     * unretired targets within {@code d + 1} over the pairs of the action's weight's lookup, where
+     * {@code d} is the distance behind its weight — both from the one {@link MopScorer#weigh}; 0
+     * when no lookup has an unretired pair.
+     */
+    private static int targetCount(MopContext mop, String activity, ModelAction action) {
+        MopScorer.Scored scored = MopScorer.weigh(mop, activity, action);
+        if (scored.distance == Integer.MAX_VALUE) {
+            return 0;
+        }
+        return MopRetirement.countWithin(mop.retirement(), scored.lookup.dist,
+                scored.distance + 1);
     }
 
     // mop-target-revisit-cap: per-run count of deterministic MOP picks, keyed by
@@ -829,11 +884,12 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
 
     /**
      * Filters {@code candidates} through the revisit cap, invokes the pure {@link #pickBestMopTarget}
-     * on the eligible subset, and records the selected key (logging once when it reaches the cap).
-     * With the cap disabled this is exactly {@code pickBestMopTarget(candidates, excluded)} with no
-     * counting (INV-SEL-MOP-05).
+     * on the eligible subset with the activity, the coverage tracker and the run's MOP context
+     * (design D21), and records the selected key (logging once when it reaches the cap). With the
+     * cap disabled this is exactly that {@code pickBestMopTarget} call with no counting
+     * (INV-SEL-MOP-05). Both deterministic MOP sites reach the ranking through here.
      */
-    private ModelAction pickCappedMopTarget(Iterable<ModelAction> candidates, ModelAction excluded,
+    ModelAction pickCappedMopTarget(Iterable<ModelAction> candidates, ModelAction excluded,
             String activity) {
         int cap = mopTargetPickCap;
         Iterable<ModelAction> eligible = candidates;
@@ -846,7 +902,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
             }
             eligible = filtered;
         }
-        ModelAction picked = pickBestMopTarget(eligible, excluded);
+        ModelAction picked = pickBestMopTarget(eligible, excluded, activity, getCoverageTracker(),
+                getMopContext());
         if (picked != null) {
             String key = mopPickKey(picked, activity);
             if (recordMopPick(mopTargetPicks, key, cap)) {

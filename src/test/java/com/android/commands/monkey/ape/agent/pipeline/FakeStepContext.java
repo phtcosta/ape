@@ -39,6 +39,8 @@ class FakeStepContext implements StepContext {
     int timestamp = 1;
     Random random;
     MopData mopData;
+    /** When set, the step's MOP context; otherwise the jar-default one over {@link #mopData}. */
+    MopContext mopContext;
     Graph graph;
     ActivityBudgetTracker budgetTracker;
     List<ApePromptBuilder.ActionHistoryEntry> actionHistory = new ArrayList<>();
@@ -51,7 +53,9 @@ class FakeStepContext implements StepContext {
     @Override public int graphStableCounter() { return graphStableCounter; }
     @Override public int timestamp() { return timestamp; }
     @Override public Random random() { return random; }
-    @Override public MopContext mopContext() { return TestMopContexts.defaults(mopData); }
+    @Override public MopContext mopContext() {
+        return mopContext != null ? mopContext : TestMopContexts.defaults(mopData);
+    }
     @Override public Graph graph() { return graph; }
     @Override public ActivityBudgetTracker budgetTracker() { return budgetTracker; }
     @Override public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() { return actionHistory; }

@@ -16,6 +16,7 @@
 package com.android.commands.monkey.ape.telemetry;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import com.android.commands.monkey.ape.runtime.Json;
@@ -37,9 +38,9 @@ import com.android.commands.monkey.ape.runtime.Json;
  * decision path (INV-SNK-07).
  *
  * <p>{@link #writeTo(Json.Buf)} is where the volume rules live (INV-SNK-04/05): the envelope once,
- * a field omitted whenever it equals its documented default, and the two exemptions —
- * {@code patched} and {@code cf} — emitted whenever they are defined at all, because for those the
- * absence is the information.
+ * a field omitted whenever it equals its documented default, and the three exemptions —
+ * {@code patched}, {@code cf} and {@code mopd} — emitted whenever they are defined at all, because
+ * for those the absence is the information.
  */
 final class StepRecord {
 
@@ -78,6 +79,10 @@ final class StepRecord {
     private boolean hasComponentLaunch;
     private int componentResult;
     private String componentError;
+    private int mopDistance = EventSink.ABSENT;
+    private String mopSource;
+    /** {@code dec.ret}: ascending, each index once; null when the step retired nothing. */
+    private int[] retired;
 
     // LLM sub-events, and the dumps staged for the next one.
     private final List<LlmEvent> llm = new ArrayList<LlmEvent>();
@@ -117,7 +122,8 @@ final class StepRecord {
 
     void decision(String action, String decisionSource, String pickChannel, int priority,
             int mop, int mopFrontier, int wtg, int coverage, int menu, int form,
-            String wtgSource, int patched, int cfChanged, String cfAction) {
+            String wtgSource, int patched, int cfChanged, String cfAction, int mopDistance,
+            String mopSource) {
         this.hasDecision = true;
         this.modelAction = true;
         this.action = action;
@@ -134,6 +140,8 @@ final class StepRecord {
         this.patched = patched;
         this.cfChanged = cfChanged;
         this.cfAction = cfAction;
+        this.mopDistance = mopDistance;
+        this.mopSource = mopSource;
     }
 
     void decisionNonModel(String action, String decisionSource, String pickChannel) {
@@ -147,6 +155,42 @@ final class StepRecord {
     void mopExposure(int boosted, int total) {
         this.mopExposureBoosted = boosted;
         this.mopExposureTotal = total;
+    }
+
+    /**
+     * Adds the targets the step's action retired. A selection retry that runs {@code moveForward}
+     * again within the step adds to the indices already held rather than replacing them: the first
+     * retirement happened, and a target retires once, so the union is what the step retired. The
+     * caller's array is copied, never kept.
+     */
+    void mopRetired(int[] indices) {
+        if (indices == null || indices.length == 0) {
+            return;
+        }
+        int[] merged;
+        if (retired == null) {
+            merged = indices.clone();
+        } else {
+            merged = Arrays.copyOf(retired, retired.length + indices.length);
+            System.arraycopy(indices, 0, merged, retired.length, indices.length);
+        }
+        Arrays.sort(merged);
+        int distinct = 0;
+        for (int i = 0; i < merged.length; i++) {
+            if (distinct == 0 || merged[i] != merged[distinct - 1]) {
+                merged[distinct++] = merged[i];
+            }
+        }
+        retired = Arrays.copyOf(merged, distinct);
+    }
+
+    /**
+     * Whether this record's chosen action had its MOP lookup answered by a handler stamp — what
+     * {@code RUN_END.counters.stampHits} counts, once per written record and so at most once per
+     * step, whatever selection retried in between.
+     */
+    boolean stampHit() {
+        return hasDecision && modelAction && EventSink.MOP_SOURCE_STAMP.equals(mopSource);
     }
 
     void componentLaunch(int result, String error) {
@@ -232,6 +276,24 @@ final class StepRecord {
                     buf.name("mopx").beginArray()
                             .value(mopExposureBoosted).value(mopExposureTotal).endArray();
                 }
+                if (mopDistance != EventSink.ABSENT) {
+                    // Exempt from the defaults-omitted rule (INV-SNK-05 as amended): `0` says the
+                    // action's handler is itself a target, absence says the action has no
+                    // distance-based weight.
+                    buf.name("mopd").value(mopDistance);
+                }
+                if (mopSource != null) {
+                    buf.name("mops").value(mopSource);
+                }
+                if (retired != null) {
+                    // Written at close like the rest of `dec`, so it survives a record closed
+                    // without an `out` member.
+                    buf.name("ret").beginArray();
+                    for (int index : retired) {
+                        buf.value(index);
+                    }
+                    buf.endArray();
+                }
                 if (patched != EventSink.ABSENT) {
                     // Exempt from the defaults-omitted rule: `0` says the action had a resolved
                     // target that was not patch-promoted, absence says it had no resolved target,
@@ -315,6 +377,9 @@ final class StepRecord {
         hasComponentLaunch = false;
         componentResult = 0;
         componentError = null;
+        mopDistance = EventSink.ABSENT;
+        mopSource = null;
+        retired = null;
         llmCount = 0;
         stagedSystem = null;
         stagedUser = null;

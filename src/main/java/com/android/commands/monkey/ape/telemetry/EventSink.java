@@ -52,6 +52,16 @@ public interface EventSink {
      */
     int ABSENT = -1;
 
+    /**
+     * {@code dec.mops} for a MOP lookup answered by the node's handler stamp (source
+     * {@code STAMP}, design D17, D23). The wire letter is the sink's vocabulary, so it is named
+     * here rather than at the call site.
+     */
+    String MOP_SOURCE_STAMP = "s";
+
+    /** {@code dec.mops} for a MOP lookup answered by the resource-id key (source {@code ID}). */
+    String MOP_SOURCE_ID = "i";
+
     // --- step lifecycle -------------------------------------------------------------------------
 
     /**
@@ -90,10 +100,22 @@ public interface EventSink {
      * @param patched {@code 0}/{@code 1}, or {@link #ABSENT} when the action has no resolved target
      * @param cfChanged {@code 0}/{@code 1}, or {@link #ABSENT} off the four MOP-sensitive channels
      * @param cfAction the counterfactual action, only when it diverges from the factual pick
+     * @param mopDistance {@code dec.mopd} (design D23): under {@code ape.mopScoring=distance}, the
+     *        distance {@code d} of the nearest unretired target behind the action's MOP weight, or
+     *        {@link #ABSENT} when the action has no such weight (and always under {@code flag}).
+     *        Exempt from the defaults-omitted rule: {@code 0} is a value — the handler is itself a
+     *        target — and is written
+     * @param mopSource {@code dec.mops} (design D23): {@link #MOP_SOURCE_STAMP} or
+     *        {@link #MOP_SOURCE_ID} for the source of the lookup behind the action's MOP weight, in
+     *        both modes and whether or not the action carries a weight; {@code null} when the
+     *        source is {@code NONE} or the action has no resolved target. It travels with the
+     *        decision rather than through a call of its own because, unlike {@code dec.ret}, it is
+     *        known when the decision is made
      */
     void decision(String action, String decisionSource, String pickChannel, int priority,
             int mop, int mopFrontier, int wtg, int coverage, int menu, int form,
-            String wtgSource, int patched, int cfChanged, String cfAction);
+            String wtgSource, int patched, int cfChanged, String cfAction, int mopDistance,
+            String mopSource);
 
     /**
      * Records a finalized non-model action: the event-level actions that carry no priority and no
@@ -278,9 +300,20 @@ public interface EventSink {
      *        API section carried no such parameter, and it is here because the same section
      *        specifies the class name as part of what {@code crash} means, which a bare reason
      *        enum cannot say
+     * @param stampNodes {@code counters.stampNodes} (design D23): the nodes, over every GUI tree the
+     *        run captured, that carried at least one handler stamp, each counted once per capture it
+     *        appears in. A parameter because only the agent sees the trees; written on every run,
+     *        zero included, because a zero is the measurement that the APK was not stamped
+     * @param retired {@code counters.retired} (design D23): the targets retired by the end of the
+     *        run, from the run's retirement counters rather than from the {@code dec.ret} the sink
+     *        saw, so a retirement whose step record was lost is still counted; 0 under
+     *        {@code flag} and without MOP data. {@code counters.stampHits}, the third MOP counter,
+     *        is not a parameter: it counts the written records whose {@code dec.mops} is
+     *        {@link #MOP_SOURCE_STAMP}, which the sink alone knows, and is at most one per step by
+     *        construction
      * @param counters the LLM totals, or {@code null} on a plan with no LLM — in which case the
      *        record carries no LLM counter block at all, since a zeroed one would read as an LLM
      *        that was asked nothing rather than an arm that has none
      */
-    void runEnd(String reason, String detail, RunCounters counters);
+    void runEnd(String reason, String detail, int stampNodes, int retired, RunCounters counters);
 }
