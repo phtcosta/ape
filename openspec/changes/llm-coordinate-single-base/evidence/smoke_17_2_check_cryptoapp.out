@@ -1,0 +1,116 @@
+========================================================================
+run distance: smoke_17_2_cryptoapp_distance.trace.gz
+  RUN_START run_id=20261009T200603Z-1791649800548-ab0f8913 seed=1791649800548 preset=mop mopScoring=distance build={'sha': '5904362', 'time': '2026-10-09T20:04:48Z'}
+  inert=['ape.frontierBoostWeight', 'ape.llmPercentageNoSubstrate', 'ape.mopActivitySourceComponents', 'ape.mopFrontierWeight', 'ape.mopWeightDirect', 'ape.mopWeightTransitive']
+  MOP_DATA {'status': 'loaded', 'formatVersion': 2, 'targets': 27, 'handlers': 2, 'droppedPairs': 0, 'flagged': 3, 'mopActivities': 3, 'sourceDigest': 'sha256:005d6a196fa79d4b6088df8031045d30c52f39c6ae9a85df56eab1903d687213'}
+  RUN_END {'reason': 'timeout', 'steps': 308, 'counters': {'acts': 4, 'states': 26, 'stampNodes': 226, 'stampHits': 41, 'retired': 0}}
+  step records: 308 (with out: 304)
+  dec.src: {'SATA': 250, 'Coverage': 41, 'MOP': 11, 'WTG': 3, 'Component': 2, 'Menu': 1}
+  members present: {'mops': 140, 'mop': 11, 'mopd': 11}
+  mopd values: {3: 10, 2: 1}   mops values: {'s': 41, 'i': 99}
+  ret steps: []
+  MOP picks by widget:
+    btn_cipher_encrypt MODEL_CLICKclass                     {'picks': 31, 'mops=s': 31}
+    buttonGenerateHash MODEL_CLICKclass                     {'picks': 1, 'mops=i': 1, 'mop=400': 1, 'mopd=2': 1}
+    editTextCipherEncrypt MODEL_CLICKclass                  {'picks': 31, 'mops=i': 31}
+    editTextCipherEncrypt MODEL_LONG_CLICK                  {'picks': 31, 'mops=i': 31}
+    editTextMessageDigest MODEL_LONG_CLICK                  {'picks': 1, 'mops=i': 1}
+    executeButton MODEL_CLICKclass                          {'picks': 10, 'mops=s': 10, 'mop=300': 10, 'mopd=3': 10}
+    inputEditText MODEL_CLICKclass                          {'picks': 10, 'mops=i': 10}
+    inputEditText MODEL_LONG_CLICK                          {'picks': 6, 'mops=i': 6}
+    keyEditText MODEL_CLICKclass                            {'picks': 7, 'mops=i': 7}
+    keyEditText MODEL_LONG_CLICK                            {'picks': 5, 'mops=i': 5}
+    spinnerMessageDigest MODEL_CLICKclass                   {'picks': 6, 'mops=i': 6}
+    spinnerMessageDigest MODEL_SCROLL_TOP                   {'picks': 1, 'mops=i': 1}
+  launcher sequence (2): ['CryptographyActivity', 'MessageDigestActivity']
+  activityDist order (static, none retired): [(0, 'CryptographyActivity'), (2, 'CipherActivity'), (2, 'MessageDigestActivity')]
+  activityDist nearest at run end (99 = all retired; retired []): [(0, 'CryptographyActivity'), (2, 'CipherActivity'), (2, 'MessageDigestActivity')]
+  [PASS] MOP_DATA formatVersion 2
+  [PASS] MOP_DATA targets 27 (artifact)
+  [PASS] MOP_DATA handlers 2 (artifact)
+  [PASS] MOP_DATA droppedPairs 0
+  [PASS] RUN_END present
+  [PASS] RUN_END stampNodes > 0
+  [PASS] dec.mops s on a pick
+  [PASS] dec.mopd on MOP picks
+  [FAIL] at least one dec.ret
+========================================================================
+run flag: smoke_17_2_cryptoapp_flag.trace.gz
+  RUN_START run_id=20261009T201120Z-1791689422304-02c1b086 seed=1791689422304 preset=mop mopScoring=flag build={'sha': '5904362', 'time': '2026-10-09T20:04:48Z'}
+  inert=['ape.frontierBoostWeight', 'ape.llmPercentageNoSubstrate', 'ape.mopActivitySourceComponents', 'ape.mopFrontierWeight']
+  MOP_DATA {'status': 'loaded', 'formatVersion': 2, 'targets': 27, 'handlers': 2, 'droppedPairs': 0, 'flagged': 3, 'mopActivities': 3, 'sourceDigest': 'sha256:005d6a196fa79d4b6088df8031045d30c52f39c6ae9a85df56eab1903d687213'}
+  RUN_END {'reason': 'timeout', 'steps': 336, 'counters': {'acts': 4, 'states': 30, 'stampNodes': 217, 'stampHits': 34, 'retired': 0}}
+  step records: 336 (with out: 331)
+  dec.src: {'SATA': 244, 'Coverage': 58, 'MOP': 29, 'Component': 2, 'WTG': 2, 'Menu': 1}
+  members present: {'mops': 143, 'mop': 54}
+  mopd values: {}   mops values: {'i': 109, 's': 34}
+  ret steps: []
+  MOP picks by widget:
+    btn_cipher_encrypt MODEL_CLICKclass                     {'picks': 24, 'mops=s': 24, 'mop=300': 24}
+    buttonGenerateHash MODEL_CLICKclass                     {'picks': 1, 'mops=i': 1, 'mop=300': 1}
+    editTextCipherEncrypt MODEL_CLICKclass                  {'picks': 24, 'mops=i': 24}
+    editTextCipherEncrypt MODEL_LONG_CLICK                  {'picks': 23, 'mops=i': 23}
+    editTextMessageDigest MODEL_CLICKclass                  {'picks': 1, 'mops=i': 1}
+    editTextMessageDigest MODEL_LONG_CLICK                  {'picks': 1, 'mops=i': 1}
+    executeButton MODEL_CLICKclass                          {'picks': 10, 'mops=s': 10, 'mop=300': 10}
+    inputEditText MODEL_CLICKclass                          {'picks': 6, 'mops=i': 6}
+    inputEditText MODEL_LONG_CLICK                          {'picks': 3, 'mops=i': 3}
+    keyEditText MODEL_CLICKclass                            {'picks': 3, 'mops=i': 3}
+    keyEditText MODEL_LONG_CLICK                            {'picks': 4, 'mops=i': 4}
+    spinnerMessageDigest MODEL_CLICKclass                   {'picks': 6, 'mops=i': 6}
+    spinnerMessageDigest MODEL_LONG_CLICK                   {'picks': 1, 'mops=i': 1}
+    spinnerMessageDigest MODEL_SCROLL_BOT                   {'picks': 1, 'mops=i': 1}
+    spinnerMessageDigest MODEL_SCROLL_LEF                   {'picks': 11, 'mops=i': 11}
+    spinnerMessageDigest MODEL_SCROLL_RIG                   {'picks': 4, 'mops=i': 4}
+    spinnerMessageDigest MODEL_SCROLL_TOP                   {'picks': 1, 'mops=i': 1}
+  launcher sequence (2): ['MessageDigestActivity', 'CipherActivity']
+  activityDist order (static, none retired): [(0, 'CryptographyActivity'), (2, 'CipherActivity'), (2, 'MessageDigestActivity')]
+  activityDist nearest at run end (99 = all retired; retired []): [(0, 'CryptographyActivity'), (2, 'CipherActivity'), (2, 'MessageDigestActivity')]
+  [PASS] MOP_DATA formatVersion 2
+  [PASS] MOP_DATA targets 27 (artifact)
+  [PASS] MOP_DATA handlers 2 (artifact)
+  [PASS] MOP_DATA droppedPairs 0
+  [PASS] RUN_END present
+  [PASS] no dec.mopd
+  [PASS] no dec.ret
+========================================================================
+run distance_retire1: smoke_17_2_cryptoapp_distance_retire1.trace.gz
+  RUN_START run_id=20261009T204820Z-1791601362501-4744860e seed=1791601362501 preset=mop mopScoring=distance build={'sha': '5904362', 'time': '2026-10-09T20:04:48Z'}
+  inert=['ape.frontierBoostWeight', 'ape.llmPercentageNoSubstrate', 'ape.mopActivitySourceComponents', 'ape.mopFrontierWeight', 'ape.mopWeightDirect', 'ape.mopWeightTransitive']
+  MOP_DATA {'status': 'loaded', 'formatVersion': 2, 'targets': 27, 'handlers': 2, 'droppedPairs': 0, 'flagged': 3, 'mopActivities': 3, 'sourceDigest': 'sha256:005d6a196fa79d4b6088df8031045d30c52f39c6ae9a85df56eab1903d687213'}
+  RUN_END {'reason': 'timeout', 'steps': 294, 'counters': {'acts': 4, 'states': 31, 'stampNodes': 260, 'stampHits': 35, 'retired': 4}}
+  step records: 294 (with out: 286)
+  dec.src: {'SATA': 212, 'Coverage': 60, 'WTG': 17, 'MOP': 2, 'Component': 2, 'Menu': 1}
+  members present: {'mop': 2, 'mopd': 2, 'mops': 119, 'ret': 2}
+  mopd values: {3: 1, 2: 1}   mops values: {'s': 35, 'i': 84}
+  ret steps: [(2, [16, 17, 18]), (51, [22])]
+  MOP picks by widget:
+    btn_cipher_encrypt MODEL_CLICKclass                     {'picks': 23, 'mops=s': 23}
+    buttonGenerateHash MODEL_CLICKclass                     {'picks': 1, 'mops=i': 1, 'mop=400': 1, 'mopd=2': 1}
+    editTextCipherEncrypt MODEL_CLICKclass                  {'picks': 22, 'mops=i': 22}
+    editTextCipherEncrypt MODEL_LONG_CLICK                  {'picks': 22, 'mops=i': 22}
+    editTextMessageDigest MODEL_CLICKclass                  {'picks': 1, 'mops=i': 1}
+    editTextMessageDigest MODEL_LONG_CLICK                  {'picks': 1, 'mops=i': 1}
+    executeButton MODEL_CLICKclass                          {'picks': 12, 'mops=s': 12, 'mop=300': 1, 'mopd=3': 1}
+    inputEditText MODEL_CLICKclass                          {'picks': 7, 'mops=i': 7}
+    inputEditText MODEL_LONG_CLICK                          {'picks': 3, 'mops=i': 3}
+    keyEditText MODEL_CLICKclass                            {'picks': 5, 'mops=i': 5}
+    keyEditText MODEL_LONG_CLICK                            {'picks': 3, 'mops=i': 3}
+    spinnerMessageDigest MODEL_CLICKclass                   {'picks': 1, 'mops=i': 1}
+    spinnerMessageDigest MODEL_LONG_CLICK                   {'picks': 1, 'mops=i': 1}
+    spinnerMessageDigest MODEL_SCROLL_BOT                   {'picks': 1, 'mops=i': 1}
+    spinnerMessageDigest MODEL_SCROLL_LEF                   {'picks': 14, 'mops=i': 14}
+    spinnerMessageDigest MODEL_SCROLL_RIG                   {'picks': 1, 'mops=i': 1}
+    spinnerMessageDigest MODEL_SCROLL_TOP                   {'picks': 1, 'mops=i': 1}
+  launcher sequence (2): ['MessageDigestActivity', 'CipherActivity']
+  activityDist order (static, none retired): [(0, 'CryptographyActivity'), (2, 'CipherActivity'), (2, 'MessageDigestActivity')]
+  activityDist nearest at run end (99 = all retired; retired [16, 17, 18, 22]): [(0, 'CryptographyActivity'), (2, 'CipherActivity'), (99, 'MessageDigestActivity')]
+  [PASS] MOP_DATA formatVersion 2
+  [PASS] MOP_DATA targets 27 (artifact)
+  [PASS] MOP_DATA handlers 2 (artifact)
+  [PASS] MOP_DATA droppedPairs 0
+  [PASS] RUN_END present
+  [PASS] RUN_END stampNodes > 0
+  [PASS] dec.mops s on a pick
+  [PASS] dec.mopd on MOP picks
+  [PASS] at least one dec.ret
