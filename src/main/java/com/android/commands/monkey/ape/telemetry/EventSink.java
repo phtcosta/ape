@@ -114,6 +114,23 @@ public interface EventSink {
     void mopExposure(int boosted, int total);
 
     /**
+     * Records the targets the step's action retired, for the step's {@code dec.ret} (design D23,
+     * mop-guidance "Target Retirement"): the indices into the artifact's target list whose
+     * retirement counter reached {@code ape.mopRetireAfter} on the first interaction of the
+     * selected action's widget in its activity, ascending, each once.
+     *
+     * <p>It is a separate call because of when the indices exist: retirement is counted at
+     * selection, in {@code StatefulAgent.moveForward}, after {@link #decision} has already run inside
+     * {@code resolveNewAction}. Like {@link #mopExposure} and {@link #componentLaunch}, it adds a
+     * member to the open step's {@code dec} after the decision call; the record writes {@code dec}
+     * when it closes, so the indices survive a record closed without an {@code out} member. Called
+     * only with a non-empty array, and only under {@code ape.mopScoring=distance}.
+     *
+     * @param indices the retired target indices, ascending, non-empty
+     */
+    void mopRetired(int[] indices);
+
+    /**
      * Records the platform's answer to a component launch, on component-trigger steps.
      *
      * <p>It is a separate call because of when the answer exists: the retired {@code [APE-STEP]}

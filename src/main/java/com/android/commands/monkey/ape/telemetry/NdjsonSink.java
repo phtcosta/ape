@@ -248,6 +248,15 @@ public final class NdjsonSink implements EventSink {
         }
     }
 
+    /**
+     * Not yet written: task 16.2 puts the indices into the open step record's {@code dec} as
+     * {@code ret} (design D23, event-sink "dec.ret"). Until then the call is accepted and dropped,
+     * so the agent can already make it from {@code moveForward}.
+     */
+    @Override
+    public void mopRetired(int[] indices) {
+    }
+
     @Override
     public void componentLaunch(int result, String error) {
         if (disabled || !pending.isOpen()) {

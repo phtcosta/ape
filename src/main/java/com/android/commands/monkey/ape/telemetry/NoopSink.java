@@ -57,6 +57,10 @@ public final class NoopSink implements EventSink {
     }
 
     @Override
+    public void mopRetired(int[] indices) {
+    }
+
+    @Override
     public void componentLaunch(int result, String error) {
     }
 

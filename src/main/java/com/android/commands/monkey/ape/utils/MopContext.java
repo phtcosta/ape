@@ -33,8 +33,9 @@ public final class MopContext {
     private final MopRetirement retirement;
 
     /**
-     * @param retirement the run's retirement; null under {@code flag} (INV-MOP-37), and null under
-     *                   {@code distance} until task 13.6 builds it
+     * @param retirement the run's retirement; null under {@code flag} (INV-MOP-37). Under
+     *                   {@code distance} {@link #fromSpec} always builds one; a null one there
+     *                   (tests) retires nothing
      * @throws IllegalArgumentException when a retirement is given under {@code flag}
      */
     public MopContext(MopData data, MopScoring scoring, int weightDirect, int weightTransitive,
@@ -60,17 +61,22 @@ public final class MopContext {
      * null when {@code data} is null (no artifact). A loaded artifact implies the plan carries the
      * MOP feature (INV-MOP-22), so {@code params} is then non-null.
      *
-     * <p>The retirement is null in both modes for now: task 13.6 builds it here under
-     * {@code distance}.
+     * <p>Under {@code distance} it builds the run's {@link MopRetirement}, sized by the artifact's
+     * target count and retiring at {@code ape.mopRetireAfter} (design D19); under {@code flag} the
+     * retirement is null (INV-MOP-37). {@code StatefulAgent} calls this once per run, so the run has
+     * exactly one retirement.
      */
     public static MopContext fromSpec(MopData data, RunSpec.MopParams params) {
         if (data == null) {
             return null;
         }
         Objects.requireNonNull(params, "a loaded artifact needs the plan's MOP parameters");
+        MopRetirement retirement = params.scoring() == MopScoring.DISTANCE
+                ? new MopRetirement(data.targetCount(), params.retireAfter())
+                : null;
         return new MopContext(data, params.scoring(), params.weightDirect(),
                 params.weightTransitive(), params.weightD1(), params.weightD2(),
-                params.weightD3(), params.retireAfter(), params.launcherDmax(), null);
+                params.weightD3(), params.retireAfter(), params.launcherDmax(), retirement);
     }
 
     /** The loaded artifact; never null. */

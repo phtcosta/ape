@@ -7,6 +7,9 @@ import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopScorer;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * rv-scoring-pipeline: the MOP-widget boost, extracted verbatim from the inline block in
  * {@code StatefulAgent.adjustActionsByGUITree()}. Scoring semantics owned by {@code mop-guidance}
@@ -16,6 +19,11 @@ import com.android.commands.monkey.ape.utils.MopScorer;
  * <p>The mode and the widget weights come from the run's {@link MopContext}
  * ({@link ScoringContext#getMopContext()}, design D17 "Plumbing"), which also carries what the
  * {@code distance} mode reads; {@link ScoringParams} still supplies every other pass's weights.
+ *
+ * <p>The pass weighs every scored action of the state first ({@link MopScorer#weigh}), stores each
+ * undivided weight as the action's {@code mopWeight}, then splits the ties at the state's best
+ * level ({@link MopScorer#splitTies}, {@code distance} only, design D18); the split weight is what
+ * is added to the priority and stored as {@code mopBoost}. Under {@code flag} the two are equal.
  */
 public final class MopWidgetPass implements ScoringPass {
 
@@ -53,6 +61,10 @@ public final class MopWidgetPass implements ScoringPass {
         int totalTarget = 0;
         int maxBoost = 0;
         int containmentBoostedCount = 0;
+        // First every scored action's undivided weight (design D18): the tie split needs the
+        // state's best level and how many actions share it.
+        List<ModelAction> scoredActions = new ArrayList<>(actions.length);
+        List<MopScorer.Scored> scores = new ArrayList<>(actions.length);
         for (ModelAction action : actions) {
             if (!action.requireTarget() || !action.isValid()) continue;
             if (!action.isResolvedAt(timestamp)) continue;
@@ -60,13 +72,27 @@ public final class MopWidgetPass implements ScoringPass {
             if (action.getResolvedNode() == null) continue;
             // B3, INV-MOP-23: the lookup runs on the node, up to two ancestors and two levels of
             // descendants; the winning lookup's position says whether containment won the boost.
-            MopScorer.Scored scored = MopScorer.weigh(mop, state, action);
-            int boost = scored.weight;
+            scoredActions.add(action);
+            scores.add(MopScorer.weigh(mop, state, action));
+        }
+        int[] weights = new int[scores.size()];
+        for (int k = 0; k < weights.length; k++) {
+            weights[k] = scores.get(k).weight;
+        }
+        // Then the split: the undivided weight is kept as mopWeight, the split one is the boost
+        // (equal under flag).
+        int[] boosts = MopScorer.splitTies(mop, weights);
+        for (int k = 0; k < weights.length; k++) {
+            ModelAction action = scoredActions.get(k);
+            if (weights[k] > 0) {
+                action.setMopWeight(weights[k]);
+            }
+            int boost = boosts[k];
             if (boost > 0) {
                 action.setPriority(action.getPriority() + boost);
                 action.setMopBoost(boost);
                 boostedCount++;
-                if (scored.index > 0) containmentBoostedCount++;
+                if (scores.get(k).index > 0) containmentBoostedCount++;
                 if (boost > maxBoost) maxBoost = boost;
             }
         }

@@ -3,6 +3,7 @@ package com.android.commands.monkey.ape.utils;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.runtime.MopScoring;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 
 import java.util.ArrayList;
@@ -19,6 +20,8 @@ import java.util.List;
  * match is worth:
  *   direct (flag mode)        → the context's direct weight
  *   transitive only           → the context's transitive weight
+ *   nearest unretired target  → the context's level weight for d (distance mode, before the
+ *                               tie split {@link #splitTies})
  *   OPTIONSMENU gateway       → the caller's open-menu weight
  *   no match                  → 0 (discriminative-only; no activity-level fallback)
  *
@@ -30,25 +33,42 @@ public class MopScorer {
     /**
      * What the MOP-widget pass learns about one action: its weight, and the containment lookup the
      * weight comes from (the <em>weight's lookup</em>, design D19), with its position in
-     * containment order. {@code index > 0} with a positive weight is a containment hit.
+     * containment order. {@code index > 0} with a positive weight is a containment hit. The
+     * retirement trigger counts the targets of the same lookup, so what gives an action its weight
+     * is what retires.
      */
     public static final class Scored {
 
-        /** The action's MOP weight before any tie split; 0 when nothing is known. */
+        /** The action's MOP weight before any tie split (the undivided weight); 0 when nothing is known. */
         public final int weight;
         /**
          * The position of the weight's lookup in {@link #containmentNodes} order: the first lookup
-         * holding the best result (ties go to the earlier node); 0, the action's own node, when the
-         * weight is 0; -1 when the action has no resolved node.
+         * holding the best result (ties go to the earlier node) — under {@code flag} the largest
+         * flag weight, 0 (the action's own node) when every lookup weighs 0; under
+         * {@code distance} the smallest unretired distance, which a lookup holds even when it is
+         * too far to weigh, 0 when no lookup has an unretired pair. -1 when the action has no
+         * resolved node.
          */
         public final int index;
         /** The weight's lookup; {@link MopData.Lookup#NONE} when {@code index} is -1. */
         public final MopData.Lookup lookup;
+        /**
+         * Under {@code distance}, the smallest unretired distance over the containment lookups,
+         * which the weight's lookup holds ({@code dec.mopd}, design D23); {@link Integer#MAX_VALUE}
+         * when no lookup has an unretired pair, and always under {@code flag}, which reads no
+         * distance.
+         */
+        public final int distance;
 
         Scored(int weight, int index, MopData.Lookup lookup) {
+            this(weight, index, lookup, Integer.MAX_VALUE);
+        }
+
+        Scored(int weight, int index, MopData.Lookup lookup, int distance) {
             this.weight = weight;
             this.index = index;
             this.lookup = lookup;
+            this.distance = distance;
         }
 
         static final Scored NOTHING = new Scored(0, -1, MopData.Lookup.NONE);
@@ -94,7 +114,10 @@ public class MopScorer {
      *       going to the earlier lookup. That is exactly the maximum the containment loop took over
      *       its ids before the lookup existed, so an unstamped tree scores as E6 did; with the jar's
      *       weights (direct above transitive) the largest weight is the strongest flag.
-     *   <li>{@code distance}: tasks 13.3/13.4.
+     *   <li>{@code distance}: each lookup holds the smallest distance over its pairs whose target
+     *       the context's retirement has not retired ({@link MopRetirement#nearest}); the lookup
+     *       holding the smallest one wins, ties going to the earlier lookup, and the weight is that
+     *       distance's level ({@link #distanceWeight}). Flags are not read.
      * </ul>
      */
     static Scored best(MopContext mop, List<MopData.Lookup> lookups) {
@@ -114,14 +137,101 @@ public class MopScorer {
                 }
                 return new Scored(bestWeight, bestIndex, lookups.get(bestIndex));
             }
-            case DISTANCE:
-                // Task 13.4 (design D18): the smallest unretired d over the lookups' pairs, its
-                // level weight, ties going to the earlier lookup.
-                throw new UnsupportedOperationException(
-                        "task 13.4: the distance weight of the nearest unretired target (D18)");
+            case DISTANCE: {
+                MopRetirement retirement = mop.retirement();
+                int bestIndex = 0;
+                int bestDistance = Integer.MAX_VALUE;
+                for (int i = 0; i < lookups.size(); i++) {
+                    int d = MopRetirement.nearest(retirement, lookups.get(i).dist,
+                            Integer.MAX_VALUE);
+                    if (d < bestDistance) {
+                        bestDistance = d;
+                        bestIndex = i;
+                    }
+                }
+                return new Scored(distanceWeight(mop, bestDistance), bestIndex,
+                        lookups.get(bestIndex), bestDistance);
+            }
             default:
                 throw new IllegalStateException("unknown MOP scoring mode " + mop.scoring());
         }
+    }
+
+    /**
+     * The {@code distance} weight of a nearest unretired target at distance {@code d} (design D18):
+     * {@code weightD1} for {@code d <= 1}, {@code weightD2} for {@code d = 2}, {@code weightD3} for
+     * {@code d = 3}, 0 from {@code d = 4} on and for {@link Integer#MAX_VALUE} (no pair). The one
+     * mapping from a distance to a weight; the tie split's levels are read off it.
+     */
+    public static int distanceWeight(MopContext mop, int d) {
+        if (d <= 1) {
+            return mop.weightD1();
+        }
+        if (d == 2) {
+            return mop.weightD2();
+        }
+        if (d == 3) {
+            return mop.weightD3();
+        }
+        return 0;
+    }
+
+    /**
+     * The tie split of the {@code distance} mode (design D18, mop-guidance "MopScorer — Priority
+     * Boost"): given the undivided weights of a state's scored actions, the boosts they receive.
+     *
+     * <p>Ties are by weight level: the tied actions are those whose undivided weight equals the
+     * state's best level, the largest positive weight. When there are {@code n > 1} of them, each
+     * receives {@code max(W / n, W_next)}, with {@code W} that weight, integer division, and
+     * {@code W_next} the weight of the next level ({@code weightD2} for the {@code d <= 1} level,
+     * {@code weightD3} for {@code d = 2}, 0 for {@code d = 3}). Every other action keeps its
+     * undivided weight. Under {@code flag} nothing is split. The one tie split; {@code
+     * MopWidgetPass} applies it.
+     *
+     * @return a new array, index-aligned with {@code weights}
+     */
+    public static int[] splitTies(MopContext mop, int[] weights) {
+        int[] boosts = weights.clone();
+        if (mop.scoring() != MopScoring.DISTANCE) {
+            return boosts;
+        }
+        int best = 0;
+        for (int w : weights) {
+            best = Math.max(best, w);
+        }
+        if (best <= 0) {
+            return boosts;
+        }
+        int tied = 0;
+        for (int w : weights) {
+            if (w == best) {
+                tied++;
+            }
+        }
+        if (tied <= 1) {
+            return boosts;
+        }
+        int share = Math.max(best / tied, nextLevelWeight(mop, best));
+        for (int k = 0; k < boosts.length; k++) {
+            if (weights[k] == best) {
+                boosts[k] = share;
+            }
+        }
+        return boosts;
+    }
+
+    /**
+     * The weight of the level after the one weighing {@code levelWeight}, read off
+     * {@link #distanceWeight}: the levels are {@code d <= 1}, {@code d = 2} and {@code d = 3}, and
+     * the level after {@code d = 3} weighs 0.
+     */
+    private static int nextLevelWeight(MopContext mop, int levelWeight) {
+        for (int d = 1; d <= 3; d++) {
+            if (distanceWeight(mop, d) == levelWeight) {
+                return distanceWeight(mop, d + 1);
+            }
+        }
+        return 0;
     }
 
     /**
@@ -275,8 +385,7 @@ public class MopScorer {
                 // Unchanged under flag: the flags decide, whatever the weights.
                 return own.direct || own.transitive;
             case DISTANCE:
-                // A positive weight under the active mode (design D17); the weight is best's,
-                // whose distance case is task 13.4.
+                // A positive weight under the active mode (design D17), from the one mode hook.
                 return best(mop, Collections.singletonList(own)).weight > 0;
             default:
                 throw new IllegalStateException("unknown MOP scoring mode " + mop.scoring());

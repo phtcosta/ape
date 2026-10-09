@@ -10,8 +10,8 @@ import static org.junit.Assert.*;
 
 /**
  * {@link MopContext} (design D17 "Plumbing", API Design "Part B: {@code MopContext}"): built from
- * the plan once the artifact loads, null without an artifact, and never carrying a retirement under
- * {@code flag}.
+ * the plan once the artifact loads, null without an artifact, carrying a retirement under
+ * {@code distance} and never under {@code flag}.
  */
 public class MopContextTest {
 
@@ -50,7 +50,7 @@ public class MopContextTest {
         assertEquals(23, mop.weightD3());
         assertEquals(5, mop.retireAfter());
         assertEquals(4, mop.launcherDmax());
-        assertNull("task 13.6 builds the retirement", mop.retirement());
+        assertNotNull("distance builds the run's retirement (task 13.6)", mop.retirement());
     }
 
     @Test

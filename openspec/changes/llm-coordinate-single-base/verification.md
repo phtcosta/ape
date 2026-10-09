@@ -287,3 +287,11 @@ Surefire excludes the framework jar (`pom.xml` `classpathDependencyExcludes`), s
 - **Grep gate 12.3**: `git grep -n 'getWidget(' -- src/main` → `ApeAgent.java:244` (typed input), `ApePromptBuilder.java:459` (`buildMopMarker`, group 15), `:480` (`buildWidgetMetadata`), `:600` (`buildExplorationContext`, group 15), `MopData.java` (definition and the id-key step of `lookup`). `containmentShortIds` has no hit.
 - **Amended on the author's decisions**: API Design `MopScorer.score(MopContext, State, ModelAction)`; mop-guidance "MopScorer — Priority Boost" and "Parent/child widget granularity reconciliation", design D17: under `flag` the largest flag weight, which is the strongest flag whenever `mopWeightDirect >= mopWeightTransitive`; `ScoringParams` drops the two MOP-widget weights.
 - Suite `mvn clean test`: 1261 / 0 / 0 / 24.
+
+## Part B, wave 3 (tasks 13.3–13.7), 2026-10-09
+
+- **Distance scoring** (`MopScorerDistanceTest`, 13): level weights, retired targets skipped, the tie split `max(W / n, W_next)` by level, `mopWeight` undivided beside the split `mopBoost`. One mapping (`MopScorer.distanceWeight`) and one split (`MopScorer.splitTies`).
+- **Retirement** (`MopRetirementTest`, 11; `StatefulAgentMopRetirementTest`, 9): `moveForward` is reachable from the JVM, so the agent-level scenarios run there: first interaction counts and the second does not; novelty per activity and per action type; a containment-only weight retires its own targets; the retiring step's indices reach `EventSink.mopRetired`; an off-tree LLM tap, `flag`, and no artifact count nothing; a first interaction whose weight is 0 counts nothing.
+- **Decisions of 2026-10-09**: only a weighted action retires anything (spec "Target Retirement" + new scenario, D19); `ape.mopRetireAfter <= 0` is documented (every target reads as retired, the run explores unguided), never rejected.
+- **Known edge cases, recorded as they are**: with level weights equal or inverted by a plan (e.g. `mopWeightD1 == mopWeightD2`) ties are by weight value, so such levels merge into one tie set; at the d = 3 level the floor is 0, so more than 300 tied actions get a split boost of 0 while `mopWeight` stays 300.
+- Suite `mvn clean test`: 1294 / 0 / 0 / 24; MOP parity goldens unchanged.

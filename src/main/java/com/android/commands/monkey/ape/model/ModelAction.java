@@ -92,6 +92,13 @@ public class ModelAction extends Action {
     // of one selection and has no place in the serialized exploration model.
     private transient ModelAction counterfactualPick;
     private int mopBoost;
+    /**
+     * The MOP weight before the {@code distance} mode's tie split (mop-guidance "MopScorer —
+     * Priority Boost", design D18): the undivided weight the MOP shortcut ranks by (D21), stored by
+     * {@code MopWidgetPass} beside the split {@link #mopBoost}. Equal to {@link #mopBoost} under
+     * {@code flag}; 0 when the action has no MOP weight.
+     */
+    private int mopWeight;
     private int wtgBoost;
     /**
      * Which pass wrote {@link #wtgBoost} — {@code wtg}, {@code frontier}, or {@code both} when they
@@ -323,6 +330,7 @@ public class ModelAction extends Action {
     /** Reset the per-mechanism boost telemetry before a fresh scoring pass. */
     public void resetBoosts() {
         this.mopBoost = 0;
+        this.mopWeight = 0;
         this.wtgBoost = 0;
         this.wtgSource = null;
         this.mopFrontierBoost = 0;
@@ -334,6 +342,10 @@ public class ModelAction extends Action {
     public int getMopBoost() { return this.mopBoost; }
 
     public void setMopBoost(int mopBoost) { this.mopBoost = mopBoost; }
+
+    public int getMopWeight() { return this.mopWeight; }
+
+    public void setMopWeight(int mopWeight) { this.mopWeight = mopWeight; }
 
     public int getWtgBoost() { return this.wtgBoost; }
 
