@@ -159,3 +159,96 @@ rest is style: braceless one-line `if`s, one-line `try`/`catch`, `WidgetKey`'s f
 on one line, declaration distance, test-method naming, `Assert.*` imports. None points to a defect.
 The one-line `catch (Exception ignored) {}` the lint flags in `recordActionHistory` is the idiom of
 the surrounding code (four occurrences in `StatefulAgent` at HEAD). Nothing was changed for it.
+
+## Task 8.1: device smoke (2026-10-08)
+
+**Jar.** `target/ape-rv.jar` built after commit `624d1701` (sha256 `3e15e05d…c7bf9`, the same on the
+device); `RUN_START.build` = `{"sha":"624d170","time":"2026-10-08T19:17:51Z"}`.
+
+**Server.** vLLM v0.29.0, image `vllm/vllm-openai:v0.29.0@sha256:c2914767…`, serving
+`Qwen/Qwen3-VL-4B-Instruct-FP8` at the pinned revision `fefbb44c…` with the argv of
+`rvsec-study03-replication-package/experiments/E5b-inloop/config/servers/m1.sh` (`--served-model-name`,
+`--revision`, `--port 30000`, `--max-model-len 8192`, `--max-num-seqs 64`,
+`--enable-auto-tool-choice`, `--tool-call-parser hermes`); no `tool_choice` in the request. Two
+differences, both forced by running outside the campaign compose: `docker run` with
+`-p 30000:30000` (the emulator runs on the host and reaches the server at `10.0.2.2`), and
+`HF_HUB_OFFLINE=1` (the pinned revision was already in the local cache). The compose path the task
+cites (`experiments/E6-campaign/config/docker-compose.e6.yml`) does not exist in that repository;
+`m1.sh` records the campaign argv instead.
+
+**Device.** AVD `RVSec` (`system-images/android-30/google_apis/x86_64`, 420 dpi, physical
+1080 × 1920), started by `scripts/run_emulator.sh`. All 179 calls resolve to the display
+1080 × 1794 through `display_of`, the campaign AVD's base.
+
+**Plan.** `ape.preset=llm`, `ape.llmPromptVariant=v13`, `ape.llmPercentage=0.7`, plus the campaign
+arm's LLM-side values from `E5b-inloop/config/tool.py` (`mop_on_llm_70`, cell A): `llmTemperature=0`,
+`llmTopP=1.0`, `llmTopK=-1`, `llmSnapTolerancePx=150`. `--running-minutes 5 --ape sata`.
+
+**APK.** `test-apks/cryptoapp.apk` (package `br.unb.cic.cryptoapp`), by the author's choice instead
+of `app.eduroam.geteduroam`. As copied into `test-apks/` (gitignored) it does not install on API 30 (`Failure [-124 …]
+resources.arsc … uncompressed and aligned`), so a copy in the session scratchpad was re-zipped with
+`resources.arsc` stored, `zipalign -p 4`'d and re-signed with a throwaway key. The app's code is
+unchanged.
+
+**Two environment findings, not caused by this change.**
+- Run from the `shell` uid, the first event fails: `ActivityTaskManager: Permission Denial:
+  package=null does not belong to uid=2000` → `** Error: SecurityException while injecting event`,
+  because `MonkeyActivityEvent.injectEvent` calls `startActivityAsUser` with a null calling package
+  and API 30 checks it. After `adb root` the run proceeds. CLAUDE.md's standalone recipe now says so.
+- CLAUDE.md's standalone recipe named the package `com.example.cryptoapp`; the APK's is
+  `br.unb.cic.cryptoapp`. Fixed there, with the re-alignment steps.
+
+**Run.** `RUN_END`: `reason=timeout`, 305 steps, 3 activities, 16 states; LLM: 179 calls (169
+`random`, 10 `new-state`), 92 matched, 1 `llm_tap`, 86 `no_match`/`dead_pair`, 0 timeout, 0 HTTP,
+connection, parse, image or internal error, 0 breaker trips; 170 answers carry a
+`repair` tag (for example `missing_y`).
+
+## Task 8.2: trace check
+
+Script `evidence/smoke_trace_check.py`, run on the smoke's trace
+`evidence/smoke_cryptoapp_20261008.trace.gz` (output `evidence/smoke_trace_check.out`). It imports
+`evidence/coordinate_counterfactual.py` for its parsing (`RE_STEP`, `RE_ACTION`,
+`parse_action_rest`, `Act`), arithmetic (`to_normalized`, `contains`) and `display_of`, and
+replaces only the alignment: each list line is read by indentation and paired with one group of
+the step's listed target-requiring actions, grouped by (target `Name`, resolved bounds) in
+first-appearance order; the line's class must equal the group's simple class. The visible centre
+uses `Rect.intersect`'s edge test.
+
+| Check | Smoke | E6 baseline |
+|---|---|---|
+| calls aligned to a listing | 179 / 179 | — |
+| list lines whose `@(x,y)` = `toNormalized(visibleCentre(bounds, W, H))` with the call's display | 904 / 904 (302 lines collapse ≥ 2 actions) | — |
+| lines of widgets disjoint from the display carrying a coordinate | 0 (no such widget listed) | 21,938 lines |
+| unresolved nodes rendering `@(` | 0 (none listed) | — |
+| repeated (Name, bounds) pair in one prompt; line starting with an ordinal | 0; 0 | 274,830 repeated lines |
+| identical bounds with distinct `Name`s keeping a line each | not exercised (0 such pairs) | 4,633 lines |
+| copied answers: tap y − visible-centre y, median per 300-px band | −2, −1, −1, −2 (bands 0–1199; 166 copies, all in [−2, −1]); every copy lands inside its widget | −12 to −105 px |
+| `boundary` outcomes of `click`/`long_click` | 0 | 4,879 non-copies in y > 1686; 559 copies |
+| `dead_pair` share of LLM decisions | 86 / 179 = 48.0 % | 40.7 % (cal_a1 27.5 %) |
+| executed actions decided by the LLM | 93 / 305 = 30.5 % | — |
+| off-tree taps within 2 px of an earlier one in the state; below y = 1686 | 0 of 1; 0 | — |
+| history entries with a coordinate outside [0,999] | 0 of 879 | 2,860 entries |
+| history entries whose result agrees with the entry's own step (D12) | 879 / 879 | — |
+| class-less history entries at `@(0,0)` (D9) | 0 | 47,573 entries |
+| `v13` system messages containing `unvisited` (D14) | 0 / 179 | all |
+| history entries with a full package class (D13) | 0 of 806 node entries | all 555,981 |
+| text-less entries whose list line shows a label (D13; `evidence/smoke_history_fields.py`, which runs `history_fields_scan.scan` with the list read without an ordinal and in the history's base) | 0 (194 show `id=`, P2; 6 no identifier; 133 unmatched: popup or widget gone) | 22,312 |
+
+The D12 check takes each entry's step from the trace's model-action steps in order and compares the
+result with that step's recorded transition: `out.target` against the step's own `st`
+(`same`), against the previous step's `st` (`previous screen`), else `new screen`. `out.target` and
+not the next record's `st`: in 3 steps they differ, because a refinement in the next update renames
+the state after the fill has run. One step (288) selected a model action that the restart check
+replaced (`Try to restart package … for start action`, no `out`): the next prompt shows 4 entries
+and none for that action, which is the WR-01 repair on the device. Without excluding it the check
+reported 9 shifted entries.
+
+The dead-pair share is above E6's. The run is 5 minutes on one small APK whose `MessageDigestActivity`
+took 166 of 179 calls, so repeated copies of the same few widgets reach five strikes quickly; the
+design's risk "[The live gain depends on the dead-pair ban, …]" predicts a higher share under
+correct copies, and this run is too small to size it.
+
+**Not exercised by this APK:** landscape calls, widgets partly or wholly outside the display,
+zero-area nodes, unresolved list nodes, container/child pairs with identical bounds, answers outside
+[0,999], and AlertDialog states (the only overlay was the Spinner's dropdown popup, whose
+`ListView`/`TextView` lines aligned and passed like the others).

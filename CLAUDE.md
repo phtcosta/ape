@@ -40,12 +40,22 @@ scripts/run_emulator.sh          # starts emulator @RVSec and blocks
 Then in another terminal:
 
 ```bash
+adb root                         # API 30 (the RVSec AVD): as the shell uid the first launch is denied
 adb push target/ape-rv.jar /data/local/tmp/
-adb install test-apks/cryptoapp.apk
+adb install -r -g cryptoapp-aligned.apk   # see below: test-apks/cryptoapp.apk needs re-aligning first
 adb shell CLASSPATH=/data/local/tmp/ape-rv.jar app_process /system/bin \
-  com.android.commands.monkey.Monkey -p com.example.cryptoapp \
+  com.android.commands.monkey.Monkey -p br.unb.cic.cryptoapp \
   --running-minutes 1 --ape sata
 ```
+
+Two things the AVD imposes (found in the llm-coordinate-single-base smoke, 2026-10-08):
+- **`adb root`.** `MonkeyActivityEvent` launches the app through `startActivityAsUser` with a null
+  calling package. On API 30 the `shell` uid gets `Permission Denial: package=null does not belong
+  to uid=2000`, and Monkey stops at event 1 with `SecurityException while injecting event`.
+- **Re-aligned APK.** `test-apks/cryptoapp.apk` targets API 33 with a compressed `resources.arsc`,
+  which API 30 refuses (`Failure [-124 …]`). Work on a copy outside the repository: store
+  `resources.arsc` uncompressed (`zip -0`), drop `META-INF/` signatures, `zipalign -p -f 4`, and
+  re-sign with `apksigner` and a throwaway key.
 
 **Test APKs** (`test-apks/` — `.apk` files are gitignored, copy from rv-android results):
 

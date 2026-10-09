@@ -1,0 +1,25 @@
+RUN_END: {"calls": 179, "tok_in": 231333, "tok_out": 4770, "ms": 89692, "matched": 92, "llm_tap": 1, "no_match": 86, "dead_pair": 86, "repaired": 170, "timeout": 0, "http_error": 0, "conn_error": 0, "parse_error": 0, "image_error": 0, "internal_error": 0, "screenshot_failed": 0, "breaker_trips": 0}
+align_yes                                179
+calls                                    179
+copied                                   166
+display:1080x1794                        179
+hist_entries                             879
+hist_result_ok                           879
+hist_target_differs_from_next_st         3
+list_coord_ok                            904
+list_lines                               904
+list_lines_collapsed                     302
+model_steps_replaced_by_restart          1
+result:llm_tap                           1
+result:matched                           92
+result:no_match/dead_pair                86
+steps                                    305
+steps_llm_decision                       93
+dead_pair share: 86/179 = 48.0%
+LLM-decided executed steps: 93/305 = 30.5%
+copy tap y - visible-centre y, median by band:
+  0-299      n=30   median=-2.0 min=-2 max=-1
+  300-599    n=121  median=-1 min=-2 max=-1
+  600-899    n=14   median=-1.0 min=-1 max=-1
+  900-1199   n=1    median=-2 min=-2 max=-2
+  ALL        n=166  median=-1.0 min=-2 max=-1
