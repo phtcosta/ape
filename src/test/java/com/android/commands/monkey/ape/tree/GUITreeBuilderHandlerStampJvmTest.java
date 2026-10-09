@@ -2,6 +2,7 @@ package com.android.commands.monkey.ape.tree;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 
 import org.junit.Test;
 
@@ -35,6 +36,17 @@ public class GUITreeBuilderHandlerStampJvmTest {
 
         assertEquals("com.x.Foo$1", node.getHandlerClick());
         assertEquals("com.x.Foo$2", node.getHandlerLongClick());
+    }
+
+    /** Two captures of one stamp share one interned string, as fillNode's other strings do. */
+    @Test
+    public void stampsAreInterned() {
+        Bundle first = new Bundle();
+        first.putString("rvsec.click", new String("com.x.Interned$1"));
+        Bundle second = new Bundle();
+        second.putString("rvsec.click", new String("com.x.Interned$1"));
+
+        assertSame(capture(first).getHandlerClick(), capture(second).getHandlerClick());
     }
 
     @Test

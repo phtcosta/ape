@@ -138,6 +138,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     private final MopContext _mopContext;
 
     /**
+     * The weight's lookup of the model action selected at this step when it is a counted first
+     * interaction (design D19), held from {@code moveForward} until {@link #checkRestart} decides
+     * whether the action runs; null otherwise.
+     */
+    private MopData.Lookup _pendingRetirement;
+
+    /**
      * {@code RUN_END.counters.stampNodes} (design D23): the nodes, over every GUI tree this agent
      * captured, that carried at least one handler stamp. Counted in {@link #buildState}, the one
      * place every capture passes through; telemetry only, read by teardown and nothing else.
@@ -1539,7 +1546,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // gh9: record interaction and budget iteration before shifting state pointers
         if (newAction != null && newState != null) {
             // Retirement counts the first interaction, so it reads the tracker before it records.
-            countTargetRetirement(newState, newAction);
+            _pendingRetirement = pendingRetirement(newState, newAction);
             _coverageTracker.recordInteraction(newState, newAction);
             if (_budgetTracker != null) {
                 _budgetTracker.recordIteration(newState.getActivity());
@@ -1549,35 +1556,40 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * Target retirement at selection (mop-guidance "Target Retirement", design D19, INV-MOP-37):
-     * under {@code ape.mopScoring=distance}, when the selected action is the first interaction of
-     * its widget in its activity ({@code hasActivityInteraction(activity, widgetId(action))} false;
-     * novelty per {@code xpath|ActionType}), the targets of the action's weight's lookup are counted
-     * once. The weight's lookup is the one {@link MopScorer#weigh} gave the action its weight from
+     * Target retirement, taken at selection (mop-guidance "Target Retirement", design D19,
+     * INV-MOP-37): under {@code ape.mopScoring=distance}, when the selected action is the first
+     * interaction of its widget in its activity ({@code hasActivityInteraction(activity,
+     * widgetId(action))} false; novelty per {@code xpath|ActionType}), the action's weight's lookup
+     * is the pending count, which {@link #checkRestart} applies once the action survives it. The weight's lookup is the one {@link MopScorer#weigh} gave the action its weight from
      * — the containment lookup holding its smallest unretired distance, ties to the earlier node —
      * so what gives an action its weight is what retires. Only a weighted action counts: nothing is
      * counted when its weight before the tie split is 0 (no unretired pair, or none within d <= 3;
      * a target does not retire through exploration it did not attract), when the action has no
      * resolved node (an off-tree LLM tap), or under {@code flag}, where the context carries no
-     * retirement. Targets that retire on this
-     * call reach the open step record through {@link EventSink#mopRetired} ({@code dec.ret}, design
-     * D23), because the decision call has already run in {@code resolveNewAction}.
+     * retirement.
+     *
+     * @return the weight's lookup to count, or null when nothing is to be counted
      */
-    private void countTargetRetirement(State state, ModelAction action) {
+    private MopData.Lookup pendingRetirement(State state, ModelAction action) {
         MopContext mop = _mopContext;
-        MopRetirement retirement = mop == null ? null : mop.retirement();
-        if (retirement == null) {
-            return;
+        if (mop == null || mop.retirement() == null) {
+            return null;
         }
         if (_coverageTracker.hasActivityInteraction(state.getActivity(),
                 UICoverageTracker.widgetId(action))) {
-            return;
+            return null;
         }
         MopScorer.Scored scored = MopScorer.weigh(mop, state, action);
-        if (scored.weight <= 0) {
-            return;
-        }
-        int[] retired = retirement.onFirstInteraction(scored.lookup);
+        return scored.weight > 0 ? scored.lookup : null;
+    }
+
+    /**
+     * Counts the pending first interaction (design D19). Targets that retire on this call reach the
+     * open step record through {@link EventSink#mopRetired} ({@code dec.ret}, design D23), because
+     * the decision call has already run in {@code resolveNewAction}.
+     */
+    private void countTargetRetirement(MopData.Lookup weightLookup) {
+        int[] retired = _mopContext.retirement().onFirstInteraction(weightLookup);
         if (retired.length > 0) {
             RunContext.current().sink().mopRetired(retired);
         }
@@ -2017,10 +2029,19 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * (design D12). The entry is the last one with an empty result: the update fills every earlier
      * entry before resolveNewAction runs, so a recording that failed, or a run without the LLM,
      * leaves nothing to remove. The other startNewEpisode callers do not come through here.
+     *
+     * <p>The same holds for target retirement (design D19): the count {@code moveForward} took for
+     * the selected action is applied only when the action survives, and discarded when the restart
+     * replaces it.
      */
     @Override
     protected Action checkRestart(Action origin) {
         Action action = super.checkRestart(origin);
+        MopData.Lookup pending = _pendingRetirement;
+        _pendingRetirement = null;
+        if (pending != null && action == origin) {
+            countTargetRetirement(pending);
+        }
         if (action != origin && origin.isModelAction() && _actionHistory != null
                 && !_actionHistory.isEmpty()) {
             int last = _actionHistory.size() - 1;

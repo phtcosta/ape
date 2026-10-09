@@ -32,6 +32,11 @@ public class StringCache {
         return cacheString(string, false);
     }
 
+    /** {@link #cacheString(String)}, keeping null as null for a field whose absence is a value. */
+    public static String cacheStringNullable(String string) {
+        return string == null ? null : cacheString(string);
+    }
+
     public static String cacheString(String string, boolean addToList) {
         if (string == null) {
             throw new NullPointerException("Cannot cache null string.");

@@ -1,5 +1,10 @@
 package com.android.commands.monkey.ape.agent;
 
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertNotSame;
+import java.util.LinkedList;
+import com.android.commands.monkey.ape.model.StateTransition;
+import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.llm.PromptFixtures.TestName;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.LlmTapAction;
@@ -153,11 +158,27 @@ public class StatefulAgentMopRetirementTest {
         return action;
     }
 
-    /** {@code updateStateInternal}'s selection of {@code action} on {@code state}, then moveForward. */
-    private void select(State state, ModelAction action) {
+    /**
+     * {@code updateStateInternal}'s selection of {@code action} on {@code state} (moveForward), then
+     * the restart check {@code ApeAgent.updateState} applies to the action it returns.
+     */
+    private Action select(State state, ModelAction action) {
         agent.newState = state;
         agent.newAction = action;
         agent.moveForward();
+        return agent.checkRestart(action);
+    }
+
+    /** {@code checkRestart} replaces the selected action with {@code getStartAction}; no device. */
+    static class RestartingAgent extends SataAgent {
+        RestartingAgent() {
+            super(null, null);
+        }
+
+        @Override
+        protected Action getStartAction(ActionType actionType) {
+            return new Action(actionType);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -267,6 +288,31 @@ public class StatefulAgentMopRetirementTest {
         assertEquals(0, count(r, 5));
         assertEquals(0, count(r, 9));
         assertTrue(retiredCalls.isEmpty());
+    }
+
+    /**
+     * Scenario "an action a restart replaces counts nothing": the count taken at selection is
+     * discarded when {@code checkRestart} replaces the action, which then never runs.
+     */
+    @Test
+    public void anActionARestartReplacesCountsNothing() throws Exception {
+        RestartingAgent restarting = allocate(RestartingAgent.class);
+        setField(restarting, "_coverageTracker", tracker);
+        setField(restarting, "actionBuffer", new LinkedList<StateTransition>());
+        setField(restarting, "restart", true);
+        agent = restarting;
+        MopRetirement r = install(artifact(
+                "\"w\":{\"dist\":{\"click\":[[22,2]]}}")).retirement();
+        ModelAction click = action("//w", ActionType.MODEL_CLICK, node(null, "Button", "w"));
+
+        Action dispatched = select(state(ACT), click);
+        assertNotSame("the restart replaced the selected action", click, dispatched);
+        assertEquals(0, count(r, 22));
+        assertTrue(retiredCalls.isEmpty());
+
+        // The same selection that survives the restart check counts.
+        assertSame(click, select(state(OTHER), click));
+        assertEquals(1, count(r, 22));
     }
 
     /** Scenario "an off-tree LLM tap never counts". */

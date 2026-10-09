@@ -237,7 +237,7 @@ public abstract class ApeAgent implements Agent {
             MopData md = getMopData();
             if (md != null) {
                 String activity = ape.getTopActivityClassName();
-                // INV-MOP-23 (amended): walk the same containment nodes as the MOP scoring pass,
+                // INV-MOP-23: walk the same containment nodes as the MOP scoring pass,
                 // not an exact-id-only lookup. Typed input reads the id key on each node, because
                 // the static metadata is keyed by id; the node itself is tried first.
                 for (GUITreeNode candidate : MopScorer.containmentNodes(node)) {

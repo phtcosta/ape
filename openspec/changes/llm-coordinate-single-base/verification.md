@@ -317,3 +317,12 @@ Surefire excludes the framework jar (`pom.xml` `classpathDependencyExcludes`), s
 - **17.1**: `-Dape.oracle.regenerate=true` on `ParityOracleMopTest`, `ParityOracleLlmMopTest`, `PreemptionGoldenTest` at `adc194f0`: 0 decision lines differ from the goldens of 10.4 (only `capturedAt`); reverted and kept, as decided for 10.4. Under `flag` with the unstamped scripted fixtures, neither the shortcut ordering (D21) nor the marker (D22) reaches a golden decision.
 - **Package**: `mvn package -DskipTests` → `target/ape-rv.jar` (303,720 bytes), `BuildInfo.GIT_SHA` `adc194f`.
 - **17.4**: `openspec validate --strict` valid; `/sdd-verify` PASS: `mvn clean test` 1349 run, 0 failures, 0 errors, 24 skipped (18 `@Ignore`, 6 `Assume`); lint skipped (`.sdd/sdd-config.yaml` `linter: none`, `checkstyle` not on PATH); complexity: no tool for Java.
+
+## Part B code review (2026-10-09)
+
+`/sdd-code-reviewer` on `f3122cee..1888af7d -- src`: verdict COMMENT, 0 critical, 2 warnings, 9 notes. Both warnings were checked in the code before they were reported.
+
+- **WR-01** (confirmed): retirement was counted in `moveForward`, inside `updateStateInternal`, before `ApeAgent.updateState` applies `checkRestart` (`ApeAgent.java:363`), so an action a restart replaced, which never runs, still counted. Author's decision: the count is pending until `checkRestart`; repaired in task 17.5 (artifacts amended: INV-MOP-37, "Target Retirement" + scenario, event-sink `dec.ret`, design D19/D23/API/Data Flow).
+- **WR-02** (confirmed): the stamp strings bypassed `StringCache`. Repaired in 17.6. The reviewer's suggested `StringCache.cacheString` throws on null; `cacheStringNullable` composes it.
+- **Notes**: NT-04, NT-05, NT-07, NT-09 applied; NT-01, NT-02, NT-03 documented; NT-06 (event normalization repeated per lookup) and NT-08 (stamp in the XML dump) not applied.
+- Suite `mvn clean test`: 1351 / 0 / 0 / 24.

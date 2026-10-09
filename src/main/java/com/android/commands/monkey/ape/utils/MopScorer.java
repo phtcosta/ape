@@ -124,9 +124,9 @@ public class MopScorer {
      *
      * <ul>
      *   <li>{@code flag}: each lookup weighs {@link #flagWeight}; the largest weight wins, ties
-     *       going to the earlier lookup. That is exactly the maximum the containment loop took over
-     *       its ids before the lookup existed, so an unstamped tree scores as E6 did; with the jar's
-     *       weights (direct above transitive) the largest weight is the strongest flag.
+     *       going to the earlier lookup. On an unstamped tree every lookup is the id key of its node,
+     *       so the result is the E6 mark; with the jar's weights (direct above transitive) the
+     *       largest weight is the strongest flag.
      *   <li>{@code distance}: each lookup holds the smallest distance over its pairs whose target
      *       the context's retirement has not retired ({@link MopRetirement#nearest}); the lookup
      *       holding the smallest one wins, ties going to the earlier lookup, and the weight is that
@@ -349,7 +349,7 @@ public class MopScorer {
      * {@code 0} when the state's activity is not MOP-bearing (cheap early-out, no widget
      * resolution); otherwise {@code 1 + count}, where {@code count} counts the actions whose
      * resolved node's <em>own</em> lookup ({@link MopData#lookup} on the node alone, no
-     * containment, as before; design D17) counts toward density under the context's mode: under
+     * containment; design D17) counts toward density under the context's mode: under
      * {@code flag}, a direct or transitive flag for the action's own event type; under
      * {@code distance}, a positive weight.
      *
@@ -441,7 +441,7 @@ public class MopScorer {
         try {
             GUITreeNode node = action.getResolvedNode();
             return node != null ? node.getClassName() : null;
-        } catch (Throwable t) {
+        } catch (RuntimeException e) {
             return null;
         }
     }

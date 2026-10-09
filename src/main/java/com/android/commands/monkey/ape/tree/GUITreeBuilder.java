@@ -645,8 +645,10 @@ public class GUITreeBuilder {
                 longClick = null;
             }
         }
-        node.setHandlerClick(click);
-        node.setHandlerLongClick(longClick);
+        // Interned like every other string fillNode keeps: a stamped node's class name is long,
+        // and every captured tree of a state is retained.
+        node.setHandlerClick(StringCache.cacheStringNullable(click));
+        node.setHandlerLongClick(StringCache.cacheStringNullable(longClick));
     }
 
     private Element getFirstChildElement(Element e) {

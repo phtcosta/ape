@@ -154,7 +154,7 @@ public class StatefulAgentMopTelemetryTest {
 
     /**
      * One step as {@code updateStateInternal} runs it for a model action: the record opens, the
-     * decision is recorded, and {@code moveForward} counts retirement against the selected action.
+     * decision is recorded, {@code moveForward} takes the retirement count, and the restart check applies it.
      */
     private void select(State state, ModelAction action) {
         RunContext.current().sink().beginStep(++step, step, ACT, true, "S1");
@@ -162,6 +162,7 @@ public class StatefulAgentMopTelemetryTest {
         agent.newState = state;
         agent.newAction = action;
         agent.moveForward();
+        agent.checkRestart(action);
     }
 
     /** The {@code dec} of the one step record {@link #select} wrote for {@code action}. */

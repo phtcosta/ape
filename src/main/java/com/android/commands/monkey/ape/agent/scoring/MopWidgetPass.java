@@ -11,14 +11,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * rv-scoring-pipeline: the MOP-widget boost, extracted verbatim from the inline block in
- * {@code StatefulAgent.adjustActionsByGUITree()}. Scoring semantics owned by {@code mop-guidance}
- * (MopScorer — Priority Boost); this pass only re-homes the wiring. Enabled whenever MOP data is
- * present ({@code mopContext != null}).
+ * rv-scoring-pipeline: the MOP-widget boost. Scoring semantics are owned by {@code mop-guidance}
+ * (MopScorer — Priority Boost): the pass weighs every target action of the state through
+ * {@link MopScorer#weigh}, stores each undivided weight as the action's {@code mopWeight}, then splits
+ * the ties of the state's best level ({@link MopScorer#splitTies}) into {@code mopBoost} and the
+ * priority (design D18). Enabled whenever MOP data is present ({@code mopContext != null}).
  *
  * <p>The mode and the widget weights come from the run's {@link MopContext}
  * ({@link ScoringContext#getMopContext()}, design D17 "Plumbing"), which also carries what the
- * {@code distance} mode reads; {@link ScoringParams} still supplies every other pass's weights.
+ * {@code distance} mode reads; {@link ScoringParams} supplies every other pass's weights.
  *
  * <p>The pass weighs every scored action of the state first ({@link MopScorer#weigh}), stores each
  * undivided weight as the action's {@code mopWeight}, then splits the ties at the state's best
