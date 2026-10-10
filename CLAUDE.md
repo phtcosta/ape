@@ -73,7 +73,7 @@ rv-android/results/cli_experiment_20260305_155802_9bd8c909/instrumented_apks/cry
 
 The `.mop.json` is not copied — it is **derived** from the `.json` beside it by rv-android's
 `aperv_tool/tools/aperv/derive_mop_artifact.py`, which is where every derivation rule now lives.
-`openspec/changes/llm-coordinate-single-base/evidence/derive_fixtures.py <rv-android root>` (run with
+`openspec/changes/archive/2026-10-09-llm-coordinate-single-base/evidence/derive_fixtures.py <rv-android root>` (run with
 `python3 -I -B`) re-derives this pair and the two test fixtures (`src/test/resources/cryptoapp.apk.mop.json`,
 `src/test/resources/synthetic-activity-selection.mop.json`, the latter from the synthetic
 `.apk.json` beside it) through the same library calls `tool.py` uses.

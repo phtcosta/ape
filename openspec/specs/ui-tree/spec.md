@@ -16,7 +16,7 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 
 ### Input
 
-- **`GUITreeBuilder`** receives an `AccessibilityNodeInfo` root obtained from the Android `AccessibilityService` via `AndroidDevice.getCurrentGUITree()`. Each node in the accessibility tree contributes one `GUITreeNode`. Attributes read per node: class name (String), resource-id (String, nullable), text (String, nullable), content-description (String, nullable), screen bounds (Rect), clickable (boolean), long-clickable (boolean), scrollable (boolean), enabled (boolean), child count (int).
+- **`GUITreeBuilder`** receives an `AccessibilityNodeInfo` root obtained from the Android `AccessibilityService` via `AndroidDevice.getCurrentGUITree()`. Each node in the accessibility tree contributes one `GUITreeNode`. Attributes read per node: class name (String), resource-id (String, nullable), text (String, nullable), content-description (String, nullable), screen bounds (Rect), clickable (boolean), long-clickable (boolean), scrollable (boolean), enabled (boolean), child count (int). From the node's extras bundle, only the two handler-stamp keys written by an APK instrumented with rv-android gh121 `--stamp-handlers`: `rvsec.click` and `rvsec.longClick` (String, nullable; the binary class name of the click and long-click handler), kept as `GUITreeNode.getHandlerClick()` / `getHandlerLongClick()` (INV-TREE-14). They are null on an unstamped APK, and on a missing bundle, a missing key, a non-string value or an extras read that throws.
 - **`GUITreeNode.resetActions(ActionType[])`** accepts an array of `ActionType` values. The array MUST NOT contain `MODEL_BACK`, `MODEL_MENU`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `FUZZ`, or `EVENT_ACTIVATE`.
 - **`GUITreeWidgetDiffer`** accepts two `GUITree` instances (expected, observed) of compatible structure for diff computation.
 
@@ -56,9 +56,12 @@ Scroll direction assignment is non-trivial because Android's accessibility API d
 - **INV-TREE-10**: After `clearChildren` returns without a logged DOM abort, the DOM element SHALL have zero children; the in-memory child list SHALL be empty in every case.
 - **INV-TREE-11**: When `Config.treeEnhancementsEnabled` is `true` (default), the WebView-removal threshold SHALL be evaluated over actionable descendants only; when the flag is `false` (the `ape_pure` arm), it is evaluated over the total descendant count (upstream over-prune) — scoped by `rv-scoring-pipeline`.
 - **INV-TREE-12**: `clearChildren` SHALL NOT propagate `DOMException` to its caller; a rejected removal degrades to a logged partial DOM prune. (Always-on: a crash/correctness fix, never gated by `treeEnhancementsEnabled`, so it holds in the `ape_pure` arm too.)
+- **INV-TREE-14**: Every `GUITreeNode` built from an accessibility node SHALL carry, as `handlerClick` and `handlerLongClick`, the string values of that node's extras `rvsec.click` and `rvsec.longClick`, or null when the bundle, the key or a string value is missing, or when reading the extras throws. No other extra SHALL be read. The two fields SHALL NOT enter the node's naming attributes or its structural hash (INV-TREE-06), so the abstraction of a stamped APK is the same as that of its unstamped build.
 
 ---
+
 ## Requirements
+
 ### Requirement: GUITree Construction from AccessibilityService
 
 `GUITreeBuilder` SHALL construct a `GUITree` from the Android `AccessibilityService` node hierarchy, producing a non-null root `GUITreeNode` and a flat node list in which each node carries the `className`, `bounds`, `clickable`, `scrollable`, and `enabled` values read from its `AccessibilityNodeInfo`.
@@ -269,3 +272,38 @@ Release SHALL be the last operation of the release cycle that touches the remove
 - **WHEN** a cache entry for a **live** tree is absent (never cached, or hypothetically evicted) and `getNodeName`/`getStateKey` is queried again
 - **THEN** the recomputed value SHALL be equal to the previously cached value — the caches memoize deterministic functions of frozen snapshot data, so no decision can depend on an entry's presence
 
+### Requirement: Handler Stamp Capture
+
+`GUITreeBuilder.fillNode` (`tree/GUITreeBuilder.java:582-607`) SHALL read `AccessibilityNodeInfo.getExtras()` and copy two strings into the `GUITreeNode` it fills:
+
+- `rvsec.click` → `handlerClick`, served by `GUITreeNode.getHandlerClick()`;
+- `rvsec.longClick` → `handlerLongClick`, served by `GUITreeNode.getHandlerLongClick()`.
+
+Each value is the binary class name gh121 wrote (`Class.getName()` form, e.g. `br.unb.cic.cryptoapp.cipher.CipherActivity$1`), copied unchanged. A field SHALL be null when `getExtras()` returns null, when the key is absent, or when the value under the key is not a string. An exception thrown while reading the extras SHALL leave both fields null and SHALL NOT propagate out of `fillNode` (design, Error Handling). The read uses `getExtras()` and `BaseBundle.getString`, both present in the framework stub `framework/classes-full-debug.jar` (checked with `javap`, design D16).
+
+The fields sit beside `isPassword` (`GUITreeNode.java:64`, INV-TREE-09) and are carried wherever the node's other captured properties are. `fillNode` SHALL read no other key of the bundle. The capture is unconditional: no plan key enables or disables it, and it runs on every arm. The run reports how many captured nodes carried at least one stamp (`RUN_END` counter `stampNodes`, `event-sink`, design D23).
+
+The `getExtras()` call inside `fillNode` is not reachable in the JVM suite, because surefire excludes the framework stubs (`pom.xml:160-163`). The rules applied to the bundle (string values copied, absent key, non-string value, a read that throws) are reachable: they run on the JVM over a test-side `android.os.Bundle` stub that mimics AOSP `getString`, as the `Rect` and `Log` stubs do. The scenarios are also written as an `@Ignore`d Android-runtime test beside `GUITreeBuilderPasswordTest`, and the device smoke on a stamped `cryptoapp` is the gate for the capture itself (tasks 11.3 and 17.2).
+
+#### Scenario: stamped View node
+- **WHEN** a `GUITreeNode` is built from an `AccessibilityNodeInfo` whose extras hold `rvsec.click = "com.x.Foo$1"` and `rvsec.longClick = "com.x.Foo$2"`
+- **THEN** `node.getHandlerClick()` SHALL return `"com.x.Foo$1"`
+- **AND** `node.getHandlerLongClick()` SHALL return `"com.x.Foo$2"`
+
+#### Scenario: unstamped node
+- **WHEN** a node is built from an `AccessibilityNodeInfo` whose `getExtras()` returns an empty bundle, or a bundle without `rvsec.click` and `rvsec.longClick` (an APK instrumented without `--stamp-handlers`)
+- **THEN** `node.getHandlerClick()` and `node.getHandlerLongClick()` SHALL both return null
+- **AND** every other captured property of the node SHALL be the same as without this requirement
+
+#### Scenario: non-string value
+- **WHEN** the extras hold `rvsec.click` as an integer and `rvsec.longClick` as a string `"com.x.Foo$3"`
+- **THEN** `node.getHandlerClick()` SHALL return null
+- **AND** `node.getHandlerLongClick()` SHALL return `"com.x.Foo$3"`
+- **AND WHEN** reading the extras throws
+- **THEN** both fields SHALL be null and the tree SHALL still be built
+
+#### Scenario: Compose node with only rvsec.click
+- **WHEN** a Compose node with no resource id carries extras holding only `rvsec.click = "com.x.ui.ScreenKt$Body$1$1"`, the class of its app handler lambda
+- **THEN** `node.getHandlerClick()` SHALL return `"com.x.ui.ScreenKt$Body$1$1"`
+- **AND** `node.getHandlerLongClick()` SHALL return null
+- **AND** the node's resource id SHALL stay empty: the stamp does not stand in for an id anywhere in the tree

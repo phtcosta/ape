@@ -10,6 +10,8 @@ This delta rewires the three use sites to the new `Config` keys (`ape.llmMaxToke
 
 - **INV-RTR-14** (new): The boundary reject bands, the euclidean snap-tolerance floor, and the request `max_tokens` SHALL be read from `Config` (`llmBoundaryTopPct`, `llmBoundaryBottomPct`, `llmSnapTolerancePx`, `llmMaxTokens`) at their existing use sites, with defaults `0.05` / `0.94` / `50` / `1024` such that a run with none of the keys configured is behaviorally identical to the pre-change hard-coded constants — same boundary rejects, same tolerance matches, same request body, same `[APE-LLM-CONFIG]` manifest values. The `[APE-LLM-TEL]` grammar and all emitter sites SHALL be unchanged by this change.
 
+> **Superseded in part (2026-10-09).** The band-default clause of INV-RTR-14 (`llmBoundaryTopPct`/`llmBoundaryBottomPct` defaulting to `0.05`/`0.94` so that boundary rejects reproduce the hard-coded constants), and the "Boundary reject" paragraph and scenario below that restate it, are superseded by INV-RTR-22 of `llm-coordinate-single-base`: the band is expressed in the display base, `ape.llmBoundaryTopPct` defaults to `0.035`, there is no bottom band, and `ape.llmBoundaryBottomPct` is retired (a properties file that sets it aborts resolution). The snap-tolerance floor and `max_tokens` clauses stand.
+
 ## MODIFIED Requirements
 
 ### Requirement: LlmRouter Lifecycle

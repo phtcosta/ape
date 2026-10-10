@@ -7,7 +7,7 @@ After this capability, every run begins by resolving a single immutable `RunSpec
 
 The plan is echoed as the run's provenance: `RUN_START`, a single JSON object line emitted before any exploration output, carrying the effective plan, both digests, the seed, the run id, and the jar's build stamp. The echo is **level 0 by owner decision D1 (final)**: write-only provenance, no automatic validation anywhere, no Python reader — drift auditing is post-hoc analysis over the traces. The line's completeness bar is that it alone reconstructs the arm without consulting `tool.py` (report Sec. 9.6).
 
-`RunContext` is introduced as the owner of per-run mutable state. Its stage-2 scope is deliberately small — the `RunSpec`, the run identity, and the seeded RNG — with the rest of the mutable state migrating in stage 3. Purity becomes structural: a feature absent from the plan does not exist in the run — no kill-switch, no forced-off registry, no exempt list. This is the substitute for the dissolved INV-ARCH-06: a sub-parameter of an absent feature has nothing to be inert *about*, because the mechanism it would parameterize was never constructed.
+`RunContext` is introduced as the owner of per-run mutable state. Its stage-2 scope is deliberately small — the `RunSpec`, the run identity, and the seeded RNG — with the rest of the mutable state migrating in stage 3. Purity becomes structural: a feature absent from the plan does not exist in the run — no kill-switch, no forced-off registry, no exempt list. This is the substitute for the dissolved INV-ARCH-06: a sub-parameter of an absent feature has nothing to be inert *about*, because the mechanism it would parameterize was never constructed. Inertness has a second cause, inside a feature that is present: the `MOP` scoring mode (`ape.mopScoring`) selects which of the feature's weight keys are read, and a key the selected mode does not read is accepted at any well-typed value and reported in `RUN_START.inert` (INV-RUN-09).
 ## Data Contracts
 
 ### Input
@@ -43,14 +43,17 @@ The plan is echoed as the run's provenance: `RUN_START`, a single JSON object li
 - **INV-RUN-06**: The jar SHALL read no behavioral input from `/sdcard` other than `/sdcard/ape.properties`. In particular `/sdcard/ape.xpath`, `/sdcard/ape.xpath.actions`, and `/sdcard/ape.strings` SHALL NOT be read by any code path (owner decision D6).
 - **INV-RUN-07**: No artifact produced by a previous run SHALL be read by the explorer (R3): there is no model/graph deserialization path, no resume, no read-back of trace or telemetry. Retry after failure is wholly the responsibility of the Python supervisor.
 - **INV-RUN-08**: All run-scoped randomness SHALL derive from the single seeded stream owned by `RunContext` (seeded from `-s`); no component SHALL use `ThreadLocalRandom`, `Math.random`, or an unseeded `Random` for any decision or generated input.
+- **INV-RUN-09**: When the `MOP` feature is in the plan, `ape.mopScoring` SHALL select exactly one of two disjoint key sets as read: `ape.mopWeightDirect`, `ape.mopWeightTransitive` under `flag`; `ape.mopWeightD1`, `ape.mopWeightD2`, `ape.mopWeightD3`, `ape.mopRetireAfter`, `ape.mopLauncherDmax` under `distance`. A key of the set the mode does not select SHALL be accepted at any value of its declared type, SHALL have no effect on the run, and, when the plan states it (in a properties file or through the preset vector), SHALL be listed in `RUN_START.inert`. All other `MOP` keys, `ape.mopScoring` among them, SHALL be read in both modes. When the `MOP` feature is absent, the six Part B keys fall under INV-RUN-05 like every other sub-parameter of an absent feature. Coverage: `RunSpecResolveTest` (inert lists per mode, a non-neutral mode-inert value accepted) and `RunSpecEchoTest`.
 
-**Coverage of these invariants.** All eight are carried by a named test. INV-RUN-01 by `RunSpecResolveTest` (immutability, input-map isolation) and `RunContextTest` (a second `initialize` throws); INV-RUN-02 by `RunSpecAbortTest` across all eight input classes, with the abort *composition* in `Monkey.run` reachable only on a device and deferred to a coordinated end-to-end run after all planned changes on both sides land (recorded in task 3.4); INV-RUN-03 by `RunSpecEchoTest`; INV-RUN-04 by `RunSpecResolveTest`'s six digest tests; INV-RUN-05 by `FeatureDerivationTest` and `RunSpecResolveTest`'s inert-key tests; INV-RUN-06, INV-RUN-07 and INV-RUN-08 by `DeviceInputChannelAbsenceTest`, whose scans read comments out first — so a line that *discusses* a removed mechanism stays legal — and carry a minimum-yield floor, because a scan that silently matches nothing passes by vacuity.
+**Coverage of these invariants.** All nine are carried by a named test; INV-RUN-09 names its tests in its own text. INV-RUN-01 by `RunSpecResolveTest` (immutability, input-map isolation) and `RunContextTest` (a second `initialize` throws); INV-RUN-02 by `RunSpecAbortTest` across all eight input classes, with the abort *composition* in `Monkey.run` reachable only on a device and deferred to a coordinated end-to-end run after all planned changes on both sides land (recorded in task 3.4); INV-RUN-03 by `RunSpecEchoTest`; INV-RUN-04 by `RunSpecResolveTest`'s six digest tests; INV-RUN-05 by `FeatureDerivationTest` and `RunSpecResolveTest`'s inert-key tests; INV-RUN-06, INV-RUN-07 and INV-RUN-08 by `DeviceInputChannelAbsenceTest`, whose scans read comments out first — so a line that *discusses* a removed mechanism stays legal — and carry a minimum-yield floor, because a scan that silently matches nothing passes by vacuity.
 
 Two of those guards were written after the rest, when a coverage audit found the invariants stated and unguarded (the audit and the decision to close it are recorded in tasks 9.2–9.3). What they assert is worth stating precisely, because one of them is not an absence:
 
 - **INV-RUN-07** — `noCodePathReadsBackAnArtifactOfAPreviousRun` scans `src/main/java` for `ObjectInputStream`, `readObject` and `readGraph`, and requires none. The retired persistence keys already aborted via `RunSpecAbortTest.everyRetiredKeyAbortsWithItsOwnReason`, and the deletion of `Graph.readGraph` and the `--ape-model` branch is compile-enforced — but neither fact guards against a *new* read-back path, which is what a future "resume" feature would introduce and what this invariant forbids.
 - **INV-RUN-08** — three mechanisms, three assertions. `ThreadLocalRandom` and `Math.random` must not appear at all. A bare `new Random()` must appear **exactly once**, in `RandomHelper`: that field initializer is genuinely unseeded, but nothing draws from the instance in a real run, because `RunContext.initialize` calls `RandomHelper.seed` before any exploration component exists. Pinning the site is what makes a *second* bare `Random` a failure rather than a silent second stream — an empty-set assertion would be false, and a "no more than N" weakening would stop naming which site is new. Behavioural coverage sits alongside it in `RunContextTest` (establishing the context seeds the run's stream) and `StringCacheSeededTest` (same seed ⇒ same string sequence).
+
 ## Requirements
+
 ### Requirement: Single Plan Resolution at Bootstrap
 
 `RunSpec.resolve` SHALL run in `Monkey.run` (the `--ape` branch) before `MonkeySourceApe` or any agent is constructed. It SHALL consume: the union of the entries of `/data/local/tmp/ape.properties` and `/sdcard/ape.properties` (load order preserved, later file wins; file-loaded entries only — JVM system properties are not a configuration channel), and the CLI values (`--ape`, `-s`, `--ape-replay`). It SHALL produce an immutable `RunSpec` value carrying: `presetName` (the `ape.preset` value, or `"explicit"` when absent), `seed`, `runId`, `agentType`, `ExplorationParams` (always present), `Set<Feature>`, `MopParams`/`LlmParams`/`TelemetryParams` (each null iff its feature is absent), `digest`, and `propertiesDigest`.
@@ -78,6 +81,21 @@ Key ownership SHALL be total: every `ape.*` key is owned by exactly one of `Expl
 
 Dependency validation SHALL distinguish explicit input from defaults: an **explicitly-set** activation key or non-neutral sub-parameter whose feature's dependencies are unmet aborts (INV-RUN-02); a **default-valued** key never activates a feature whose dependencies are unmet — the feature is simply absent from the plan.
 
+**The MOP scoring keys** (`llm-coordinate-single-base`, design D18–D20). The `MOP` feature SHALL own six further sub-parameters, declared in `KeyOwnership` beside `ape.mopWeightDirect`/`ape.mopWeightTransitive` (`KeyOwnership.java:189-193`), registered with their neutral values in `Feature.MOP.own(...)` (`Feature.java:150-151`), and read through `RunSpec.MopParams`:
+
+| Key | Type | Default | Neutral | Read under |
+|---|---|---|---|---|
+| `ape.mopScoring` | string, `flag` \| `distance` | `flag` | `flag` | both modes |
+| `ape.mopWeightD1` | int | `500` | `0` | `distance` (weight for a nearest unretired target at `d ≤ 1`) |
+| `ape.mopWeightD2` | int | `400` | `0` | `distance` (`d = 2`) |
+| `ape.mopWeightD3` | int | `300` | `0` | `distance` (`d = 3`) |
+| `ape.mopRetireAfter` | int | `3` | `3` | `distance` (first interactions after which a target retires, `mop-guidance` "Target Retirement") |
+| `ape.mopLauncherDmax` | int | `6` | `6` | `distance` (largest distance the launcher orders by, `component-triggering` "Cadence-Based MOP Activity Launch") |
+
+`ape.mopWeightDirect` (500) and `ape.mopWeightTransitive` (300) are read under `flag` only. The neutral value is the one INV-RUN-05 accepts when `MOP` is absent: zero for a weight, as for `ape.mopWeightDirect`, and the default for the mode, the retirement count and the launcher bound, as for `ape.mopTargetPickCap`.
+
+**Inert by mode** (INV-RUN-09). With `MOP` in the plan, a `MOP` key that the selected mode does not read SHALL be accepted at any value of its declared type and SHALL be listed in `RUN_START.inert` when the plan states it, whether in a properties file or through the preset vector. It is not subject to INV-RUN-05's neutral-value rule, which concerns an absent feature: here the feature exists, and the plan may state both modes' weights so that one preset serves both arms. The key keeps its effective value in the plan, so it appears in `params` when non-default and enters the plan digest; `inert` is what says it parameterizes nothing. `ape.mopScoring` itself is never inert while `MOP` is in the plan.
+
 #### Scenario: dependent feature validated
 
 - **WHEN** `ape.properties` sets `ape.mopWeightOpenMenu=250` and `ape.modelMenuEnabled=false` with `ape.mopDataPath` present
@@ -95,6 +113,30 @@ Dependency validation SHALL distinguish explicit input from defaults: an **expli
 - **THEN** resolution SHALL succeed, the key SHALL appear in the echo's `inert` list, and `LlmParams` SHALL be null
 - **AND WHEN** the same file instead contains `ape.llmOnNewState=true` with no `ape.llmUrl`
 - **THEN** resolution SHALL abort with a missing-dependency diagnostic naming `LLM`
+
+#### Scenario: the six MOP scoring keys resolve to their defaults
+
+- **WHEN** a properties file sets `ape.mopDataPath` and none of the six keys
+- **THEN** `MopParams` SHALL report scoring mode `flag`, weights 500/400/300, retirement after 3 and launcher bound 6
+- **AND** `RUN_START.inert` SHALL list none of them, since the plan states none
+
+#### Scenario: distance arm from the mop preset
+
+- **WHEN** `ape.properties` contains `ape.preset=mop`, `ape.mopDataPath=/data/local/tmp/mop-artifact.json` and `ape.mopScoring=distance`
+- **THEN** resolution SHALL succeed with `MOP` active and scoring mode `distance`
+- **AND** `ape.mopWeightDirect` (500) and `ape.mopWeightTransitive` (300), stated by the preset vector, SHALL be accepted and listed in `RUN_START.inert`
+
+#### Scenario: distance keys stated under flag are inert, not rejected
+
+- **WHEN** a properties file sets `ape.mopDataPath`, `ape.mopScoring=flag`, `ape.mopWeightD2=450` and `ape.mopRetireAfter=5`
+- **THEN** resolution SHALL succeed, both keys SHALL be listed in `RUN_START.inert`, and the run SHALL score with `ape.mopWeightDirect`/`ape.mopWeightTransitive` and retire no target
+
+#### Scenario: scoring keys of an absent MOP feature
+
+- **WHEN** a properties file without `ape.mopDataPath` sets `ape.mopScoring=flag`
+- **THEN** resolution SHALL succeed and list the key in `RUN_START.inert`, `flag` being its neutral value
+- **AND WHEN** the same file instead sets `ape.mopScoring=distance`
+- **THEN** resolution SHALL abort with `reason=missing_dependency key=ape.mopScoring` (INV-RUN-05)
 
 ### Requirement: Presets Resident in the Jar
 
@@ -150,8 +192,8 @@ This case is not a compatibility affordance and does not depend on any particula
 
 1. **Unknown key**: an `ape.*` key in a properties file that no owner declares.
 2. **Foreign key**: any non-`ape.` key in a properties file.
-3. **Retired key** (dedicated message naming the replacement): `ape.apePureMode` (purity is structural — owner decision D3), `ape.modelFile`, `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.saveStates` (persistence protocol removed), `ape.enableXPathAction` (injection channel removed), `ape.mopWeightActivity` (dead key), `ape.agentType` and `ape.replayLog` when present in a **file** (CLI-only values — closes the `/sdcard` agent-swap hole).
-4. **Invalid type**: a non-numeric value for a numeric key; a boolean key whose value is not literally `true`/`false` (case-insensitive). Documented value-semantics clamps (cadence `<= 0`, launch cap `< 0`, percentage clamps, `-1` sentinel) remain clamps, not aborts.
+3. **Retired key** (dedicated message naming the replacement): `ape.apePureMode` (purity is structural — owner decision D3), `ape.modelFile`, `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.saveStates` (persistence protocol removed), `ape.enableXPathAction` (injection channel removed), `ape.mopWeightActivity` (dead key), `ape.llmBoundaryBottomPct` (on the display base the jar maps answers in, the navigation bar is outside every reachable pixel, so the band only rejected app content — `llm-coordinate-single-base`), `ape.agentType` and `ape.replayLog` when present in a **file** (CLI-only values — closes the `/sdcard` agent-swap hole).
+4. **Invalid type**: a non-numeric value for a numeric key; a boolean key whose value is not literally `true`/`false` (case-insensitive); a value of `ape.mopScoring` other than exactly `flag` or `distance` (the one string key with a closed value set; the diagnostic names the valid set — `llm-coordinate-single-base`, design D18). Documented value-semantics clamps (cadence `<= 0`, launch cap `< 0`, percentage clamps, `-1` sentinel) remain clamps, not aborts.
 5. **Missing dependency / invalid combination**: per the Feature Model requirement; plus `--ape replay` without `--ape-replay`.
 6. **Unknown `--ape` value**: any value outside `{sata, random, replay}` — including `bfs`, `dfs`, and `ape` — aborts with a diagnostic naming the valid set. The silent `SataAgent` fallback SHALL NOT exist.
 
@@ -187,19 +229,31 @@ This case is not a compatibility affordance and does not depend on any particula
 - **WHEN** `ape.properties` contains `ape.apePureMode=true` (a hand-written file — after the stage-2 Python edit no arm pushes the key, at either value)
 - **THEN** the process SHALL abort with `reason=retired_key key=ape.apePureMode` and a detail referencing structural purity (a feature absent from the plan does not exist)
 
+#### Scenario: retired bottom boundary band aborts with its reason
+
+- **WHEN** `ape.properties` contains `ape.llmBoundaryBottomPct=0.94`
+- **THEN** the process SHALL abort with `reason=retired_key key=ape.llmBoundaryBottomPct`
+- **AND** the detail SHALL state that the display excludes the navigation bar and that the status-bar band `ape.llmBoundaryTopPct` is the only boundary band
+
+#### Scenario: unknown MOP scoring mode aborts
+
+- **WHEN** `ape.properties` contains `ape.mopDataPath=/data/local/tmp/mop-artifact.json` and `ape.mopScoring=nearest`
+- **THEN** the process SHALL abort with `[APE-RUNSPEC-ABORT] reason=invalid_type key=ape.mopScoring` and a detail naming the valid set `{flag, distance}`
+- **AND** the run SHALL NOT fall back to `flag`
+
 ### Requirement: Level-0 RUN_START Echo
 
-Immediately after successful resolution and before any exploration output, the jar SHALL emit `RUN_START` as a single JSON object line to stdout: `type`, format version `v`, `run_id`, `t0` (device epoch milliseconds at emission — the base against which the stage-4 step records' relative `t` offsets resolve), `seed`, `agent`, `preset` (name or `"explicit"`), `features` (sorted names), `params` (every effective non-default parameter plus every active feature's activation key, as `ape.*` keys with effective values), `inert` (accepted neutral keys of inactive features), optional `corpus_basis`, `digest`, `props_digest`, and `build` (`sha`, `time` from the build stamp).
+Immediately after successful resolution and before any exploration output, the jar SHALL emit `RUN_START` as a single JSON object line to stdout: `type`, format version `v`, `run_id`, `t0` (device epoch milliseconds at emission — the base against which the stage-4 step records' relative `t` offsets resolve), `seed`, `agent`, `preset` (name or `"explicit"`), `features` (sorted names), `params` (every effective non-default parameter plus every active feature's activation key, as `ape.*` keys with effective values), `inert` (sorted; the stated keys that parameterize nothing in this run: the accepted neutral keys of inactive features, INV-RUN-05, and the `MOP` keys the selected `ape.mopScoring` mode does not read, INV-RUN-09), optional `corpus_basis`, `digest`, `props_digest`, and `build` (`sha`, `time` from the build stamp).
 
-The format version `v` is not decoration and is worth one sentence of justification, because its absence has already cost something. Traces from different campaigns of this study carry materially different `[APE-STEP]` schemas — the earlier calibration corpus has no `mop_frontier`, `pick_channel`, `patched` or counterfactual fields, and its `mop=` realises `{0,300}` where the decisive campaign realises `{0,500}` — and nothing in either trace says which schema it is. `v` is what makes a cross-campaign comparison fail loudly instead of quietly comparing incomparable fields.
+The format version `v` is not decoration and is worth one sentence of justification, because its absence has already cost something. Traces from different campaigns of this study carry materially different `[APE-STEP]` schemas — the earlier calibration corpus has no `mop_frontier`, `pick_channel`, `patched` or counterfactual fields, and its `mop=` realises `{0,300}` where the decisive campaign realises `{0,500}` — and nothing in either trace says which schema it is. `v` is what makes a cross-campaign comparison fail loudly instead of quietly comparing incomparable fields. The same holds within one jar from `llm-coordinate-single-base` on: the `mop` boost of a step means a flag weight under `ape.mopScoring=flag` and a distance weight under `distance`, so the scoring mode is part of what the echo must let an analyst read. It is, because `ape.mopScoring` is a parameter of the `MOP` feature: present in `params` when it is `distance`, and `flag` by its absence.
 
 The line SHALL be produced by a serializer that escapes quotes, backslashes, and control characters and never emits a raw newline inside the record (one-record-one-line by construction) — the same serializer the stage-4 NDJSON sink will grow from, so `RUN_START`'s format survives stage 4 unchanged. The echo is write-only provenance (owner decision D1, level 0, definitive): no validation of the line anywhere, no Python change, no new communication channel — the physical flow remains `adb push` + stdout capture. In stage 2 the line precedes every APE-RV record and all exploration output; pre-existing AOSP Monkey banner lines may still precede it until the stage-4 sink replaces the remaining emitters.
 
 #### Scenario: the line alone reconstructs the arm
 
 - **WHEN** a run executes the current `sata_mop_llm` arm properties
-- **THEN** the `RUN_START` line SHALL contain the agent type, seed, all active features (baseline + `MOP` family + `LLM` family), the MOP weights, the LLM sampling parameters and url, and the build sha
-- **AND** an analyst reading only that line SHALL be able to state which arm ran, without `tool.py`
+- **THEN** the `RUN_START` line SHALL contain the agent type, seed, all active features (baseline + `MOP` family + `LLM` family), the MOP scoring mode (by `ape.mopScoring` in `params`, or by its absence for `flag`) and the MOP weights that mode reads, the LLM sampling parameters and url, and the build sha
+- **AND** an analyst reading only that line SHALL be able to state which arm ran, without `tool.py`, including whether the MOP weights in force are the flag weights or the distance weights
 
 #### Scenario: echo precedes exploration output
 
@@ -215,6 +269,12 @@ The line SHALL be produced by a serializer that escapes quotes, backslashes, and
 
 - **WHEN** an outdated jar is deployed to the device
 - **THEN** the `build.sha` of every trace it produces identifies the stale build, making the drift diagnosable post-hoc from the traces alone
+
+#### Scenario: weights the mode does not read are marked inert
+
+- **WHEN** a run resolves `ape.preset=llm_mop` with `ape.mopScoring=distance`
+- **THEN** `RUN_START.params` SHALL carry `ape.mopScoring:"distance"`
+- **AND** `RUN_START.inert` SHALL list `ape.mopWeightDirect` and `ape.mopWeightTransitive`
 
 ### Requirement: Run Identity and Seed
 
@@ -276,4 +336,3 @@ The build SHALL embed a `BuildInfo` class generated at build time (Maven git-com
 
 - **WHEN** the tree is built without a `.git` directory
 - **THEN** the build SHALL succeed and `GIT_SHA` SHALL be `unknown`
-

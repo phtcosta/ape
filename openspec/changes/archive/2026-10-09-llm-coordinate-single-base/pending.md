@@ -1,6 +1,6 @@
 # Pending improvements: llm-coordinate-single-base
 
-**Status: P1 confirmed and moved back into the change (2026-10-07); P2 and P3 pending the author's confirmation; P4 recorded from the code review on 2026-10-08, pending.** No requirement of a pending item is in `specs/`, and no task of one is in `tasks.md`. `openspec archive` does not read this file. Each item has to be moved back into the artifacts on purpose before it is implemented.
+**Status at archive (author, 2026-10-09): P1 confirmed and implemented in this change; P2 and P3 not confirmed, kept as candidates; P4 confirmed, to be done in a change of its own.** Apart from P1, nothing here is implemented by this change. No requirement of a pending item is in `specs/`, and no task of one is in `tasks.md`. `openspec archive` does not read this file. Each item has to be moved back into the artifacts on purpose before it is implemented.
 
 The split was decided by the author on 2026-10-07:
 
@@ -27,7 +27,9 @@ Where it lives now:
 
 The verbatim requirement and tasks that were kept here are superseded by those artifacts and were removed from this file; the text before the key change is in `tasks.md` and `specs/llm-prompt/spec.md` at commit `a695709e`.
 
-## P2. The history entry's identifier uses the list's full fallback, `id=<shortId>` included
+## P2. The history entry's identifier uses the list's full fallback, `id=<shortId>` included: NOT CONFIRMED
+
+**Kept as a candidate at archive (author, 2026-10-09).** An improvement to the `v13` prompt; not confirmed, because each prompt change widens the distance from the configuration Study 03 calibrated.
 
 **What it changes.** D13 makes the history follow the `exploration` spec: text, else content-description. The element list has a third step, the short resource id rendered as `id=<shortId>` (INV-PRM-05). P2 would add that step to the history too, so that a widget carries one identifier in both places. Implementation: `recordActionHistory` calls the list's identifier helper as a whole instead of its text/content-description part (design D13).
 
@@ -37,7 +39,9 @@ The verbatim requirement and tasks that were kept here are superseded by those a
 
 **Artifacts it would touch.** `exploration` delta: the `widgetText` row ("text, content-description, or `id=<shortId>`, the element list's identifier") and one scenario. `llm-prompt` "Action History": one scenario. Task 3.5: the helper called.
 
-## P3. A `type_text` entry names the field it typed into
+## P3. A `type_text` entry names the field it typed into: NOT CONFIRMED
+
+**Kept as a candidate at archive (author, 2026-10-09),** for the same reason as P2.
 
 **What it changes.** Today a `type_text` entry reads `- type_text @(x,y) "typed text" → result`: no class and no widget identifier, so in a form with several fields the model sees what it typed but not where. P3 would render the field's class and identifier as well. The exact form is open, for example `- type_text @(500,280) EditText "Email" ← "user@example.com" → same`.
 
@@ -47,7 +51,9 @@ The verbatim requirement and tasks that were kept here are superseded by those a
 
 **Artifacts it would touch.** `llm-prompt` "Action History": the `type_text` format line and its scenario. `exploration` delta: the `widgetClass` and `widgetText` rows, which today say nothing about `type_text`. Tasks 3.3 and 3.5.
 
-## P4. Text typed by SATA is recorded as `click`
+## P4. Text typed by SATA is recorded as `click`: CONFIRMED, NEEDS ITS OWN CHANGE
+
+**Confirmed by the author at archive (2026-10-09)** as a repair to be done in a change of its own; this change does not implement it.
 
 **Found by** the code review of task 8.6 (NT-02, 2026-10-08). Recorded here by the author's decision, not implemented.
 

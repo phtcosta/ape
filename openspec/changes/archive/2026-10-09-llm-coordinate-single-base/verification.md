@@ -371,3 +371,40 @@ The author asked for a real run of the final-experiment instrumentation (Study 0
 - `mop_on_llm_off` (`flag`): 450 steps; `stampNodes` 3084, `stampHits` 167; no `mopd`, no `ret`; 7 launches, 6 of them DetailsActivity. Methods 66.95 %, MOP methods 70.88 %. One run per arm: no comparison is drawn.
 - **The click aggregate on a real app**: under `distance`, `passwordText` and `multiPwdText` (only `entertext` keys, d = 0) and the switches (only `select`, d = 3) weigh on a click; their long-clicks and scrolls do not, while under `flag` they do (the flag aggregate of INV-MOP-14).
 - **Why `retired` is 0** (`smoke_17_2_retire_bound.py`, output `smoke_17_2_retire_bound_password_monitor.out`): counting each distinct weighted (activity, widget, action type) by its widget's id-key pairs at `d*` gives at most 3 on targets 33, 35 and 38, through `theme`, `support` and `licenses`, which share the settings fragment's pairs. All three were picked through their stamps (`mops:"s"`), and the stamped handlers `SettingsFragment$$ExternalSyntheticLambda1`, `…Lambda2` and `…Lambda9` reach one target each (33, 38, 35); the stamp narrows the id key's reach as design D16 intends, so no counter passes 1. This is read from the artifact; the trace does not name the handler of a stamped pick.
+
+## Task 9.2: archive and manual sync (2026-10-09)
+
+`openspec archive llm-coordinate-single-base --yes`: 11 main specs updated (+6 requirements added, ~26 modified). Pre-archive main specs were snapshotted, and every requirement and scenario title of the touched specs is still present afterwards.
+
+**Manual syncs** (the archive does not sync `## Invariants` and drops a delta's `## Purpose`):
+
+- `llm-prompt`: INV-PRM-03 replaced by its amended text, INV-PRM-06 added; `## Data Contracts` (`build` takes `deviceWidth`/`deviceHeight` and no `GUITree`; `recentActions` entries carry pixel bounds and their own result); `## Purpose` (no `GUITree` input; one coordinate base per decision, visible centre).
+- `llm-infrastructure`: INV-LLM-13 added; `## Purpose` and `## Data Contracts` (`CoordinateNormalizer` in both directions, forward output `int[] normalized`; dimensions from `ScreenshotStep.deviceDimensions`: display, then root node, then constants).
+- `llm-routing`: INV-RTR-21 and INV-RTR-22 added. The archived `2026-07-23-llm-native-toolcall-repair` delta carries a dated note that INV-RTR-14's band-default clause is superseded by INV-RTR-22.
+- `mop-guidance`: INV-MOP-19 (cut `d ≤ 3`) and INV-MOP-23 replaced; INV-MOP-34, INV-MOP-36 and INV-MOP-37 (only the targets at `d*` count) added; `## Purpose` rewritten for the format-2 artifact (it said "compact v1 artifact" and `mopRank`).
+- `static-analysis-entrypoints`: INV-DRV-06 added in its amended form; `## Purpose` names format 2.
+- `event-sink`: a `## Invariants` section created, holding INV-SNK-05 as amended. `ui-tree`: INV-TREE-14 and the stamp fields' `## Data Contracts` line. `component-triggering`: INV-CT-15. `action-selection`: INV-SEL-MOP-06, and the weights in `## Purpose` by mode. `run-spec`: INV-RUN-09, plus one `## Purpose` sentence (inertness inside a present feature).
+- `exploration`: no edit; the synced "Action History Ring Buffer" and `llm-prompt` "Action History" agree on `bounds`, `menu` and the class and text helpers (D13).
+- **This change's own stale text, corrected (author, 2026-10-09)**:
+  - `static-analysis-entrypoints` scenario "widget distance is the minimum over its handlers, cut to three" now expects `[[2,1],[4,1],[7,2],[8,2]]` under `d ≤ 3`; it still expected the K = 3 count cut;
+  - the cryptoapp scenario's parenthetical about rv-android `aperv` `:1309` was removed (gh122 corrected it);
+  - `llm-routing` and `llm-prompt` name `MopContext mop` (the code's parameter since wave 4) where they said `MopData mopData`.
+- `pending.md`: P1 implemented; P2 and P3 not confirmed, kept as candidates; P4 confirmed for a change of its own (author, 2026-10-09).
+
+**Validation**: each of the 11 specs passes `openspec validate <spec> --type spec --strict`. `openspec validate --specs --strict` gives 22 passed and 1 failed: `scoring-pipeline`, whose `## Purpose` is still the archive placeholder. That spec failed before this archive, and the archive did not touch it.
+
+### Known divergences at archive (recorded, not resolved; author: for a later spec-hygiene change)
+
+Pointed out by task 9.2, left as they are:
+- `llm-prompt` "System Message", scenario "System message content": it requires every system message to explain `[DM]`/`[M]`, which neither `ape_current` nor `v13` does (design D14, "Not done here").
+- `llm-routing` "Stagnation LLM Mode" (`spec.md:114`): it still shows `selectAction(..., "stagnation", step)`; the code passes no `step` (`LlmStagnationStage.java:111-112`, `LlmEngine.java:87-92`).
+- `mop-guidance` "MopScorer — Event-Type-Aware Reachability Scoring" (`spec.md:425-426`): it maps `MODEL_INPUT` on a Spinner to `itemSelected` and `MODEL_SCROLL` to `scroll`; the code maps `MODEL_CLICK` on a Spinner to `itemSelected` and every `isScroll()` type to `scroll` (`MopScorer.java:425-438`, whose Javadoc and design D17 agree with the code).
+
+Found during the sync; all predate this change:
+- Invariants stated only in archived deltas: INV-SNK-01..04 and 06..13 (`2026-08-07-rearch-04-step-ndjson-telemetry`; the event-sink requirements cite 01, 06, 07, 09, 10, 13), INV-TREE-13 (`2026-08-07-rearch-06-memory-surgical`), and INV-MOP-35 (`2026-08-07-rearch-07-compact-static-artifact`, cited at `mop-guidance` `:37`, `:114`, `:620`).
+- `mop-guidance` `## Data Contracts` → Input still describes the full JSON (`{"windows": [...], "reachability": [...]}`); INV-MOP-21 still names the `[APE-MOP-DATA]` line, and INV-MOP-25 the on-device dialog merge.
+- `scoring-pipeline` `## Purpose` is the archive placeholder (the one `--specs --strict` failure).
+- `exploration` table: `widgetText` "truncated to 50 chars"; the code stores the text whole and truncates it when rendering (`formatHistoryEntry`, `MAX_TEXT_LEN`).
+- `llm-prompt` `## Purpose`, paragraph 3: an off-element LLM target "may return null … a future enhancement could inject a raw coordinate click"; the off-tree `MODEL_LLM_TAP` exists.
+- `ScreenshotStep.deviceDimensions` Javadoc says a source that reports a non-positive edge is passed over; the code falls back to the root node only when the display call throws (code-side comment; the spec follows the code).
+- rv-android `aperv` (gh122) and this repository's `static-analysis-entrypoints` agree on format 2's members, the generator id, the `d ≤ 3` and K = 3 cuts and the handler sources. Only rv-android states INV-DRV-10 (pair bounds), the explicit ban on a raw `distanceTargets` section in INV-DRV-06, and the rules for malformed `targetDistances` entries and the null-event `""` key.

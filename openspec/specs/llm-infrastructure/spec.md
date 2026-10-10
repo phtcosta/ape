@@ -1,6 +1,6 @@
 ## Purpose
 
-APE-RV's LLM infrastructure provides the low-level building blocks for communicating with an SGLang server running a vision-language model (Qwen3-VL). These components handle the full pipeline from screen capture to actionable coordinates: capturing a screenshot on the Android device, compressing and encoding the image for transmission, sending a multimodal chat request over HTTP, parsing the model's tool-call response with fallbacks for Qwen3-VL formatting quirks, converting normalized coordinates to device pixels, and protecting the exploration loop from cascading LLM failures via a circuit breaker.
+APE-RV's LLM infrastructure provides the low-level building blocks for communicating with an SGLang server running a vision-language model (Qwen3-VL). These components handle the full pipeline from screen capture to actionable coordinates: capturing a screenshot on the Android device, compressing and encoding the image for transmission, sending a multimodal chat request over HTTP, parsing the model's tool-call response with fallbacks for Qwen3-VL formatting quirks, converting between normalized coordinates and device pixels in both directions (the model's answer to a pixel, and a widget's pixel to the coordinate the prompt shows, `llm-coordinate-single-base`), and protecting the exploration loop from cascading LLM failures via a circuit breaker.
 
 All 7 classes in this capability are copied from the rvsmart project (`rvsec-android/rvsmart/src/.../llm/`) with a package rename from `br.unb.cic.rvsmart.llm` to `com.android.commands.monkey.ape.llm`. During copy, `SglangClient` and `ToolCallParser` are converted from Gson (`com.google.gson`) to org.json (`org.json.JSONObject`, `org.json.JSONArray`), which is already available in the Android runtime and used by 24 existing files in APE-RV. This eliminates the need for any new Maven dependency. The remaining 5 classes have no JSON dependency and are copied as-is. Total: ~1000 LOC.
 
@@ -20,14 +20,15 @@ The infrastructure is designed for graceful degradation: if any component fails 
 - `Config.llmTopP: double` — nucleus sampling threshold (default: `0.6`; source: `ape.properties`)
 - `Config.llmTopK: int` — top-k sampling (default: `50`; source: `ape.properties`)
 - `Config.llmTimeoutMs: int` — HTTP timeout in milliseconds for SGLang requests (default: `15000`; source: `ape.properties`)
-- `display width/height: int` — device screen dimensions in pixels (source: `AndroidDevice`)
+- `{width, height}: int[]` — the decision's device dimensions in pixels, the pair `ScreenshotStep.deviceDimensions(tree)` returns: the display bounds (`AndroidDevice.getDisplayBounds()`, each axis taken when positive), then the tree's root-node bounds only if the display call throws, then the `1080` × `1920` constants. Both conversion directions of `CoordinateNormalizer` are called with this one pair within a decision (source: `ScreenshotStep`)
 - `PNG bytes: byte[]` — raw screenshot data produced by `ScreenshotCapture` (source: SurfaceControl reflection)
 
 ### Output
 
 - `SglangClient.ChatResponse` — parsed LLM response containing text content, optional tool calls, and token usage (`getPromptTokens()`, `getCompletionTokens()` extracted from the OpenAI-compatible `usage` field in the response JSON)
 - `ToolCallParser.ParsedAction` — extracted action type, normalized coordinates (x, y in [0,1000) Qwen3-VL space), optional text (for type_text)
-- `int[] pixelCoords` — device-pixel coordinates converted from normalized [0,1000) space
+- `int[] pixelCoords` — device-pixel coordinates converted from normalized [0,1000) space (`CoordinateNormalizer.normalize`)
+- `int[] normalized` — [0,1000) coordinates converted from a device pixel, clamped to `[0, 999]` (`CoordinateNormalizer.toNormalized`); every coordinate the prompt shows is computed by it
 - `String base64Image` — JPEG-compressed, resized, base64-encoded screenshot for LLM consumption
 
 ### Side-Effects
@@ -56,9 +57,12 @@ The infrastructure is designed for graceful degradation: if any component fails 
 - **INV-LLM-08**: When `chat()` returns null, exactly one cause SHALL be recorded (`timeout`, `http_<status>`, `connection`, or `parse`), reflecting the actual failure point. The cause SHALL be reset at the start of every `chat()` invocation and SHALL be readable by the caller between the null return and the next `chat()` call.
 - **INV-LLM-11**: The `tools` array sent on the wire SHALL be exactly the schema supplied to that `chat()` invocation; no tools state SHALL persist on the client across invocations.
 - **INV-LLM-12**: When `capture()` returns null, exactly one failure stage SHALL be recorded, reset at the start of every `capture()` invocation; the seam SHALL never alter the null-return contract (INV-LLM-02).
+- **INV-LLM-13**: For every display dimension `d` with `0 < d < 2000` and every pixel `p` with `0 <= p < d`, the round trip `normalize(toNormalized(p))` on one axis SHALL return a pixel `q` with `p - 2 <= q <= p`. Both directions truncate, so the loss is always toward the origin and below `d/1000 + 1` px. This bound is what lets a coordinate copied from the prompt land inside the widget it names.
 
 ---
+
 ## Requirements
+
 ### Requirement: SglangClient — OpenAI-Compatible HTTP Client
 
 `SglangClient` SHALL send HTTP POST requests to `{baseUrl}/chat/completions` using the OpenAI chat completions API format. The request body SHALL be built using `org.json.JSONObject` and `org.json.JSONArray`, and SHALL include model name, sampling parameters (`temperature`, `top_p`, `top_k`, `max_tokens`), a `messages` array, and a `tools` array (OpenAI function-calling schema). The `tools` parameter is **required** for Qwen3-VL to generate structured tool calls when processing multimodal (image+text) input — without it the model returns empty content. Each message MAY contain text content, multimodal content (text + base64 image), or both. The client SHALL support Qwen3-VL's coordinate format where `"x"` may arrive as a `[x, y]` array instead of separate primitives.
@@ -267,6 +271,17 @@ pixelY = clamp((int)((qwenY / 1000.0) * deviceHeight), 0, deviceHeight - 1)
 
 The method SHALL return an `int[2]` array containing `[pixelX, pixelY]`.
 
+`CoordinateNormalizer.toNormalized(int pixelX, int pixelY, int width, int height)` SHALL be the forward conversion, from a device pixel to Qwen3-VL's [0, 1000) space:
+
+```
+normX = clamp((int)(pixelX * 1000.0 / width),  0, 999)
+normY = clamp((int)(pixelY * 1000.0 / height), 0, 999)
+```
+
+It SHALL return an `int[2]` array containing `[normX, normY]`. It is the only implementation of this conversion in the jar. Every [0, 1000) coordinate shown to the model is computed by it (`llm-prompt` INV-PRM-06), and no other class SHALL carry its own copy of the arithmetic. The prompt passes only pixels inside the display (the centre of a widget's visible part, `llm-prompt` "Single Coordinate Base"), so the clamp is defensive: it maps a pixel outside the display to the nearest edge value instead of producing 1000 or more. `width` and `height` SHALL be positive; the caller passes the dimensions `ScreenshotStep.deviceDimensions` returned, which are positive by contract.
+
+The two methods are inverses up to truncation (INV-LLM-13). They SHALL be called with the same `{width, height}` within one decision, because that pair is what makes the model's answer and the prompt's coordinates the same space.
+
 Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL/issues/1486
 
 #### Scenario: Center of 1080x1920 display
@@ -279,6 +294,18 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 - **WHEN** `normalize(1050, -10, 1080, 1920)` is called
 - **THEN** `pixelX` SHALL be clamped to `1079` (deviceWidth - 1)
 - **AND** `pixelY` SHALL be clamped to `0`
+
+#### Scenario: forward conversion on the campaign display
+- **WHEN** `toNormalized(540, 178, 1080, 1794)` is called
+- **THEN** the returned array SHALL be `[500, 99]`
+
+#### Scenario: forward conversion clamps a pixel past the display edge
+- **WHEN** `toNormalized(1080, 1857, 1080, 1794)` is called
+- **THEN** the returned array SHALL be `[999, 999]`
+
+#### Scenario: round trip stays within two pixels toward the origin
+- **WHEN** for every `p` in `[0, 1794)` the value `toNormalized(0, p, 1080, 1794)[1]` is passed back through `normalize(0, n, 1080, 1794)[1]`
+- **THEN** every result `q` SHALL satisfy `p - 2 <= q <= p`
 
 #### Scenario: Zero coordinates
 
@@ -360,10 +387,9 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 | `ape.llmPercentage` | double | `0.02` | Probability of routing to LLM on each step (0.0 = disabled, 0.7 = 70%, 0.99 = nearly every step) |
 | `ape.llmMaxTokens` | int | `1024` | `max_tokens` for the chat completion request (J1c; default = the previously hard-coded value; not causal for truncation — observed `tokens_out` ≈ 25) |
 | `ape.llmSnapTolerancePx` | int | `50` | Floor of the euclidean snap tolerance `max(floor, min(w,h)/2)` in `mapToModelAction` (J1b; lever analyzed and discarded — default not swept) |
-| `ape.llmBoundaryTopPct` | double | `0.05` | Top boundary reject band as a fraction of screen height (J1b; policy lever, default not swept) |
-| `ape.llmBoundaryBottomPct` | double | `0.94` | Bottom boundary reject band as a fraction of screen height (J1b; policy lever, default not swept) |
+| `ape.llmBoundaryTopPct` | double | `0.035` | Status-bar boundary reject band as a fraction of the display height, the `deviceHeight` of the decision (J1b; `0.035` = the campaign AVD's 63 px status bar over its 1794 px display, so a degenerate `(0,0)` is still rejected; set it for a device of another density) |
 
-The four J1b/J1c keys carry no clamping logic (researcher-facing knobs, like `llmTimeoutMs`/`llmTopK`); their defaults SHALL reproduce the previously hard-coded behavior bit-for-bit. In the run-spec `Feature` model, `ape.llmUrl` is the activation key of the `LLM` feature and every other key in this table is a sub-parameter owned by the `LLM` feature family: when `LLM` is absent from the resolved plan, `LlmParams` is null, no LLM object is constructed, and an explicitly-set LLM sub-parameter is accepted only at its neutral value (INV-RUN-05 of `run-spec`) — an explicitly enabled mode (`ape.llmOnNewState=true`, `ape.llmOnStagnation=true`, or `ape.llmPercentage>0`) without `ape.llmUrl` aborts resolution as a missing dependency.
+The three J1b/J1c keys carry no clamping logic (researcher-facing knobs, like `llmTimeoutMs`/`llmTopK`). `ape.llmMaxTokens` and `ape.llmSnapTolerancePx` reproduce the previously hard-coded behavior bit-for-bit. `ape.llmBoundaryTopPct` does not: its old default `0.05` and the bottom band `ape.llmBoundaryBottomPct=0.94` were fractions of a 1920-high screen applied to the 1794-high display, and `llm-coordinate-single-base` re-derived the band in the display base (`llm-routing` INV-RTR-22). `ape.llmBoundaryBottomPct` is retired: on the display every value below 1.0 rejects app content and every value from 1.0 up never fires, so a properties file that sets it aborts resolution with that reason (`run-spec`, "Total Fail-Fast Validation"). In the run-spec `Feature` model, `ape.llmUrl` is the activation key of the `LLM` feature and every other key in this table is a sub-parameter owned by the `LLM` feature family: when `LLM` is absent from the resolved plan, `LlmParams` is null, no LLM object is constructed, and an explicitly-set LLM sub-parameter is accepted only at its neutral value (INV-RUN-05 of `run-spec`) — an explicitly enabled mode (`ape.llmOnNewState=true`, `ape.llmOnStagnation=true`, or `ape.llmPercentage>0`) without `ape.llmUrl` aborts resolution as a missing dependency.
 
 When `Config.llmPercentage` is `0.0`, no random LLM calls SHALL occur — only new-state and stagnation modes apply. When `Config.llmPercentage` is `0.02` (default), approximately 2% of non-event steps SHALL attempt LLM calls.
 
@@ -413,9 +439,10 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 
 #### Scenario: J1b/J1c defaults reproduce the hard-coded values
 
-- **WHEN** `ape.properties` contains none of the four J1b/J1c keys
-- **THEN** `Config.llmMaxTokens` SHALL be `1024`, `Config.llmSnapTolerancePx` SHALL be `50`, `Config.llmBoundaryTopPct` SHALL be `0.05`, and `Config.llmBoundaryBottomPct` SHALL be `0.94`
-- **AND** router behavior (request `max_tokens`, boundary rejects, euclidean tolerance) SHALL be identical to the pre-delta hard-coded constants
+- **WHEN** `ape.properties` contains none of the three J1b/J1c keys
+- **THEN** `Config.llmMaxTokens` SHALL be `1024`, `Config.llmSnapTolerancePx` SHALL be `50`, and `Config.llmBoundaryTopPct` SHALL be `0.035`
+- **AND** request `max_tokens` and the euclidean tolerance SHALL be identical to the pre-J1 hard-coded constants
+- **AND** the boundary reject SHALL NOT reproduce the hard-coded `0.05`/`0.94`: it SHALL be the status-bar band of `llm-routing` INV-RTR-22, with no lower band (`llm-coordinate-single-base`)
 
 #### Scenario: J1b/J1c keys configurable without rebuild
 
@@ -425,14 +452,15 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 
 #### Scenario: New keys classified in the apePureMode registry
 
-- **WHEN** the four J1b/J1c keys are looked for in the `apePureMode` kill-switch registry
+- **WHEN** the J1b/J1c keys are looked for in the `apePureMode` kill-switch registry
 - **THEN** no such registry SHALL exist — `rvForcedOffValues`, `rvUnsetKeys` and `rvExemptReasons` are deleted along with the mechanism they served, and INV-ARCH-06 is dissolved (`scoring-pipeline` capability)
 - **AND** the classification this scenario asked for SHALL instead be made by the `Feature` model, where the compiler can check it rather than a string literal naming a field (next scenario)
 
 #### Scenario: LLM sub-parameters owned by the Feature model
 
 - **WHEN** the run-spec key-ownership totality test runs
-- **THEN** `llmMaxTokens`, `llmSnapTolerancePx`, `llmBoundaryTopPct`, and `llmBoundaryBottomPct` SHALL each be owned by the `LLM` feature as sub-parameters
+- **THEN** `llmMaxTokens`, `llmSnapTolerancePx`, and `llmBoundaryTopPct` SHALL each be owned by the `LLM` feature as sub-parameters
+- **AND** `llmBoundaryBottomPct` SHALL be owned by no feature and SHALL appear among the retired keys
 - **AND** with `LLM` absent from the plan, none of them SHALL parameterize any constructed mechanism
 
 #### Scenario: LLM mode without a URL aborts
@@ -523,4 +551,3 @@ The shared-`max_tokens` discipline survives the manifest that used to demonstrat
 - **AND** no other class SHALL hold a `SglangClient` or `LlmCircuitBreaker` reference
 
 ---
-

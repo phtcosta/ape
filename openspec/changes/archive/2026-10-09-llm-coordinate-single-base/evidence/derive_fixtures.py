@@ -7,7 +7,7 @@ document it was derived from. This script derives each fixture from the
 
 Usage (run from the ape repository root, with -I -B so nothing is cached here):
 
-    python3 -I -B openspec/changes/llm-coordinate-single-base/evidence/derive_fixtures.py \
+    python3 -I -B openspec/changes/archive/2026-10-09-llm-coordinate-single-base/evidence/derive_fixtures.py \
         <rv-android root>
 
 Pairs (source -> artifact):
