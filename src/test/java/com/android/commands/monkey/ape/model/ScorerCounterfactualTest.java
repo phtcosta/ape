@@ -143,48 +143,8 @@ public class ScorerCounterfactualTest {
         assertNull(ScorerCounterfactual.replayRoulette(candidates, 100, 800, MOP));
     }
 
-    // -------------------------------------------------------------------------
-    // Short-circuit counterfactuals (deterministic — they draw nothing)
-    // -------------------------------------------------------------------------
-
-    @Test
-    public void theUnvisitedShortCircuitFallsThroughToLeastVisited() {
-        ModelAction mopTarget = action(600, 500, 0, 3);
-        ModelAction neverVisited = action(100, 0, 0, 0);
-        List<ModelAction> candidates = Arrays.asList(mopTarget, neverVisited);
-
-        assertSame("without the boost the fall-through takes the least-visited action",
-                neverVisited, ScorerCounterfactual.leastVisitedWithout(candidates, true, MOP));
-    }
-
-    @Test
-    public void leastVisitedBreaksTiesOnTheMopFreePriority() {
-        ModelAction boosted = action(600, 500, 0, 1);     // MOP-free priority 100
-        ModelAction stronger = action(400, 0, 0, 1);      // MOP-free priority 400
-        assertSame(stronger, ScorerCounterfactual.leastVisitedWithout(
-                Arrays.asList(boosted, stronger), true, MOP));
-    }
-
-    @Test
-    public void theZeroStepShortCircuitFallsThroughToTheStrongestMopFreeCandidate() {
-        ModelAction mopTarget = action(700, 500, 0, 0);   // MOP-free priority 200
-        ModelAction other = action(400, 0, 0, 0);
-        assertSame(other, ScorerCounterfactual.highestPriorityWithout(
-                Arrays.asList(mopTarget, other), MOP));
-    }
-
-    @Test
-    public void aShortCircuitOnAnUnboostedCandidateSetChangesNothing() {
-        ModelAction first = action(400, 0, 0, 0);
-        ModelAction second = action(100, 0, 0, 0);
-        assertSame(first, ScorerCounterfactual.highestPriorityWithout(
-                Arrays.asList(first, second), MOP));
-    }
-
     @Test
     public void emptyCandidateSetsAreInert() {
-        assertNull(ScorerCounterfactual.leastVisitedWithout(new ArrayList<ModelAction>(), true, MOP));
-        assertNull(ScorerCounterfactual.highestPriorityWithout(new ArrayList<ModelAction>(), MOP));
         assertNull(ScorerCounterfactual.replayRoulette(new ArrayList<ModelAction>(), 0, 100, MOP));
     }
 

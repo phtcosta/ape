@@ -62,14 +62,14 @@ public final class ScenarioScript {
         private final int priority;
         private final boolean visited;
         private final float saturation;
-        private final int mopBoost;
+        private final int mopWeight;
 
-        Widget(String xpath, int priority, boolean visited, float saturation, int mopBoost) {
+        Widget(String xpath, int priority, boolean visited, float saturation, int mopWeight) {
             this.xpath = xpath;
             this.priority = priority;
             this.visited = visited;
             this.saturation = saturation;
-            this.mopBoost = mopBoost;
+            this.mopWeight = mopWeight;
         }
 
         public String getXPath() { return xpath; }
@@ -77,13 +77,13 @@ public final class ScenarioScript {
         public boolean isVisited() { return visited; }
 
         /**
-         * The MOP boost the scoring pipeline would have written, declared here because that
-         * pipeline runs above the oracle's entry point (finding 6.1-a). Without a declared boost
-         * every synthetic action carries 0, the MOP short-circuit is a no-op, and no step can be
-         * attributed {@code MOP} — so a scenario that wants a MOP-attributed step declares it,
+         * The undivided MOP weight the scoring pipeline would have written, declared here because
+         * that pipeline runs above the oracle's entry point (finding 6.1-a). Without a declared
+         * weight every synthetic action carries 0, the MOP coin finds no eligible action, and no
+         * step is owned by {@code mop} — so a scenario that wants a MOP-coin step declares it,
          * exactly as it declares validity and priority (finding 1.2-b).
          */
-        public int getMopBoost() { return mopBoost; }
+        public int getMopWeight() { return mopWeight; }
 
         /**
          * {@code ModelAction.isSaturated()} is visit-based for targetless actions but
@@ -255,10 +255,10 @@ public final class ScenarioScript {
         return new Widget(xpath, priority, visited, saturation, 0);
     }
 
-    /** A widget carrying a declared MOP boost — see {@link Widget#getMopBoost()}. */
+    /** A widget carrying a declared MOP weight — see {@link Widget#getMopWeight()}. */
     public static Widget widget(String xpath, int priority, boolean visited, float saturation,
-                                int mopBoost) {
-        return new Widget(xpath, priority, visited, saturation, mopBoost);
+                                int mopWeight) {
+        return new Widget(xpath, priority, visited, saturation, mopWeight);
     }
 
     /** A screen whose BACK and MENU actions are unvisited, at the default priority. */

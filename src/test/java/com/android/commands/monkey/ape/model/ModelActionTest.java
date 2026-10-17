@@ -32,29 +32,26 @@ public class ModelActionTest {
 
     @Test
     public void testDecisionSourceEnumCoversAllSources() {
-        // SATA, MOP, MopFrontier, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form, and the
-        // two owners isolate-guidance-groups adds, RESTART and LAUNCHER (design 3.8b).
-        assertEquals(13, ModelAction.DecisionSource.values().length);
+        // One source per dec.src owner (design D-B7): SATA, MOP, LLM, Budget, RESTART, LAUNCHER.
+        assertEquals(6, ModelAction.DecisionSource.values().length);
         // Spot-check the sources attributed by the selection paths.
         assertNotNull(ModelAction.DecisionSource.valueOf("SATA"));
         assertNotNull(ModelAction.DecisionSource.valueOf("LLM"));
         assertNotNull(ModelAction.DecisionSource.valueOf("Budget"));
-        assertNotNull(ModelAction.DecisionSource.valueOf("Form"));
-        assertNotNull(ModelAction.DecisionSource.valueOf("MopFrontier"));
+        assertNotNull(ModelAction.DecisionSource.valueOf("MOP"));
     }
 
-    /** The owner vocabulary of dec.src (design D-B7): six owners, and none for a boost source. */
+    /** The owner vocabulary of dec.src (design D-B7): six owners, one per source. */
     @Test
     public void theOwnerVocabularyIsTheSixPipelineOwners() {
         java.util.Set<String> owners = new java.util.TreeSet<>();
         for (ModelAction.DecisionSource source : ModelAction.DecisionSource.values()) {
-            if (source.owner() != null) {
-                owners.add(source.owner());
-            }
+            owners.add(source.owner());
         }
+        assertEquals("every source names exactly one owner", ModelAction.DecisionSource.values().length,
+                owners.size());
         assertEquals(new java.util.TreeSet<>(java.util.Arrays.asList(
                 "budget", "launcher", "llm", "mop", "restart", "sata")), owners);
-        assertEquals(null, ModelAction.DecisionSource.WTG.owner());
     }
 
     @Test

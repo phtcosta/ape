@@ -258,7 +258,7 @@ public class ScriptedLlmTest {
                 ScenarioScript.accept(true, false, false, ScriptedLlm.XPATH_PREFIX + W1)));
         ScriptedLlm llm = new ScriptedLlm(script);
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM, script, llm);
+                OracleScaffold.Cell.AS_LLM, script, llm);
         OracleScaffold.setField(agent, "_isNewState", true);
         llm.beginStep(0);
 

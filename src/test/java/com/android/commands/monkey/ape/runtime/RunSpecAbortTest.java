@@ -413,7 +413,8 @@ public class RunSpecAbortTest {
         // Deliberate and worth pinning: the preset states the routing gates ON, and the server
         // they route to is deployment-specific. A preset that quietly resolved to "LLM off" would
         // be the silent-degradation failure this whole change exists to end.
-        RunSpecException failure = abort(entries("ape.preset", Presets.LLM));
+        RunSpecException failure = abort(entries("ape.preset", Presets.AS_LLM,
+                "ape.staticDataPath", "/data/local/tmp/mop-artifact.json"));
         assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
     }
 

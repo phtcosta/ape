@@ -171,7 +171,6 @@ public class RestartGuardTest {
         assertEquals("launcher",
                 StatefulAgent.nonModelDecisionSource(ActionType.EVENT_TRIGGER_ACTIVITY).owner());
         assertEquals("sata", StatefulAgent.nonModelDecisionSource(ActionType.EVENT_NOP).owner());
-        assertEquals("sata", StatefulAgent.ownerOf(ModelAction.DecisionSource.Coverage));
-        assertEquals("mop", StatefulAgent.ownerOf(ModelAction.DecisionSource.MOP));
+        assertEquals("mop", ModelAction.DecisionSource.MOP.owner());
     }
 }

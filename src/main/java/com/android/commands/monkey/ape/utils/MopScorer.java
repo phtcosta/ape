@@ -102,8 +102,8 @@ public class MopScorer {
 
     /**
      * {@link #weigh(MopContext, State, ModelAction)} for an action of {@code activity}: the state
-     * contributes only its activity. For the MOP shortcut's ranking, which knows the activity and
-     * not the state (design D21).
+     * contributes only its activity. For the MOP coin's ranking, which knows the activity and
+     * not the state (design D-B10).
      *
      * @param mop the run's MOP context; null (no artifact) weighs 0
      */
@@ -293,7 +293,7 @@ public class MopScorer {
 
     /**
      * {@link MopData#lookup} of {@code eventType} on every node of {@link #containmentNodes}, in
-     * that order: the containment lookups the scoring pass, the shortcut, the marker and the
+     * that order: the containment lookups the scoring pass, the MOP coin, the marker and the
      * retirement trigger choose among. Each node is looked up with its own stamp and its own id.
      */
     public static List<MopData.Lookup> containmentLookups(MopData data, String activity,

@@ -3,14 +3,15 @@ package com.android.commands.monkey.ape.model;
 /**
  * activity-frontier (Lever B) — a first-class, non-model {@link Action} representing a stagnation
  * triggered activity launch. It carries the launch package name (captured from
- * {@code MopData.getPackageName()} by the launcher — never derived from the class name, main-spec
+ * {@code StaticGuiModel.packageName()} by the launcher — never derived from the class name,
  * INV-CT-04), the target activity class name, and, when the manifest provided one, a deep-link URI.
  *
  * <p>The type is {@link ActionType#EVENT_TRIGGER_ACTIVITY}, so {@code requireTarget()} and
  * {@code isModelAction()} both return false (it is not a GUI gesture and never a graph edge label,
  * mirroring {@code EVENT_RESTART}). {@code DecisionSource} lives only on {@link ModelAction}, not on
- * this non-model {@code Action}; attribution to {@code Component} happens in the else-branch of
- * {@code StatefulAgent.resolveNewAction}, which reads this action's type (INV-CT-07).
+ * this non-model {@code Action}; its {@code dec.src} is {@code launcher}, named by the stage that
+ * selects it and read back from this action's type ({@code StatefulAgent.nonModelDecisionSource},
+ * INV-CT-07).
  */
 public class ActivityTriggerAction extends Action {
 

@@ -8,47 +8,41 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
 /**
- * rearch-01 task 6.4 — the {@code llm_mop} preset's baseline golden: both axes at once, which is
- * the arm the decisive comparison was run on.
+ * The {@code as_mop_llm} cell's baseline golden (isolate-guidance-groups 11.3): all four groups.
  *
  * <h2>What the four steps interleave</h2>
  * <ol>
- *   <li><b>accept</b> on the fresh screen — the LLM preempts everything below it, including the
- *       launcher block. The cadence counter is therefore <i>not</i> advanced on this step: the
- *       increment is the first statement of a block the ladder returned above (finding 3.3-1). The
- *       golden records the accepted action; the counter's behavior is asserted directly by the
- *       preemption golden (task 7.2, INV-ORA-05), not here.</li>
- *   <li><b>decline</b> — the stagnation hook routes, answers null, and the step falls past the
- *       launcher (the counter reaches 49, one short of the cadence) into the SATA chain, where the
- *       declared MOP boost converts into a {@code MOP} / {@code short_circuit_unvisited} pick. One
- *       record showing both axes: a consulted LLM and a MOP-decided action.</li>
- *   <li><b>not_routed</b> — no consultation, the counter reaches the cadence, and the launcher
- *       fires. This is the step that pins the launcher's precedence over the SATA chain.</li>
- *   <li><b>timeout</b> — the counter restarts from the fire's reset, so no launcher; the boosted
- *       widget is visited by now, so no short-circuit; the chain settles on the epsilon-greedy
- *       rung.</li>
+ *   <li><b>accept</b> on the fresh screen — the LLM decides before the launcher is reached, and the
+ *       cadence counter advances anyway (design D-B11).</li>
+ *   <li><b>decline</b> — the stagnation stage calls and gets null; the counter is past the cadence,
+ *       so the launcher fires. One record carrying both a consulted LLM and the launcher.</li>
+ *   <li><b>not_routed</b> — the counter restarted at the fire, so the launcher is quiet and the MOP
+ *       coin takes the declared weight.</li>
+ *   <li><b>timeout</b> — the coin call times out and the MOP coin takes the weight again, the
+ *       driver writing no ledger; the component trigger fires on this step under the seed.</li>
  * </ol>
  *
  * <p>The seeded cadence (two below the fire) is what makes that sequence fit in four steps instead
- * of fifty — a declared scenario input, per design D2, not a lowered Config default.
+ * of fifty — a declared scenario input, per design D2, not a lowered default.
  */
-public class ParityOracleLlmMopTest {
+public class ParityOracleAsMopLlmTest {
 
     private static final long SEED = 7070L;
 
-    private static final String PRESET = "llm_mop";
+    private static final String PRESET = "as_mop_llm";
     private static final String SCENARIO = "baseline";
 
     private static final String HOST_ACTIVITY = "br.unb.cic.cryptoapp.MainActivity";
+    /** The census activity nearest to an unretired target (distance mode, design D20). */
     private static final String EXPECTED_TRIGGER =
-            "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity";
+            "br.unb.cic.cryptoapp.generated.CryptographyActivity";
 
     private static final int SEEDED_CADENCE = 48;
 
     private static final int BOOSTED_PRIORITY = 20;
     private static final int PLAIN_PRIORITY = 12;
     private static final int NAV_PRIORITY = 5;
-    private static final int DECLARED_BOOST = 7;
+    private static final int DECLARED_WEIGHT = 7;
 
     private static ScenarioScript baseline() {
         return ScenarioScript.named(SCENARIO, SEED)
@@ -59,7 +53,7 @@ public class ParityOracleLlmMopTest {
                                 ScenarioScript.widget("//*[@resource-id='h2']", BOOSTED_PRIORITY, false, 0.0F)),
                         ScenarioScript.screen("mopish", HOST_ACTIVITY, NAV_PRIORITY, true,
                                 ScenarioScript.widget("//*[@resource-id='m_boost']",
-                                        BOOSTED_PRIORITY, false, 1.0F, DECLARED_BOOST),
+                                        BOOSTED_PRIORITY, false, 1.0F, DECLARED_WEIGHT),
                                 ScenarioScript.widget("//*[@resource-id='m1']", PLAIN_PRIORITY, true, 1.0F),
                                 ScenarioScript.widget("//*[@resource-id='m2']", PLAIN_PRIORITY, true, 1.0F)))
                 .transition("home", "//*[@resource-id='h0']", "mopish")
@@ -77,8 +71,7 @@ public class ParityOracleLlmMopTest {
 
     @Test
     public void ladderConfigDefaultsAreUnchanged() {
-        LadderConfigGuard.assertSharedDefaults();
-        LadderConfigGuard.assertMopDefaults();
+        LadderConfigGuard.assertCellValues(OracleScaffold.Cell.AS_MOP_LLM);
     }
 
     @Test
@@ -86,7 +79,7 @@ public class ParityOracleLlmMopTest {
         ScenarioScript script = baseline();
         ScriptedLlm llm = new ScriptedLlm(script);
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM_MOP, script, llm);
+                OracleScaffold.Cell.AS_MOP_LLM, script, llm);
 
         List<DecisionRecord> records = OracleDriver.run(agent, script, llm);
 
@@ -98,19 +91,16 @@ public class ParityOracleLlmMopTest {
         DecisionRecord declined = records.get(1);
         assertEquals("the stagnation hook was consulted and declined",
                 "declined", declined.getLlm());
-        assertEquals("and the step fell through to the declared MOP boost",
-                "MOP", declined.getDecisionSource());
-        assertEquals("through the unvisited-MOP short-circuit",
-                "short_circuit_unvisited", declined.getPickChannel());
+        assertEquals("and the cadence, advanced on the accepted step too, fires the launcher",
+                "EVENT_TRIGGER_ACTIVITY", declined.getActionType());
+        assertEquals("with the nearest census candidate as its target",
+                EXPECTED_TRIGGER, declined.getTarget());
+        assertNull("a launcher return carries no decision source", declined.getDecisionSource());
 
-        DecisionRecord launcher = records.get(2);
-        assertEquals("an unrouted step reaches the launcher block",
-                "not_routed", launcher.getLlm());
-        assertEquals("and the seeded cadence fires it there",
-                "EVENT_TRIGGER_ACTIVITY", launcher.getActionType());
-        assertEquals("with the census candidate as its target",
-                EXPECTED_TRIGGER, launcher.getTarget());
-        assertNull("a launcher return carries no decision source", launcher.getDecisionSource());
+        DecisionRecord coin = records.get(2);
+        assertEquals("an unrouted step reaches the MOP coin", "not_routed", coin.getLlm());
+        assertEquals("which takes the declared weight", "MOP", coin.getDecisionSource());
+        assertEquals("on its own channel", "mop_coin", coin.getPickChannel());
 
         assertEquals("the random hook timed out", "timeout", records.get(3).getLlm());
 

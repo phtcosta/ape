@@ -14,10 +14,10 @@ import java.util.Arrays;
  * <p>One counter per target, {@code int[targets]}. Counters change only through
  * {@link #onFirstInteraction}, which counts the targets of the selected action's weight's lookup at
  * the distance behind its weight, {@code d*} (design D19 as amended 2026-10-09). The count is taken
- * in {@code StatefulAgent.moveForward}, before the coverage tracker records the selected action,
- * when this is the first interaction of the action's widget in its activity, and applied once the
- * action survives {@code StatefulAgent.checkRestart}; counters never decrease, so a retired target
- * stays retired for the rest of the run. A
+ * and applied at once in {@code StatefulAgent.moveForward}, through the run's
+ * {@code MopInteractionLedger}, when this is the first interaction of the action's widget in its
+ * activity: the restart is a guard stage before selection, so no selected action is replaced
+ * afterwards. Counters never decrease, so a retired target stays retired for the rest of the run. A
  * target whose counter is at least {@code ape.mopRetireAfter} is retired: it no longer counts toward
  * an action's distance, the prompt marker or the launcher order.
  */
@@ -124,8 +124,8 @@ public final class MopRetirement {
 
     /**
      * The number of distinct targets over the pairs {@code [i, d]} of {@code dist} that are not
-     * retired and lie at {@code d <= dmax}; a null retirement retires nothing. The MOP shortcut's
-     * target count (design D21, key 3), read over the weight's lookup with {@code dmax} its
+     * retired and lie at {@code d <= dmax}; a null retirement retires nothing. The MOP coin's
+     * target count (design D-B10, key 2), read over the weight's lookup with {@code dmax} its
      * distance plus one.
      */
     public static int countWithin(MopRetirement retirement, int[][] dist, int dmax) {

@@ -45,7 +45,7 @@ public class EgreedySeamTest {
     @Test
     public void egreedyDrawsFromTheOverriddenStream() throws Exception {
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.APERV, saturatedScript(42L), null);
+                OracleScaffold.Cell.AS, saturatedScript(42L), null);
 
         Action selected = agent.ladder();
 
@@ -61,11 +61,11 @@ public class EgreedySeamTest {
     @Test
     public void theFlipIsRepeatableUnderTheSameSeed() throws Exception {
         OracleSataAgent first = OracleScaffold.newAgent(
-                OracleScaffold.Preset.APERV, saturatedScript(7L), null);
+                OracleScaffold.Cell.AS, saturatedScript(7L), null);
         Action firstPick = first.ladder();
 
         OracleSataAgent second = OracleScaffold.newAgent(
-                OracleScaffold.Preset.APERV, saturatedScript(7L), null);
+                OracleScaffold.Cell.AS, saturatedScript(7L), null);
         Action secondPick = second.ladder();
 
         assertEquals("same seed, same epsilon-greedy outcome",

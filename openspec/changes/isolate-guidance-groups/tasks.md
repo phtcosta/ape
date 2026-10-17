@@ -120,14 +120,14 @@ Owns: `agent/SataAgent.java`, `model/State.java`, `agent/sata/*` (implementation
   - [x] 6.4.4 `dec.bmc` from the BACK/MENU cap filters;
   - [x] 6.4.5 `dec.cfc` at the roulettes and the least-visited pick, through `ScorerCounterfactual`, for each mounted scorer with a non-zero field in the candidate set
 - [x] 6.5 The submit exclusion (`:557-560`, `:1477-1487`) applies only when `FORM_COMPLETION` is in the plan (P-6). The BACK/MENU cap is read through `BACK_MENU_CAP`. `dec.ch` keeps its channels, without `SHORT_CIRCUIT_*` (D-B14.17). Delete `attributeByLargestBoost` (`:317-348`): `dec.src` is the owner the pipeline names (`sata` for this agent's own picks)
-- [ ] 6.5b `dumpCoverage` (`:369-372`): `mopReach` is written only when `MOP` is mounted, and is omitted otherwise (D-B14.21)
+- [x] 6.5b `dumpCoverage` (`:369-372`): `mopReach` is written only when `MOP` is mounted, and is omitted otherwise (D-B14.21)
 - [x] 6.6 Tests (`SataExtensionPointTest`):
   - [x] 6.6.1 X1 with zero scorers equals upstream's first-of-array;
   - [x] 6.6.2 X3 APE keeps the incumbent;
   - [x] 6.6.3 X4 APE consumes exactly one helper draw when there is more than one path;
   - [x] 6.6.4 the MOP variants decide as specified;
   - [x] 6.6.5 the shortcut is gone (no `SHORT_CIRCUIT_*` channel)
-- [ ] 6.7 Run `/sdd-test-run`
+- [x] 6.7 Run `/sdd-test-run`
 
 ## 7. Wave 1 · F4 — decision, coins, gates, guards (§4.2, §4.4, §4.5; D-A4–D-A6, D-A10, D-A15–D-A17, D-B7–D-B11)
 
@@ -135,7 +135,7 @@ Owns: `agent/pipeline/*`, `llm/LlmCircuitBreaker.java`, `llm/LlmClient.java`, th
 
 - [x] 7.1 `DecisionPipeline.Candidate` order: `BUDGET`, `RESTART`, `LLM_NEW_STATE`, `LLM_STAGNATION`, `LLM_COIN`, `MOP_LAUNCHER`, `COMPONENT_TRIGGER`, `MOP_COIN`, `SATA_CHAIN`. Each candidate is mounted by its feature (`MOP_LAUNCHER` by the renamed feature); `onStepOpen` is broadcast to every mounted stage at step open. The pipeline writes `dec.src` (the selecting stage's owner) and `dec.own` on **every** step, whatever is mounted (`i` = the first claimer, D-B14.6); the guard stages set `dec.ch` `budget`/`restart` (D-B14.17) and the owner values of 3.8b (`BudgetStage:74-76`, `LlmGate:65`, `MopLauncherStage:160`)
 - [x] 7.2 `MinActionsGate` (admits `size() >= min`) and `BreakerGate`, composed from `LlmParams` (a gate with parameter 0 is not mounted) and shared by the three LLM stages; a step lost to a gate counts `gateMinActions`/`gateBreaker`. The buffer condition is deleted from the LLM path. **At most one LLM call per step** (D-B8): once an LLM stage has called, the later LLM stages return `Continue` without calling. `LlmCircuitBreaker` and `LlmClient` (`:57`, today the default constructor) read `ape.llmBreakerFailures` and `ape.llmBreakerOpenMs` from `LlmParams`
-- [ ] 7.3 `LlmRandomStage` → `LlmCoinStage`: it reads `u_L` from `StepRng` (drawn at step open), checks the gates, then calls the engine. Whenever the LLM is mounted it records the LLM part of `dec.own` (`trg`, `uL`, the gate that barred, the fallback reason); a won coin counts `coinLlm`. The new-state and stagnation stages are unchanged except for using the gate chain and recording `trg` (D-A17)
+- [x] 7.3 `LlmRandomStage` → `LlmCoinStage`: it reads `u_L` from `StepRng` (drawn at step open), checks the gates, then calls the engine. Whenever the LLM is mounted it records the LLM part of `dec.own` (`trg`, `uL`, the gate that barred, the fallback reason); a won coin counts `coinLlm`. The new-state and stagnation stages are unchanged except for using the gate chain and recording `trg` (D-A17)
 - [x] 7.4 `RestartStage` (guard), mounted iff `ape.checkRestart`: when `collaborators.restartDue()`, it selects `collaborators.restartAction()` with `src=restart` and `dec.restart` set to the kind
 - [x] 7.5 `MopLauncherStage`: `stepsSinceFiring` advances in `onStepOpen`, and the stage fires when the count is at or past the cadence and the stage is reached (D-B11). It reads the activity list, main activity and package through `ctx.staticModel()` and the distances/MOP activities through `MopData` (today `:138-157` reads all of them from `MopData`). Each launch increments `launches`
 - [x] 7.6 `MopCoinStage` (new), as in D-B10: eligibility, `u_M < p_M`, then the ordering weight → unretired target count (distance) → `getActions()` order, and the submit exclusion when `FORM_COMPLETION` is mounted. It records `dec.own`, `dec.mopd`, `dec.mops` and `dec.ch:mop_coin`, and `coinMop`. `MopInteractionLedger` comes through `collaborators.mopLedger()`
@@ -205,17 +205,17 @@ Cross-reference: its `tasks.md` (wave 0 group 0; wave 1 fronts T, D, R, A, M, W;
 
 ## 11. Wave 2 — integration (serial)
 
-- [ ] 11.1 Merge the six wave-1 worktrees into `isolate-guidance-groups`, in the order F1, F2, F6, F5, F3, F4, resolving only import or signature seams
-- [ ] 11.2 Delete the four old presets (`aperv`, old `mop`, `llm`, `llm_mop`), their goldens and their `OracleScaffold.Preset` values. `OracleScaffold` takes a cell instead. Rewrite the tests that name them: `ParityOracle{Aperv,Mop,Llm,LlmMop}Test`, `PresetsTest`, `RunSpec*Test`, `FeatureDerivationTest`, `DecisionPipelineFromSpecTest`, `HardPreemptionTest`, `PipelineFixture`, `StageProvenanceLabelTest`, `EgreedySeamTest`, `OracleDriverTest`, `OracleScaffoldTest`, `PreemptionGoldenTest`, `ScriptedLlmTest`, `SinkNeutralityTest`. `OracleSataAgent` overrides `triggerComponent()` as a recorded no-op (D-B14.5; dispatch needs a device). Delete the obsolete enum values of 3.8b (`SHORT_CIRCUIT_*`, the boost-attributed `DecisionSource` values) and `CounterfactualFieldTest`'s cases for them
-- [ ] 11.3 Capture new goldens on purpose, one per cell (`src/test/resources/goldens/<cell>/baseline.ndjson`, plus the preemption golden), through the deliberate-regeneration path; review the diffs
-- [ ] 11.4 `SinkNeutralityTest`: one case per cell, including `as`, the real control; the new sink calls are reached
-- [ ] 11.5 `CleanControlTest` (new): replays of `base`, `as` and `as_llm` carry no `mop`, `mopf`, `wtg`, `menu`, `mopd`, `mops`, `ret`, `mopx`, `own.uM`, MOP key of `cfc`, `nav.c=mop`, `src=mop`, `src=launcher`, `ch=mop_coin`, `ACT.mop` or UICOV `mopReach`, and their `coinMop`, `launches` and `retired` are 0. `RngNeutralityTest` (new): unmounting `MinActionsGate`, or the MOP coin at `p_M=0`, leaves SATA's choice sequence identical on a fixed script
-- [ ] 11.6 Base parity: the `base` cell matches upstream's X1/X3/X4 behaviour on the oracle fixtures (`ParityOracleBaseTest`). Write the cell `RUN_START` fixtures `src/test/resources/cells/<cell>.run_start.json`, with volatile fields masked, and send them to `aperv-tool` (F7 10.6)
-- [ ] 11.7 Re-derive the APE fixtures with F7's derive (5.6), if not done
-- [ ] 11.8 `mvn clean test` green; then `mvn package`. Record the jar's sha256 and `BuildInfo.GIT_SHA`
-- [ ] 11.9 `mvn install -Drvsec_home=/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/worktrees-aperv/isolate-guidance-groups` (the worktree root, as the sister's S.1 expects; never the shared `rvsec` tree, which is on `modules` with other sessions' work). The F7 module tests pass against this jar
-- [ ] 11.10 Update `CLAUDE.md`: groups, keys, cells, telemetry members, rotation fix, removed presets (P4, current state)
-- [ ] 11.11 **Commit wave 2** (explicit paths; ask the author)
+- [x] 11.1 Merge the six wave-1 worktrees into `isolate-guidance-groups`, in the order F1, F2, F6, F5, F3, F4, resolving only import or signature seams
+- [x] 11.2 Delete the four old presets (`aperv`, old `mop`, `llm`, `llm_mop`), their goldens and their `OracleScaffold.Preset` values. `OracleScaffold` takes a cell instead. Rewrite the tests that name them: `ParityOracle{Aperv,Mop,Llm,LlmMop}Test`, `PresetsTest`, `RunSpec*Test`, `FeatureDerivationTest`, `DecisionPipelineFromSpecTest`, `HardPreemptionTest`, `PipelineFixture`, `StageProvenanceLabelTest`, `EgreedySeamTest`, `OracleDriverTest`, `OracleScaffoldTest`, `PreemptionGoldenTest`, `ScriptedLlmTest`, `SinkNeutralityTest`. `OracleSataAgent` overrides `triggerComponent()` as a recorded no-op (D-B14.5; dispatch needs a device). Delete the obsolete enum values of 3.8b (`SHORT_CIRCUIT_*`, the boost-attributed `DecisionSource` values) and `CounterfactualFieldTest`'s cases for them
+- [x] 11.3 Capture new goldens on purpose, one per cell (`src/test/resources/goldens/<cell>/baseline.ndjson`, plus the preemption golden), through the deliberate-regeneration path; review the diffs
+- [x] 11.4 `SinkNeutralityTest`: one case per cell, including `as`, the real control; the new sink calls are reached
+- [x] 11.5 `CleanControlTest` (new): replays of `base`, `as` and `as_llm` carry no `mop`, `mopf`, `wtg`, `menu`, `mopd`, `mops`, `ret`, `mopx`, `own.uM`, MOP key of `cfc`, `nav.c=mop`, `src=mop`, `src=launcher`, `ch=mop_coin`, `ACT.mop` or UICOV `mopReach`, and their `coinMop`, `launches` and `retired` are 0. `RngNeutralityTest` (new): unmounting `MinActionsGate`, or the MOP coin at `p_M=0`, leaves SATA's choice sequence identical on a fixed script
+- [x] 11.6 Base parity: the `base` cell matches upstream's X1/X3/X4 behaviour on the oracle fixtures (`ParityOracleBaseTest`). Write the cell `RUN_START` fixtures `src/test/resources/cells/<cell>.run_start.json`, with volatile fields masked, and send them to `aperv-tool` (F7 10.6)
+- [x] 11.7 Re-derive the APE fixtures with F7's derive (5.6), if not done
+- [x] 11.8 `mvn clean test` green; then `mvn package`. Record the jar's sha256 and `BuildInfo.GIT_SHA`
+- [x] 11.9 `mvn install -Drvsec_home=/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/worktrees-aperv/isolate-guidance-groups` (the worktree root, as the sister's S.1 expects; never the shared `rvsec` tree, which is on `modules` with other sessions' work). The F7 module tests pass against this jar
+- [x] 11.10 Update `CLAUDE.md`: groups, keys, cells, telemetry members, rotation fix, removed presets (P4, current state)
+- [x] 11.11 **Commit wave 2** (explicit paths; ask the author)
 
 ## 12. Wave 3 — device smoke (the mini experiment; author decision 2026-10-17)
 

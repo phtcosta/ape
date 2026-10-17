@@ -126,10 +126,8 @@ import java.util.Map;
  *       decision). This graph has no edges by design, so the production guard has no analogue here;
  *       the substitute is the script's own transition table, which is what already moves the agent
  *       from screen to screen.</li>
- *   <li>the two tri-states are handed {@code ABSENT}. For {@code patched} that is what production
- *       would compute — the harness's actions have no resolved {@code GUITreeNode} — and for
- *       {@code cf} it is one member's difference on the four MOP-sensitive channels, whose
- *       counterfactual pick is written above the entry point and is therefore null here.</li>
+ *   <li>the tri-state {@code patched} is handed {@code ABSENT}, which is what production would
+ *       compute: the harness's actions have no resolved {@code GUITreeNode}.</li>
  *   <li>{@code mopExposure} and the {@code llm[]} sub-events stay undriven: the first is emitted
  *       inside {@code adjustActionsByGUITree()} and the second by the units the scaffold replaces
  *       with {@link ScriptedLlm}. {@code SinkNeutralityTest} keeps a test on the undriven path that
@@ -236,7 +234,10 @@ public final class OracleDriver {
                 llm.beginStep(index);
             }
 
+            int triggeredBefore = agent.triggered == null ? 0 : agent.triggered.size();
             Action selected = agent.ladder();
+            String trig = agent.triggered == null || agent.triggered.size() == triggeredBefore
+                    ? null : agent.triggered.get(agent.triggered.size() - 1);
 
             if (llm != null) {
                 llm.finishStep();
@@ -244,7 +245,7 @@ public final class OracleDriver {
             if (sink != null) {
                 decision(agent, state, sink, selected);
             }
-            records.add(record(index, selected, llm));
+            records.add(record(index, selected, llm, trig));
             if (selected instanceof ModelAction) {
                 graph.markVisited((ModelAction) selected, agent.getTimestamp());
             }
@@ -316,23 +317,28 @@ public final class OracleDriver {
      *   <li>any other non-model return carries its type alone.</li>
      * </ul>
      *
+     * <p>Any of the three carries {@code trig} when the component trigger fired on the step: a
+     * side effect that decides nothing, recorded beside the action the step did select.
+     *
      * <p>The {@code llm} field distinguishes <i>absent</i> from {@code not_routed}, which are
      * different statements: absent means the preset has no LLM at all, so no consultation was
      * possible; {@code not_routed} means one was present and the step passed it by. Only a
      * preset that actually has one can make the second claim.
      */
-    private static DecisionRecord record(int step, Action selected, ScriptedLlm scripted) {
+    private static DecisionRecord record(int step, Action selected, ScriptedLlm scripted,
+            String trig) {
         String llm = scripted == null ? null : scripted.getProvenance().getLabel();
         if (selected instanceof ModelAction) {
             ModelAction picked = (ModelAction) selected;
             return new DecisionRecord(step, picked.getType().name(), targetXPath(picked),
-                    picked.getDecisionSource().name(), picked.getPickChannel().getLabel(), llm);
+                    picked.getDecisionSource().name(), picked.getPickChannel().getLabel(), llm,
+                    trig);
         }
         if (selected instanceof ActivityTriggerAction) {
             return new DecisionRecord(step, selected.getType().name(),
-                    ((ActivityTriggerAction) selected).getClassName(), null, null, llm);
+                    ((ActivityTriggerAction) selected).getClassName(), null, null, llm, trig);
         }
-        return new DecisionRecord(step, selected.getType().name(), null, null, null, llm);
+        return new DecisionRecord(step, selected.getType().name(), null, null, null, llm, trig);
     }
 
     /**

@@ -94,7 +94,7 @@ public class LlmStructuralFallbackTest {
         Action decided = pipeline.decide(ctx);
 
         assertEquals(Arrays.asList("Budget", "Restart", "LlmNewState", "LlmStagnation", "LlmCoin",
-                "MopLauncher", "MopCoin", "SataChain"), pipeline.stageNames());
+                "MopLauncher", "ComponentTrigger", "MopCoin", "SataChain"), pipeline.stageNames());
         assertEquals("the declined step falls through to the launcher, not past it to the chain",
                 ActivityTriggerAction.class, decided.getClass());
         assertEquals(PipelineFixture.TRIGGER_TARGET,

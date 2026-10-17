@@ -22,12 +22,9 @@ import java.util.Random;
  * ({@code SataAgent.java:1330}, after the task-1.6 seam), the epsilon-greedy roulette
  * ({@code :681}), and {@code handleNullAction} ({@code StatefulAgent.java:1695,1706,1711}).
  *
- * <p>The component-trigger draw is <b>not</b> among them, although {@code ComponentTriggerStage}
- * takes it from this same accessor. No preset states {@code ape.componentPercentage}, so the stage
- * is in no preset's roster and the draw never executes (finding 2.1-c, design D5). Nothing is lost by
- * that: a draw that never happens cannot desynchronize the stream. The distinction is worth the
- * sentence, because "the override reaches this call site" and "this call site draws" are different
- * claims, and only the second one moves a golden.
+ * <p>No coin is among them: the LLM, MOP and component coins and the fuzz toss are drawn at step
+ * open from the four {@code StepRng} streams (design D-B9), seeded by the installed context, so
+ * mounting a stage moves no draw of this stream (INV-DP-13).
  *
  * <p><b>Why {@link #ladder()} exists (finding 1.1-a).</b> The ladder cannot be entered
  * reflectively. {@code Class.getDeclaredMethod} runs {@code getDeclaredMethods0}, which resolves
@@ -38,8 +35,9 @@ import java.util.Random;
  *
  * <p>This class is allocated through {@code Unsafe} like the production agent it extends
  * ({@link OracleScaffold#newAgent}); its constructor never runs, and its fields are injected.
- * It deliberately overrides nothing else: every production decision the ladder makes must be the
- * production one, or the golden records a harness artifact rather than the system under test.
+ * Besides the stream it overrides only {@link #triggerComponent}, whose dispatch leaves the JVM:
+ * every production decision the ladder makes must be the production one, or the golden records a
+ * harness artifact rather than the system under test.
  */
 public class OracleSataAgent extends SataAgent {
 
@@ -58,6 +56,24 @@ public class OracleSataAgent extends SataAgent {
     protected Random getRandom() {
         getRandomCalls++;
         return pinned;
+    }
+
+    /** The {@code kind:class} of each target the component trigger fired, in order; null until the first. */
+    java.util.List<String> triggered;
+
+    /**
+     * The component trigger as a recorded no-op (design D-B14.5): the dispatch needs
+     * {@code android.content.Intent}, so nothing is sent, and the step carries the {@code dec.trig}
+     * production records for the target the round-robin cursor selected.
+     */
+    @Override
+    public void triggerComponent(int target) {
+        if (triggered == null) {
+            triggered = new java.util.ArrayList<>();
+        }
+        String[] kindAndClass = componentTarget(target);
+        triggered.add(kindAndClass[0] + ":" + kindAndClass[1]);
+        recordComponentTrigger(target);
     }
 
     /** The compiled entry point into the protected selection ladder. */

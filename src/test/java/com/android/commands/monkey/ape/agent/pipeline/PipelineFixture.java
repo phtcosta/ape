@@ -6,7 +6,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Random;
 
 import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
@@ -121,7 +120,6 @@ final class PipelineFixture {
         private final int componentTargets;
 
         /** The agent's own stream; no stage reads it, the coins come from the step's routing. */
-        private final Random agentRandom = new Random(11L);
 
         int chainCalls;
         int triggerCalls;
@@ -146,7 +144,6 @@ final class PipelineFixture {
 
         @Override public LlmEngine llmEngine() { return llm; }
         @Override public boolean llmBreakerAllows() { return llm.allows(); }
-        @Override public Random agentRandom() { return agentRandom; }
         @Override public ModelAction selectNewActionForTrivialActivity() { return null; }
         @Override public ModelAction selectNewActionBackToActivity() { return null; }
         @Override public ModelAction selectNewActionEarlyStageForward() { return null; }
@@ -226,9 +223,10 @@ final class PipelineFixture {
         "ape.graphStableRestartThreshold", "10",
         "ape.llmPercentage", "1.0"};
 
-    /** The shipped {@code llm} arm: the three LLM stages, then the chain. */
+    /** The {@code as_llm} cell: the three LLM stages, the component trigger, then the chain. */
     static RunSpec llmPlan() {
-        return preset(Presets.LLM, join(new String[] {"ape.llm", "true", "ape.llmUrl", LLM_URL}, LIVE_HOOK_KEYS));
+        return preset(Presets.AS_LLM, join(new String[] {"ape.llmUrl", LLM_URL,
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH}, LIVE_HOOK_KEYS));
     }
 
     static String[] join(String[] first, String[] second) {
@@ -239,17 +237,14 @@ final class PipelineFixture {
     }
 
     /**
-     * The {@code llm} arm with the MOP substrate and the activity trigger on, which puts the launcher
-     * between the LLM stages and the chain.
+     * The {@code as_mop_llm} cell, which puts the launcher between the LLM stages and the chain.
      *
      * @param cadence the launcher's firing period, so a test can put the firing point where it needs
      *        it rather than counting to the jar default of fifty
      */
     static RunSpec llmWithLauncherPlan(int cadence) {
-        return preset(Presets.LLM, join(new String[] {
-                "ape.llm", "true", "ape.llmUrl", LLM_URL,
-                "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true",
-                "ape.activityTriggerEnabled", "true",
+        return preset(Presets.AS_MOP_LLM, join(new String[] {
+                "ape.llmUrl", LLM_URL, "ape.staticDataPath", TestRunSpecs.MOP_PATH,
                 "ape.activityTriggerStagnationStep", Integer.toString(cadence)}, LIVE_HOOK_KEYS));
     }
 

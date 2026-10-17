@@ -127,11 +127,6 @@ public class DecisionPipelineFromSpecTest {
         }
 
         @Override
-        public Random agentRandom() {
-            return new Random(0L);
-        }
-
-        @Override
         public void resolveSynthesizedTap(ModelAction tap) {
             throw new UnsupportedOperationException("no test here decides through an LLM stage");
         }

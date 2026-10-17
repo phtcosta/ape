@@ -313,10 +313,12 @@ public class RunSpecEchoTest {
 
     @Test
     public void weightsTheModeDoesNotReadAreMarkedInert() throws Exception {
-        // The run-spec scenario: llm_mop with the distance mode. The mode is read from params, and
-        // the flag weights the preset vector states are listed as parameterizing nothing.
-        Map<String, String> plan = presetPlan(Presets.LLM_MOP);
-        plan.put("ape.mopScoring", "distance");
+        // The run-spec scenario: as_mop_llm, whose MOP block states the distance mode, with the flag
+        // weights stated too. The mode is read from params, and the flag weights are listed as
+        // parameterizing nothing.
+        Map<String, String> plan = presetPlan(Presets.AS_MOP_LLM);
+        plan.put("ape.mopWeightDirect", "500");
+        plan.put("ape.mopWeightTransitive", "300");
         JSONObject json = record(resolve(plan));
 
         assertEquals("distance", json.getJSONObject("params").getString("ape.mopScoring"));

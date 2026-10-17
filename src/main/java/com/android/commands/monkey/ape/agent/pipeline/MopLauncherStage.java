@@ -224,7 +224,7 @@ public final class MopLauncherStage implements DecisionStage {
      * (INV-CT-10). There is no non-census fallback: a null/empty
      * census, or no eligible census member, yields null. The census is the reachability-augmented
      * {@code MopData.activityHasMop} truth (INV-MOP-27), NOT the component-level
-     * {@code ComponentInfo.reachesTarget} field, which false-negatives lambda-triggered activities.
+     * {@code MopData.reachesMop} fact, which false-negatives lambda-triggered activities.
      * The caller owns the index increment.
      *
      * @param activities the arm's declared activities

@@ -62,17 +62,6 @@ public class RunSpecResolveTest {
         assertEquals("ape.llmPercentageNoSubstrate", failure.getKey());
     }
 
-    @Test
-    public void theBaselineArmsFiveOffSwitchesAreAllInert() {
-        RunSpec spec = resolve(new LinkedHashMap<>(Presets.resolve(Presets.APERV)));
-        assertEquals(Arrays.asList(
-                        "ape.activityTriggerEnabled",
-                        "ape.frontierBoostWeight",
-                        "ape.llmPercentageNoSubstrate",
-                        "ape.mopActivitySourceComponents",
-                        "ape.mopFrontierWeight"),
-                spec.inertKeys());
-    }
 
     @Test
     public void aSubParameterOfAnActiveFeatureIsNotInert() {
@@ -145,11 +134,11 @@ public class RunSpecResolveTest {
     }
 
     @Test
-    public void theDistanceArmFromTheMopPresetMarksTheFlagWeightsInert() {
+    public void theDistanceCellMarksTheFlagWeightsInert() {
         RunSpec spec = resolve(entries(
-                "ape.preset", Presets.MOP_ARM,
-                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
-                "ape.mopScoring", "distance"));
+                "ape.preset", Presets.AS_MOP,
+                "ape.staticDataPath", MOP_PATH,
+                "ape.mopWeightDirect", "500", "ape.mopWeightTransitive", "300"));
         assertTrue(spec.has(Feature.MOP));
         assertEquals("distance", spec.mop().values().get("ape.mopScoring"));
         assertTrue(spec.inertKeys().contains("ape.mopWeightDirect"));
@@ -162,8 +151,9 @@ public class RunSpecResolveTest {
     }
 
     @Test
-    public void theFlagArmFromTheMopPresetHasNoModeInertKey() {
-        RunSpec spec = resolve(entries("ape.preset", Presets.MOP_ARM, "ape.staticDataPath", MOP_PATH, "ape.mop", "true"));
+    public void theFlagModeOnAMopCellHasNoModeInertKey() {
+        RunSpec spec = resolve(entries("ape.preset", Presets.AS_MOP, "ape.staticDataPath", MOP_PATH,
+                "ape.mopScoring", "flag"));
         assertFalse(spec.inertKeys().contains("ape.mopWeightDirect"));
         assertFalse(spec.inertKeys().contains("ape.mopWeightTransitive"));
     }
@@ -250,14 +240,14 @@ public class RunSpecResolveTest {
     @Test
     public void anExplicitKeyOverridesThePreset() {
         Map<String, String> input = entries(
-                "ape.preset", Presets.MOP_ARM,
-                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
-                "ape.mopWeightDirect", "0");
+                "ape.preset", Presets.AS_MOP,
+                "ape.staticDataPath", MOP_PATH,
+                "ape.mopWeightWtg", "150");
         RunSpec spec = resolve(input);
-        assertEquals(Presets.MOP_ARM, spec.presetName());
-        assertEquals("0", spec.effectiveValues().get("ape.mopWeightDirect"));
+        assertEquals(Presets.AS_MOP, spec.presetName());
+        assertEquals("150", spec.effectiveValues().get("ape.mopWeightWtg"));
         assertEquals("the preset's other weights survive the override",
-                "300", spec.effectiveValues().get("ape.mopWeightTransitive"));
+                "200", spec.effectiveValues().get("ape.mopFrontierWeight"));
     }
 
     @Test
@@ -317,11 +307,10 @@ public class RunSpecResolveTest {
     public void aPresetAndTheSamePlanWrittenOutHaveTheSameDigest() {
         // INV-RUN-04's hardest clause: the digest identifies the arm as interpreted, so how the
         // arm was expressed must be invisible to it. This is why the preset name is not hashed.
-        Map<String, String> viaPreset = entries("ape.preset", Presets.MOP_ARM,
-                "ape.staticDataPath", MOP_PATH, "ape.mop", "true");
-        Map<String, String> written = new LinkedHashMap<>(Presets.resolve(Presets.MOP_ARM));
+        Map<String, String> viaPreset = entries("ape.preset", Presets.AS_MOP,
+                "ape.staticDataPath", MOP_PATH);
+        Map<String, String> written = new LinkedHashMap<>(Presets.resolve(Presets.AS_MOP));
         written.put("ape.staticDataPath", MOP_PATH);
-        written.put("ape.mop", "true");
 
         RunSpec fromPreset = resolve(viaPreset);
         RunSpec fromKeys = resolve(written);

@@ -180,9 +180,8 @@ public final class GoldenFile {
      * states its identity once and cannot accidentally compare one preset's run against another's
      * golden — a header mismatch is reported as its own failure for exactly that reason.
      *
-     * <p>Composed here rather than in each of the four preset tests because it is the same one line
-     * in all of them; group 4 deliberately left it unwritten until this group could see whether the
-     * presets wanted the same shape. They do.
+     * <p>Composed here rather than in each cell test because it is the same one line in all of
+     * them.
      */
     public static void captureOrCompare(Header header, List<DecisionRecord> records)
             throws IOException {

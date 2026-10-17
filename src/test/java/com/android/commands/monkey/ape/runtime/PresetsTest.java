@@ -179,9 +179,9 @@ public class PresetsTest {
     }
 
     @Test
-    public void theCellsLeadTheNames() {
+    public void theNamesAreExactlyTheSixCells() {
         assertEquals(Arrays.asList(Presets.BASE, Presets.MOP, Presets.AS, Presets.AS_MOP,
-                Presets.AS_LLM, Presets.AS_MOP_LLM), Presets.names().subList(0, 6));
+                Presets.AS_LLM, Presets.AS_MOP_LLM), Presets.names());
     }
 
     @Test

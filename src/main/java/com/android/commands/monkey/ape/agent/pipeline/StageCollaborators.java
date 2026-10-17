@@ -21,7 +21,6 @@ import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ModelAction;
 
-import java.util.Random;
 
 /**
  * The agent behaviours assembly binds into stages.
@@ -134,16 +133,6 @@ public interface StageCollaborators {
      * @return whether an LLM attempt may be made on this step
      */
     boolean llmBreakerAllows();
-
-    /**
-     * The agent's own generator — {@code ape.getRandom()}, Monkey's {@code mRandom}.
-     *
-     * <p>No stage reads it: the coins come from their own streams, drawn at step open
-     * ({@link StepRouting}, INV-DP-13). It stays declared only because the agent overrides it.
-     *
-     * @return the agent-side stream
-     */
-    Random agentRandom();
 
     /**
      * Resolves an LLM-synthesized tap against the current state, so the action carries the

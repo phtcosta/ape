@@ -62,7 +62,7 @@ public class OracleDriverTest {
     @Test
     public void aRunRecordsOneOrderedRecordPerScriptedStep() throws Exception {
         ScenarioScript script = singleScreen(4);
-        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Preset.APERV, script, null);
+        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Cell.AS, script, null);
 
         List<DecisionRecord> records = OracleDriver.run(agent, script);
 
@@ -80,7 +80,7 @@ public class OracleDriverTest {
         // second StateKey for one screen (the harness's Names compare by identity), and the agent
         // would then meet an explored screen as if it were new.
         ScenarioScript script = singleScreen(4);
-        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Preset.APERV, script, null);
+        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Cell.AS, script, null);
 
         OracleDriver.run(agent, script);
 
@@ -115,7 +115,7 @@ public class OracleDriverTest {
                                 ScriptedLlm.XPATH_PREFIX + D0)))
                 .build();
         ScriptedLlm llm = new ScriptedLlm(script);
-        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Preset.LLM, script, llm);
+        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Cell.AS_LLM, script, llm);
 
         List<DecisionRecord> records = OracleDriver.run(agent, script, llm);
 
@@ -131,10 +131,10 @@ public class OracleDriverTest {
 
     @Test
     public void theLlmFieldIsAbsentWithoutAScriptedLlmAndAlwaysPresentWithOne() throws Exception {
-        ScenarioScript apervScript = singleScreen(2);
-        OracleSataAgent aperv =
-                OracleScaffold.newAgent(OracleScaffold.Preset.APERV, apervScript, null);
-        for (DecisionRecord record : OracleDriver.run(aperv, apervScript)) {
+        ScenarioScript asScript = singleScreen(2);
+        OracleSataAgent asAgent =
+                OracleScaffold.newAgent(OracleScaffold.Cell.AS, asScript, null);
+        for (DecisionRecord record : OracleDriver.run(asAgent, asScript)) {
             assertNull("a preset with no LLM cannot claim not_routed either", record.getLlm());
         }
 
@@ -142,7 +142,7 @@ public class OracleDriverTest {
         ScenarioScript llmScript = singleScreen(2);
         ScriptedLlm scriptedLlm = new ScriptedLlm(llmScript);
         OracleSataAgent llm =
-                OracleScaffold.newAgent(OracleScaffold.Preset.LLM, llmScript, scriptedLlm);
+                OracleScaffold.newAgent(OracleScaffold.Cell.AS_LLM, llmScript, scriptedLlm);
         for (DecisionRecord record : OracleDriver.run(llm, llmScript, scriptedLlm)) {
             assertEquals(ScriptedLlm.Provenance.NOT_ROUTED.getLabel(), record.getLlm());
         }
@@ -151,7 +151,7 @@ public class OracleDriverTest {
     @Test
     public void aModelActionReturnCarriesBothProvenanceFields() throws Exception {
         ScenarioScript script = singleScreen(3);
-        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Preset.APERV, script, null);
+        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Cell.AS, script, null);
 
         for (DecisionRecord record : OracleDriver.run(agent, script)) {
             // ModelAction.java:91-92 initializes both, and logActionSelected rewrites the source on
@@ -173,9 +173,9 @@ public class OracleDriverTest {
         ScenarioScript script = singleScreen(6);
 
         List<DecisionRecord> first = OracleDriver.run(
-                OracleScaffold.newAgent(OracleScaffold.Preset.APERV, script, null), script);
+                OracleScaffold.newAgent(OracleScaffold.Cell.AS, script, null), script);
         List<DecisionRecord> second = OracleDriver.run(
-                OracleScaffold.newAgent(OracleScaffold.Preset.APERV, script, null), script);
+                OracleScaffold.newAgent(OracleScaffold.Cell.AS, script, null), script);
 
         assertEquals("harness nondeterminism is a test failure, not a mystery diff", first, second);
     }
@@ -190,7 +190,7 @@ public class OracleDriverTest {
         // scenario that wanders outside the capture boundary looks like, and it must be a redesign
         // signal rather than a swallowed step.
         ScenarioScript script = singleScreen(1);
-        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Preset.APERV, script, null);
+        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Cell.AS, script, null);
         OracleScaffold.setField(agent, "backToActivity", new ActivityNode(ACTIVITY));
 
         try {

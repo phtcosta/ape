@@ -26,6 +26,7 @@ import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Namer;
 import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.Presets;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
@@ -86,7 +87,7 @@ import java.util.Set;
  *   <tr><td>{@code model}</td><td>StatefulAgent</td><td>{@code getGraph()} — the global-action scan, the launcher's visited set, path search</td></tr>
  *   <tr><td>{@code _mopContext}</td><td>StatefulAgent</td><td>preset axis; launcher and component-trigger gates</td></tr>
  * *   <tr><td>{@code _coverageTracker}</td><td>StatefulAgent</td><td>{@code computeDynamicEpsilon()} ({@code Config.dynamicEpsilon} defaults true)</td></tr>
- *   <tr><td>{@code _budgetTracker}</td><td>StatefulAgent</td><td>the first block dereferences it unconditionally — {@code Config.activityBudgetEnabled} defaults <b>true</b>, so null is not the "budget off" wiring, it is a crash</td></tr>
+ *   <tr><td>{@code _budgetTracker}</td><td>StatefulAgent</td><td>the BUDGET stage; built iff {@code ACTIVITY_BUDGET} is mounted (an ADDONS member), as the constructor builds it, and null otherwise, when no BUDGET stage is assembled</td></tr>
  *   <tr><td>{@code scoringContext}, {@code scoringPipeline}</td><td>StatefulAgent</td><td>not read by the ladder itself; wired because the profile mirrors the constructor</td></tr>
  *   <tr><td>{@code actionBuffer}</td><td>StatefulAgent</td><td>{@code actionBufferSize()} in all three LLM preconditions, {@code selectNewActionFromBuffer()}</td></tr>
  *   <tr><td>{@code _actionHistory}</td><td>StatefulAgent</td><td>argument of {@code selectAction}</td></tr>
@@ -191,49 +192,27 @@ import java.util.Set;
  *       {@code ActivityNode}, {@code Graph.markVisited(State,int)} NPEs, and without the action
  *       inventory, {@code Graph.markVisited(ModelAction,int)} throws its sanity check — both of
  *       which the driver's bookkeeping calls (design D7).</li>
- *   <li><b>2.1-c — the component trigger is outside the capture boundary</b>, by owner decision
- *       of 2026-08-03. It never fires: {@code ape.componentPercentage} is set by no arm of the
- *       phase-2 grid — the key exists only in {@code aperv-tool}'s mapping
- *       ({@code tool.py:101}) and is absent from the 18 {@code ARM_DEFINING_KEYS} and both
- *       arm-flag dicts — so every arm runs on the jar default 0.0
- *       ({@code Config.java:256}), which makes the rate non-positive in production and here alike.
- *       Since the extraction moved that rate into the plan, the same fact reads structurally: no
- *       preset states the key, so {@code COMPONENT_TRIGGER} is in no preset's plan and
- *       {@code ComponentTriggerStage} is in no preset's roster (INV-DP-03). Even with the gate
- *       forced open the committed fixture yields zero tuples (no receivers, no services, and its
- *       one provider has {@code reachesTarget=false}, filtered at {@code StatefulAgent.java:1246}),
- *       so {@code componentTargetCount()} reports zero and the stage's cursor never moves; and
- *       had a tuple existed, dispatch is device-bound ({@code android.content.Intent} in
- *       {@code dispatchTrigger}, {@code AndroidDevice.executeCommandAndWaitFor} in
- *       {@code dispatchProvider}, whose wrapper catches {@code Exception} and not the
- *       {@code NoClassDefFoundError} actually thrown). The exclusion costs no parity: an absent
- *       stage decides nothing and draws nothing, exactly as the short-circuiting conjunction it
- *       replaced did. Should a future arm enable it, this must be revisited before that arm's
- *       comparability is claimed.</li>
+ *   <li><b>2.1-c — the component trigger is inside the capture boundary as a recorded no-op.</b>
+ *       The STATIC block mounts it at {@code ape.componentPercentage=0.03}, so it is in the roster
+ *       of the four {@code as*} cells. Its coin is {@code u_C} from {@code StepRng}'s component
+ *       stream, so it shifts no agent, helper or other coin draw. Its dispatch is device-bound
+ *       ({@code android.content.Intent}, {@code AndroidDevice.executeCommandAndWaitFor}), so
+ *       {@link OracleSataAgent#triggerComponent} dispatches nothing and records the target the
+ *       cursor selected, which the golden carries as {@code trig} (design D-B14.5). The committed
+ *       fixture's pool is its one provider's three operations.</li>
  * </ul>
  *
  * <h2>Group-6 findings</h2>
  * <ul>
- *   <li><b>6.1-a — a MOP-attributed step needs a declared boost, and the state that carries it is a
- *       documented stand-in.</b> {@code selectUnvisitedMopTarget} ranks by
- *       {@code ModelAction.getMopBoost()} ({@code SataAgent.java:727-732}) and
- *       {@code attributeByLargestBoost} ({@code :293}) reads the same fields to decide the source.
- *       Those fields are written in exactly one place ({@code MopWidgetPass}, inside
- *       {@code adjustActionsByGUITree()}) and cleared in exactly one other
- *       ({@code ScoringPipeline}'s {@code resetBoosts()}) — both <i>above</i> this oracle's entry
- *       point, so a boost declared here persists for the whole run and an undeclared one is 0,
- *       which makes the short-circuit a no-op. {@link ScenarioScript.Widget#getMopBoost()} declares
- *       it and {@link #buildState} writes it through the public {@code ModelAction.setMopBoost}, on
- *       the precedent of finding 1.2-b. <b>The honest half</b>: reaching the short-circuit also
- *       needs the action declared <i>unvisited and saturated at once</i>, and per action that pair
- *       does not occur in production — {@code ModelAction.resolveAt} ({@code :243-246}) derives
- *       {@code resolvedSaturation} from {@code visitedCount}. In production the pair arises one
- *       level up, in the differ: {@code StateActionDiffer.getUnsaturated(from,to)} ({@code :74})
- *       drops a matched pair when <i>either</i> side is saturated, so a NamingFactory-refined
- *       sibling offers an action unvisited in {@code to} whose counterpart in {@code from} is
- *       saturated — verbatim what the production comment at {@code SataAgent.java:641-643} calls
- *       re-arming the short-circuit. The harness has no {@code currentState} and no refinement, so
- *       it declares the pair on the action itself, as a stand-in for that path.</li>
+ *   <li><b>6.1-a — a MOP-coin step needs a declared weight.</b> {@code MopCoinStage} is eligible
+ *       only on an action with a positive undivided {@code ModelAction.getMopWeight()} that has no
+ *       first interaction in the ledger. The weight is written in exactly one place
+ *       ({@code MopWidgetPass}, inside {@code adjustActionsByGUITree()}) — <i>above</i> this oracle's
+ *       entry point, so a weight declared here persists for the whole run and an undeclared one is
+ *       0. {@link ScenarioScript.Widget#getMopWeight()} declares it and {@link #buildState} writes
+ *       it through the public {@code ModelAction.setMopWeight}, on the precedent of finding 1.2-b.
+ *       The ledger is written in {@code moveForward}, which the driver does not run, so a declared
+ *       weight stays eligible on every step of the scenario.</li>
  *   <li><b>6.1-b — the budget block's trivial-action return is outside the boundary; its gate is
  *       not.</b> With the exhaustion declared the block is entered, and what it calls next —
  *       {@code selectNewActionForTrivialActivity()} — needs more than
@@ -269,7 +248,7 @@ import java.util.Set;
 public final class OracleScaffold {
 
     /**
-     * The MOP fixture the {@code mop} and {@code llm_mop} presets load, via {@code MopData.load}.
+     * The artifact fixture every cell with STATIC or MOP loads, via {@code StaticArtifactLoader.load}.
      *
      * <p>It is the derived artifact, not the static-analysis document it came from: after the
      * cutover the loader reads only the compact format, so pointing the presets at the source would
@@ -289,27 +268,34 @@ public final class OracleScaffold {
     }
 
     /**
-     * The four target presets. A preset is realized by the plan it states and the injection profile
-     * that follows from it: the presence or absence of {@code _mopContext} and of the LLM feature are
-     * its only axes (design D2), which is what {@code StatefulAgent}'s constructor used to decide
-     * from {@code Config.mopDataPath} and {@code Config.llmUrl} and what {@code RunSpec} decides
-     * now.
+     * The six cells (guidance-groups). A cell is realized by its preset's resolved plan and the
+     * injection profile that follows from it, as the composition root wires it: whether the
+     * artifact's providers exist, which stages, gates and coins are assembled, and which X1/X3/X4
+     * variants are mounted are the plan's features, exactly as in production (parity-oracle
+     * "Per-Preset Golden Decision-Sequence Capture").
      */
-    public enum Preset {
-        APERV(false, false),
-        MOP(true, false),
-        LLM(false, true),
-        LLM_MOP(true, true);
+    public enum Cell {
+        BASE(Presets.BASE, false, false),
+        MOP(Presets.MOP, true, false),
+        AS(Presets.AS, true, false),
+        AS_MOP(Presets.AS_MOP, true, false),
+        AS_LLM(Presets.AS_LLM, true, true),
+        AS_MOP_LLM(Presets.AS_MOP_LLM, true, true);
 
-        private final boolean mopData;
+        private final String preset;
+        private final boolean staticData;
         private final boolean llm;
 
-        Preset(boolean mopData, boolean llm) {
-            this.mopData = mopData;
+        Cell(String preset, boolean staticData, boolean llm) {
+            this.preset = preset;
+            this.staticData = staticData;
             this.llm = llm;
         }
 
-        public boolean hasMopData() { return mopData; }
+        /** The cell's {@code ape.preset} name, which is also its golden directory. */
+        public String preset() { return preset; }
+        /** Whether the cell loads the artifact: it carries STATIC or MOP. */
+        public boolean hasStaticData() { return staticData; }
         public boolean hasLlm() { return llm; }
     }
 
@@ -393,7 +379,7 @@ public final class OracleScaffold {
             ModelAction click = new ModelAction(state, names[i], ActionType.MODEL_CLICK);
             click.setValid(true);
             click.setPriority(widget.getPriority());
-            click.setMopBoost(widget.getMopBoost()); // finding 6.1-a
+            click.setMopWeight(widget.getMopWeight()); // finding 6.1-a
             setField(click, "resolvedSaturation", widget.getSaturation());
             if (widget.isVisited()) {
                 markVisited(click);
@@ -473,6 +459,33 @@ public final class OracleScaffold {
 
     // ---- preset wiring ---------------------------------------------------------------------
 
+    /**
+     * The plan a cell's agent is built over: the cell's preset plus the deployment keys and the
+     * two injection-profile adaptations {@link #newAgent} explains, resolved under {@code seed} —
+     * the run seed the four {@code StepRng} streams are derived from. Also what
+     * {@link LadderConfigGuard} asserts the cell's ladder values against.
+     *
+     * @param overrides {@code ape.*} key/value pairs stated over the cell, as a variant's dose
+     *        override is (guidance-groups); none for the cell itself
+     */
+    static RunSpec planOf(Cell cell, long seed, String... overrides) {
+        List<String> keys = new ArrayList<>(Arrays.asList("ape.preset", cell.preset()));
+        if (cell.hasStaticData()) {
+            keys.addAll(Arrays.asList("ape.staticDataPath", TestRunSpecs.MOP_PATH));
+        }
+        if (cell.hasLlm()) {
+            keys.addAll(Arrays.asList("ape.llmUrl", "http://127.0.0.1:30000/v1",
+                    "ape.graphStableRestartThreshold", "10",
+                    "ape.llmPercentage", "1.0"));
+        }
+        keys.addAll(Arrays.asList(overrides));
+        Map<String, String> entries = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < keys.size(); i += 2) {
+            entries.put(keys.get(i), keys.get(i + 1));
+        }
+        return RunSpec.resolve(entries, RunSpec.CliValues.of("sata", seed, null));
+    }
+
     /** Loads the committed MOP fixture through the production path, as {@code MopDataTest} does. */
     static StaticArtifactLoader.Loaded loadMopFixture() {
         URL url = OracleScaffold.class.getResource("/" + MOP_FIXTURE);
@@ -490,88 +503,63 @@ public final class OracleScaffold {
     }
 
     /**
-     * Builds the agent for a preset, wired over the scenario's entry screen and with both RNG
-     * streams seeded from the scenario's declared seed.
+     * Builds the agent for a cell, wired over the scenario's entry screen and with every RNG
+     * stream seeded from the scenario's declared seed.
      *
-     * @param llm the scripted LLM for the LLM presets; null for the others. The preset's declared
+     * @param llm the scripted LLM for the LLM cells; null for the others. The cell's declared
      *            axis and the argument must agree — a mismatch is an authoring bug and fails here
-     *            rather than producing a golden for the wrong preset.
+     *            rather than producing a golden for the wrong cell.
      */
-    static OracleSataAgent newAgent(Preset preset, ScenarioScript script, ScriptedLlm llm)
+    static OracleSataAgent newAgent(Cell cell, ScenarioScript script, ScriptedLlm llm)
             throws Exception {
-        return newAgent(preset, script, llm, null);
+        return newAgent(cell, script, llm, null);
     }
 
     /**
      * The same agent, observed by a sink of the caller's choosing.
      *
      * <p>The neutrality gate (R7, INV-SNK-07) is the only caller that passes one: it replays a
-     * preset under one seed with {@code NdjsonSink} and then with {@code NoopSink} and asserts the
+     * cell under one seed with {@code NdjsonSink} and then with {@code NoopSink} and asserts the
      * decisions did not move. A null means what a run gets — the context builds its own.
      *
      * @param sink the sink the run's context should hold, or null for the one it would build
      */
-    static OracleSataAgent newAgent(Preset preset, ScenarioScript script, ScriptedLlm llm,
+    static OracleSataAgent newAgent(Cell cell, ScenarioScript script, ScriptedLlm llm,
             EventSink sink) throws Exception {
-        if (preset.hasLlm() != (llm != null)) {
-            throw new IllegalArgumentException("preset " + preset + " requires a scripted LLM "
-                    + (preset.hasLlm() ? "but none was supplied" : "but one was supplied"));
+        return newAgent(cell, script, llm, sink, new String[0]);
+    }
+
+    /**
+     * The same agent over the cell with {@code overrides} stated (see {@link #planOf}). The RNG
+     * neutrality gate is the caller: it replays one cell with a gate or a coin unmounted.
+     */
+    static OracleSataAgent newAgent(Cell cell, ScenarioScript script, ScriptedLlm llm,
+            EventSink sink, String... overrides) throws Exception {
+        if (cell.hasLlm() != (llm != null)) {
+            throw new IllegalArgumentException("cell " + cell + " requires a scripted LLM "
+                    + (cell.hasLlm() ? "but none was supplied" : "but one was supplied"));
         }
 
-        // The plan the decision pipeline is assembled from, and which the ladder reads. A preset
-        // must state itself as a RunSpec because what used to be a Config read at the decision site
-        // is now an assembly condition — the launcher gate first, and since the extraction started,
-        // the presence of each stage. This is the injection scaffold adapting to relocated
-        // configuration, the one adaptation INV-ORA-07 permits while stages 2 and 3 are in flight.
+        // The plan the decision pipeline is assembled from, and which the ladder reads: the cell's
+        // preset, plus the deployment keys a preset deliberately omits. ape.staticDataPath names a
+        // file the scaffold never opens — the providers below are loaded from the committed fixture
+        // through the production loader — and ape.llmUrl names a server nothing here contacts:
+        // every LLM stage's engine is substituted (installScriptedLlm).
         //
-        // The values are the jar defaults, deliberately: the goldens were captured over
-        // jar-default Config (design D2), so a MOP arm at its defaults reproduces exactly the
-        // launcher gate the capture ran under (activityTriggerEnabled true), and an LLM arm gets the
-        // three hooks the capture ran with (llmOnNewState/llmOnStagnation true, llmPercentage 0.02).
-        // A preset without the substrate states neither key, which closes the same gates its absent
-        // MopData and absent LLM stages already closed.
+        // Two LLM keys are stated away from the cell's values, and both are injection-profile
+        // adaptations to the trigger predicates living in the stages (INV-ORA-07):
         //
-        // ape.llmUrl is a plan value only. Every stage's engine and gate is substituted below, so
-        // nothing in this harness opens a socket — what the URL buys is the LLM feature, and with it
-        // the LLM stages.
+        //   ape.graphStableRestartThreshold=10 — the stagnation stage evaluates the real midpoint
+        //   predicate, and at the jar default of 100 the midpoint is 50 while every scenario's
+        //   graphStableCounter is 0, 5, 6 or 7. At 10 the midpoint is 5, which is the value the
+        //   scenarios were written around. The forced restart that also reads it is never reached:
+        //   onGraphStable runs from checkStable() at the end of updateStateInternal, and this
+        //   harness drives agent.ladder() directly.
         //
-        // Two LLM keys are stated away from their jar defaults, and both are injection-profile
-        // adaptations to the trigger predicates having moved into the stages (INV-ORA-07):
-        //
-        //   ape.graphStableRestartThreshold=10 — the stagnation stage now evaluates the real
-        //   midpoint predicate, and at the jar default of 100 the midpoint is 50 while every
-        //   scenario's graphStableCounter is 0, 5, 6 or 7. At 10 the midpoint is 5, which is the
-        //   value the scenarios were written around. This does not touch the forced restart, and the
-        //   reason is the harness's boundary rather than where the threshold is read: onGraphStable
-        //   consults the same plan value, but it is reached only from checkStable() at the end of
-        //   updateStateInternal, and this harness drives agent.ladder() directly. No scenario ever
-        //   runs the restart check, so lowering the threshold cannot trigger one.
-        //
-        //   ape.llmPercentage=1.0 — the probabilistic stage now draws a real coin, and at the jar
-        //   default of 0.02 a scripted random hook would be refused ~98% of the time. At 1.0 the
-        //   coin always passes and the scripted gate below is what decides. The stream it draws
-        //   from is substituted as well (installScriptedLlm), so the draw does not touch the
-        //   agent's pinned stream and no golden moves.
-        //
-        // The goldens were captured when the jar's defaults carried every addon and, with MOP data,
-        // the frontier and typed input. Since isolate-guidance-groups the defaults are the base
-        // cell, so the former defaults are stated as groups: ADDONS always, STATIC with the MOP
-        // data, and the MOP coin off, since the former arms had none. Wave 2 replaces these
-        // presets with the cells and recaptures the goldens.
-        List<String> keys = new ArrayList<>(Arrays.asList("ape.addons", "true"));
-        if (preset.hasLlm()) {
-            keys.addAll(Arrays.asList("ape.llm", "true",
-                    "ape.llm", "true", "ape.llmUrl", "http://127.0.0.1:30000/v1",
-                    "ape.graphStableRestartThreshold", "10",
-                    "ape.llmPercentage", "1.0"));
-        }
-        if (preset.hasMopData()) {
-            keys.addAll(Arrays.asList("ape.static", "true", "ape.mopCoinPercentage", "0"));
-        }
-        String[] planKeys = keys.toArray(new String[0]);
-        RunSpec spec = preset.hasMopData()
-                ? TestRunSpecs.mopSpec(planKeys)
-                : TestRunSpecs.spec(planKeys);
+        //   ape.llmPercentage=1.0 — the coin is the seeded u_L against p_L, and at the cell's 0.9 a
+        //   scripted coin consultation would be lost on one step in ten, which the script cannot
+        //   foresee. At 1.0 the coin always passes and the scripted verdict decides.
+        RunSpec spec = planOf(cell, script.getSeed(), overrides);
         if (sink != null) {
             RunContext.installForTest(spec, sink);
         } else {
@@ -582,8 +570,9 @@ public final class OracleScaffold {
         Graph graph = new Graph();
         Model model = new Model(graph);
         UICoverageTracker coverageTracker = new UICoverageTracker();
-        StaticArtifactLoader.Loaded loaded = preset.hasMopData() ? loadMopFixture() : null;
-        MopData mopData = loaded == null ? null : loaded.mopData;
+        StaticArtifactLoader.Loaded loaded = cell.hasStaticData() ? loadMopFixture() : null;
+        // As the constructor: MopData reaches the agent iff MOP is mounted (design D-B14.21).
+        MopData mopData = loaded == null || !spec.has(Feature.MOP) ? null : loaded.mopData;
         final StaticGuiModel staticModel = loaded == null ? null : loaded.staticModel;
         State entryState = buildState(script.getEntryScreen());
         registerInGraph(graph, entryState);
@@ -607,9 +596,9 @@ public final class OracleScaffold {
         // The MOP interaction ledger, as the constructor builds it: present iff MOP is mounted.
         setField(agent, "_mopLedger", spec.has(Feature.MOP) ? new MopInteractionLedger() : null);
         setField(agent, "_coverageTracker", coverageTracker);
-        // Config.activityBudgetEnabled defaults true, so the constructor builds a real tracker and
-        // the ladder's first block dereferences it unconditionally (SataAgent.java:468).
-        setField(agent, "_budgetTracker", budgetTracker(script));
+        // As the constructor: a tracker iff ACTIVITY_BUDGET, the BUDGET stage's only reader.
+        setField(agent, "_budgetTracker",
+                spec.has(Feature.ACTIVITY_BUDGET) ? budgetTracker(script) : null);
         ScoringContext scoringContext = new ScoringContext() {
             @Override public StaticGuiModel getStaticModel() { return staticModel; }
             @Override public MopContext getMopContext() { return mopContext; }

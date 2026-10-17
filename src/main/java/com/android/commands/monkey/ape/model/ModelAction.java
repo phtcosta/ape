@@ -36,14 +36,12 @@ public class ModelAction extends Action {
      * budget-exhausted early-return set their own source explicitly.
      */
     public enum DecisionSource {
-        SATA, MOP, MopFrontier, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form,
-        RESTART, LAUNCHER;
+        SATA, MOP, LLM, Budget, RESTART, LAUNCHER;
 
         /**
-         * The owner this source names on the wire under isolate-guidance-groups' {@code dec.src}
-         * (design D-B7): {@code budget}, {@code restart}, {@code llm}, {@code launcher},
-         * {@code mop} or {@code sata}; null for the boost-attributed sources, which name no owner
-         * and leave the enum when the wave-2 integration deletes them.
+         * The owner this source names on the wire as {@code dec.src} (design D-B7):
+         * {@code budget}, {@code restart}, {@code llm}, {@code launcher}, {@code mop} or
+         * {@code sata}.
          */
         public String owner() {
             switch (this) {
@@ -60,7 +58,7 @@ public class ModelAction extends Action {
             case LAUNCHER:
                 return "launcher";
             default:
-                return null;
+                throw new AssertionError(this);
             }
         }
     }
@@ -68,17 +66,12 @@ public class ModelAction extends Action {
     /**
      * The selection channel that picked this action, for the {@code pick_channel} field of
      * the step record (A-5, INV-SEL-05). Independent of {@link DecisionSource}: the source names
-     * the mechanism whose boost was largest, the channel names the code path that consumed it.
-     * Measured motivation — the unvisited-MOP short-circuit yields 15.1% new states while the
-     * MOP-boosted roulette yields 1.4%, and aggregating them under {@code decision_source=MOP}
-     * mixes mechanism with noise.
+     * the owner that selected the action, the channel the code path that picked it.
      *
      * <p>The enum is total: every path that is not one of the named channels reports
      * {@code sata_other}, so the field is never absent and never free-form.
      */
     public enum PickChannel {
-        SHORT_CIRCUIT_UNVISITED("short_circuit_unvisited"),
-        SHORT_CIRCUIT_0STEP("short_circuit_0step"),
         ROULETTE_GREEDY("roulette_greedy"),
         ROULETTE_EARLY("roulette_early"),
         LAUNCHER("launcher"),
@@ -118,15 +111,10 @@ public class ModelAction extends Action {
     // the most recent adjustActionsByGUITree pass. Boosts are reset each pass.
     private DecisionSource decisionSource = DecisionSource.SATA;
     private PickChannel pickChannel = PickChannel.SATA_OTHER;
-    // A3 (INV-SEL-08): what the channel that picked this action would have selected with the MOP
-    // boosts zeroed. Stamped at the same four pick sites that stamp the channel, so a line can
-    // never pair one step's channel with another step's counterfactual. Transient: it is telemetry
-    // of one selection and has no place in the serialized exploration model.
-    private transient ModelAction counterfactualPick;
     private int mopBoost;
     /**
      * The MOP weight before the {@code distance} mode's tie split (mop-guidance "MopScorer —
-     * Priority Boost", design D18): the undivided weight the MOP shortcut ranks by (D21), stored by
+     * Priority Boost", design D18): the undivided weight the MOP coin ranks by (D-B10), stored by
      * {@code MopWidgetPass} beside the split {@link #mopBoost}. Equal to {@link #mopBoost} under
      * {@code flag}; 0 when the action has no MOP weight.
      */
@@ -325,18 +313,6 @@ public class ModelAction extends Action {
 
     public void setDecisionSource(DecisionSource decisionSource) {
         this.decisionSource = decisionSource;
-    }
-
-    /**
-     * The counterfactual pick of this selection, or null when it could not be recomputed. Equal to
-     * this action when the MOP boosts made no difference.
-     */
-    public ModelAction getCounterfactualPick() {
-        return this.counterfactualPick;
-    }
-
-    public void setCounterfactualPick(ModelAction counterfactualPick) {
-        this.counterfactualPick = counterfactualPick;
     }
 
     public PickChannel getPickChannel() {

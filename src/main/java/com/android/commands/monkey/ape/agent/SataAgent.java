@@ -607,17 +607,6 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     /**
      * {@inheritDoc}
      *
-     * <p>The agent's own stream, which is what {@code ApeAgent.getRandom()} exposes and what the
-     * probabilistic hook has always drawn from.
-     */
-    @Override
-    public java.util.Random agentRandom() {
-        return getRandom();
-    }
-
-    /**
-     * {@inheritDoc}
-     *
      * <p>Forwards the edge to the stages after the agent's own bookkeeping has run, which is the
      * order the episode state depends on: the stagnation stage re-arms on exactly the transitions
      * that reset the stability counter it reads, so re-arming before the reset would show it the
@@ -1463,27 +1452,17 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     /**
      * {@inheritDoc}
      *
-     * <p>The same priority roulette over the validated actions, in its recorded form so the step
-     * carries {@code dec.draw} and {@code dec.cfc} (action-selection "Per-step counterfactual
-     * attribution"). The draw is the one {@code randomlyPickAction} takes. The counterfactual's
-     * candidates are read after the roulette: its filter validated every action, so each action's
-     * validity flag is the filter's decision, read without resolving anything again.
+     * <p>The step carries the roulette's {@code dec.draw} and {@code dec.cfc} (action-selection
+     * "Per-step counterfactual attribution"). The counterfactual's candidates are read after the
+     * roulette: its filter validated every action, so each action's validity flag is the filter's
+     * decision, read without resolving anything again.
      */
     @Override
-    public ModelAction handleNullAction() {
-        State.RoulettePick pick =
-                newState.randomlyPickActionRecorded(getRandom(), validatedActionFilter, true);
-        ModelAction action = pick.getAction();
-        if (action != null) {
-            ModelAction resolved = validateNewAction(action);
-            if (resolved != null) {
-                recordDraw(pick.getDrawIndex(), pick.getTotal());
-                recordRouletteCounterfactual(candidatesOf(newState, ActionFilter.VALID, null),
-                        action, pick.getDrawIndex(), pick.getTotal());
-                return chose(resolved, ModelAction.PickChannel.SATA_OTHER, "null");
-            }
-        }
-        throw new BadStateException("No available action on the current state");
+    protected ModelAction nullActionPicked(State.RoulettePick pick, ModelAction resolved) {
+        recordDraw(pick.getDrawIndex(), pick.getTotal());
+        recordRouletteCounterfactual(candidatesOf(newState, ActionFilter.VALID, null),
+                pick.getAction(), pick.getDrawIndex(), pick.getTotal());
+        return chose(resolved, ModelAction.PickChannel.SATA_OTHER, "null");
     }
 
     protected void checkDisableRestart(ModelAction action) {

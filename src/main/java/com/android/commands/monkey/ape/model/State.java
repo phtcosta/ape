@@ -192,18 +192,6 @@ public class State extends GraphElement {
         return tie.pick(leastVisited);
     }
 
-    /**
-     * The least-visited rule as it stood before X1 (a visit-count tie broken by higher priority
-     * when {@code tiebreak} is on), kept only for {@code ScorerCounterfactual.leastVisitedWithout},
-     * its last reader; {@link #greedyPickLeastVisited} no longer reads it.
-     */
-    static boolean beatsLeastVisited(int vc, int p, int minValue, int maxPriority, boolean tiebreak) {
-        if (vc < minValue) {
-            return true;
-        }
-        return tiebreak && vc == minValue && p > maxPriority;
-    }
-
     public ModelAction randomlyPickAction(Random random, ActionFilter filter) {
         return randomlyPickAction(random, filter, true);
     }

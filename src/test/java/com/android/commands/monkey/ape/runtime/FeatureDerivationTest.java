@@ -257,33 +257,6 @@ public class FeatureDerivationTest {
     }
 
     @Test
-    public void theFormerBaselineArmIsTheAddonsGroup() {
-        RunSpec spec = resolve(new LinkedHashMap<>(Presets.resolve(Presets.APERV)));
-        Set<Feature> expected = EnumSet.copyOf(BARE_RUN);
-        expected.addAll(ADDONS);
-        assertEquals(expected, spec.features());
-    }
-
-    @Test
-    public void theFormerMopArmAddsExactlyTheFeaturesItUsedToCarry() {
-        Map<String, String> arm = new LinkedHashMap<>(Presets.resolve(Presets.MOP_ARM));
-        arm.put("ape.staticDataPath", PATH);
-        RunSpec spec = resolve(arm);
-
-        Set<Feature> expected = EnumSet.copyOf(BARE_RUN);
-        expected.addAll(ADDONS);
-        expected.addAll(EnumSet.of(Feature.STATIC_DATA, Feature.STATIC, Feature.TYPED_FUZZ,
-                Feature.MOP, Feature.WTG, Feature.MENU_GATEWAY));
-        assertEquals(expected, spec.features());
-        // The arm explicitly turns the frontier family and the coin off, so they stay off even
-        // with the groups present — that is the fair-test obligation the arm dictionary encodes.
-        assertFalse(spec.has(Feature.NAV_FRONTIER));
-        assertFalse(spec.has(Feature.MOP_FRONTIER));
-        assertFalse(spec.has(Feature.MOP_LAUNCHER));
-        assertFalse(spec.has(Feature.MOP_COIN));
-    }
-
-    @Test
     public void paramsAreNullExactlyWhenTheirFeatureIsAbsent() {
         Map<String, String> both = new LinkedHashMap<>(Presets.resolve(Presets.AS_MOP_LLM));
         both.put("ape.staticDataPath", PATH);

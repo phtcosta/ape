@@ -1,7 +1,7 @@
 package com.android.commands.monkey.ape.oracle;
 
 import com.android.commands.monkey.ape.runtime.Feature;
-import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.utils.Config;
 
 import static org.junit.Assert.assertEquals;
@@ -9,12 +9,11 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 /**
- * rearch-01 task group 6 — the per-preset Config guard the spec requires ("Config default drift is
- * caught by the guard, not the golden").
+ * The per-cell guard the spec requires ("Config default drift is caught by the guard, not the
+ * golden").
  *
- * <p>A preset is realized by its injection profile over <b>jar-default</b> Config and a
- * jar-default {@link com.android.commands.monkey.ape.runtime.RunSpec} (design D2), so every golden
- * silently depends on those defaults. Without a guard, changing one would surface as
+ * <p>A cell is realized by its injection profile over <b>jar-default</b> Config and the cell's
+ * resolved {@link RunSpec} (design D2), so every golden silently depends on those values. Without a guard, changing one would surface as
  * an unexplained golden divergence — the reader would go hunting through the ladder for a decision
  * that changed, when what changed is an input. Each assertion here names the key, so the failure
  * says which default moved.
@@ -25,12 +24,10 @@ import static org.junit.Assert.assertTrue;
  * happens in {@code adjustActionsByGUITree()}, above this oracle's entry point, so no golden record
  * can depend on one. Their guard belongs to {@code rearch-03} INV-ARCH-12.
  *
- * <p><b>Two keys the harness deliberately moves off their jar defaults are absent from this table,
- * and both belong here so the two files agree about what the LLM presets actually run under</b>
- * ({@code OracleScaffold.newAgent} records the same pair as INV-ORA-07 injection-profile
- * adaptations). {@code ape.llmPercentage=1.0}: an LLM preset states the key in its own plan rather
- * than inheriting the jar's, and the scaffold substitutes the stream the coin is drawn from (design
- * D3), so no LLM preset's golden depends on that default at all.
+ * <p><b>Two keys the harness deliberately moves off the cell's values</b>
+ * ({@code OracleScaffold.planOf} records the pair as INV-ORA-07 injection-profile adaptations).
+ * {@code ape.llmPercentage=1.0}: at the cell's 0.9 a scripted coin consultation would be lost on
+ * one step in ten, which the script cannot foresee, so the guard asserts the harness's value.
  * {@code ape.graphStableRestartThreshold=10}: the stagnation stage evaluates the real midpoint
  * predicate, which at the jar default of 100 would sit at 50 while every scenario's counter is 0, 5,
  * 6 or 7. Lowering it cannot trigger a forced restart, because {@code onGraphStable} is reached only
@@ -42,45 +39,56 @@ final class LadderConfigGuard {
     private LadderConfigGuard() {
     }
 
-    /** The defaults every preset's ladder reads, whatever its injection profile. */
-    static void assertSharedDefaults() {
-        // The first block: enabled, so the ladder dereferences the tracker unconditionally, and the
-        // budget arithmetic the scenario's declared exhaustion has to reach (design D2).
-        assertTrue("ape.activityBudgetEnabled", Config.activityBudgetEnabled);
+    /**
+     * The values {@code cell}'s ladder reads: the jar-default {@code Config} values outside the
+     * plan, which every cell shares, and the cell plan's values (parity-oracle "Per-Preset Golden
+     * Decision-Sequence Capture"), asserted against the plan the scaffold builds the cell over.
+     */
+    static void assertCellValues(OracleScaffold.Cell cell) {
+        RunSpec spec = OracleScaffold.planOf(cell, 0L); // no ladder value depends on the seed
+        boolean addons = spec.has(Feature.ADDONS);
+        // The BUDGET stage: assembled iff the ADDONS member is mounted, with the budget arithmetic a
+        // scenario's declared exhaustion has to reach (design D2).
+        assertEquals(cell + " ape.activityBudgetEnabled", addons, spec.has(Feature.ACTIVITY_BUDGET));
         assertEquals("ape.activityBaseBudget", 50, Config.activityBaseBudget);
         assertEquals("ape.activityBudgetPerWidget", 5, Config.activityBudgetPerWidget);
         // The trivial-activity rung: at this threshold a scenario's handful of activity nodes
         // yields an empty set, which is what keeps the rung a fall-through (finding 6.1-b).
         assertEquals("ape.trivialActivityRankThreshold", 3, Config.trivialActivityRankThreshold);
         assertFalse("ape.doBackToTrivialActivity", Config.doBackToTrivialActivity);
-        // The component-trigger block's gate. False here is why the block cannot fire and why it
-        // consumes no RNG draw (finding 2.1-c); a non-zero default would reopen that exclusion.
-        assertEquals("ape.componentPercentage", 0.0, Config.componentPercentage, 0.0);
         // The SATA chain's own reads: the action set a state carries, how EARLY_STAGE decides what
-        // is still worth visiting, and the epsilon-greedy rung's caps and coin.
-        assertTrue("ape.modelMenuEnabled", RunContext.current().spec().has(Feature.MODEL_MENU));
+        // is still worth visiting, and the epsilon-greedy rung's cap and coin.
+        assertEquals(cell + " ape.modelMenuEnabled", addons, spec.has(Feature.MODEL_MENU));
         assertTrue("ape.useActionDiffer", Config.useActionDiffer);
-        assertEquals("ape.backMenuPickCap", 3,
-                RunContext.current().spec().exploration().backMenuPickCap());
-        assertTrue("ape.dynamicEpsilon", Config.dynamicEpsilon);
+        assertEquals(cell + " ape.backMenuPickCap", addons ? 3 : 0,
+                spec.exploration().backMenuPickCap());
+        assertEquals(cell + " ape.dynamicEpsilon", addons, spec.exploration().dynamicEpsilon());
         assertEquals("ape.defaultEpsilon", 0.05, Config.defaultEpsilon, 0.0);
-        assertEquals("ape.minEpsilon", 0.02, RunContext.current().spec().exploration().minEpsilon(), 0.0);
-        assertEquals("ape.maxEpsilon", 0.15, RunContext.current().spec().exploration().maxEpsilon(), 0.0);
-    }
-
-    /**
-     * The launcher and MOP-pick defaults, read only where {@code _mopContext} is present — the cadence
-     * the scenario's declared {@code _stepsSinceLauncherFiring} is seeded against, and the cap on
-     * the deterministic MOP short-circuit.
-     */
-    static void assertMopDefaults() {
-        // The launcher gate is the one ladder value that lives in the run plan rather than in
-        // Config, so it is asserted against the plan the scaffold installed. The assertion is
-        // unchanged in substance: a MOP arm at its jar defaults has the launcher enabled, which is
-        // the condition every MOP golden was captured under.
-        assertTrue("ape.activityTriggerEnabled",
-                RunContext.current().spec().has(Feature.MOP_LAUNCHER));
-        assertEquals("ape.activityTriggerStagnationStep", 50, Config.activityTriggerStagnationStep);
-        assertEquals("ape.activityTriggerMaxPerRun", 0, Config.activityTriggerMaxPerRun);
+        if (spec.exploration().dynamicEpsilon()) {
+            assertEquals("ape.minEpsilon", 0.02, spec.exploration().minEpsilon(), 0.0);
+            assertEquals("ape.maxEpsilon", 0.15, spec.exploration().maxEpsilon(), 0.0);
+        }
+        // The component trigger: the STATIC block mounts it at 0.03; its coin is u_C, drawn from
+        // its own stream, so it moves no other draw.
+        assertEquals(cell + " ape.componentPercentage", spec.has(Feature.STATIC),
+                spec.has(Feature.COMPONENT_TRIGGER));
+        if (spec.has(Feature.COMPONENT_TRIGGER)) {
+            assertEquals("ape.componentPercentage", 0.03,
+                    spec.staticData().componentPercentage(), 0.0);
+        }
+        if (spec.has(Feature.MOP)) {
+            // The launcher's cadence the scenario's declared counter is seeded against, and the
+            // MOP coin's dose.
+            assertTrue("ape.activityTriggerEnabled", spec.has(Feature.MOP_LAUNCHER));
+            assertEquals("ape.activityTriggerStagnationStep", 50,
+                    spec.mop().activityTriggerStagnationStep());
+            assertEquals("ape.activityTriggerMaxPerRun", 0, spec.mop().activityTriggerMaxPerRun());
+            assertEquals("ape.mopCoinPercentage", 1.0, spec.mop().coinPercentage(), 0.0);
+        }
+        if (spec.has(Feature.LLM)) {
+            assertEquals("ape.llmPercentage (harness)", 1.0, spec.llm().dbl("ape.llmPercentage"),
+                    0.0);
+            assertEquals("ape.llmGateMinActions", 3, spec.llm().gateMinActions());
+        }
     }
 }

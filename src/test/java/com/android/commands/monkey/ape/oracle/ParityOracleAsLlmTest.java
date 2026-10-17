@@ -7,36 +7,33 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 
 /**
- * rearch-01 task 6.3 — the {@code llm} preset's baseline golden: a scripted LLM, no MOP data.
+ * The {@code as_llm} cell's baseline golden (isolate-guidance-groups 11.3): ADDONS, STATIC and a
+ * scripted LLM, no MOP.
  *
- * <h2>All three hooks, all three verdicts, and the fourth label</h2>
- * The four steps are one of each, in the order the ladder consults them:
+ * <h2>The three LLM stages, the three verdicts, and the fourth label</h2>
  * <ol>
- *   <li><b>new-state accept</b> — the hook routes because the step declares a first visit
- *       ({@code shouldRouteNewState} honors {@code _isNewState}, it does not merely obey the
- *       script), and the accepted action comes back labelled {@code LLM} / {@code llm} by
- *       the accepting stage. The selected action is a member of the offered list, never a
- *       synthesized tap: resolving a {@code MODEL_LLM_TAP} would leave the JVM.</li>
- *   <li><b>stagnation decline</b> — the hook routes, the verdict is null, the ladder falls through
- *       to the SATA chain. The record still carries {@code llm:"declined"}: the consultation
- *       happened and the golden says so.</li>
- *   <li><b>random timeout</b> — the same observable as a decline (null, fall-through), a different
- *       provenance. That distinction exists only in the golden, which is exactly why the golden
- *       records it (design D3).</li>
- *   <li><b>no entry</b> — {@code not_routed}: an LLM was present and the step passed it by. That
- *       is a different claim from the field being <i>absent</i>, which is what an {@code aperv}
- *       golden says, and only a preset that has one can make it.</li>
+ *   <li><b>new-state accept</b> — the stage's trigger holds because the step declares a first
+ *       visit, and the accepted action comes back owned by {@code LLM} on the {@code llm} channel.
+ *       The selected action is a member of the offered list, never a synthesized tap: resolving a
+ *       {@code MODEL_LLM_TAP} would leave the JVM.</li>
+ *   <li><b>stagnation decline</b> — the new-state trigger holds again but the script refuses it at
+ *       the gate, so no call is made; the stagnation stage calls, the verdict is null, and the step
+ *       falls through to the SATA chain with {@code llm:"declined"}.</li>
+ *   <li><b>coin timeout</b> — the same observable as a decline, a different provenance, which only
+ *       the golden records (design D3).</li>
+ *   <li><b>no entry</b> — {@code not_routed}: an LLM was present and the step passed it by, which
+ *       is a different claim from the field being absent. The component trigger fires on this step
+ *       ({@code u_C < 0.03} under the scenario's seed), beside SATA's pick.</li>
  * </ol>
  *
- * <p>The screens stay unsaturated throughout, so every fall-through lands on EARLY_STAGE. That is
- * deliberate: the chain's descent is the {@code aperv} golden's subject, and mixing the two axes
- * into one scenario would make a diff harder to read, not richer.
+ * <p>The screens stay unsaturated throughout, so every fall-through lands on EARLY_STAGE: the
+ * chain's descent is the {@code as} golden's subject.
  */
-public class ParityOracleLlmTest {
+public class ParityOracleAsLlmTest {
 
-    private static final long SEED = 6060L;
+    private static final long SEED = 6075L;
 
-    private static final String PRESET = "llm";
+    private static final String PRESET = "as_llm";
     private static final String SCENARIO = "baseline";
 
     private static final String MAIN = "com.example.MainActivity";
@@ -70,7 +67,7 @@ public class ParityOracleLlmTest {
 
     @Test
     public void ladderConfigDefaultsAreUnchanged() {
-        LadderConfigGuard.assertSharedDefaults();
+        LadderConfigGuard.assertCellValues(OracleScaffold.Cell.AS_LLM);
     }
 
     @Test
@@ -78,7 +75,7 @@ public class ParityOracleLlmTest {
         ScenarioScript script = baseline();
         ScriptedLlm llm = new ScriptedLlm(script);
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM, script, llm);
+                OracleScaffold.Cell.AS_LLM, script, llm);
 
         List<DecisionRecord> records = OracleDriver.run(agent, script, llm);
 
@@ -97,6 +94,7 @@ public class ParityOracleLlmTest {
         }
 
         GoldenFile.captureOrCompare(new GoldenFile.Header(
-                PRESET, SCENARIO, SEED, null, GoldenFile.capturedAt()), records);
+                PRESET, SCENARIO, SEED, OracleScaffold.MOP_FIXTURE, GoldenFile.capturedAt()),
+                records);
     }
 }

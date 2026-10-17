@@ -1360,16 +1360,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * The {@code dec.src} owner of a model action (INV-SNK-15): the owner its source names. A
-     * boost-attributed source names no owner; it is set on SATA's paths only, so it reads as
-     * {@code sata}.
-     */
-    static String ownerOf(ModelAction.DecisionSource source) {
-        String owner = source.owner();
-        return owner != null ? owner : ModelAction.DecisionSource.SATA.owner();
-    }
-
-    /**
      * The {@code dec.patched} bit, or {@link EventSink#ABSENT} for an action with no resolved target
      * (INV-SEL-10). {@code MODEL_BACK}, {@code MODEL_MENU} and {@code MODEL_LLM_TAP} report absent,
      * consistently with the record's other target-derived fields.
@@ -1385,41 +1375,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         GUITreeNode node = action.getResolvedNode();
         if (node == null) return EventSink.ABSENT;
         return node.isPatchedClickable() ? 1 : 0;
-    }
-
-    /**
-     * The {@code dec.cf.changed} bit, or {@link EventSink#ABSENT} for a channel where MOP boosts do
-     * not participate in the pick (INV-SEL-08). Only the two roulette channels carry it; the LLM,
-     * the launcher, the MOP coin, the buffer and every other path carry none.
-     *
-     * <p>A recomputation that failed reports {@code 0}: the factual pick was already made, so a
-     * failure costs the record its contrast and nothing else.
-     *
-     * <p>Reading rule, part of the contract: this is the divergence point of one step, not a
-     * trajectory effect. Summing it over a run does not measure what the MOP guidance achieved —
-     * only an arm-level contrast does.
-     */
-    static int counterfactualChanged(ModelAction action) {
-        switch (action.getPickChannel()) {
-        case ROULETTE_GREEDY:
-        case ROULETTE_EARLY:
-            break;
-        default:
-            return EventSink.ABSENT;
-        }
-        ModelAction counterfactual = action.getCounterfactualPick();
-        return counterfactual != null && counterfactual != action ? 1 : 0;
-    }
-
-    /**
-     * The counterfactual action, and only when it diverges from the factual pick.
-     *
-     * <p>Null everywhere else, which includes the unchanged case: the retired line repeated the
-     * factual action there, and the record already carries it as {@code dec.a} — a second copy on
-     * every MOP-sensitive step would be the largest string in the trace written twice for nothing.
-     */
-    static String counterfactualAction(ModelAction action) {
-        return counterfactualChanged(action) == 1 ? action.getCounterfactualPick().toString() : null;
     }
 
     /**
@@ -1525,11 +1480,39 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * @param target an index below {@link #componentTargetCount}
      */
     public void triggerComponent(int target) {
+        recordComponentTrigger(target);
         if (target < _triggerTuples.size()) {
             dispatchTrigger(_triggerTuples.get(target));
             return;
         }
         dispatchProvider(_providerTuples.get(target - _triggerTuples.size()));
+    }
+
+    /**
+     * Records {@code dec.trig} for one target of the pool: its kind and class, the side effect of
+     * this step whatever the platform answers. Separate from the dispatch so a harness that cannot
+     * dispatch records the same member.
+     *
+     * @param target an index into the pool {@link #componentTargetCount} sized
+     */
+    protected final void recordComponentTrigger(int target) {
+        String[] kindAndClass = componentTarget(target);
+        RunContext.current().sink().componentTrigger(kindAndClass[0], kindAndClass[1]);
+    }
+
+    /**
+     * One target of the pool as {@code dec.trig} names it: {@code {kind, className}}, the kind
+     * {@code broadcast}, {@code service} or {@code provider}.
+     *
+     * @param target an index into the pool {@link #componentTargetCount} sized
+     */
+    protected final String[] componentTarget(int target) {
+        if (target < _triggerTuples.size()) {
+            ComponentInfo c = _triggerTuples.get(target).component;
+            return new String[] {triggerKind(c), c.className};
+        }
+        return new String[] {"provider",
+                _providerTuples.get(target - _triggerTuples.size()).provider.className};
     }
 
     /** Build the per-trigger log line (static for testability). */
@@ -1613,8 +1596,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             intent.setType(dataAndType[1]);
         }
         Logger.iprintln(triggerLogLine(t));
-        // dec.trig: the side effect of this step, whatever the platform answers.
-        RunContext.current().sink().componentTrigger(triggerKind(c), c.className);
         if (c instanceof ComponentInfo.ReceiverInfo) {
             if (_broadcastCatalog != null && t.action != null) {
                 for (SystemBroadcastCatalog.IntentExtra extra : _broadcastCatalog.lookup(t.action)) {
@@ -1631,7 +1612,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         String[] cmd = buildContentCommand(t);
         Logger.iformat("[APE-RV] Triggering provider: %s op=%s uri=content://%s",
                 t.provider.className, t.operation, t.provider.authorities);
-        RunContext.current().sink().componentTrigger("provider", t.provider.className);
         int exit = runContentCommand(cmd);
         if (exit != 0) {
             Logger.wformat("[APE-RV] provider %s op=%s exit=%d", t.provider.className, t.operation, exit);
@@ -1835,7 +1815,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         } else {
             // Non-model actions (e.g. event-level) carry no per-mechanism boosts. The decision
             // source is derived from the action's type: the stagnation launcher
-            // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
+            // (EVENT_TRIGGER_ACTIVITY) is a launcher decision (INV-CT-07); every other non-model
             // action stays on the SATA chain that produced it (INV-SEL-04).
             RunContext.current().sink().decisionNonModel(action.toString(),
                     nonModelDecisionSource(action.getType()).owner(),
@@ -1862,7 +1842,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     protected void recordModelDecision(State state, ModelAction action) {
         MopScorer.Scored scored = MopScorer.weigh(_mopContext, state, action);
         RunContext.current().sink().decision(action.toString(),
-                ownerOf(action.getDecisionSource()),
+                action.getDecisionSource().owner(),
                 action.getPickChannel().getLabel(),
                 action.getPriority(),
                 action.getMopBoost(), action.getMopFrontierBoost(),
@@ -1922,16 +1902,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         default:
             return 1;
         }
-    }
-
-    /**
-     * back-menu-pick-cap hook: whether the gh13 OPTIONSMENU gateway boost may still be applied on
-     * {@code activity}. The base agent is always eligible (no cap state); {@code SataAgent} overrides
-     * this with a cap check over its per-(activity, MODEL_MENU) pick count. Consulted in the menu-boost
-     * pass of {@link #adjustActionsByGUITree()}.
-     */
-    protected boolean menuPickEligible(String activity) {
-        return true;
     }
 
     protected void adjustActionsByGUITree() {
@@ -2054,18 +2024,33 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * 
+     * The last resort: a priority roulette over the validated actions.
+     *
      * @return must return a non-null action
      */
     public ModelAction handleNullAction() {
-        ModelAction action = newState.randomlyPickAction(getRandom(), validatedActionFilter);
+        State.RoulettePick pick =
+                newState.randomlyPickActionRecorded(getRandom(), validatedActionFilter, true);
+        ModelAction action = pick.getAction();
         if (action != null) {
             ModelAction resolved = validateNewAction(action);
             if (resolved != null) {
-                return resolved;
+                return nullActionPicked(pick, resolved);
             }
         }
         throw new BadStateException("No available action on the current state");
+    }
+
+    /**
+     * What {@link #handleNullAction} returns for its roulette's pick, once resolved: the resolved
+     * action. A subclass that records its picks overrides this, never the roulette.
+     *
+     * @param pick the roulette's recorded draw
+     * @param resolved the pick, validated against the current tree
+     * @return the action the step executes
+     */
+    protected ModelAction nullActionPicked(State.RoulettePick pick, ModelAction resolved) {
+        return resolved;
     }
 
     protected ModelAction selectNewActionRandomly() {

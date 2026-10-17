@@ -195,7 +195,7 @@ public class StageProvenanceLabelTest {
     @Test
     public void theChainsOwnerIsSataWhateverTheStamp() throws Exception {
         for (ModelAction.DecisionSource stamped : EnumSet.of(ModelAction.DecisionSource.SATA,
-                ModelAction.DecisionSource.MopFrontier, ModelAction.DecisionSource.WTG)) {
+                ModelAction.DecisionSource.MOP)) {
             ModelAction fromTheChain = action();
             fromTheChain.setDecisionSource(stamped);
             DecisionPipeline pipeline = DecisionPipeline.fromSpec(fullRosterPlan(),

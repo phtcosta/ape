@@ -149,8 +149,8 @@ The preemption golden SHALL additionally pin:
 
 #### Scenario: the component trigger is a recorded no-op that decides nothing
 
-- **WHEN** an `as` cell step reaches `COMPONENT_TRIGGER` with `u_C = 0.01 < 0.03` and the cursor selects the service tuple of `br.unb.cic.cryptoapp.SyncService`
-- **THEN** `OracleSataAgent.triggerComponent()` SHALL dispatch no intent and the step's record SHALL carry `"trig":{"k":"service","c":"br.unb.cic.cryptoapp.SyncService"}`
+- **WHEN** an `as` cell step reaches `COMPONENT_TRIGGER` with `u_C = 0.01 < 0.03` and the cursor selects the provider tuple of `androidx.startup.InitializationProvider`, the fixture's one provider
+- **THEN** `OracleSataAgent.triggerComponent()` SHALL dispatch no intent and the step's record SHALL carry `"trig":{"k":"provider","c":"androidx.startup.InitializationProvider"}`
 - **AND** the step's action SHALL be selected by the `MOP_COIN` or `SATA_CHAIN` stage, and the next step's `u_C` SHALL be the next value of `StepRng.componentCoin`
 
 ### Requirement: Deterministic LLM Stubbing

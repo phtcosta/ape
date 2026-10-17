@@ -32,8 +32,8 @@ import java.util.Map;
  * cell, never a seventh preset.
  *
  * <p><b>Provenance.</b> The blocks reproduce Study 03's campaign E6 (design D-B3): the ADDONS block
- * is the former {@code aperv} preset, the STATIC block the frontier at 200 with typed input and
- * component triggering at 0.03 (D-B13), the MOP block arm 3's MOP configuration
+ * is the addon configuration of E6's APE-RV arms, the STATIC block the frontier at 200 with typed
+ * input and component triggering at 0.03 (D-B13), the MOP block arm 3's MOP configuration
  * ({@code mopd_on_llm_off}) plus {@code p_M = 1.0}, and the LLM block arm 4's sampling
  * configuration ({@code mopd_on_llm_90}) with {@code p_L = 0.9}.
  *
@@ -50,12 +50,6 @@ import java.util.Map;
  *     MOP block would abort the {@code mop} cell, which has no {@code MODEL_MENU}. Its jar default
  *     (250) mounts the gateway wherever the menu action exists (D-B14.1).</li>
  * </ul>
- *
- * <p><b>The four former arm presets</b> ({@code aperv}, {@code llm}, {@code llm_mop} and the
- * former {@code mop}) are kept until the wave-2 integration of isolate-guidance-groups deletes
- * them with their goldens; each states the group keys that make it resolve to its former plan.
- * Until then the former {@code mop} arm is reachable as {@code mop_arm}, since the cell owns the
- * name {@code mop}.
  */
 public final class Presets {
 
@@ -72,17 +66,8 @@ public final class Presets {
     /** All four groups. */
     public static final String AS_MOP_LLM = "as_mop_llm";
 
-    /** Former campaign arm {@code sata}; deleted in wave 2. */
-    public static final String APERV = "aperv";
-    /** Former campaign arm {@code sata_mop_widget}; deleted in wave 2. */
-    public static final String MOP_ARM = "mop_arm";
-    /** Former campaign arm {@code sata_llm}; deleted in wave 2. */
-    public static final String LLM = "llm";
-    /** Former campaign arm {@code sata_mop_llm}; deleted in wave 2. */
-    public static final String LLM_MOP = "llm_mop";
-
     private static final List<String> NAMES = Collections.unmodifiableList(
-            Arrays.asList(BASE, MOP, AS, AS_MOP, AS_LLM, AS_MOP_LLM, APERV, MOP_ARM, LLM, LLM_MOP));
+            Arrays.asList(BASE, MOP, AS, AS_MOP, AS_LLM, AS_MOP_LLM));
 
     private Presets() {
     }
@@ -118,27 +103,11 @@ public final class Presets {
             }
             return vector;
         }
-        if (APERV.equals(name)) {
-            return aperv();
-        }
-        if (MOP_ARM.equals(name)) {
-            return mopArm();
-        }
-        if (LLM.equals(name)) {
-            vector = aperv();
-            vector.putAll(formerLlmBlock());
-            return vector;
-        }
-        if (LLM_MOP.equals(name)) {
-            vector = mopArm();
-            vector.putAll(formerLlmBlock());
-            return vector;
-        }
         throw new RunSpecException(RunSpecException.Reason.UNKNOWN_PRESET, KeyOwnership.KEY_PRESET,
                 "unknown preset '" + name + "'; valid names are " + NAMES);
     }
 
-    /** The ADDONS block: the former {@code aperv} preset's addon keys (design D-B3). */
+    /** The ADDONS block: the addon keys of E6's APE-RV arms (design D-B3). */
     private static Map<String, String> addonsBlock() {
         Map<String, String> block = new LinkedHashMap<>();
         block.put("ape.addons", "true");
@@ -192,67 +161,6 @@ public final class Presets {
         block.put("ape.llmTopK", "-1");
         block.put("ape.llmSnapTolerancePx", "150");
         block.put("ape.llmModel", "Qwen/Qwen3-VL-4B-Instruct-FP8");
-        block.put("ape.llmTimeoutMs", "15000");
-        return block;
-    }
-
-    /**
-     * Former arm {@code sata}: the addons on, no data, no LLM. Translated from the harness's arm
-     * dictionary at rvsec {@code 6dc8a0af}; its {@code ape.leastVisitedPriorityTiebreak} and
-     * {@code ape.fuzzInputTyped} entries are gone, the first retired and the second a STATIC
-     * member that has no effect without the artifact.
-     */
-    private static Map<String, String> aperv() {
-        Map<String, String> vector = new LinkedHashMap<>();
-        vector.put("ape.addons", "true");
-        vector.put("ape.backMenuPickCap", "3");
-        vector.put("ape.foreignActivityGuard", "true");
-        vector.put("ape.treePackageGuard", "true");
-        vector.put("ape.dynamicEpsilon", "true");
-        vector.put("ape.heuristicInput", "true");
-        vector.put("ape.formCompletionEnabled", "true");
-        vector.put("ape.modelMenuEnabled", "true");
-        vector.put("ape.treeEnhancementsEnabled", "true");
-        vector.put("ape.activityBudgetEnabled", "true");
-        // The sentinel every baseline arm pushes: accepted as inert on a plan with no LLM.
-        vector.put("ape.llmPercentageNoSubstrate", "-1");
-        vector.put("ape.frontierBoostWeight", "0");
-        vector.put("ape.activityTriggerEnabled", "false");
-        vector.put("ape.mopActivitySourceComponents", "false");
-        vector.put("ape.mopFrontierWeight", "0");
-        // throttle_ms in the arm dictionary; ape.defaultGUIThrottle on the wire.
-        vector.put("ape.defaultGUIThrottle", "200");
-        return vector;
-    }
-
-    /**
-     * Former arm {@code sata_mop_widget}: {@code aperv} plus the four flag-mode MOP weights, with
-     * the STATIC group on for typed input (a root feature before the split) and the MOP coin off,
-     * since the former arm had none.
-     */
-    private static Map<String, String> mopArm() {
-        Map<String, String> vector = aperv();
-        vector.put("ape.static", "true");
-        vector.put("ape.fuzzInputTyped", "true");
-        vector.put("ape.mop", "true");
-        vector.put("ape.mopCoinPercentage", "0");
-        vector.put("ape.mopWeightDirect", "500");
-        vector.put("ape.mopWeightTransitive", "300");
-        vector.put("ape.mopWeightOpenMenu", "250");
-        vector.put("ape.mopWeightWtg", "200");
-        return vector;
-    }
-
-    /** The former arms' shared LLM sampling block, minus the deployment-specific server URL. */
-    private static Map<String, String> formerLlmBlock() {
-        Map<String, String> block = new LinkedHashMap<>();
-        block.put("ape.llm", "true");
-        block.put("ape.llmOnNewState", "true");
-        block.put("ape.llmOnStagnation", "true");
-        block.put("ape.llmModel", "default");
-        block.put("ape.llmTemperature", "0.3");
-        block.put("ape.llmTopP", "0.6");
-        block.put("ape.llmTopK", "50");
         block.put("ape.llmTimeoutMs", "15000");
         return block;
     }

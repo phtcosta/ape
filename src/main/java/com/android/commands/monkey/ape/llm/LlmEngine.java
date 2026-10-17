@@ -222,12 +222,7 @@ public class LlmEngine {
                     nearest, response, elapsedMs);
 
             // Step 10
-            if (match == null) {
-                lastFallback = "no_match".equals(verdict.result) ? FALLBACK_NO_MATCH
-                        : FALLBACK_DECLINE;
-            } else {
-                lastFallback = null;
-            }
+            lastFallback = fallbackOf(match, verdict);
             return match;
 
         } catch (Exception e) {
@@ -256,6 +251,17 @@ public class LlmEngine {
      */
     public String lastFallback() {
         return lastFallback;
+    }
+
+    /**
+     * The fallback reason of a call that reached its verdict: none when it selected,
+     * {@code no_match} when the verdict refused the answer at mapping, {@code decline} otherwise.
+     */
+    static String fallbackOf(ModelAction match, Verdict verdict) {
+        if (match != null) {
+            return null;
+        }
+        return "no_match".equals(verdict.result) ? FALLBACK_NO_MATCH : FALLBACK_DECLINE;
     }
 
     // -------------------------------------------------------------------------
