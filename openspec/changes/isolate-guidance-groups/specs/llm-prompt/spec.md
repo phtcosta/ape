@@ -435,18 +435,20 @@ No tool, parser or mapper reads the ordinal: the answer is a coordinate, matched
 
 ```java
 interface PromptContribution {
-    default String systemSentence(String variant) { return ""; }
-    default String lineMarker(ModelAction a) { return ""; }
+    default String systemSentence(String point) { return ""; }
+    default String lineMarker(List<ModelAction> lineActions) { return ""; }
     default String lineDetail(ModelAction a) { return ""; }
     default String contextLine(State s, List<ModelAction> actions) { return ""; }
     default String section(State s, List<ModelAction> actions) { return ""; }
 }
 ```
 
+`systemSentence` is called once per **extension point** of a message, not once per variant: `point` is `"<variant>"` for a variant with a single MOP clause, or `"<variant>.<slot>"` where one message has several insertion points (the `v17` reasoning step, the `ELEMENTS` step's clause, the `PRIORITY` line; the `v13` and `v17` user-text closing clause). `PromptContribution`'s javadoc lists the point keys. A contribution returns the text for that point, and the builder renumbers the steps that follow an absent step. `lineMarker` receives **all the actions a line renders** (one action in the shared line formatter; every target-requiring action of the widget in `v13`/`v17`) and returns the line's single marker, so the contribution, not the builder, ranks verdicts (`[DM]` over `[M]`, "MOP Marker Annotation").
+
 The composition root mounts at most two contributions, from the plan, in this order:
 
 - `StaticPromptContribution`, when `Feature.STATIC` is in the plan. It contributes `lineDetail`: the widget metadata suffix (`prompt`, `spinnerMode`, `contentDescription`, `tooltipText`, `entries`, `inputType`, `hint`, each only when non-empty, with the existing caps) of the `v13` and `v17` lines, read from `StaticGuiModel` (INV-PRM-09).
-- `MopPromptContribution`, when `Feature.MOP` is in the plan. It contributes `systemSentence` (the MOP clauses of the system messages, table below), `lineMarker` (`[DM]`/`[M]`, "MOP Marker Annotation"), `contextLine` (` <N>/<M> MOP.`, "Exploration Context in Prompt") and `section` (the `v17` heading `MOP NAVIGATION:`, which takes the place of the builder's neutral heading `NAVIGATION:`, and the MOP clause of its closing instruction). The visit part under either heading is the builder's own.
+- `MopPromptContribution`, when `Feature.MOP` is in the plan. It contributes `systemSentence` (the MOP clauses of the system messages, table below), `lineMarker` (`[DM]`/`[M]`, "MOP Marker Annotation"), `contextLine` (` <N>/<M> MOP.`, "Exploration Context in Prompt") and `section` (the `v17` heading `MOP NAVIGATION:`, which takes the place of the builder's neutral heading `NAVIGATION:`). The MOP clauses of the `v13`/`v17` closing instructions are `systemSentence` points (`v13.close`, `v17.close`). The visit part under either heading is the builder's own.
 
 A group that is not in the plan has no contribution, and a contribution's absence removes its text entirely: no empty heading, no placeholder, no MOP sentence. `ApePromptBuilder` holds the list of mounted contributions and never tests for MOP or static data (INV-PRM-08). The LLM reads the MOP signal in a cell with `Feature.MOP` and `Feature.LLM` (D-A18 Q-8).
 
@@ -464,7 +466,7 @@ The MOP text of each variant, and the wording without `Feature.MOP`, is the exis
 | `v17` (user text, SCREEN line) | `SCREEN: <Activity> \| <tested>/<widgets> elements tested \| visits: <N>` | unchanged (not MOP) |
 | `v17` (user text, last line) | `Select action. Prioritize elements reaching monitored operations, then navigation to new screens.` | `Select action. Prioritize navigation to new screens.` |
 | `v13` (user text, last line) | `Choose ONE action to explore new UI states or trigger monitored operations.` | `Choose ONE action to explore new UI states.` |
-| `visual_only` | no MOP text | no MOP text |
+| `visual_only` (system) | no MOP text | no MOP text (the user text keeps the ` <N>/<M> MOP.` count with `Feature.MOP`, "Exploration Context in Prompt") |
 
 #### Scenario: as_llm prompt carries no MOP text
 

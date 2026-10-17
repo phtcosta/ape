@@ -532,7 +532,7 @@ with `run_id`, `t0`, `seed`, `build` and `props_digest` masked. The rv-android g
 | `dec.inp` | `typed` `heuristic` `random` `form` `llm` | when the action entered text |
 | `dec.restart` | `graph` `state` `activity` `periodic` | when `src=restart` |
 | `dec.bmc` | int | candidates removed by the BACK/MENU cap in this pick; omitted when 0 |
-| `dec.strat` | `buffer` `back_to_activity` `aba` `early_forward` `early_roulette` `greedy_global` `greedy_path` `trivial` `early_backward` `backtrack` `eps_back` `eps_menu` `least_visited` `eps_roulette` `null` `saturated` | when `src=sata` |
+| `dec.strat` | `buffer` `back_to_activity` `aba` `early_roulette` `greedy_global` `greedy_path` `trivial` `early_backward` `backtrack` `eps_back` `eps_menu` `least_visited` `eps_roulette` `null` `saturated` | when `src=sata` |
 | `dec.rot` | int −1..3 (−1 = unreadable) | every step; `0` is written |
 | `dec.buf` | owner | the owner that abandoned a non-empty buffer |
 | `dec.trig` | `{"k":"broadcast"\|"service"\|"provider", "c":"<class>"}` | the step on which `ComponentTriggerStage` fired, whatever `src`; `dec.comp` stays the launcher's launch outcome |
@@ -556,8 +556,8 @@ interface LeastVisitedTie { ModelAction pick(List<ModelAction> leastVisited); } 
 interface AbaTargetTie   { boolean replaces(State incumbent, State candidate); }       // X3
 interface TrivialPathPick { Subsequence pick(List<Subsequence> paths); }               // X4
 interface PromptContribution {
-    default String systemSentence(String variant) { return ""; }
-    default String lineMarker(ModelAction a) { return ""; }
+    default String systemSentence(String point) { return ""; }      // "<variant>" or "<variant>.<slot>"
+    default String lineMarker(List<ModelAction> lineActions) { return ""; } // one marker per line
     default String lineDetail(ModelAction a) { return ""; }
     default String contextLine(State s, List<ModelAction> actions) { return ""; }
     default String section(State s, List<ModelAction> actions) { return ""; }

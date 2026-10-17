@@ -217,11 +217,15 @@ Cross-reference: its `tasks.md` (wave 0 group 0; wave 1 fronts T, D, R, A, M, W;
 - [ ] 11.10 Update `CLAUDE.md`: groups, keys, cells, telemetry members, rotation fix, removed presets (P4, current state)
 - [ ] 11.11 **Commit wave 2** (explicit paths; ask the author)
 
-## 12. Wave 3 — device smoke
+## 12. Wave 3 — device smoke (the mini experiment; author decision 2026-10-17)
 
-- [ ] 12.1 Each of the six variants on `cryptoapp` for a few minutes through the rv-android worktree. `RUN_START` (`preset`, `variant`, `features`, `params`, `inert`, `digest`) matches the cell fixture, and the new `dec` members appear
-- [ ] 12.2 One landscape APK (retrowars or beatgame) on `as_mop_llm`: `dec.rot` is 1 or 3, and the LLM sub-event's screenshot is in the displayed orientation. Keep the evidence in `openspec/changes/isolate-guidance-groups/evidence.md`
-- [ ] 12.3 Hand the jar sha256 and `GIT_SHA` to the Study 03 session for the mini experiment. Q-9 and Q-10 are the author's
+The smoke no longer runs on `cryptoapp`: it is the `mini-experimento` session's short round and mini experiment on
+the Study 03 v2 corpus (instrumented APKs + compact `.apk.json`, image `phtcosta/rvandroid:0.9.5` with this jar and the
+`aperv-tool` sources bind-mounted). That session runs it; the evidence comes from it and is recorded here.
+
+- [ ] 12.1 Hand `mini-experimento` (and `aperv-tool`) the jar of 11.9 (path, sha256, `GIT_SHA`) and the fixtures of 11.6. From its short round, record in `openspec/changes/isolate-guidance-groups/evidence.md` that each cell's `RUN_START` (`preset`, `variant`, `features`, `params`, `inert`, `digest`) matches the cell fixture and that the new `dec` members appear
+- [ ] 12.2 Rotation on a real landscape APK (author decision 2026-10-17): in the short round, one run of `retrowars` on `as_mop_llm` with `ape.llmGateMinActions=0` (a gate at 0 is not mounted, 7.2), because its opaque screen offers only BACK/MENU and the default gate never admits a call. `dec.rot` is 1 or 3 on the LLM steps, and the LLM sub-event's screenshot is in the displayed orientation (width > height, upright). The experiment itself keeps the default gate. Record it in `evidence.md`. Letting the LLM act on opaque screens (`DynamicRegionGate`) stays out of this change
+- [ ] 12.3 Hand the jar sha256 and `GIT_SHA` to the Study 03 session as well. Q-9 and Q-10 are the author's
 
 ## 13. Verification
 
