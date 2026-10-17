@@ -25,6 +25,7 @@ import java.util.Random;
 
 import com.android.commands.monkey.ape.ActionFilter;
 import com.android.commands.monkey.ape.agent.StatefulAgent;
+import com.android.commands.monkey.ape.agent.sata.LeastVisitedTie;
 import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.utils.Config;
@@ -133,51 +134,68 @@ public class State extends GraphElement {
     }
 
     /**
-     * The action with the lowest visit count, with ties broken by {@code priorityTiebreak}.
+     * The action with the lowest visit count; a visit-count tie is handed to the X1 strategy
+     * (action-selection INV-SEL-01/02, design D-B4).
      *
-     * <p>The flag is an argument rather than a field read because this is the seam where every
-     * priority boost — MOP, WTG, coverage — becomes a chosen action, and the greedy path takes
-     * 85-98% of decisions. A residual static read here would keep the old behaviour while the
-     * injected value travelled unused, and nothing else in the run would report differently: the
-     * same stages assemble, the same rungs fire, the same lines are emitted. Only the picks change.
-     * The argument comes from the resolved plan at the SataChain call site (INV-DP-12).
+     * <p>This is the seam where every scorer term can become a chosen action, and the greedy path
+     * takes most decisions, so the tie rule is an argument rather than something the state reads:
+     * the strategy the agent mounted is the one that decides. Priority is never read here.
      */
-    public ModelAction greedyPickLeastVisited(ActionFilter filter, boolean priorityTiebreak) {
-        return greedyPickLeastVisited(filter, null, priorityTiebreak);
+    public ModelAction greedyPickLeastVisited(ActionFilter filter, LeastVisitedTie tie) {
+        return greedyPickLeastVisited(filter, null, tie);
     }
 
     /**
-     * As {@link #greedyPickLeastVisited(ActionFilter, boolean)}, but skips {@code excluded} when
-     * non-null — the form-submit guard (extended INV-FORM-06): the submit must not be picked by
-     * visit count while the form has unfilled EditTexts, since least-visited ignores the priority
-     * that steers fields ahead of the submit.
+     * As {@link #greedyPickLeastVisited(ActionFilter, LeastVisitedTie)}, but skips {@code excluded}
+     * when non-null — the form-submit guard (INV-FORM-06): the submit must not be picked by visit
+     * count while the form has unfilled EditTexts.
      */
     public ModelAction greedyPickLeastVisited(ActionFilter filter, ModelAction excluded,
-            boolean priorityTiebreak) {
-        ModelAction minAction = null;
+            LeastVisitedTie tie) {
+        return pickLeastVisited(leastVisited(filter, excluded), tie);
+    }
+
+    /**
+     * The actions passing {@code filter} (minus {@code excluded}) that share the lowest visit count,
+     * in array order: the candidates of the least-visited pick. Pure.
+     */
+    public List<ModelAction> leastVisited(ActionFilter filter, ModelAction excluded) {
+        List<ModelAction> tied = new ArrayList<ModelAction>();
         int minValue = Integer.MAX_VALUE;
-        int maxPriority = Integer.MIN_VALUE;
         for (ModelAction action : actions) {
             if (action == excluded || !filter.include(action)) {
                 continue;
             }
             int vc = action.getVisitedCount();
-            if (beatsLeastVisited(vc, action.getPriority(), minValue, maxPriority,
-                    priorityTiebreak)) {
+            if (vc < minValue) {
                 minValue = vc;
-                maxPriority = action.getPriority();
-                minAction = action;
+                tied.clear();
+            }
+            if (vc == minValue) {
+                tied.add(action);
             }
         }
-        return minAction;
+        return tied;
     }
 
     /**
-     * rv-scoring-pipeline (leastVisitedPriorityTiebreak, INV-SEL-01/02): whether an action with visit
-     * count {@code vc} and priority {@code p} beats the current best in {@link #greedyPickLeastVisited}.
-     * Fewer visits always wins. A visit-count tie is broken by higher priority ONLY when the RV
-     * tiebreak is on; with it off, upstream APE keeps the incumbent (ties resolved by array order).
-     * Extracted as a pure seam so both branches are unit-testable despite the {@code static final} gate.
+     * The least-visited pick over {@link #leastVisited}'s candidates: null when there is none, the
+     * single candidate without consulting {@code tie} (INV-SEL-02), otherwise {@code tie}'s choice.
+     */
+    public static ModelAction pickLeastVisited(List<ModelAction> leastVisited, LeastVisitedTie tie) {
+        if (leastVisited.isEmpty()) {
+            return null;
+        }
+        if (leastVisited.size() == 1) {
+            return leastVisited.get(0);
+        }
+        return tie.pick(leastVisited);
+    }
+
+    /**
+     * The least-visited rule as it stood before X1 (a visit-count tie broken by higher priority
+     * when {@code tiebreak} is on), kept only for {@code ScorerCounterfactual.leastVisitedWithout},
+     * its last reader; {@link #greedyPickLeastVisited} no longer reads it.
      */
     static boolean beatsLeastVisited(int vc, int p, int minValue, int maxPriority, boolean tiebreak) {
         if (vc < minValue) {
@@ -196,8 +214,9 @@ public class State extends GraphElement {
 
     /**
      * The priority roulette, reporting the draw it consumed alongside the action it picked. The
-     * draw is what A3's counterfactual replays as a fraction of total weight, so the recomputation
-     * costs the seeded stream nothing (INV-SEL-09); nothing else about the pick differs.
+     * draw is what {@code dec.draw} records and {@code dec.cfc}'s counterfactual replays as a
+     * fraction of total weight, so the recomputation costs the seeded stream nothing (INV-SEL-09);
+     * nothing else about the pick differs.
      */
     public RoulettePick randomlyPickActionRecorded(Random random, ActionFilter filter,
                                                    boolean includeBack) {
