@@ -110,23 +110,23 @@ Owns: `utils/MopData.java`, `utils/StaticGuiModel.java`, `utils/StaticArtifactLo
 Owns: `agent/SataAgent.java`, `model/State.java`, `agent/sata/*` (implementations), their tests
 (`SataAgent*Test`, `State*Test`, `SataExtensionPointTest` new).
 
-- [ ] 6.1 X1, `agent/sata/ScorerSumLeastVisitedTie`: `State.greedyPickLeastVisited` delegates its tie to `LeastVisitedTie`. R2 compares the sum of the scorer fields (`mop`, `mopf`, `wtg`, `navf`, `cov`, `menu`, `form`); with zero scorers the incumbent stays. Delete `beatsLeastVisited`'s priority flag and its reads (`SataAgent:586,594`)
-- [ ] 6.2 X3, `agent/sata/ApeAbaTargetTie` (never replace on a tie, no draw) and `agent/sata/MopAbaTargetTie`, used in `selectNewActionEarlyStageForABAInternal` (`:1081-1097`). X4, `agent/sata/ApeTrivialPathPick` (always `RandomHelper.randomPick`) and `agent/sata/MopTrivialPathPick` (density, with equal densities falling back to `randomPick`), used at `:1339-1367`. The `SataAgent` constructor mounts the MOP variants iff `MOP` is in the plan; the `getMopData() != null` tests at these sites are deleted
-- [ ] 6.3 Delete the MOP shortcut from `SataAgent`: `selectUnvisitedMopTarget` (`:574`), the 0-step pick (`:1500`), `pickCappedMopTarget`, `pickBestMopTarget`, `mopTargetPicks` and the MOP preference in the EARLY_STAGE roulette. The ranking moves to F4's `MopCoinStage`
-- [ ] 6.4 Telemetry at the SATA sites, through the wave-0 sink methods:
-  - [ ] 6.4.1 `dec.strat` for every path of the selection table (design.md), replacing the `sata_other` collapse;
-  - [ ] 6.4.2 `dec.draw` at the EARLY_STAGE, ε and null-handler roulettes;
-  - [ ] 6.4.3 `dec.nav` when X1, X3 or X4 decided a tie;
-  - [ ] 6.4.4 `dec.bmc` from the BACK/MENU cap filters;
-  - [ ] 6.4.5 `dec.cfc` at the roulettes and the least-visited pick, through `ScorerCounterfactual`, for each mounted scorer with a non-zero field in the candidate set
-- [ ] 6.5 The submit exclusion (`:557-560`, `:1477-1487`) applies only when `FORM_COMPLETION` is in the plan (P-6). The BACK/MENU cap is read through `BACK_MENU_CAP`. `dec.ch` keeps its channels, without `SHORT_CIRCUIT_*` (D-B14.17). Delete `attributeByLargestBoost` (`:317-348`): `dec.src` is the owner the pipeline names (`sata` for this agent's own picks)
+- [x] 6.1 X1, `agent/sata/ScorerSumLeastVisitedTie`: `State.greedyPickLeastVisited` delegates its tie to `LeastVisitedTie`. R2 compares the sum of the scorer fields (`mop`, `mopf`, `wtg`, `navf`, `cov`, `menu`, `form`); with zero scorers the incumbent stays. Delete `beatsLeastVisited`'s priority flag and its reads (`SataAgent:586,594`)
+- [x] 6.2 X3, `agent/sata/ApeAbaTargetTie` (never replace on a tie, no draw) and `agent/sata/MopAbaTargetTie`, used in `selectNewActionEarlyStageForABAInternal` (`:1081-1097`). X4, `agent/sata/ApeTrivialPathPick` (always `RandomHelper.randomPick`) and `agent/sata/MopTrivialPathPick` (density, with equal densities falling back to `randomPick`), used at `:1339-1367`. The `SataAgent` constructor mounts the MOP variants iff `MOP` is in the plan; the `getMopData() != null` tests at these sites are deleted
+- [x] 6.3 Delete the MOP shortcut from `SataAgent`: `selectUnvisitedMopTarget` (`:574`), the 0-step pick (`:1500`), `pickCappedMopTarget`, `pickBestMopTarget`, `mopTargetPicks` and the MOP preference in the EARLY_STAGE roulette. The ranking moves to F4's `MopCoinStage`
+- [x] 6.4 Telemetry at the SATA sites, through the wave-0 sink methods:
+  - [x] 6.4.1 `dec.strat` for every path of the selection table (design.md), replacing the `sata_other` collapse;
+  - [x] 6.4.2 `dec.draw` at the EARLY_STAGE, ε and null-handler roulettes;
+  - [x] 6.4.3 `dec.nav` when X1, X3 or X4 decided a tie;
+  - [x] 6.4.4 `dec.bmc` from the BACK/MENU cap filters;
+  - [x] 6.4.5 `dec.cfc` at the roulettes and the least-visited pick, through `ScorerCounterfactual`, for each mounted scorer with a non-zero field in the candidate set
+- [x] 6.5 The submit exclusion (`:557-560`, `:1477-1487`) applies only when `FORM_COMPLETION` is in the plan (P-6). The BACK/MENU cap is read through `BACK_MENU_CAP`. `dec.ch` keeps its channels, without `SHORT_CIRCUIT_*` (D-B14.17). Delete `attributeByLargestBoost` (`:317-348`): `dec.src` is the owner the pipeline names (`sata` for this agent's own picks)
 - [ ] 6.5b `dumpCoverage` (`:369-372`): `mopReach` is written only when `MOP` is mounted, and is omitted otherwise (D-B14.21)
-- [ ] 6.6 Tests (`SataExtensionPointTest`):
-  - [ ] 6.6.1 X1 with zero scorers equals upstream's first-of-array;
-  - [ ] 6.6.2 X3 APE keeps the incumbent;
-  - [ ] 6.6.3 X4 APE consumes exactly one helper draw when there is more than one path;
-  - [ ] 6.6.4 the MOP variants decide as specified;
-  - [ ] 6.6.5 the shortcut is gone (no `SHORT_CIRCUIT_*` channel)
+- [x] 6.6 Tests (`SataExtensionPointTest`):
+  - [x] 6.6.1 X1 with zero scorers equals upstream's first-of-array;
+  - [x] 6.6.2 X3 APE keeps the incumbent;
+  - [x] 6.6.3 X4 APE consumes exactly one helper draw when there is more than one path;
+  - [x] 6.6.4 the MOP variants decide as specified;
+  - [x] 6.6.5 the shortcut is gone (no `SHORT_CIRCUIT_*` channel)
 - [ ] 6.7 Run `/sdd-test-run`
 
 ## 7. Wave 1 · F4 — decision, coins, gates, guards (§4.2, §4.4, §4.5; D-A4–D-A6, D-A10, D-A15–D-A17, D-B7–D-B11)

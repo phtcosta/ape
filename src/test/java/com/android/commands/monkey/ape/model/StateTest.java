@@ -7,13 +7,15 @@ import java.lang.reflect.Field;
 import org.junit.Test;
 
 import com.android.commands.monkey.ape.ActionFilter;
+import com.android.commands.monkey.ape.agent.sata.LeastVisitedTie;
+import com.android.commands.monkey.ape.agent.sata.ScorerSumLeastVisitedTie;
 import com.android.commands.monkey.ape.naming.Name;
 
 /**
- * Unit tests for {@link State#greedyPickLeastVisited(ActionFilter, boolean)}.
+ * Unit tests for {@link State#greedyPickLeastVisited(ActionFilter, LeastVisitedTie)}.
  *
- * <p>Verifies that priority is used as a tiebreaker when multiple actions
- * share the same minimum visitedCount (INV-SEL-01..03).
+ * <p>Fewer visits always win; a visit-count tie goes to X1, rule R2: the larger scorer sum, else
+ * array order. Priority is never read (action-selection INV-SEL-01/02, design D-B4).
  *
  * <p>Uses sun.misc.Unsafe to allocate State/StateKey instances without
  * calling constructors that depend on Android APIs.
@@ -62,8 +64,15 @@ public class StateTest {
      * Creates a ModelAction with given priority and visitedCount via reflection.
      */
     private static ModelAction createAction(State state, int priority, int visitedCount) throws Exception {
+        return createAction(state, priority, visitedCount, 0);
+    }
+
+    /** As above, with a coverage scorer term: the scorer sum R2 compares. */
+    private static ModelAction createAction(State state, int priority, int visitedCount,
+            int coverageBoost) throws Exception {
         ModelAction action = new ModelAction(state, ActionType.MODEL_CLICK);
         action.setPriority(priority);
+        action.setCoverageBoost(coverageBoost);
 
         // visitedCount is a protected field in GraphElement
         Field vcField = GraphElement.class.getDeclaredField("visitedCount");
@@ -75,267 +84,182 @@ public class StateTest {
 
     private static final ActionFilter ALL = ActionFilter.ALL;
 
+    private static final LeastVisitedTie R2 = new ScorerSumLeastVisitedTie();
+
+    private static State stateWith(ModelAction... actions) throws Exception {
+        State state = createState(new ModelAction[0]);
+        Field actionsField = State.class.getDeclaredField("actions");
+        actionsField.setAccessible(true);
+        actionsField.set(state, actions);
+        return state;
+    }
+
+    /** A tie strategy that fails the test if it is consulted. */
+    private static final LeastVisitedTie NEVER = tied -> {
+        fail("X1 consulted without a tie: " + tied);
+        return null;
+    };
+
     // -----------------------------------------------------------------------
     // Tests
     // -----------------------------------------------------------------------
 
-    /**
-     * Scenario: Single least-visited action (unchanged behavior).
-     * WHEN actions have visitedCounts [0, 3, 5]
-     * THEN the action with visitedCount=0 SHALL be selected.
-     */
+    /** Scenario: single least-visited action — X1 is not consulted (INV-SEL-02). */
     @Test
     public void testSingleLeastVisited() throws Exception {
-        State state = createState(new ModelAction[0]);
-        ModelAction a0 = createAction(state, 32, 0);
-        ModelAction a1 = createAction(state, 32, 3);
-        ModelAction a2 = createAction(state, 32, 5);
+        State holder = createState(new ModelAction[0]);
+        ModelAction a0 = createAction(holder, 32, 0);
+        ModelAction a1 = createAction(holder, 32, 3, 500);
+        ModelAction a2 = createAction(holder, 32, 5);
+        State state = stateWith(a0, a1, a2);
 
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{a0, a1, a2});
+        assertSame(a0, state.greedyPickLeastVisited(ALL, NEVER));
+    }
 
-        assertSame(a0, state.greedyPickLeastVisited(ALL, true));
+    /** Scenario: a tie broken by the scorer sum, not by the priority. */
+    @Test
+    public void testTieBrokenByScorerSum() throws Exception {
+        State holder = createState(new ModelAction[0]);
+        ModelAction a0 = createAction(holder, 32, 2);
+        ModelAction a1 = createAction(holder, 532, 2, 500);
+        ModelAction a2 = createAction(holder, 52, 5);
+        State state = stateWith(a0, a1, a2);
+
+        assertSame(a1, state.greedyPickLeastVisited(ALL, R2));
+    }
+
+    /** Scenario: all actions on the same visit count — the largest scorer sum wins. */
+    @Test
+    public void testAllSameVisitedCount_largestScorerSumWins() throws Exception {
+        State holder = createState(new ModelAction[0]);
+        ModelAction[] actions = new ModelAction[10];
+        int[] sums = {0, 0, 200, 0, 500, 0, 0, 0, 0, 0};
+        for (int i = 0; i < actions.length; i++) {
+            actions[i] = createAction(holder, 32 + sums[i], 0, sums[i]);
+        }
+        State state = stateWith(actions);
+
+        assertSame(actions[4], state.greedyPickLeastVisited(ALL, R2));
+    }
+
+    /** Scenario: tie with equal scorer sums — the first of the array wins. */
+    @Test
+    public void testTieWithEqualSums_firstWins() throws Exception {
+        State holder = createState(new ModelAction[0]);
+        ModelAction a0 = createAction(holder, 252, 1, 200);
+        ModelAction a1 = createAction(holder, 252, 1, 200);
+        ModelAction a2 = createAction(holder, 32, 3);
+        State state = stateWith(a0, a1, a2);
+
+        assertSame(a0, state.greedyPickLeastVisited(ALL, R2));
     }
 
     /**
-     * Scenario: Tie broken by priority.
-     * WHEN actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
-     * THEN the action with visitedCount=2 and priority=532 SHALL be selected.
+     * Scenario: the base cell (no scorer) — array order, NOT the priority-532 action. This is the
+     * case the retired addon G got wrong, because it compared the whole priority.
      */
     @Test
-    public void testTieBrokenByPriority() throws Exception {
-        State state = createState(new ModelAction[0]);
-        ModelAction a0 = createAction(state, 32, 2);
-        ModelAction a1 = createAction(state, 532, 2);
-        ModelAction a2 = createAction(state, 52, 5);
+    public void testNoScorer_arrayOrderNotPriority() throws Exception {
+        State holder = createState(new ModelAction[0]);
+        ModelAction a0 = createAction(holder, 32, 2);
+        ModelAction a1 = createAction(holder, 532, 2);
+        ModelAction a2 = createAction(holder, 52, 5);
+        State state = stateWith(a0, a1, a2);
 
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{a0, a1, a2});
-
-        assertSame(a1, state.greedyPickLeastVisited(ALL, true));
+        assertSame(a0, state.greedyPickLeastVisited(ALL, R2));
     }
 
     /**
-     * Scenario: All actions same visitedCount.
-     * WHEN all actions have visitedCount=0 and priorities [32, 32, 232, 32, 532, 32]
-     * THEN the action with priority=532 SHALL be selected.
+     * Scenario: the same action set picks differently with and without a scorer term — the
+     * permanent paired test of the conversion point (action-selection "Priority Tiebreaker").
      */
     @Test
-    public void testAllSameVisitedCount_highestPriorityWins() throws Exception {
-        State state = createState(new ModelAction[0]);
-        ModelAction a0 = createAction(state, 32, 0);
-        ModelAction a1 = createAction(state, 32, 0);
-        ModelAction a2 = createAction(state, 232, 0);
-        ModelAction a3 = createAction(state, 32, 0);
-        ModelAction a4 = createAction(state, 532, 0);
-        ModelAction a5 = createAction(state, 32, 0);
+    public void testScorerTermDecidesTheTie() throws Exception {
+        State holder = createState(new ModelAction[0]);
+        ModelAction first = createAction(holder, 32, 2);
+        ModelAction scored = createAction(holder, 132, 2, 100);
+        ModelAction visited = createAction(holder, 52, 5);
+        State state = stateWith(first, scored, visited);
 
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{a0, a1, a2, a3, a4, a5});
+        ModelAction withScorer = state.greedyPickLeastVisited(ALL, R2);
+        scored.setCoverageBoost(0);
+        ModelAction withoutScorer = state.greedyPickLeastVisited(ALL, R2);
 
-        assertSame(a4, state.greedyPickLeastVisited(ALL, true));
+        assertSame("scorer sum 100 wins the tie", scored, withScorer);
+        assertSame("every sum 0: the first of the array (upstream APE)", first, withoutScorer);
+        assertNotSame(withScorer, withoutScorer);
     }
 
-    /**
-     * Scenario: Tie with equal priorities.
-     * WHEN actions have visitedCounts [1, 1, 3] and priorities [52, 52, 32]
-     * THEN either of the two tied actions MAY be selected (first encountered wins).
-     */
-    @Test
-    public void testTieWithEqualPriorities_firstEncounteredWins() throws Exception {
-        State state = createState(new ModelAction[0]);
-        ModelAction a0 = createAction(state, 52, 1);
-        ModelAction a1 = createAction(state, 52, 1);
-        ModelAction a2 = createAction(state, 32, 3);
-
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{a0, a1, a2});
-
-        ModelAction result = state.greedyPickLeastVisited(ALL, true);
-        // First encountered with min visitedCount and max priority wins
-        assertSame(a0, result);
-    }
-
-    /**
-     * INV-SEL-01: Lower visitedCount always wins regardless of priority.
-     * Priority NEVER overrides visitedCount.
-     */
+    /** INV-SEL-01: a lower visit count always wins, whatever the scorer sum or priority. */
     @Test
     public void testINV_SEL_01_visitedCountAlwaysPrimary() throws Exception {
-        State state = createState(new ModelAction[0]);
-        // a0 has low visitedCount but low priority
-        ModelAction a0 = createAction(state, 1, 0);
-        // a1 has high visitedCount but very high priority
-        ModelAction a1 = createAction(state, 99999, 1);
+        State holder = createState(new ModelAction[0]);
+        ModelAction a0 = createAction(holder, 1, 0);
+        ModelAction a1 = createAction(holder, 99999, 1, 99999);
+        State state = stateWith(a0, a1);
 
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{a0, a1});
-
-        assertSame(a0, state.greedyPickLeastVisited(ALL, true));
+        assertSame(a0, state.greedyPickLeastVisited(ALL, R2));
     }
 
-    /**
-     * INV-SEL-02: Distinct visitedCounts = same behavior as before.
-     * When all actions have unique visitedCounts, priority is irrelevant.
-     */
+    /** INV-SEL-02: distinct visit counts never consult X1. */
     @Test
     public void testINV_SEL_02_distinctVisitedCounts() throws Exception {
-        State state = createState(new ModelAction[0]);
-        // Lowest visitedCount has lowest priority — still wins
-        ModelAction a0 = createAction(state, 10, 1);
-        ModelAction a1 = createAction(state, 500, 2);
-        ModelAction a2 = createAction(state, 1000, 3);
+        State holder = createState(new ModelAction[0]);
+        ModelAction a0 = createAction(holder, 10, 1);
+        ModelAction a1 = createAction(holder, 500, 2, 500);
+        ModelAction a2 = createAction(holder, 1000, 3);
+        State state = stateWith(a0, a1, a2);
 
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{a0, a1, a2});
-
-        assertSame(a0, state.greedyPickLeastVisited(ALL, true));
+        assertSame(a0, state.greedyPickLeastVisited(ALL, NEVER));
     }
 
-    /**
-     * Verify the method returns null when no actions pass the filter.
-     */
+    /** The tied candidates come back in array order, the X1 strategy's input. */
+    @Test
+    public void testLeastVisitedListsTheTieInArrayOrder() throws Exception {
+        State holder = createState(new ModelAction[0]);
+        ModelAction a0 = createAction(holder, 32, 3);
+        ModelAction a1 = createAction(holder, 32, 1);
+        ModelAction a2 = createAction(holder, 32, 2);
+        ModelAction a3 = createAction(holder, 32, 1);
+        State state = stateWith(a0, a1, a2, a3);
+
+        assertEquals(java.util.Arrays.asList(a1, a3), state.leastVisited(ALL, null));
+    }
+
     @Test
     public void testNoMatchingActions_returnsNull() throws Exception {
         State state = createState(new ModelAction[0]);
 
-        assertNull(state.greedyPickLeastVisited(ALL, true));
+        assertNull(state.greedyPickLeastVisited(ALL, NEVER));
     }
 
-    /**
-     * Verify filter is respected: filtered-out actions are ignored even if
-     * they have lower visitedCount.
-     */
+    /** The filter is respected: a filtered-out action is ignored even with fewer visits. */
     @Test
     public void testFilterExcludesActions() throws Exception {
-        State state = createState(new ModelAction[0]);
-        ModelAction a0 = createAction(state, 100, 0);  // would win, but filtered out
-        ModelAction a1 = createAction(state, 50, 5);
+        State holder = createState(new ModelAction[0]);
+        ModelAction a0 = createAction(holder, 100, 0);
+        ModelAction a1 = createAction(holder, 50, 5);
+        State state = stateWith(a0, a1);
 
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{a0, a1});
-
-        // Filter that excludes the first action
         ActionFilter excludeFirst = action -> action != a0;
 
-        assertSame(a1, state.greedyPickLeastVisited(excludeFirst, true));
+        assertSame(a1, state.greedyPickLeastVisited(excludeFirst, R2));
     }
 
     /**
-     * form-completion #1 D-7.2 guard (extended INV-FORM-06): the excluded submit candidate is
-     * skipped even when it is the least-visited action, so the next-least-visited non-excluded
-     * action wins; a null exclusion leaves behavior unchanged.
+     * Form-submit guard (INV-FORM-06): the excluded submit candidate is skipped even when it is the
+     * least-visited action; a null exclusion leaves the pick unchanged.
      */
     @Test
     public void testExcludedActionSkippedEvenIfLeastVisited() throws Exception {
-        State state = createState(new ModelAction[0]);
-        ModelAction submit = createAction(state, 100, 0);   // least visited — would win unguarded
-        ModelAction field = createAction(state, 32, 3);
-
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{submit, field});
+        State holder = createState(new ModelAction[0]);
+        ModelAction submit = createAction(holder, 100, 0);
+        ModelAction field = createAction(holder, 32, 3);
+        State state = stateWith(submit, field);
 
         assertSame("excluded submit skipped despite lowest visitedCount",
-                field, state.greedyPickLeastVisited(ALL, submit, true));
+                field, state.greedyPickLeastVisited(ALL, submit, R2));
         assertSame("null exclusion → unchanged least-visited behavior",
-                submit, state.greedyPickLeastVisited(ALL, null, true));
-    }
-
-    /**
-     * The tiebreak argument decides the pick — the only thing that can catch it being wired wrong.
-     *
-     * <p>One fixed action set, one fixed set of visit counts, differing priorities, passed to
-     * {@code greedyPickLeastVisited} twice: once with {@code true}, once with {@code false}. The
-     * two calls SHALL pick different actions. This is the seam where every priority boost — MOP,
-     * WTG, coverage — becomes a chosen action, and the greedy path takes 85-98% of decisions, so an
-     * argument wired wrong here degrades MOP guidance while every stage still reports the same
-     * structure: same roster, same rungs, same lines, no golden moves. Nothing else in the suite
-     * would go red.
-     *
-     * <p>The priorities are stated here and appear nowhere in production, so the result can only
-     * carry them by having travelled through the argument under test.
-     */
-    @Test
-    public void testTiebreakArgumentDecidesThePick() throws Exception {
-        State state = createState(new ModelAction[0]);
-        // Tied on the lowest visit count; boosted is the one a priority boost would steer to.
-        ModelAction first = createAction(state, 37, 2);
-        ModelAction boosted = createAction(state, 537, 2);
-        ModelAction visited = createAction(state, 57, 5);
-
-        Field actionsField = State.class.getDeclaredField("actions");
-        actionsField.setAccessible(true);
-        actionsField.set(state, new ModelAction[]{first, boosted, visited});
-
-        ModelAction withTiebreak = state.greedyPickLeastVisited(ALL, true);
-        ModelAction withoutTiebreak = state.greedyPickLeastVisited(ALL, false);
-
-        assertSame("tiebreak on: the boost reaches the greedy path", boosted, withTiebreak);
-        assertSame("tiebreak off: the tie falls back to array order (upstream APE)",
-                first, withoutTiebreak);
-        assertNotSame("the argument is load-bearing, not decorative",
-                withTiebreak, withoutTiebreak);
-    }
-
-    /**
-     * The same contrast through {@code ScorerCounterfactual}, which mirrors the tie rule. A
-     * counterfactual that disagreed with the branch it stands in for would misreport {@code
-     * cf_changed} on every {@code ape_pure} run, and no factual assertion would notice.
-     */
-    @Test
-    public void testCounterfactualHonoursTheSameTiebreakArgument() throws Exception {
-        State state = createState(new ModelAction[0]);
-        ModelAction first = createAction(state, 37, 2);
-        ModelAction boosted = createAction(state, 537, 2);
-        java.util.List<ModelAction> candidates = java.util.Arrays.asList(first, boosted);
-
-        assertSame("tiebreak on: higher priority wins the tie", boosted,
-                ScorerCounterfactual.leastVisitedWithout(candidates, true, ScorerCounterfactual.Scorer.MOP, ScorerCounterfactual.Scorer.MOP_FRONTIER));
-        assertSame("tiebreak off: candidate order wins the tie", first,
-                ScorerCounterfactual.leastVisitedWithout(candidates, false, ScorerCounterfactual.Scorer.MOP, ScorerCounterfactual.Scorer.MOP_FRONTIER));
-    }
-
-    // -----------------------------------------------------------------------
-    // The leastVisitedPriorityTiebreak seam. The flag is a parameter of
-    // greedyPickLeastVisited, so both branches are reachable through the real
-    // entry point; testTiebreakArgumentDecidesThePick below is what proves the
-    // argument is load-bearing. The tests here pin the pure seam it delegates to.
-    // -----------------------------------------------------------------------
-
-    @Test
-    public void testBeatsLeastVisited_fewerVisitsAlwaysWins() {
-        // vc below the incumbent minValue wins regardless of tiebreak flag or priority.
-        assertTrue(State.beatsLeastVisited(2, 1, 5, 999, true));
-        assertTrue(State.beatsLeastVisited(2, 1, 5, 999, false));
-    }
-
-    @Test
-    public void testBeatsLeastVisited_tieBrokenByPriorityOnlyWhenTiebreakOn() {
-        // Equal vc, strictly higher priority: RV tiebreak takes it, upstream keeps the incumbent.
-        assertTrue("tiebreak on: higher priority wins the tie",
-                State.beatsLeastVisited(3, 500, 3, 100, true));
-        assertFalse("tiebreak off: incumbent keeps the slot (upstream array-order)",
-                State.beatsLeastVisited(3, 500, 3, 100, false));
-    }
-
-    @Test
-    public void testBeatsLeastVisited_higherVisitsNeverWins() {
-        assertFalse(State.beatsLeastVisited(6, 999, 5, 0, true));
-        assertFalse(State.beatsLeastVisited(6, 999, 5, 0, false));
-    }
-
-    @Test
-    public void testBeatsLeastVisited_equalPriorityTieKeepsIncumbent() {
-        // Equal vc and equal priority: incumbent keeps the slot under both settings (strict >).
-        assertFalse(State.beatsLeastVisited(3, 100, 3, 100, true));
-        assertFalse(State.beatsLeastVisited(3, 100, 3, 100, false));
+                submit, state.greedyPickLeastVisited(ALL, null, R2));
     }
 }

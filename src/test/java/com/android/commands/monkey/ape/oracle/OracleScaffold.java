@@ -86,7 +86,6 @@ import java.util.Set;
  *   <tr><td>{@code _actionHistory}</td><td>StatefulAgent</td><td>argument of {@code selectAction}</td></tr>
  *   <tr><td>{@code actionDiffer}</td><td>SataAgent</td><td>{@code getGreedyActions} → the EARLY_STAGE rungs</td></tr>
  *   <tr><td>{@code backMenuPicks}</td><td>SataAgent</td><td>the back/menu pick cap in EPSILON_GREEDY and the capped filter</td></tr>
- *   <tr><td>{@code mopTargetPicks}</td><td>SataAgent</td><td>{@code pickCappedMopTarget}, reached from EARLY_STAGE <i>and</i> EPSILON_GREEDY</td></tr>
  *   <tr><td>{@code actionCounters} (int[])</td><td>SataAgent</td><td>{@code logEvent} on every selected rung; {@code printCounters()} in the logging preamble</td></tr>
  *   <tr><td>{@code epsilon}</td><td>SataAgent</td><td>{@code computeDynamicEpsilon()} floor; set to {@code Config.defaultEpsilon}, the value the production constructor passes</td></tr>
  *   <tr><td>{@code backToActivity}</td><td>SataAgent</td><td>null keeps {@code selectNewActionBackToActivity()} out of {@code AndroidDevice} (see the boundary below)</td></tr>
@@ -254,7 +253,7 @@ import java.util.Set;
  * {@code dynamicEpsilon=true}, {@code defaultEpsilon=0.05}, {@code minEpsilon=0.02},
  * {@code maxEpsilon=0.15}. Read only where {@code _mopContext} is present:
  * {@code activityTriggerEnabled=true}, {@code activityTriggerStagnationStep=50},
- * {@code activityTriggerMaxPerRun=0}, {@code mopTargetPickCap=3}. Each preset test guard-asserts
+ * {@code activityTriggerMaxPerRun=0}. Each preset test guard-asserts
  * the half it depends on (design D2). Scoring weights are deliberately <b>not</b> among them: they
  * are consumed above this entry point, so no golden can depend on one, and their guard belongs to
  * {@code rearch-03} INV-ARCH-12. {@code llmPercentage} and
@@ -624,7 +623,6 @@ public final class OracleScaffold {
         setField(agent, "actionBuffer", new LinkedList<>());
         setField(agent, "_actionHistory", new ArrayList<>());
         setField(agent, "backMenuPicks", new HashMap<String, Integer>());
-        setField(agent, "mopTargetPicks", new HashMap<String, Integer>());
         setField(agent, "actionCounters", new int[sataEventTypeCount()]);
         setField(agent, "actionDiffer", new StateActionDiffer());
 
@@ -639,8 +637,6 @@ public final class OracleScaffold {
         // the extraction is in flight. No golden moves: these are the jar defaults the goldens were
         // captured over, reaching the same read sites by a different route.
         setField(agent, "exploration", spec.exploration());
-        // ape.mopTargetPickCap is retired; the shortcut keeps its former default until wave 1.
-        setField(agent, "mopTargetPickCap", spec.has(Feature.MOP) ? 3 : 0);
         // The decision policy the constructor would have assembled (SataAgent.java), built from the
         // same plan installed above and against this agent's own action producers. Last, because
         // nothing it binds may be read before every field it reaches through is set — this is the
