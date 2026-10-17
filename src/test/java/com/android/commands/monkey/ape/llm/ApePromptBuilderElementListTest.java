@@ -206,7 +206,7 @@ public class ApePromptBuilderElementListTest {
         Matcher m = Pattern.compile("@\\((\\d+),(\\d+)\\)").matcher(line);
         assertTrue(line, m.find());
         CoordinateMapper mapper = new CoordinateMapper(
-                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm());
+                TestRunSpecs.spec("ape.llm", "true", "ape.llmUrl", "http://localhost:9999/v1").llm());
         int[] px = mapper.toPixels(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), W, H);
         assertSame(longClick, mapper.map(px[0], px[1], "long_click", null, actions, null, W, H));
     }

@@ -17,15 +17,11 @@
 package com.android.commands.monkey;
 
 import static com.android.commands.monkey.ape.utils.Config.defaultGUIThrottle;
-import static com.android.commands.monkey.ape.utils.Config.doFuzzing;
-import static com.android.commands.monkey.ape.utils.Config.fuzzingRate;
-import static com.android.commands.monkey.ape.utils.Config.foreignActivityGuard;
 import static com.android.commands.monkey.ape.utils.Config.imageWriterCount;
 import static com.android.commands.monkey.ape.utils.Config.maxIdleTimeoutMs;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoCount;
 import static com.android.commands.monkey.ape.utils.Config.refectchInfoWaitingInterval;
 import static com.android.commands.monkey.ape.utils.Config.swipeDuration;
-import static com.android.commands.monkey.ape.utils.Config.treePackageGuard;
 
 import java.io.File;
 import java.util.HashMap;
@@ -52,6 +48,7 @@ import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StartAction;
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -815,7 +812,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 // window at the modeling boundary (INV-EXPL-20). Whitelist packages and a
                 // null topComp bypass the guard. The BACK is raw (no step record): it is
                 // not counted as a step and is invisible to the BACK/MENU pick cap.
-                if (foreignActivityGuard && topComp != null) {
+                if (RunContext.current().spec().has(Feature.FOREIGN_ACTIVITY_GUARD)
+                        && topComp != null) {
                     String pkg = topComp.getPackageName();
                     boolean accepts = MonkeyUtils.getPackageFilter().isPackageValid(pkg);
                     if (!ForeignActivityGuard.shouldModel(pkg, accepts,
@@ -834,7 +832,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 // On a foreign-tree mismatch, refetch within THIS loop while retries remain
                 // (repeat > 0); on exhaustion (repeat == 0) fall through and model the pair
                 // (fail-open — a `continue` on the last iteration would wrongly exit to NOP).
-                if (treePackageGuard && topComp != null) {
+                if (RunContext.current().spec().has(Feature.TREE_PACKAGE_GUARD)
+                        && topComp != null) {
                     String topPkg = topComp.getPackageName();
                     CharSequence tp = info.getPackageName();
                     String treePkg = tp == null ? null : tp.toString();
@@ -873,7 +872,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
             action = Action.NOP;
         }
         generateEventsForAction(action);
-        if (doFuzzing && RandomHelper.toss(fuzzingRate)) {
+        RunSpec spec = RunContext.current().spec();
+        if (spec.has(Feature.FUZZING) && RandomHelper.toss(spec.exploration().fuzzingRate())) {
             if (mAgent.canFuzzing()) {
                 Action fuzzingAction = mAgent.generateFuzzingAction();
                 generateEventsForAction(fuzzingAction);

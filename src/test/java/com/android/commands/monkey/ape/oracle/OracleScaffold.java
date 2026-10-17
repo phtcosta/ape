@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.agent.SataAgent;
@@ -34,6 +35,7 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -194,7 +196,7 @@ import java.util.Set;
  *       {@code ComponentTriggerStage} is in no preset's roster (INV-DP-03). Even with the gate
  *       forced open the committed fixture yields zero tuples (no receivers, no services, and its
  *       one provider has {@code reachesTarget=false}, filtered at {@code StatefulAgent.java:1246}),
- *       so {@code mopComponentTargetCount()} reports zero and the stage's cursor never moves; and
+ *       so {@code componentTargetCount()} reports zero and the stage's cursor never moves; and
  *       had a tuple existed, dispatch is device-bound ({@code android.content.Intent} in
  *       {@code dispatchTrigger}, {@code AndroidDevice.executeCommandAndWaitFor} in
  *       {@code dispatchProvider}, whose wrapper catches {@code Exception} and not the
@@ -403,7 +405,7 @@ public final class OracleScaffold {
             }
         }
         actions.add(back);
-        if (Config.modelMenuEnabled) {
+        if (RunContext.current().spec().has(Feature.MODEL_MENU)) {
             actions.add(menu);
         }
 
@@ -542,14 +544,26 @@ public final class OracleScaffold {
         //   coin always passes and the scripted gate below is what decides. The stream it draws
         //   from is substituted as well (installScriptedLlm), so the draw does not touch the
         //   agent's pinned stream and no golden moves.
-        String[] llmKeys = preset.hasLlm()
-                ? new String[] {"ape.llmUrl", "http://127.0.0.1:30000/v1",
-                        "ape.graphStableRestartThreshold", "10",
-                        "ape.llmPercentage", "1.0"}
-                : new String[0];
+        //
+        // The goldens were captured when the jar's defaults carried every addon and, with MOP data,
+        // the frontier and typed input. Since isolate-guidance-groups the defaults are the base
+        // cell, so the former defaults are stated as groups: ADDONS always, STATIC with the MOP
+        // data, and the MOP coin off, since the former arms had none. Wave 2 replaces these
+        // presets with the cells and recaptures the goldens.
+        List<String> keys = new ArrayList<>(Arrays.asList("ape.addons", "true"));
+        if (preset.hasLlm()) {
+            keys.addAll(Arrays.asList("ape.llm", "true",
+                    "ape.llm", "true", "ape.llmUrl", "http://127.0.0.1:30000/v1",
+                    "ape.graphStableRestartThreshold", "10",
+                    "ape.llmPercentage", "1.0"));
+        }
+        if (preset.hasMopData()) {
+            keys.addAll(Arrays.asList("ape.static", "true", "ape.mopCoinPercentage", "0"));
+        }
+        String[] planKeys = keys.toArray(new String[0]);
         RunSpec spec = preset.hasMopData()
-                ? TestRunSpecs.mopSpec(llmKeys)
-                : TestRunSpecs.spec(llmKeys);
+                ? TestRunSpecs.mopSpec(planKeys)
+                : TestRunSpecs.spec(planKeys);
         if (sink != null) {
             RunContext.installForTest(spec, sink);
         } else {
@@ -576,6 +590,10 @@ public final class OracleScaffold {
         // adapting to a relocated collaborator (INV-ORA-07); the agent derives getMopData() from it.
         final MopContext mopContext = MopContext.fromSpec(mopData, spec.mop());
         setField(agent, "_mopContext", mopContext);
+        // The static model and the per-step streams, as the constructor takes them (design D-B9,
+        // D-B14.20): the model over the loaded fixture, the streams from the installed context.
+        setField(agent, "_staticModel", mopData == null ? null : new StaticGuiModel(mopData));
+        setField(agent, "_stepRng", RunContext.current().stepRng());
         setField(agent, "_coverageTracker", coverageTracker);
         // Config.activityBudgetEnabled defaults true, so the constructor builds a real tracker and
         // the ladder's first block dereferences it unconditionally (SataAgent.java:468).
@@ -616,8 +634,8 @@ public final class OracleScaffold {
         // the extraction is in flight. No golden moves: these are the jar defaults the goldens were
         // captured over, reaching the same read sites by a different route.
         setField(agent, "exploration", spec.exploration());
-        setField(agent, "mopTargetPickCap",
-                spec.has(Feature.MOP) ? spec.mop().targetPickCap() : 0);
+        // ape.mopTargetPickCap is retired; the shortcut keeps its former default until wave 1.
+        setField(agent, "mopTargetPickCap", spec.has(Feature.MOP) ? 3 : 0);
         // The decision policy the constructor would have assembled (SataAgent.java), built from the
         // same plan installed above and against this agent's own action producers. Last, because
         // nothing it binds may be read before every field it reaches through is set — this is the

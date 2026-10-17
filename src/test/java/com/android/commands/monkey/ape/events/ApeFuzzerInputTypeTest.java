@@ -19,10 +19,13 @@ public class ApeFuzzerInputTypeTest {
 
     private final Random rnd = new Random(42);
 
-    /** The typed path is plan-controlled, and the generator reads the plan in effect. */
+    /**
+     * The typed path is plan-controlled, and the generator reads the plan in effect: typed input is
+     * a STATIC member, so the plan states the artifact and the group.
+     */
     @Before
     public void installDefaultPlan() {
-        TestRunSpecs.install();
+        TestRunSpecs.install("ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.static", "true");
     }
 
     @After

@@ -13,7 +13,6 @@ import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
-import com.android.commands.monkey.ape.utils.MopContext;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -57,7 +56,7 @@ public class LlmRandomStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopContext mop, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             modeSeen = mode;
             return answer;

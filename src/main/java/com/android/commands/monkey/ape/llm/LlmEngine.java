@@ -45,6 +45,14 @@ public class LlmEngine {
     private final LlmTelemetry telemetry;
 
     /**
+     * The run's MOP context, bound once by the agent that built it, or null on a plan without
+     * {@code MOP}. The engine is built before the artifact is loaded, so the context cannot be a
+     * constructor argument; the stages no longer carry it per call (llm-routing "Action Selection
+     * Pipeline").
+     */
+    private MopContext mop;
+
+    /**
      * @param screenshot the screen-to-string step
      * @param promptBuilder the prompt assembler
      * @param client the run's single door to the model, breaker included
@@ -63,22 +71,31 @@ public class LlmEngine {
     }
 
     /**
+     * Binds the run's MOP context, which the prompt's MOP text reads. Called once, by the agent,
+     * right after the artifact loads; a plan without {@code MOP} binds nothing.
+     *
+     * @param mop the run's MOP context, or null
+     */
+    public void bindMopContext(MopContext mop) {
+        this.mop = mop;
+    }
+
+    /**
      * Run the pipeline and return the action the model asked for, or null.
      *
      * <p>Null is an ordinary outcome, not an error: the LLM declined, failed, or was refused, and
      * the remainder of the assembled pipeline decides the step (INV-DP-11).
      *
-     * <p><b>The five per-step values arrive as arguments and that is deliberate.</b> This object is
-     * built once per run and owned by {@code RunContext}, while {@code mop} and
-     * {@code recentActions} belong to the step the calling stage is deciding; sourcing them here
-     * would mean holding the agent or its step view, which is exactly the coupling design D2 exists
-     * to prevent.
+     * <p><b>The per-step values arrive as arguments and that is deliberate.</b> This object is
+     * built once per run and owned by {@code RunContext}, while {@code recentActions} belongs to the
+     * step the calling stage is deciding; sourcing it here would mean holding the agent or its step
+     * view, which is exactly the coupling design D2 exists to prevent. The MOP context is the run's,
+     * not the step's, so it is bound once ({@link #bindMopContext}).
      *
      * @param tree the current tree, the dimension fallback of {@code ScreenshotStep.deviceDimensions}
      *        when the display cannot be read; not a prompt input
      * @param state the current abstract state
      * @param actions the candidate actions the state offers
-     * @param mop the run's MOP context for the prompt's markers and context line; may be null
      * @param recentActions the action-history ring the prompt shows; may be null or empty
      * @param mode which hook asked — {@code new-state}, {@code stagnation} or {@code random} — as
      *        the decision sub-event reports it
@@ -87,7 +104,6 @@ public class LlmEngine {
     public ModelAction selectAction(GUITree tree,
                                     State state,
                                     List<ModelAction> actions,
-                                    MopContext mop,
                                     List<ApePromptBuilder.ActionHistoryEntry> recentActions,
                                     String mode) {
         telemetry.countAttempt();

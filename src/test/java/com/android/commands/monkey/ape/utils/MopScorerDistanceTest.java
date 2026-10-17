@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.agent.scoring.MopWidgetPass;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.model.ActionType;
@@ -32,6 +34,15 @@ import static org.junit.Assert.*;
  * state, so those go through {@link MopWidgetPass#apply}, the one place it is applied.
  */
 public class MopScorerDistanceTest {
+
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
 
     private static final String ACT = "com.x.MainActivity";
 

@@ -38,9 +38,9 @@ import com.android.commands.monkey.ape.runtime.Json;
  * decision path (INV-SNK-07).
  *
  * <p>{@link #writeTo(Json.Buf)} is where the volume rules live (INV-SNK-04/05): the envelope once,
- * a field omitted whenever it equals its documented default, and the three exemptions —
- * {@code patched}, {@code cf} and {@code mopd} — emitted whenever they are defined at all, because
- * for those the absence is the information.
+ * a field omitted whenever it equals its documented default, and the exemptions — {@code patched}
+ * and {@code mopd}, emitted whenever they are defined, because for those the absence is the
+ * information, and {@code own} and {@code rot}, written on every record that has a {@code dec}.
  */
 final class StepRecord {
 
@@ -67,13 +67,11 @@ final class StepRecord {
     private int mop;
     private int mopFrontier;
     private int wtg;
+    private int navFrontier;
     private int coverage;
     private int menu;
     private int form;
-    private String wtgSource;
     private int patched = EventSink.ABSENT;
-    private int cfChanged = EventSink.ABSENT;
-    private String cfAction;
     private int mopExposureBoosted = EventSink.ABSENT;
     private int mopExposureTotal = EventSink.ABSENT;
     private boolean hasComponentLaunch;
@@ -83,6 +81,32 @@ final class StepRecord {
     private String mopSource;
     /** {@code dec.ret}: ascending, each index once; null when the step retired nothing. */
     private int[] retired;
+
+    // The routing and selection members of isolate-guidance-groups (design § Telemetry contract).
+    private String ownIntended;
+    private String ownTrigger;
+    private double ownUL = Double.NaN;
+    private double ownUM = Double.NaN;
+    private String ownGate;
+    private String ownFallback;
+    /** {@code dec.cfc}, in arrival order; parallel lists rather than a map, as the pool reuses them. */
+    private final List<String> cfcScorers = new ArrayList<String>();
+    private final List<Boolean> cfcChanged = new ArrayList<Boolean>();
+    private int drawIndex = EventSink.ABSENT;
+    private int drawTotal = EventSink.ABSENT;
+    private String navPoint;
+    private String navVariant;
+    private boolean navAlt;
+    private boolean navDrew;
+    private String inputOrigin;
+    private String restartKind;
+    private int backMenuCapped;
+    private String strategy;
+    private boolean hasRotation;
+    private int rotation;
+    private String bufferOwner;
+    private String triggerKind;
+    private String triggerClass;
 
     // LLM sub-events, and the dumps staged for the next one.
     private final List<LlmEvent> llm = new ArrayList<LlmEvent>();
@@ -121,9 +145,8 @@ final class StepRecord {
     }
 
     void decision(String action, String decisionSource, String pickChannel, int priority,
-            int mop, int mopFrontier, int wtg, int coverage, int menu, int form,
-            String wtgSource, int patched, int cfChanged, String cfAction, int mopDistance,
-            String mopSource) {
+            int mop, int mopFrontier, int wtg, int navFrontier, int coverage, int menu, int form,
+            int patched, int mopDistance, String mopSource) {
         this.hasDecision = true;
         this.modelAction = true;
         this.action = action;
@@ -133,13 +156,11 @@ final class StepRecord {
         this.mop = mop;
         this.mopFrontier = mopFrontier;
         this.wtg = wtg;
+        this.navFrontier = navFrontier;
         this.coverage = coverage;
         this.menu = menu;
         this.form = form;
-        this.wtgSource = wtgSource;
         this.patched = patched;
-        this.cfChanged = cfChanged;
-        this.cfAction = cfAction;
         this.mopDistance = mopDistance;
         this.mopSource = mopSource;
     }
@@ -191,6 +212,85 @@ final class StepRecord {
      */
     boolean stampHit() {
         return hasDecision && modelAction && EventSink.MOP_SOURCE_STAMP.equals(mopSource);
+    }
+
+    /** Merges into {@code dec.own}: a null string or a {@code NaN} draw leaves its member as is. */
+    void owner(String intended, String trigger, double uL, double uM, String gate,
+            String fallback) {
+        if (intended != null) {
+            ownIntended = intended;
+        }
+        if (trigger != null) {
+            ownTrigger = trigger;
+        }
+        if (!Double.isNaN(uL)) {
+            ownUL = uL;
+        }
+        if (!Double.isNaN(uM)) {
+            ownUM = uM;
+        }
+        if (gate != null) {
+            ownGate = gate;
+        }
+        if (fallback != null) {
+            ownFallback = fallback;
+        }
+    }
+
+    /**
+     * Adds a {@code dec.cfc} key. A selection retry that reaches the same pick site again replaces
+     * the key's value rather than repeating the key, so the record holds each scorer once.
+     */
+    void cfc(String scorer, boolean changed) {
+        int at = cfcScorers.indexOf(scorer);
+        if (at >= 0) {
+            cfcChanged.set(at, changed);
+        } else {
+            cfcScorers.add(scorer);
+            cfcChanged.add(changed);
+        }
+    }
+
+    void draw(int index, int total) {
+        this.drawIndex = index;
+        this.drawTotal = total;
+    }
+
+    void nav(String point, String variant, boolean alt, boolean drew) {
+        this.navPoint = point;
+        this.navVariant = variant;
+        this.navAlt = alt;
+        this.navDrew = drew;
+    }
+
+    void input(String origin) {
+        this.inputOrigin = origin;
+    }
+
+    void restart(String kind) {
+        this.restartKind = kind;
+    }
+
+    void backMenuCapped(int removed) {
+        this.backMenuCapped = removed;
+    }
+
+    void strategy(String path) {
+        this.strategy = path;
+    }
+
+    void rotation(int rotation) {
+        this.hasRotation = true;
+        this.rotation = rotation;
+    }
+
+    void bufferAbandoned(String owner) {
+        this.bufferOwner = owner;
+    }
+
+    void componentTrigger(String kind, String className) {
+        this.triggerKind = kind;
+        this.triggerClass = className;
     }
 
     void componentLaunch(int result, String error) {
@@ -254,21 +354,25 @@ final class StepRecord {
         buf.name("act").value(actId);
         buf.name("st").value(stateId);
 
-        if (hasDecision) {
+        if (hasDecision || hasRotation) {
             buf.name("dec").beginObject();
-            buf.name("a").value(action);
-            buf.name("src").value(decisionSource);
-            buf.name("ch").value(pickChannel);
-            if (modelAction) {
+            if (hasDecision) {
+                buf.name("a").value(action);
+                buf.name("src").value(decisionSource);
+                buf.name("ch").value(pickChannel);
+            }
+            writeOwner(buf);
+            if (hasRotation) {
+                // Exempt from the defaults-omitted rule: `0` is the portrait reading the fraction
+                // of landscape steps is measured against.
+                buf.name("rot").value(rotation);
+            }
+            if (hasDecision && modelAction) {
                 buf.name("pri").value(priority);
                 boost(buf, "mop", mop);
                 boost(buf, "mopf", mopFrontier);
                 boost(buf, "wtg", wtg);
-                if (wtg != 0 && wtgSource != null) {
-                    // Exactly when the boost is non-zero: with both producers configured at the
-                    // same weight the value alone cannot say which of them wrote it.
-                    buf.name("wtgsrc").value(wtgSource);
-                }
+                boost(buf, "navf", navFrontier);
                 boost(buf, "cov", coverage);
                 boost(buf, "menu", menu);
                 boost(buf, "form", form);
@@ -300,16 +404,8 @@ final class StepRecord {
                     // and collapsing the two would lose the distinction the field exists for.
                     buf.name("patched").value(patched);
                 }
-                if (cfChanged != EventSink.ABSENT) {
-                    // Exempt for the same reason: present exactly on the four MOP-sensitive
-                    // channels, so absence identifies the channel class rather than a default.
-                    buf.name("cf").beginObject().name("changed").value(cfChanged);
-                    if (cfAction != null) {
-                        buf.name("a").value(cfAction);
-                    }
-                    buf.endObject();
-                }
             }
+            writeSelection(buf);
             if (hasComponentLaunch) {
                 buf.name("comp").beginObject().name("r").value(componentResult);
                 if (componentError != null) {
@@ -345,6 +441,61 @@ final class StepRecord {
         buf.endObject();
     }
 
+    /** {@code dec.own}, written whenever {@code dec} is: an empty object when nothing claimed. */
+    private void writeOwner(Json.Buf buf) {
+        buf.name("own").beginObject();
+        optionalName(buf, "i", ownIntended);
+        optionalName(buf, "trg", ownTrigger);
+        if (!Double.isNaN(ownUL)) {
+            buf.name("uL").value(ownUL);
+        }
+        if (!Double.isNaN(ownUM)) {
+            buf.name("uM").value(ownUM);
+        }
+        optionalName(buf, "g", ownGate);
+        optionalName(buf, "fb", ownFallback);
+        buf.endObject();
+    }
+
+    /** The conditional members of isolate-guidance-groups, each absent when its condition fails. */
+    private void writeSelection(Json.Buf buf) {
+        if (!cfcScorers.isEmpty()) {
+            buf.name("cfc").beginObject();
+            for (int i = 0; i < cfcScorers.size(); i++) {
+                buf.name(cfcScorers.get(i)).value(cfcChanged.get(i).booleanValue() ? 1 : 0);
+            }
+            buf.endObject();
+        }
+        if (drawTotal != EventSink.ABSENT) {
+            buf.name("draw").beginArray().value(drawIndex).value(drawTotal).endArray();
+        }
+        if (navPoint != null) {
+            buf.name("nav").beginObject()
+                    .name("x").value(navPoint)
+                    .name("c").value(navVariant)
+                    .name("alt").value(navAlt ? 1 : 0)
+                    .name("drew").value(navDrew ? 1 : 0)
+                    .endObject();
+        }
+        optionalName(buf, "inp", inputOrigin);
+        optionalName(buf, "restart", restartKind);
+        boost(buf, "bmc", backMenuCapped);
+        optionalName(buf, "strat", strategy);
+        optionalName(buf, "buf", bufferOwner);
+        if (triggerKind != null) {
+            buf.name("trig").beginObject()
+                    .name("k").value(triggerKind)
+                    .name("c").value(triggerClass)
+                    .endObject();
+        }
+    }
+
+    private static void optionalName(Json.Buf buf, String name, String value) {
+        if (value != null) {
+            buf.name(name).value(value);
+        }
+    }
+
     /**
      * Returns the accumulator to empty. The sub-event pool survives — the objects are reused, their
      * contents are not: {@link #llmCount} is what the writer reads, so a stale entry beyond it can
@@ -365,13 +516,11 @@ final class StepRecord {
         mop = 0;
         mopFrontier = 0;
         wtg = 0;
+        navFrontier = 0;
         coverage = 0;
         menu = 0;
         form = 0;
-        wtgSource = null;
         patched = EventSink.ABSENT;
-        cfChanged = EventSink.ABSENT;
-        cfAction = null;
         mopExposureBoosted = EventSink.ABSENT;
         mopExposureTotal = EventSink.ABSENT;
         hasComponentLaunch = false;
@@ -380,6 +529,29 @@ final class StepRecord {
         mopDistance = EventSink.ABSENT;
         mopSource = null;
         retired = null;
+        ownIntended = null;
+        ownTrigger = null;
+        ownUL = Double.NaN;
+        ownUM = Double.NaN;
+        ownGate = null;
+        ownFallback = null;
+        cfcScorers.clear();
+        cfcChanged.clear();
+        drawIndex = EventSink.ABSENT;
+        drawTotal = EventSink.ABSENT;
+        navPoint = null;
+        navVariant = null;
+        navAlt = false;
+        navDrew = false;
+        inputOrigin = null;
+        restartKind = null;
+        backMenuCapped = 0;
+        strategy = null;
+        hasRotation = false;
+        rotation = 0;
+        bufferOwner = null;
+        triggerKind = null;
+        triggerClass = null;
         llmCount = 0;
         stagedSystem = null;
         stagedUser = null;

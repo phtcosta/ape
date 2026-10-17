@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -26,14 +27,14 @@ import static org.junit.Assert.*;
  */
 public class MopFrontierPassTest {
 
-    private static MopData.WtgTransition edge(String widget, String target) {
-        return new MopData.WtgTransition(widget, target);
+    private static StaticGuiModel.WtgTransition edge(String widget, String target) {
+        return new StaticGuiModel.WtgTransition(widget, target);
     }
 
     /** INV-MFP-01: MOP+unvisited qualifies; MOP+visited does not; non-MOP+unvisited does not. */
     @Test
     public void qualifiesOnlyForMopBearingUnvisitedTargets() {
-        List<MopData.WtgTransition> transitions = Arrays.asList(
+        List<StaticGuiModel.WtgTransition> transitions = Arrays.asList(
                 edge("btnDetail", "com.x.Detail"),  // MOP,    unvisited -> qualifies
                 edge("btnSeen",   "com.x.Seen"),     // MOP,    visited   -> excluded
                 edge("btnPlain",  "com.x.Plain"));   // non-MOP,unvisited -> excluded
@@ -50,7 +51,7 @@ public class MopFrontierPassTest {
     /** No MOP-bearing target among the transitions → empty qualifying set (pass no-ops). */
     @Test
     public void emptyWhenNoMopTarget() {
-        List<MopData.WtgTransition> transitions = Collections.singletonList(
+        List<StaticGuiModel.WtgTransition> transitions = Collections.singletonList(
                 edge("btnPlain", "com.x.Plain"));
         MopData mopData = MopData.forTest(null, new HashSet<String>(), null);
         Set<String> qualifying = MopFrontierPass.qualifyingMopTargets(

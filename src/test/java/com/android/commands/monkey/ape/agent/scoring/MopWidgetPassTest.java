@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -25,6 +27,15 @@ import static org.junit.Assert.*;
  * stamped relative reaches the action as it did through a flagged id.
  */
 public class MopWidgetPassTest {
+
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
 
     private static final String ACT = "com.x.MainActivity";
 

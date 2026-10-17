@@ -3,6 +3,7 @@ package com.android.commands.monkey.ape.utils;
 import java.util.Random;
 
 import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 
 /**
  * gh13 T1.3: type-aware input generation for EditText fuzzing.
@@ -29,7 +30,8 @@ public final class TypedInputGenerator {
      * false the typed path is bypassed entirely (rollback knob).
      */
     public static String generateForType(String inputType, String hint, Random rnd) {
-        if (!RunContext.current().spec().exploration().fuzzInputTyped()) {
+        RunSpec.StaticParams staticData = RunContext.current().spec().staticData();
+        if (staticData == null || !staticData.fuzzInputTyped()) {
             return legacyString(rnd);
         }
         String it = inputType == null ? "" : inputType;

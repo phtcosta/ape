@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.agent.StepRng;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +43,9 @@ class FakeStepContext implements StepContext {
     MopData mopData;
     /** When set, the step's MOP context; otherwise the jar-default one over {@link #mopData}. */
     MopContext mopContext;
+    /** When set, the step's static model; otherwise the one over {@link #mopData}, if any. */
+    StaticGuiModel staticModel;
+    StepRng stepRng = new StepRng(0L);
     Graph graph;
     ActivityBudgetTracker budgetTracker;
     List<ApePromptBuilder.ActionHistoryEntry> actionHistory = new ArrayList<>();
@@ -56,6 +61,11 @@ class FakeStepContext implements StepContext {
     @Override public MopContext mopContext() {
         return mopContext != null ? mopContext : TestMopContexts.defaults(mopData);
     }
+    @Override public StaticGuiModel staticModel() {
+        return staticModel != null ? staticModel
+                : mopData != null ? new StaticGuiModel(mopData) : null;
+    }
+    @Override public StepRng stepRng() { return stepRng; }
     @Override public Graph graph() { return graph; }
     @Override public ActivityBudgetTracker budgetTracker() { return budgetTracker; }
     @Override public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() { return actionHistory; }

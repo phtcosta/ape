@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.KeyOwnership;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -67,7 +68,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testMaxEpsilon_defaultIs015() {
-        assertEquals(0.15, Config.maxEpsilon, 1e-9);
+        assertEquals("0.15", KeyOwnership.defaultOf("ape.maxEpsilon"));
     }
 
     // ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testMinEpsilon_defaultIs002() {
-        assertEquals(0.02, Config.minEpsilon, 1e-9);
+        assertEquals("0.02", KeyOwnership.defaultOf("ape.minEpsilon"));
     }
 
     // ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testHeuristicInput_defaultIsTrue() {
-        assertTrue(Config.heuristicInput);
+        assertEquals("true", KeyOwnership.defaultOf("ape.heuristicInput"));
     }
 
     // ---------------------------------------------------------------------------

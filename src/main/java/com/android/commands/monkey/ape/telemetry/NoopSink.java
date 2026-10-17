@@ -44,9 +44,8 @@ public final class NoopSink implements EventSink {
 
     @Override
     public void decision(String action, String decisionSource, String pickChannel, int priority,
-            int mop, int mopFrontier, int wtg, int coverage, int menu, int form,
-            String wtgSource, int patched, int cfChanged, String cfAction, int mopDistance,
-            String mopSource) {
+            int mop, int mopFrontier, int wtg, int navFrontier, int coverage, int menu, int form,
+            int patched, int mopDistance, String mopSource) {
     }
 
     @Override
@@ -63,6 +62,55 @@ public final class NoopSink implements EventSink {
 
     @Override
     public void componentLaunch(int result, String error) {
+    }
+
+    @Override
+    public void owner(String intended, String trigger, double uL, double uM, String gate,
+            String fallback) {
+    }
+
+    @Override
+    public void cfc(String scorer, boolean changed) {
+    }
+
+    @Override
+    public void draw(int index, int total) {
+    }
+
+    @Override
+    public void nav(String point, String variant, boolean alt, boolean drew) {
+    }
+
+    @Override
+    public void input(String origin) {
+    }
+
+    @Override
+    public void restart(String kind) {
+    }
+
+    @Override
+    public void backMenuCapped(int removed) {
+    }
+
+    @Override
+    public void strategy(String path) {
+    }
+
+    @Override
+    public void rotation(int rotation) {
+    }
+
+    @Override
+    public void bufferAbandoned(String owner) {
+    }
+
+    @Override
+    public void componentTrigger(String kind, String className) {
+    }
+
+    @Override
+    public void count(RunCounter counter) {
     }
 
     @Override

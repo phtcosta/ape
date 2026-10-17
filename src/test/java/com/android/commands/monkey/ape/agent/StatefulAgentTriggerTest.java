@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.StopTestingException;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
@@ -22,6 +24,15 @@ import static org.junit.Assert.*;
  * integration smoke (§22).
  */
 public class StatefulAgentTriggerTest {
+
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
 
     private static ComponentInfo.IntentFilter filter(List<String> actions, List<String> cats) {
         return new ComponentInfo.IntentFilter(actions, cats);
@@ -124,7 +135,7 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.7
     public void testTriggerReturnsFalseOnEmptyComponentList() {
-        // cryptoapp-like: all components reachesTarget=false ⇒ no tuples ⇒ triggerMopComponent no-op.
+        // cryptoapp-like: all components reachesTarget=false ⇒ no tuples ⇒ triggerComponent no-op.
         ComponentInfo.ActivityInfo a = new ComponentInfo.ActivityInfo("p.A", true,
                 Collections.<ComponentInfo.IntentFilter>emptyList(), false, Collections.<String>emptyList());
         ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.P", false,

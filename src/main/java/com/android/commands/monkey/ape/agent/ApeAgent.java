@@ -15,7 +15,6 @@
  */
 package com.android.commands.monkey.ape.agent;
 
-import static com.android.commands.monkey.ape.utils.Config.checkRestart;
 import static com.android.commands.monkey.ape.utils.Config.inputRate;
 import static com.android.commands.monkey.ape.utils.Config.restartThresholdMax;
 import static com.android.commands.monkey.ape.utils.Config.restartThresholdMin;
@@ -35,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 import com.android.commands.monkey.MonkeySourceApe;
 import com.android.commands.monkey.MonkeyUtils;
 import com.android.commands.monkey.ape.Agent;
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.StopTestingException;
@@ -233,7 +233,8 @@ public abstract class ApeAgent implements Agent {
      * on non-instrumented apps). Bypassed entirely when the plan's fuzzInputTyped is false.
      */
     protected String generateInputText(GUITreeNode node) {
-        if (RunContext.current().spec().exploration().fuzzInputTyped()) {
+        RunSpec.StaticParams staticData = RunContext.current().spec().staticData();
+        if (staticData != null && staticData.fuzzInputTyped()) {
             MopData md = getMopData();
             if (md != null) {
                 String activity = ape.getTopActivityClassName();
@@ -249,7 +250,8 @@ public abstract class ApeAgent implements Agent {
                 }
             }
         }
-        return Config.heuristicInput ? inputValueGenerator.generateForNode(node) : StringCache.nextString();
+        return RunContext.current().spec().has(Feature.HEURISTIC_INPUT)
+                ? inputValueGenerator.generateForNode(node) : StringCache.nextString();
     }
 
     private static boolean notEmpty(String s) {
@@ -277,7 +279,7 @@ public abstract class ApeAgent implements Agent {
     }
 
     protected Action checkRestart(Action origin) {
-        if (!checkRestart) {
+        if (!RunContext.current().spec().exploration().checkRestart()) {
             return origin;
         }
         if (restart) {

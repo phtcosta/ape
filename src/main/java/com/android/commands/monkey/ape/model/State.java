@@ -25,6 +25,8 @@ import java.util.Random;
 
 import com.android.commands.monkey.ape.ActionFilter;
 import com.android.commands.monkey.ape.agent.StatefulAgent;
+import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.NamerComparator;
@@ -67,15 +69,10 @@ public class State extends GraphElement {
         // non-null) but it joins the selectable `actions` set only when the gate is on; with it off
         // the state's action set matches upstream and the agent can never select MODEL_MENU.
         //
-        // This is the one Config read the decision path keeps (design D9, INV-DP-12's recorded
-        // residue), and it is a decision rather than a deferral. It is not a decision-time read at
-        // all: it gates which actions a State is *built* with, during model construction, from a
-        // value the plan freezes at load. Threading plan state through Model/State/naming
-        // construction to reach it would be a model-layer change with no decision-path payoff, and
-        // StaticConfigReadGuardTest pins it at exactly one occurrence so it cannot quietly grow a
-        // sibling.
+        // The menu action is an ADDONS member: the plan, not Config, says whether a State is built
+        // with it (guidance-groups INV-GRP-06), so the base cell's states carry no MODEL_MENU.
         menuAction = new ModelAction(this, ActionType.MODEL_MENU);
-        if (Config.modelMenuEnabled) {
+        if (RunContext.current().spec().has(Feature.MODEL_MENU)) {
             c.add(menuAction);
         }
         actions = c.toArray(new ModelAction[c.size()]);

@@ -149,6 +149,16 @@ public final class NdjsonSink implements EventSink {
     private boolean acknowledged;
 
     /**
+     * Whether the plan mounts {@code MOP}, which decides whether an {@code ACT} entry carries its
+     * {@code mop} member (design D-B14.9): a cell without MOP carries no MOP field, and the
+     * clean-control gate reads the member's absence (INV-SNK-18).
+     */
+    private final boolean mopMounted;
+
+    /** The routing counters of {@code RUN_END}, indexed by {@link RunCounter#ordinal()}. */
+    private final int[] routing = new int[RunCounter.values().length];
+
+    /**
      * Creates a sink writing to the given stream, with the heartbeat on.
      *
      * @param out the stream the trace is captured from — {@code System.out} in a run, a buffer in a
@@ -167,8 +177,21 @@ public final class NdjsonSink implements EventSink {
      * @param heartbeat whether each step writes its logcat line ({@code ape.telemetryHeartbeat})
      */
     public NdjsonSink(PrintStream out, boolean heartbeat) {
+        this(out, heartbeat, true);
+    }
+
+    /**
+     * Creates a sink writing to the given stream.
+     *
+     * @param out the stream the trace is captured from
+     * @param heartbeat whether each step writes its logcat line ({@code ape.telemetryHeartbeat})
+     * @param mopMounted whether the plan mounts {@code MOP}; without it no {@code ACT} entry
+     *        carries {@code mop}
+     */
+    public NdjsonSink(PrintStream out, boolean heartbeat, boolean mopMounted) {
         this.out = out;
         this.heartbeat = heartbeat;
+        this.mopMounted = mopMounted;
     }
 
     @Override
@@ -220,16 +243,14 @@ public final class NdjsonSink implements EventSink {
 
     @Override
     public void decision(String action, String decisionSource, String pickChannel, int priority,
-            int mop, int mopFrontier, int wtg, int coverage, int menu, int form,
-            String wtgSource, int patched, int cfChanged, String cfAction, int mopDistance,
-            String mopSource) {
+            int mop, int mopFrontier, int wtg, int navFrontier, int coverage, int menu, int form,
+            int patched, int mopDistance, String mopSource) {
         if (disabled || !pending.isOpen()) {
             return;
         }
         try {
             pending.decision(action, decisionSource, pickChannel, priority, mop, mopFrontier, wtg,
-                    coverage, menu, form, wtgSource, patched, cfChanged, cfAction, mopDistance,
-                    mopSource);
+                    navFrontier, coverage, menu, form, patched, mopDistance, mopSource);
         } catch (Throwable failure) {
             latch("decision", failure);
         }
@@ -285,6 +306,155 @@ public final class NdjsonSink implements EventSink {
             pending.componentLaunch(result, error);
         } catch (Throwable failure) {
             latch("componentLaunch", failure);
+        }
+    }
+
+    @Override
+    public void owner(String intended, String trigger, double uL, double uM, String gate,
+            String fallback) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.owner(intended, trigger, uL, uM, gate, fallback);
+        } catch (Throwable failure) {
+            latch("owner", failure);
+        }
+    }
+
+    @Override
+    public void cfc(String scorer, boolean changed) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.cfc(scorer, changed);
+        } catch (Throwable failure) {
+            latch("cfc", failure);
+        }
+    }
+
+    @Override
+    public void draw(int index, int total) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.draw(index, total);
+        } catch (Throwable failure) {
+            latch("draw", failure);
+        }
+    }
+
+    @Override
+    public void nav(String point, String variant, boolean alt, boolean drew) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.nav(point, variant, alt, drew);
+        } catch (Throwable failure) {
+            latch("nav", failure);
+        }
+    }
+
+    @Override
+    public void input(String origin) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.input(origin);
+        } catch (Throwable failure) {
+            latch("input", failure);
+        }
+    }
+
+    @Override
+    public void restart(String kind) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.restart(kind);
+        } catch (Throwable failure) {
+            latch("restart", failure);
+        }
+    }
+
+    @Override
+    public void backMenuCapped(int removed) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.backMenuCapped(removed);
+        } catch (Throwable failure) {
+            latch("backMenuCapped", failure);
+        }
+    }
+
+    @Override
+    public void strategy(String path) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.strategy(path);
+        } catch (Throwable failure) {
+            latch("strategy", failure);
+        }
+    }
+
+    @Override
+    public void rotation(int rotation) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.rotation(rotation);
+        } catch (Throwable failure) {
+            latch("rotation", failure);
+        }
+    }
+
+    @Override
+    public void bufferAbandoned(String owner) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.bufferAbandoned(owner);
+        } catch (Throwable failure) {
+            latch("bufferAbandoned", failure);
+        }
+    }
+
+    @Override
+    public void componentTrigger(String kind, String className) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.componentTrigger(kind, className);
+        } catch (Throwable failure) {
+            latch("componentTrigger", failure);
+        }
+    }
+
+    /**
+     * Counted whether or not a record is open: a counter totals the run, and a guard BACK sent
+     * outside a step is still a BACK the run sent.
+     */
+    @Override
+    public void count(RunCounter counter) {
+        if (disabled) {
+            return;
+        }
+        try {
+            routing[counter.ordinal()]++;
+        } catch (Throwable failure) {
+            latch("count", failure);
         }
     }
 
@@ -514,6 +684,11 @@ public final class NdjsonSink implements EventSink {
             sideBuf.name("stampNodes").value(stampNodes);
             sideBuf.name("stampHits").value(stampHits);
             sideBuf.name("retired").value(retired);
+            // The routing counters of isolate-guidance-groups, in full on every run: the
+            // clean-control gate reads coinMop and launches at zero (INV-SNK-18).
+            for (RunCounter counter : RunCounter.values()) {
+                sideBuf.name(counter.wire()).value(routing[counter.ordinal()]);
+            }
             if (counters != null) {
                 writeLlmCounters(counters);
             }
@@ -575,7 +750,8 @@ public final class NdjsonSink implements EventSink {
      *
      * <p>The write happens here, inside the lookup, so that no caller can reference an id whose
      * definition has not already been written (INV-SNK-06). The MOP flag is taken from this first
-     * call only; it is a static per-activity fact and later calls cannot revise it.
+     * call only; it is a static per-activity fact and later calls cannot revise it. It is written
+     * only when the plan mounts MOP ({@link #mopMounted}).
      *
      * @param activity the activity name
      * @param hasMop the static per-activity MOP fact, recorded on the dictionary entry
@@ -591,9 +767,11 @@ public final class NdjsonSink implements EventSink {
         sideBuf.reset().beginObject()
                 .name("type").value("ACT")
                 .name("id").value(id)
-                .name("name").value(activity)
-                .name("mop").value(hasMop ? 1 : 0)
-                .endObject();
+                .name("name").value(activity);
+        if (mopMounted) {
+            sideBuf.name("mop").value(hasMop ? 1 : 0);
+        }
+        sideBuf.endObject();
         write(sideBuf.toLine());
         return id;
     }

@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.telemetry.NdjsonSink;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.runtime.RunContext;
@@ -61,7 +62,7 @@ public class MopDataTest {
     // -------------------------------------------------------------------------
 
     /** Build a minimal MopData with WTG transitions and MOP activities. */
-    private static MopData buildTestData(Map<String, List<MopData.WtgTransition>> wtg,
+    private static MopData buildTestData(Map<String, List<StaticGuiModel.WtgTransition>> wtg,
                                          Set<String> mopActivities) {
         // Minimal widget data: one widget per MOP activity to make activityHasMop() return true
         Map<String, Map<String, MopData.Widget>> widgetData = new HashMap<>();
@@ -87,12 +88,12 @@ public class MopDataTest {
      */
     @Test
     public void testClickTransitions_storedCorrectly() {
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "menu_item_cipher",
                 "br.unb.cic.cryptoapp.cipher.CipherActivity"));
-        transitions.add(new MopData.WtgTransition(
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "menu_item_message_digest",
                 "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
         wtg.put("br.unb.cic.cryptoapp.MainActivity", transitions);
@@ -105,17 +106,17 @@ public class MopDataTest {
 
         assertTrue("WTG data should be present", data.hasWtgData());
 
-        List<MopData.WtgTransition> result =
+        List<StaticGuiModel.WtgTransition> result =
                 data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity");
         assertEquals(2, result.size());
         assertTrue("suffixed key no longer used (INV-WTG-04)",
                 data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity#OptionsMenu").isEmpty());
 
-        MopData.WtgTransition t0 = result.get(0);
+        StaticGuiModel.WtgTransition t0 = result.get(0);
         assertEquals("menu_item_cipher", t0.widgetName);
         assertEquals("br.unb.cic.cryptoapp.cipher.CipherActivity", t0.targetActivity);
 
-        MopData.WtgTransition t1 = result.get(1);
+        StaticGuiModel.WtgTransition t1 = result.get(1);
         assertEquals("menu_item_message_digest", t1.widgetName);
         assertEquals("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity", t1.targetActivity);
     }
@@ -128,17 +129,17 @@ public class MopDataTest {
     @Test
     public void testImplicitEvents_notStored() {
         // Build WTG with only click transitions (as the parser would do)
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
         // Only the click event from a mixed transition (implicit_home + click)
-        transitions.add(new MopData.WtgTransition(
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "search",
                 "com.example.SearchActivity"));
         wtg.put("com.example.MainActivity", transitions);
 
         MopData data = buildTestData(wtg, new HashSet<String>());
 
-        List<MopData.WtgTransition> result = data.getWtgTransitions("com.example.MainActivity");
+        List<StaticGuiModel.WtgTransition> result = data.getWtgTransitions("com.example.MainActivity");
         assertEquals("Only click events should be stored", 1, result.size());
         assertEquals("search", result.get(0).widgetName);
     }
@@ -163,9 +164,9 @@ public class MopDataTest {
      */
     @Test
     public void testGetWtgTransitions_unknownActivity() {
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "btn",
                 "com.example.Target"));
         wtg.put("com.example.Source", transitions);
@@ -183,16 +184,16 @@ public class MopDataTest {
      */
     @Test
     public void testMenuItemClickTransition() {
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "menu_item_message_digest",
                 "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
         wtg.put("br.unb.cic.cryptoapp.MainActivity", transitions);
 
         MopData data = buildTestData(wtg, new HashSet<String>());
 
-        List<MopData.WtgTransition> result =
+        List<StaticGuiModel.WtgTransition> result =
                 data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity");
         assertEquals(1, result.size());
         assertEquals("menu_item_message_digest", result.get(0).widgetName);
@@ -207,22 +208,22 @@ public class MopDataTest {
      */
     @Test
     public void testMultipleTransitions_sameSource() {
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "buttonCipher",
                 "br.unb.cic.cryptoapp.cipher.CipherActivity"));
-        transitions.add(new MopData.WtgTransition(
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "buttonMessageDigest",
                 "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
-        transitions.add(new MopData.WtgTransition(
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "buttonGenerated",
                 "br.unb.cic.cryptoapp.generated.CryptographyActivity"));
         wtg.put("br.unb.cic.cryptoapp.MainActivity", transitions);
 
         MopData data = buildTestData(wtg, new HashSet<String>());
 
-        List<MopData.WtgTransition> result =
+        List<StaticGuiModel.WtgTransition> result =
                 data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity");
         assertEquals(3, result.size());
     }
@@ -237,12 +238,12 @@ public class MopDataTest {
      */
     @Test
     public void testWtgTransitionCarriesOnlyTheConsumedPair() {
-        MopData.WtgTransition t = new MopData.WtgTransition(
+        StaticGuiModel.WtgTransition t = new StaticGuiModel.WtgTransition(
                 "btn_encrypt", "com.example.EncryptActivity");
         assertEquals("btn_encrypt", t.widgetName);
         assertEquals("com.example.EncryptActivity", t.targetActivity);
         assertEquals("the edge carries exactly widgetName and targetActivity",
-                2, MopData.WtgTransition.class.getFields().length);
+                2, StaticGuiModel.WtgTransition.class.getFields().length);
     }
 
     // Component-decoding tests live in ComponentInfoTest; the backward-compat
@@ -407,12 +408,12 @@ public class MopDataTest {
         // The four parameters below are resolved into the plan, not held in a mutable static. A
         // MOP arm that states none of them inherits the jar defaults; a different value is a
         // different plan, which is why there is no assignment to observe here.
-        RunSpec spec = TestRunSpecs.installMop();
+        RunSpec spec = TestRunSpecs.installMop("ape.addons", "true", "ape.static", "true");
         assertEquals(250, spec.mop().weightOpenMenu());
-        assertTrue(spec.exploration().fuzzInputTyped());
-        assertFalse(spec.mop().strictPackageMatch());
+        assertTrue(spec.staticData().fuzzInputTyped());
+        assertFalse(spec.staticData().strictPackageMatch());
         // activity-frontier: default true (it gates the stagnation launcher).
-        assertTrue(spec.mop().activityTriggerEnabled());
+        assertTrue(spec.has(Feature.MOP_LAUNCHER));
     }
 
     /**

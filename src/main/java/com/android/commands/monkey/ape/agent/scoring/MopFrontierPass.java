@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -56,10 +57,10 @@ public final class MopFrontierPass implements ScoringPass {
         MopData mopData = ctx.getMopData();
         int timestamp = ctx.getTimestamp();
         String activity = state.getActivity();
-        List<MopData.WtgTransition> transitions = mopData.getWtgTransitions(activity);
+        List<StaticGuiModel.WtgTransition> transitions = mopData.getWtgTransitions(activity);
         // A transition target is visited when the graph already has its activity node.
         Set<String> visitedTargets = new HashSet<>();
-        for (MopData.WtgTransition t : transitions) {
+        for (StaticGuiModel.WtgTransition t : transitions) {
             if (ctx.getGraph().getActivityNode(t.targetActivity) != null) {
                 visitedTargets.add(t.targetActivity);
             }
@@ -109,10 +110,10 @@ public final class MopFrontierPass implements ScoringPass {
      * ({@code mopData.activityHasMop}) AND not in {@code visitedTargets}. Pure — no graph, no action —
      * so it is JVM-unit-testable; {@link #apply} supplies the visited set from the live graph.
      */
-    static Set<String> qualifyingMopTargets(List<MopData.WtgTransition> transitions,
+    static Set<String> qualifyingMopTargets(List<StaticGuiModel.WtgTransition> transitions,
             MopData mopData, Set<String> visitedTargets) {
         Set<String> qualifying = new HashSet<>();
-        for (MopData.WtgTransition t : transitions) {
+        for (StaticGuiModel.WtgTransition t : transitions) {
             String target = t.targetActivity;
             if (mopData.activityHasMop(target) && !visitedTargets.contains(target)) {
                 qualifying.add(target);
@@ -123,8 +124,8 @@ public final class MopFrontierPass implements ScoringPass {
 
     /** True when the widget's short id matches a WTG transition to a qualifying target. */
     private static boolean matchesQualifyingTarget(String shortId,
-            List<MopData.WtgTransition> transitions, Set<String> qualifyingTargets) {
-        for (MopData.WtgTransition t : transitions) {
+            List<StaticGuiModel.WtgTransition> transitions, Set<String> qualifyingTargets) {
+        for (StaticGuiModel.WtgTransition t : transitions) {
             if (shortId.equals(t.widgetName) && qualifyingTargets.contains(t.targetActivity)) {
                 return true;
             }

@@ -15,6 +15,7 @@
  */
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -74,6 +75,7 @@ import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopRetirement;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.utils.SystemBroadcastCatalog;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 import com.android.commands.monkey.ape.utils.Utils;
@@ -136,6 +138,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * through {@link #getMopData()}, derived from this field rather than held a second time.
      */
     private final MopContext _mopContext;
+    /** The loaded artifact's static GUI model, or null when no group reads the artifact. */
+    private final StaticGuiModel _staticModel;
+    /** The run's per-step streams, taken from the run context at construction. */
+    private final StepRng _stepRng;
 
     /**
      * The weight's lookup of the model action selected at this step when it is a counted first
@@ -197,17 +203,24 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         ComponentName mainApp = ape.getMainApp();
         RunSpec spec = RunContext.current().spec();
         this.exploration = spec.exploration();
-        // The MOP substrate's path. A plan carries MopParams exactly when it carries the MOP
-        // feature, and that feature is derived from ape.mopDataPath being set — so a null path here
-        // and an absent feature are the same statement, and requireMopArm below reads the null as
-        // "this run declares no MOP arm" exactly as it read an unset Config field.
-        String mopDataPath = spec.has(Feature.MOP) ? spec.mop().dataPath() : null;
+        // The artifact is loaded iff a group that reads it is mounted (design D-B14.20): with
+        // neither STATIC nor MOP the path is inert, so a null path here and "no group reads the
+        // artifact" are the same statement, and requireMopArm below reads the null as such.
+        String staticDataPath = spec.has(Feature.STATIC) || spec.has(Feature.MOP)
+                ? spec.staticData().dataPath() : null;
         MopData mopData = requireMopArm(
-                MopData.load(mopDataPath, mainApp.getPackageName(), mainApp.getClassName(),
+                MopData.load(staticDataPath, mainApp.getPackageName(), mainApp.getClassName(),
                         RunContext.current().sink()),
-                mopDataPath);
-        // Built once, right after the artifact loads (design D17, Plumbing); null with no artifact.
-        this._mopContext = MopContext.fromSpec(mopData, spec.mop());
+                staticDataPath);
+        this._staticModel = mopData == null ? null : new StaticGuiModel(mopData);
+        this._stepRng = RunContext.current().stepRng();
+        // Built once, right after the artifact loads (design D17, Plumbing); null without MOP.
+        this._mopContext = MopContext.fromSpec(spec.has(Feature.MOP) ? mopData : null, spec.mop());
+        if (RunContext.current().llmEngine() != null) {
+            // The engine was built before the artifact loaded; the prompt's MOP text reads the
+            // context from here on (llm-routing "Action Selection Pipeline").
+            RunContext.current().llmEngine().bindMopContext(_mopContext);
+        }
         this._coverageTracker = new UICoverageTracker();
         // rv-scoring-pipeline (activityBudgetEnabled): the activity budget is a fork addition; upstream
         // has none. Off -> no tracker is built and the budget check is skipped (INV-ARCH-01).
@@ -262,14 +275,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * INV-MOP-22: a run with {@code ape.mopDataPath} set SHALL either have MOP data or abort —
+     * INV-MOP-22: a run that reads {@code ape.staticDataPath} SHALL either have its data or abort —
      * it SHALL never silently run as pure SATA and mislabel the arm (the failure class that
      * invalidated the earlier build-skew round). Returns {@code loaded} unchanged when the path
      * is unset (MOP disabled) or the data loaded; throws when the path is set but load failed.
      */
     static MopData requireMopArm(MopData loaded, String path) {
         if (loaded == null && path != null) {
-            throw new StopTestingException("MOP arm cannot arm: ape.mopDataPath is set (" + path
+            throw new StopTestingException("MOP arm cannot arm: ape.staticDataPath is set (" + path
                     + ") but MopData.load returned null; aborting rather than running as pure SATA"
                     + " and mislabeling the arm (INV-MOP-22)");
         }
@@ -351,6 +364,16 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     @Override
     public MopContext mopContext() {
         return getMopContext();
+    }
+
+    @Override
+    public StaticGuiModel staticModel() {
+        return _staticModel;
+    }
+
+    @Override
+    public StepRng stepRng() {
+        return _stepRng;
     }
 
     @Override
@@ -1241,12 +1264,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * Mirrors {@code MopScorer.scoreWtg}'s resource-id match but keys on unvisited-ness instead of
      * MOP-reachability (INV-WTG-06). Testable without the Graph via the visited-target set.
      */
-    public static int frontierBoost(String shortId, java.util.List<MopData.WtgTransition> transitions,
+    public static int frontierBoost(String shortId, java.util.List<StaticGuiModel.WtgTransition> transitions,
             Set<String> visitedTargets, int weight) {
         if (weight <= 0 || shortId == null || shortId.isEmpty() || transitions == null) {
             return 0;
         }
-        for (MopData.WtgTransition t : transitions) {
+        for (StaticGuiModel.WtgTransition t : transitions) {
             if (shortId.equals(t.widgetName) && !visitedTargets.contains(t.targetActivity)) {
                 return weight;
             }
@@ -1386,7 +1409,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      *
      * @return the pool size; zero when the census yields no triggerable target
      */
-    public int mopComponentTargetCount() {
+    public int componentTargetCount() {
         if (!_tuplesBuilt) {
             _triggerTuples = buildTriggerTuples(getMopData());
             _providerTuples = buildProviderTuples(getMopData());
@@ -1404,9 +1427,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * {@code content}-command dispatch below is device-facing machinery that stays with the agent
      * (design D5).
      *
-     * @param target an index below {@link #mopComponentTargetCount}
+     * @param target an index below {@link #componentTargetCount}
      */
-    public void triggerMopComponent(int target) {
+    public void triggerComponent(int target) {
         if (target < _triggerTuples.size()) {
             dispatchTrigger(_triggerTuples.get(target));
             return;
@@ -1706,11 +1729,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 action.getPickChannel().getLabel(),
                 action.getPriority(),
                 action.getMopBoost(), action.getMopFrontierBoost(),
-                action.getWtgBoost(), action.getCoverageBoost(),
+                action.getWtgBoost(), action.getNavFrontierBoost(), action.getCoverageBoost(),
                 action.getMenuBoost(), action.getFormBoost(),
-                action.getWtgSource(),
                 patchedValue(action),
-                counterfactualChanged(action), counterfactualAction(action),
                 mopDistanceValue(_mopContext, scored), mopSourceValue(scored));
     }
 

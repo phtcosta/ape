@@ -15,77 +15,34 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
-import java.util.function.Consumer;
-
-import com.android.commands.monkey.ape.model.ActionType;
-import com.android.commands.monkey.ape.model.ModelAction;
-
 /**
- * What every LLM stage does around its engine call: the precondition before, the acceptance after.
+ * A precondition on an LLM call, shared by the three LLM stages (llm-routing, design D-B8).
  *
- * <p>Both halves were written out three times in the ladder, once per hook, which is what made them
- * worth a name. The precondition in particular — {@code actionBufferSize() == 0 &&
- * newState.getActions().size() > 2} — was verbatim at three sites, so a change to one of them was a
- * change to the policy at one hook and not the others, silently.
- *
- * <p>The third conjunct of those three copies, a null test on the run's LLM, is not here: an LLM
- * stage exists only on a plan carrying its feature, and such a plan builds the units. The guard
- * dissolved into assembly rather than moving (INV-DP-03).
+ * <p>A Specification: each gate answers one question about the step — enough actions on the
+ * screen, a breaker that allows an attempt — and the composition root mounts the gates the plan
+ * parameterizes, in a fixed order, so that a step lost to a gate can name the gate that barred it
+ * ({@code dec.own.g}). A gate whose parameter is {@code 0} is not mounted at all.
  */
-public final class LlmGate {
+public interface LlmGate {
 
-    private LlmGate() {
-    }
+    /** The gate's name on the wire: {@code min_actions} or {@code breaker}. */
+    String name();
 
     /**
-     * Whether this step is the LLM's to redirect at all.
+     * Whether this gate lets the step call the LLM. Pure: it reads the step and draws nothing.
      *
-     * <p>Two conditions, and neither is about the LLM. A non-empty action buffer means the agent is
-     * mid-sequence, executing a path it already committed to, and redirecting there would abandon
-     * the path rather than choose within it. Three actions or fewer is a screen with nothing to
-     * reason about — the model's answer would cost a round trip to pick from a set the chain picks
-     * from just as well.
+     * @param ctx the step being decided
+     */
+    boolean admits(StepContext ctx);
+
+    /**
+     * The precondition the three LLM stages share until the gate chain replaces it (wave 1, task
+     * 7.2): an empty action buffer and more than two actions on the screen.
      *
      * @param ctx the step being decided
      * @return whether an LLM stage may consult its trigger predicate
      */
     static boolean allows(StepContext ctx) {
         return ctx.actionBufferSize() == 0 && ctx.newState().getActions().size() > 2;
-    }
-
-    /**
-     * Stamps an accepted answer with its provenance and resolves it if it needs resolving.
-     *
-     * @param result the action the engine returned, never null
-     * @param resolveSynthesizedTap the agent's per-state resolution, applied only to the synthesized
-     *        tap — see {@link #requiresSynthesizedResolution}
-     * @return {@code result}, stamped
-     */
-    public static ModelAction accept(ModelAction result, Consumer<ModelAction> resolveSynthesizedTap) {
-        result.setDecisionSource(ModelAction.DecisionSource.LLM);
-        result.setPickChannel(ModelAction.PickChannel.LLM);
-        if (requiresSynthesizedResolution(result)) {
-            resolveSynthesizedTap.accept(result);
-        }
-        return result;
-    }
-
-    /**
-     * True when an LLM-routed action must be resolved against the current state before dispatch
-     * (llm-coordinate-tap, D7).
-     *
-     * <p>Only the synthesized off-tree tap ({@link ActionType#MODEL_LLM_TAP}) needs it: the tap is
-     * {@code isModelAction()==true} yet absent from {@code State.actions}, so it never passed the
-     * per-state resolution pass and its {@code GUITreeAction} is null — which the agent's
-     * {@code resolveNewAction()} would {@code assertNotNull} on. A matched widget action returned on
-     * the same path is already resolved and MUST NOT be re-resolved, which would re-pick its node, so
-     * this returns {@code false} for every widget/targetless type other than the synthesized tap.
-     * Pure, so the guard decision is unit-testable without a live State or graph.
-     *
-     * @param result the action the engine returned
-     * @return whether it needs the per-state resolution pass
-     */
-    public static boolean requiresSynthesizedResolution(ModelAction result) {
-        return result.getType() == ActionType.MODEL_LLM_TAP;
     }
 }

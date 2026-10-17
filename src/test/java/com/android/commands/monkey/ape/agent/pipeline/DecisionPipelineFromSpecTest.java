@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.agent.StepRng;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Field;
@@ -143,12 +145,12 @@ public class DecisionPipelineFromSpecTest {
         }
 
         @Override
-        public int mopComponentTargetCount() {
+        public int componentTargetCount() {
             throw new UnsupportedOperationException("no MOP stage is assembled in these plans");
         }
 
         @Override
-        public void triggerMopComponent(int target) {
+        public void triggerComponent(int target) {
             throw new UnsupportedOperationException("no MOP stage is assembled in these plans");
         }
     }
@@ -176,6 +178,8 @@ public class DecisionPipelineFromSpecTest {
         @Override public int timestamp() { return 1; }
         @Override public Random random() { return null; }
         @Override public MopContext mopContext() { return null; }
+        @Override public StaticGuiModel staticModel() { return null; }
+        @Override public StepRng stepRng() { return new StepRng(0L); }
         @Override public Graph graph() { return null; }
         @Override public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() { return null; }
         @Override public void resetGraphStableCounter() { }
@@ -231,7 +235,8 @@ public class DecisionPipelineFromSpecTest {
 
     @Test
     public void aBareplanAssemblesTheBudgetGateAndTheTerminalStage() {
-        DecisionPipeline pipeline = assemble(TestRunSpecs.spec(),
+        // The budget is an ADDONS member, so the plan states the group.
+        DecisionPipeline pipeline = assemble(TestRunSpecs.spec("ape.addons", "true"),
                 new FakeCollaborators(null, action()));
 
         assertEquals(Arrays.asList("Budget", "SataChain"), pipeline.stageNames());
@@ -240,7 +245,7 @@ public class DecisionPipelineFromSpecTest {
     @Test
     public void aPlanWithTheBudgetOffAssemblesNoBudgetStage() {
         DecisionPipeline pipeline = assemble(
-                TestRunSpecs.spec("ape.activityBudgetEnabled", "false"),
+                TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false"),
                 new FakeCollaborators(null, action()));
 
         // Structural absence, not a stage that answers "disabled" (INV-DP-03).
@@ -250,7 +255,7 @@ public class DecisionPipelineFromSpecTest {
     @Test
     public void assemblyEchoesTheRosterItBuilt() {
         List<DecisionPipeline> built = new java.util.ArrayList<>();
-        String echoed = echoOf(TestRunSpecs.spec(),
+        String echoed = echoOf(TestRunSpecs.spec("ape.addons", "true"),
                 new FakeCollaborators(null, action()), built);
 
         assertTrue("got: " + echoed, echoed.contains("[APE-ARCH] stages=[Budget, SataChain]"));
@@ -274,7 +279,7 @@ public class DecisionPipelineFromSpecTest {
         ModelAction trivial = action();
         FakeCollaborators agent =
                 new FakeCollaborators(trivial, action());
-        DecisionPipeline pipeline = assemble(TestRunSpecs.spec(), agent);
+        DecisionPipeline pipeline = assemble(TestRunSpecs.spec("ape.addons", "true"), agent);
 
         Action decided = pipeline.decide(new FakeContext(stateOn(ACTIVITY), exhausted()));
 
@@ -335,7 +340,7 @@ public class DecisionPipelineFromSpecTest {
         // inherited from aperv) nor ComponentTrigger (no preset states ape.componentPercentage, so
         // it keeps its neutral 0). Guidance in this arm travels through candidate scores, never
         // through a stage of its own.
-        RunSpec spec = preset(Presets.MOP, "ape.mopDataPath", TestRunSpecs.MOP_PATH);
+        RunSpec spec = preset(Presets.MOP_ARM, "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true");
 
         assertTrue("the mop arm's substrate must be present", spec.has(Feature.MOP));
         assertAssembles(spec, Arrays.asList("Budget", "SataChain"));
@@ -349,10 +354,10 @@ public class DecisionPipelineFromSpecTest {
         // LLM_RANDOM in Feature's table is the *neutral* value a plan may state for an inactive
         // feature, not the value an unstated key resolves to. So the llm arm really does route
         // about one step in fifty at random, and the roster is where that becomes visible.
-        RunSpec spec = preset(Presets.LLM, "ape.llmUrl", LLM_URL);
+        RunSpec spec = preset(Presets.LLM, "ape.llm", "true", "ape.llmUrl", LLM_URL);
 
         assertTrue("the random-routing rate is what assembles the third stage",
-                spec.has(Feature.LLM_RANDOM));
+                spec.has(Feature.LLM_COIN));
         assertAssembles(spec, Arrays.asList(
                 "Budget", "LlmNewState", "LlmStagnation", "LlmRandom", "SataChain"));
     }
@@ -363,8 +368,8 @@ public class DecisionPipelineFromSpecTest {
         // arms are structurally identical decision paths that differ only in how the SataChain's
         // candidates are scored.
         RunSpec spec = preset(Presets.LLM_MOP,
-                "ape.mopDataPath", TestRunSpecs.MOP_PATH,
-                "ape.llmUrl", LLM_URL);
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true",
+                "ape.llm", "true", "ape.llmUrl", LLM_URL);
 
         assertTrue("the llm_mop arm's substrate must be present", spec.has(Feature.MOP));
         assertAssembles(spec, Arrays.asList(

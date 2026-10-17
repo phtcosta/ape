@@ -48,7 +48,7 @@ import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
-import com.android.commands.monkey.ape.model.MopCounterfactual;
+import com.android.commands.monkey.ape.model.ScorerCounterfactual;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.model.StateActionDiffer;
@@ -214,6 +214,18 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      * disables the cap, which is what a run with no MOP targets to cap means.
      */
     private final int mopTargetPickCap;
+    /**
+     * The least-visited priority tie at its former default. ape.leastVisitedPriorityTiebreak is
+     * retired (isolate-guidance-groups); wave 1 (F3, task 6.1) replaces this flag with the
+     * scorer-sum tie X1.
+     */
+    private static final boolean LEAST_VISITED_PRIORITY_TIE = true;
+    /**
+     * The two MOP boosts the A3 counterfactual zeroes together, until wave 1 (F3, task 6.4.5)
+     * replaces it with one {@code dec.cfc} key per mounted scorer.
+     */
+    private static final ScorerCounterfactual.Scorer[] MOP_SCORERS = {
+            ScorerCounterfactual.Scorer.MOP, ScorerCounterfactual.Scorer.MOP_FRONTIER};
 
     public SataAgent(MonkeySourceApe ape, Graph graph) {
         this(ape, graph, RunContext.current().spec().exploration().defaultEpsilon());
@@ -224,7 +236,9 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         this.epsilon = epsilon;
 
         RunSpec spec = RunContext.current().spec();
-        this.mopTargetPickCap = spec.has(Feature.MOP) ? spec.mop().targetPickCap() : 0;
+        // ape.mopTargetPickCap is retired (isolate-guidance-groups); the shortcut this cap bounds
+        // keeps its former default until wave 1 (F3, task 6.3) deletes it with the shortcut.
+        this.mopTargetPickCap = spec.has(Feature.MOP) ? 3 : 0;
 
         this.actionCounters = new int[SataEventType.values().length];
         // Assembly is here rather than in StatefulAgent because the stages bind this class's action
@@ -581,9 +595,9 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
             // A3: this short-circuit exists only because of the MOP boost, so its counterfactual is
             // the fall-through it pre-empted — the least-visited pick with MOP weights zeroed.
             final ModelAction excluded = submitExcluded;
-            mopTarget.setCounterfactualPick(counterfactual(() -> MopCounterfactual
-                    .leastVisitedWithoutMopWeights(candidatesOf(newState, cappedFilter, excluded),
-                            exploration.leastVisitedPriorityTiebreak())));
+            mopTarget.setCounterfactualPick(counterfactual(() -> ScorerCounterfactual
+                    .leastVisitedWithout(candidatesOf(newState, cappedFilter, excluded),
+                            LEAST_VISITED_PRIORITY_TIE, MOP_SCORERS)));
             return mopTarget;
         }
         if (egreedy()) { // TODO: this is different from Sarsa.
@@ -591,7 +605,7 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
             // Least-visited pick: priority (and any boost) is only a tie-break, not the
             // reason for selection — SATA.
             ModelAction leastVisited = newState.greedyPickLeastVisited(cappedFilter, submitExcluded,
-                    exploration.leastVisitedPriorityTiebreak());
+                    LEAST_VISITED_PRIORITY_TIE);
             if (leastVisited != null) {
                 leastVisited.setDecisionSource(ModelAction.DecisionSource.SATA);
                 leastVisited.setPickChannel(ModelAction.PickChannel.SATA_OTHER);
@@ -608,8 +622,9 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
             roulettePick.setDecisionSource(attributeByLargestBoost(roulettePick));
             roulettePick.setPickChannel(ModelAction.PickChannel.ROULETTE_GREEDY);
             // A3: same random point, different weights — no draw of its own (INV-SEL-09).
-            roulettePick.setCounterfactualPick(counterfactual(() -> MopCounterfactual.replayRoulette(
-                    candidatesOf(newState, cappedFilter, null), pick.getDrawIndex(), pick.getTotal())));
+            roulettePick.setCounterfactualPick(counterfactual(() -> ScorerCounterfactual.replayRoulette(
+                    candidatesOf(newState, cappedFilter, null), pick.getDrawIndex(), pick.getTotal(),
+                    MOP_SCORERS)));
             recordBackMenuPick(roulettePick.getType(), activity);
         }
         return roulettePick;
@@ -1508,8 +1523,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                 // A3: the roulette this probe pre-empted made no draw, so its counterfactual is that
                 // roulette's modal outcome with MOP weights zeroed — deterministic, since drawing
                 // here would perturb the seeded stream (INV-SEL-09).
-                mopTarget.setCounterfactualPick(counterfactual(() -> MopCounterfactual
-                        .highestPriorityWithoutMopWeights(rouletteCandidates)));
+                mopTarget.setCounterfactualPick(counterfactual(() -> ScorerCounterfactual
+                        .highestPriorityWithout(rouletteCandidates, MOP_SCORERS)));
                 return mopTarget;
             }
             RandomHelper.Draw<ModelAction> draw =
@@ -1525,8 +1540,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                 action.setPickChannel(ModelAction.PickChannel.ROULETTE_EARLY);
                 // A3: replay of this roulette's own draw with MOP weights zeroed.
                 final ModelAction picked = action;
-                picked.setCounterfactualPick(counterfactual(() -> MopCounterfactual.replayRoulette(
-                        rouletteCandidates, draw.getIndex(), draw.getTotal())));
+                picked.setCounterfactualPick(counterfactual(() -> ScorerCounterfactual.replayRoulette(
+                        rouletteCandidates, draw.getIndex(), draw.getTotal(), MOP_SCORERS)));
                 recordBackMenuPick(action.getType(), next.getActivity());
                 return action;
             }

@@ -67,9 +67,9 @@ public final class DecisionPipeline {
         /** LLM routing at the stagnation midpoint, once per episode. */
         LLM_STAGNATION("LlmStagnation", Feature.LLM_STAGNATION),
         /** LLM routing at a configured rate. */
-        LLM_RANDOM("LlmRandom", Feature.LLM_RANDOM),
+        LLM_RANDOM("LlmRandom", Feature.LLM_COIN),
         /** The cadence-based MOP activity launcher. */
-        MOP_LAUNCHER("MopLauncher", Feature.ACTIVITY_TRIGGER),
+        MOP_LAUNCHER("MopLauncher", Feature.MOP_LAUNCHER),
         /** The probabilistic component trigger — the one stage that acts without deciding. */
         COMPONENT_TRIGGER("ComponentTrigger", Feature.COMPONENT_TRIGGER),
         /** The SATA strategy chain: the terminal stage of every plan (INV-DP-06). */
@@ -175,9 +175,9 @@ public final class DecisionPipeline {
                             spec.mop().launcherDmax()));
                     break;
                 case COMPONENT_TRIGGER:
-                    stages.add(new ComponentTriggerStage(spec.mop().componentPercentage(),
-                            collaborators::mopComponentTargetCount,
-                            collaborators::triggerMopComponent));
+                    stages.add(new ComponentTriggerStage(spec.staticData().componentPercentage(),
+                            collaborators::componentTargetCount,
+                            collaborators::triggerComponent));
                     break;
                 case SATA_CHAIN:
                     stages.add(new SataChainStage(collaborators::logActionSelected,

@@ -16,64 +16,64 @@
 
 ## 1. Wave 0 — run-plan contracts (serial)
 
-- [ ] 1.1 Baseline: `mvn clean test` on `isolate-guidance-groups` at `eea2b1a9`; record the count (expect 1361 / 24 skipped)
-- [ ] 1.2 `runtime/Feature`: add the roots `ADDONS` (`ape.addons`), `STATIC_DATA` (`ape.staticDataPath`, PRESENT) and `LLM` (`ape.llm`, owning `ape.llmUrl` with no neutral); turn `MOP` into a `ape.mop` root that requires `STATIC_DATA`; add `STATIC` (`ape.static`, requires `STATIC_DATA`), `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART` and `MOP_COIN`; rename `FRONTIER` → `NAV_FRONTIER` (requires `STATIC`, D-A1), `LLM_RANDOM` → `LLM_COIN` and `ACTIVITY_TRIGGER` → `MOP_LAUNCHER` (key `ape.activityTriggerEnabled` unchanged, D-B11); move `COMPONENT_TRIGGER` (D-B13) and `TYPED_FUZZ` (D-B14.3) under `STATIC`; make every addon member require `ADDONS`; delete `LEAST_VISITED_TIEBREAK` (design D-B1, D-B4, D-B5, D-B13)
-- [ ] 1.3 `runtime/KeyOwnership`: add the new keys with their types and defaults (`ape.addons`, `ape.static`, `ape.mop`, `ape.llm`, `ape.staticDataPath`, `ape.variant` as resolver, `ape.mopCoinPercentage`, `ape.llmGateMinActions`, `ape.llmBreakerFailures`, `ape.llmBreakerOpenMs`); move `ape.backMenuPickCap` and `ape.activityStableRestartThreshold` from BASE to their features; retire `ape.mopDataPath`, `ape.leastVisitedPriorityTiebreak` and `ape.mopTargetPickCap`, each with the reason given in design.md
-- [ ] 1.4 `runtime/Presets`: the four group blocks and the six cell presets `base`, `mop`, `as`, `as_mop`, `as_llm` and `as_mop_llm` (design § Key contract). Keep the four old presets for now, each given the group keys (`addons`, `static`, `mop`, `llm`) that make it resolve to its current behaviour, so the existing goldens stay green; group 11 deletes them. A test that builds a plan with no preset and relied on a `Config` default of an addon (e.g. `modelMenuEnabled=true`) states `ape.addons=true` explicitly after 1.8; list each such test in the commit
-- [ ] 1.5 `runtime/RunSpec`:
-  - [ ] 1.5.1 add the `StaticParams` record (data path, strict package match, `frontierBoostWeight`, `fuzzInputTyped`, `componentPercentage`), present iff `STATIC_DATA` is in the plan;
-  - [ ] 1.5.2 move `mopCoinPercentage` into `MopParams`, and the gate and breaker keys into `LlmParams`; `ape.mopStrictPackageMatch` moves to `STATIC_DATA` (D-B14.3); `ape.staticDataPath` with neither `STATIC` nor `MOP` mounted is inert (D-B14.20);
-  - [ ] 1.5.3 clamp `p_M` to [0,1];
-  - [ ] 1.5.4 resolve `ape.variant`;
-  - [ ] 1.5.5 a member's params accessor returns the neutral value when the member is absent: `activityStableRestartThreshold()` returns `Integer.MAX_VALUE` without `ACTIVITY_STABLE_RESTART`, `backMenuPickCap()` returns 0 without `BACK_MENU_CAP` (today `RunSpec.java:800` has no `has()` gate);
-  - [ ] 1.5.6 delete the dead accessor `MopParams.activityTriggerEnabled()` (`RunSpec.java:974-975`, no caller); `componentPercentage` and `strictPackageMatch` are read from `StaticParams` only
-- [ ] 1.6 `runtime/RunSpecEcho`: write `variant` in `RUN_START` (omitted when null; outside the digest); `FORMAT_VERSION` = 2 (D-B14.22)
-- [ ] 1.7 Mechanical rename `ape.mopDataPath` → `ape.staticDataPath` across `src/main` and `src/test` (`StatefulAgent.java:204` reads `spec.staticData().dataPath()`); MOP reads stay under `spec.mop()`
-- [ ] 1.8 D-B6, every addon read site reads the plan and no longer `Config`:
-  - [ ] 1.8.1 `model/State.java:78` (`MODEL_MENU`)
-  - [ ] 1.8.2 `tree/GUITreeNode.java:218,594` and `tree/GUITreeBuilder.java:444` (`TREE_ENHANCEMENTS`)
-  - [ ] 1.8.3 `agent/ApeAgent.java:252` (`HEURISTIC_INPUT`)
-  - [ ] 1.8.4 `MonkeySourceApe.java:818,837` (the two guards)
-  - [ ] 1.8.5 `utils/MopData.java:207` (`MOP_ACTIVITY_SOURCE`)
-  - [ ] 1.8.6 BASE keys the plan owns (D-B6, verification A10): `MonkeySourceApe.java:876` `Config.doFuzzing`/`fuzzingRate` (`FUZZING`) and `agent/ApeAgent.java:280` `Config.checkRestart`
+- [x] 1.1 Baseline: `mvn clean test` on `isolate-guidance-groups` at `eea2b1a9`; record the count (expect 1361 / 24 skipped)
+- [x] 1.2 `runtime/Feature`: add the roots `ADDONS` (`ape.addons`), `STATIC_DATA` (`ape.staticDataPath`, PRESENT) and `LLM` (`ape.llm`, owning `ape.llmUrl` with no neutral); turn `MOP` into a `ape.mop` root that requires `STATIC_DATA`; add `STATIC` (`ape.static`, requires `STATIC_DATA`), `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART` and `MOP_COIN`; rename `FRONTIER` → `NAV_FRONTIER` (requires `STATIC`, D-A1), `LLM_RANDOM` → `LLM_COIN` and `ACTIVITY_TRIGGER` → `MOP_LAUNCHER` (key `ape.activityTriggerEnabled` unchanged, D-B11); move `COMPONENT_TRIGGER` (D-B13) and `TYPED_FUZZ` (D-B14.3) under `STATIC`; make every addon member require `ADDONS`; delete `LEAST_VISITED_TIEBREAK` (design D-B1, D-B4, D-B5, D-B13)
+- [x] 1.3 `runtime/KeyOwnership`: add the new keys with their types and defaults (`ape.addons`, `ape.static`, `ape.mop`, `ape.llm`, `ape.staticDataPath`, `ape.variant` as resolver, `ape.mopCoinPercentage`, `ape.llmGateMinActions`, `ape.llmBreakerFailures`, `ape.llmBreakerOpenMs`); move `ape.backMenuPickCap` and `ape.activityStableRestartThreshold` from BASE to their features; retire `ape.mopDataPath`, `ape.leastVisitedPriorityTiebreak` and `ape.mopTargetPickCap`, each with the reason given in design.md
+- [x] 1.4 `runtime/Presets`: the four group blocks and the six cell presets `base`, `mop`, `as`, `as_mop`, `as_llm` and `as_mop_llm` (design § Key contract). Keep the four old presets for now, each given the group keys (`addons`, `static`, `mop`, `llm`) that make it resolve to its current behaviour, so the existing goldens stay green; group 11 deletes them. A test that builds a plan with no preset and relied on a `Config` default of an addon (e.g. `modelMenuEnabled=true`) states `ape.addons=true` explicitly after 1.8; list each such test in the commit
+- [x] 1.5 `runtime/RunSpec`:
+  - [x] 1.5.1 add the `StaticParams` record (data path, strict package match, `frontierBoostWeight`, `fuzzInputTyped`, `componentPercentage`), present iff `STATIC_DATA` is in the plan;
+  - [x] 1.5.2 move `mopCoinPercentage` into `MopParams`, and the gate and breaker keys into `LlmParams`; `ape.mopStrictPackageMatch` moves to `STATIC_DATA` (D-B14.3); `ape.staticDataPath` with neither `STATIC` nor `MOP` mounted is inert (D-B14.20);
+  - [x] 1.5.3 clamp `p_M` to [0,1];
+  - [x] 1.5.4 resolve `ape.variant`;
+  - [x] 1.5.5 a member's params accessor returns the neutral value when the member is absent: `activityStableRestartThreshold()` returns `Integer.MAX_VALUE` without `ACTIVITY_STABLE_RESTART`, `backMenuPickCap()` returns 0 without `BACK_MENU_CAP` (today `RunSpec.java:800` has no `has()` gate);
+  - [x] 1.5.6 delete the dead accessor `MopParams.activityTriggerEnabled()` (`RunSpec.java:974-975`, no caller); `componentPercentage` and `strictPackageMatch` are read from `StaticParams` only
+- [x] 1.6 `runtime/RunSpecEcho`: write `variant` in `RUN_START` (omitted when null; outside the digest); `FORMAT_VERSION` = 2 (D-B14.22)
+- [x] 1.7 Mechanical rename `ape.mopDataPath` → `ape.staticDataPath` across `src/main` and `src/test` (`StatefulAgent.java:204` reads `spec.staticData().dataPath()`); MOP reads stay under `spec.mop()`
+- [x] 1.8 D-B6, every addon read site reads the plan and no longer `Config`:
+  - [x] 1.8.1 `model/State.java:78` (`MODEL_MENU`)
+  - [x] 1.8.2 `tree/GUITreeNode.java:218,594` and `tree/GUITreeBuilder.java:444` (`TREE_ENHANCEMENTS`)
+  - [x] 1.8.3 `agent/ApeAgent.java:252` (`HEURISTIC_INPUT`)
+  - [x] 1.8.4 `MonkeySourceApe.java:818,837` (the two guards)
+  - [x] 1.8.5 `utils/MopData.java:207` (`MOP_ACTIVITY_SOURCE`)
+  - [x] 1.8.6 BASE keys the plan owns (D-B6, verification A10): `MonkeySourceApe.java:876` `Config.doFuzzing`/`fuzzingRate` (`FUZZING`) and `agent/ApeAgent.java:280` `Config.checkRestart`
   
   Delete the `Config` twins these reads leave dead, and those of the retired or renamed keys (`mopDataPath` `Config.java:121`, `mopTargetPickCap` `:153`, `leastVisitedPriorityTiebreak` `:249`, `frontierBoostWeight` `:216`), P3. `ape.minEpsilon`/`ape.maxEpsilon` stay `DYNAMIC_EPSILON` keys, already read through the plan (`SataAgent.java:1214`); their twins `Config.java:218-219` are deleted too. Update their test readers (`oracle/LadderConfigGuard.java:57,62,63,84`, `utils/ConfigTest.java:100`) and `agent/pipeline/StaticConfigReadGuardTest` (its single accepted residue `modelMenuEnabled`, pinned at `:139-151`, goes to zero occurrences)
-- [ ] 1.9 Tests:
-  - [ ] 1.9.1 `FeatureDerivationTest`: group off → members left out; explicit member key without its group → `MISSING_DEPENDENCY`
-  - [ ] 1.9.2 `PresetsTest` and `CellPresetTest` (new): the six cells resolve to the expected `features` of design.md
-  - [ ] 1.9.3 `RunSpecAbortTest`: the three retired keys abort with their reason; `ape.llm=true` without a URL aborts
-  - [ ] 1.9.4 `RunSpecEchoTest`: `variant` is echoed and is not in the digest
-  - [ ] 1.9.5 `KeyOwnershipTotalityTest` stays green
-  - [ ] 1.9.6 `GroupReadSiteTest` (new): with `base`, every addon site in 1.8 reads off
-- [ ] 1.10 Run `/sdd-test-run` (`mvn test`): green, except tests that pin the retired keys, which are rewritten here
+- [x] 1.9 Tests:
+  - [x] 1.9.1 `FeatureDerivationTest`: group off → members left out; explicit member key without its group → `MISSING_DEPENDENCY`
+  - [x] 1.9.2 `PresetsTest` and `CellPresetTest` (new): the six cells resolve to the expected `features` of design.md
+  - [x] 1.9.3 `RunSpecAbortTest`: the three retired keys abort with their reason; `ape.llm=true` without a URL aborts
+  - [x] 1.9.4 `RunSpecEchoTest`: `variant` is echoed and is not in the digest
+  - [x] 1.9.5 `KeyOwnershipTotalityTest` stays green
+  - [x] 1.9.6 `GroupReadSiteTest` (new): with `base`, every addon site in 1.8 reads off
+- [x] 1.10 Run `/sdd-test-run` (`mvn test`): green, except tests that pin the retired keys, which are rewritten here
 
 ## 2. Wave 0 — telemetry contracts (serial)
 
-- [ ] 2.1 `telemetry/EventSink` and `NoopSink`: add the methods `owner`, `cfc`, `draw`, `nav`, `input`, `restart`, `backMenuCapped`, `strategy`, `rotation`, `bufferAbandoned` and `componentTrigger` (`dec.trig`, verification A7), plus the counter increments (design § Telemetry contract); remove the `cf` and `wtgSource` arguments from `decision(...)` and add `navf`
-- [ ] 2.2 `telemetry/StepRecord`:
-  - [ ] 2.2.1 the members `own`, `cfc`, `draw`, `nav`, `inp`, `restart`, `bmc`, `strat`, `rot`, `buf`, `navf` and `trig`, in the shapes of design.md;
-  - [ ] 2.2.2 `own` and `rot` are always written (exempt from omit-default, documented beside `mopd`);
-  - [ ] 2.2.3 `dec.cf` and `dec.wtgsrc` are removed;
-  - [ ] 2.2.4 `reset()` clears the new members
-- [ ] 2.3 `telemetry/NdjsonSink` and `telemetry/RunCounters`: route the new calls; `RUN_END.counters` gains `launches`, `gateMinActions`, `gateBreaker`, `guardBacks`, `bufAbandoned`, `restarts`, `coinLlm` and `coinMop`, written in full
-- [ ] 2.4 Update every current caller of the changed `decision(...)` signature mechanically (`StatefulAgent.recordModelDecision` passes `navf`, and nothing for `cf`/`wtgsrc`; the test callers `NdjsonSinkTest` (~35 calls) and `LlmTelemetryTest` (~12)). No other behaviour changes
-- [ ] 2.5 Tests: `StepRecordTest` round-trips every new member through `org.json`; omit-default cases; the one-line invariant holds with hostile strings in `own.g`/`fb`
-- [ ] 2.6 Run `/sdd-test-run`
+- [x] 2.1 `telemetry/EventSink` and `NoopSink`: add the methods `owner`, `cfc`, `draw`, `nav`, `input`, `restart`, `backMenuCapped`, `strategy`, `rotation`, `bufferAbandoned` and `componentTrigger` (`dec.trig`, verification A7), plus the counter increments (design § Telemetry contract); remove the `cf` and `wtgSource` arguments from `decision(...)` and add `navf`
+- [x] 2.2 `telemetry/StepRecord`:
+  - [x] 2.2.1 the members `own`, `cfc`, `draw`, `nav`, `inp`, `restart`, `bmc`, `strat`, `rot`, `buf`, `navf` and `trig`, in the shapes of design.md;
+  - [x] 2.2.2 `own` and `rot` are always written (exempt from omit-default, documented beside `mopd`);
+  - [x] 2.2.3 `dec.cf` and `dec.wtgsrc` are removed;
+  - [x] 2.2.4 `reset()` clears the new members
+- [x] 2.3 `telemetry/NdjsonSink` and `telemetry/RunCounters`: route the new calls; `RUN_END.counters` gains `launches`, `gateMinActions`, `gateBreaker`, `guardBacks`, `bufAbandoned`, `restarts`, `coinLlm` and `coinMop`, written in full
+- [x] 2.4 Update every current caller of the changed `decision(...)` signature mechanically (`StatefulAgent.recordModelDecision` passes `navf`, and nothing for `cf`/`wtgsrc`; the test callers `NdjsonSinkTest` (~35 calls) and `LlmTelemetryTest` (~12)). No other behaviour changes
+- [x] 2.5 Tests: `StepRecordTest` round-trips every new member through `org.json`; omit-default cases; the one-line invariant holds with hostile strings in `own.g`/`fb`
+- [x] 2.6 Run `/sdd-test-run`
 
 ## 3. Wave 0 — interfaces and shared primitives (serial)
 
-- [ ] 3.1 `agent/pipeline/LlmGate` becomes the interface `{ String name(); boolean admits(StepContext ctx); }`. Its acceptance helper moves to `agent/pipeline/LlmAcceptance`, and its callers follow
-- [ ] 3.2 `agent/pipeline/DecisionStage` gains `default void onStepOpen(StepContext ctx) {}`. `StageCollaborators` gains `restartDue()`, `restartAction()`, `abandonBuffer(String owner)` and `mopLedger()`, as default methods that throw `UnsupportedOperationException` until F5 implements them in `StatefulAgent` (`SataAgent` implements `StageCollaborators`, `:67`, and inherits them). Rename `triggerMopComponent`/`mopComponentTargetCount` → `triggerComponent`/`componentTargetCount` everywhere (`StageCollaborators.java:172,180`, `DecisionPipeline.java:180`, `StatefulAgent.java:1389,1409`, `PipelineFixture.java:166`, `DecisionPipelineFromSpecTest.java:151`, `StatefulAgentTriggerTest`), and `requireMopArm` with its message naming `ape.mopDataPath`
-- [ ] 3.2b `agent/pipeline/StepContext` gains `staticModel()` and `stepRng()`; `StatefulAgent` (`:88`) implements them (the static model delegates as in 3.5; `stepRng()` returns the instance of 3.7). `runtime/RunContext` builds `StepRng` from the run seed. No pipeline or `llm/` class calls `RunContext.current()` (the static-read guard test)
-- [ ] 3.3 `agent/sata/LeastVisitedTie`, `agent/sata/AbaTargetTie`, `agent/sata/TrivialPathPick`: the interfaces of X1, X3 and X4 (signatures in design.md)
-- [ ] 3.4 `llm/PromptContribution`: the interface with default-empty methods
-- [ ] 3.5 `utils/StaticGuiModel`: the public read-only API, with method signatures for the WTG, widget metadata, package/main activity and components with intent filters, including `data`. The bodies delegate to the current `MopData` until F2 moves the parsing
-- [ ] 3.6 `agent/MopInteractionLedger`: complete, a small pure class with `tried(activity, key)` and `record(activity, key)`, plus `MopInteractionLedgerTest`
-- [ ] 3.7 `agent/StepRng`: complete. Streams `llmCoin`, `mopCoin`, `componentCoin` and `fuzz` derive from the run seed; `StepRngTest` checks determinism per seed and that the streams are independent
-- [ ] 3.8 `model/ScorerCounterfactual`: generalize `MopCounterfactual` to zero one named scorer field (pure, with no RNG, no `resolveAction` and no cache effect); delete `MopCounterfactual` (P3) and move its callers (`SataAgent` `:584`, `:611`, `:1511`, `:1528`; `StateTest`); `ScorerCounterfactualTest` absorbs `MopCounterfactualTest`
-- [ ] 3.8b `model/ModelAction`, additive only so the old goldens stay green: the `navFrontierBoost` field with its accessors; the `DecisionSource` owner values `budget`, `restart`, `llm`, `launcher`, `mop`, `sata`; the `PickChannel` values `mop_coin`, `budget`, `restart`. Each wave-1 front sets them in its own files; the obsolete values (`SHORT_CIRCUIT_*`, the boost-attributed sources) are deleted in 11.2
-- [ ] 3.9 Run `/sdd-doc-code` on each new file in 3.3–3.8b
-- [ ] 3.10 Run `/sdd-test-run`; `mvn clean test` green. **Commit wave 0** (explicit paths; ask the author) and **send the `aperv-tool` session the confirmation that the key contract is frozen at this commit**, with its SHA
+- [x] 3.1 `agent/pipeline/LlmGate` becomes the interface `{ String name(); boolean admits(StepContext ctx); }`. Its acceptance helper moves to `agent/pipeline/LlmAcceptance`, and its callers follow
+- [x] 3.2 `agent/pipeline/DecisionStage` gains `default void onStepOpen(StepContext ctx) {}`. `StageCollaborators` gains `restartDue()`, `restartAction()`, `abandonBuffer(String owner)` and `mopLedger()`, as default methods that throw `UnsupportedOperationException` until F5 implements them in `StatefulAgent` (`SataAgent` implements `StageCollaborators`, `:67`, and inherits them). Rename `triggerMopComponent`/`mopComponentTargetCount` → `triggerComponent`/`componentTargetCount` everywhere (`StageCollaborators.java:172,180`, `DecisionPipeline.java:180`, `StatefulAgent.java:1389,1409`, `PipelineFixture.java:166`, `DecisionPipelineFromSpecTest.java:151`, `StatefulAgentTriggerTest`), and `requireMopArm` with its message naming `ape.mopDataPath`
+- [x] 3.2b `agent/pipeline/StepContext` gains `staticModel()` and `stepRng()`; `StatefulAgent` (`:88`) implements them (the static model delegates as in 3.5; `stepRng()` returns the instance of 3.7). `runtime/RunContext` builds `StepRng` from the run seed. No pipeline or `llm/` class calls `RunContext.current()` (the static-read guard test)
+- [x] 3.3 `agent/sata/LeastVisitedTie`, `agent/sata/AbaTargetTie`, `agent/sata/TrivialPathPick`: the interfaces of X1, X3 and X4 (signatures in design.md)
+- [x] 3.4 `llm/PromptContribution`: the interface with default-empty methods
+- [x] 3.5 `utils/StaticGuiModel`: the public read-only API, with method signatures for the WTG, widget metadata, package/main activity and components with intent filters, including `data`. The bodies delegate to the current `MopData` until F2 moves the parsing
+- [x] 3.6 `agent/MopInteractionLedger`: complete, a small pure class with `tried(activity, key)` and `record(activity, key)`, plus `MopInteractionLedgerTest`
+- [x] 3.7 `agent/StepRng`: complete. Streams `llmCoin`, `mopCoin`, `componentCoin` and `fuzz` derive from the run seed; `StepRngTest` checks determinism per seed and that the streams are independent
+- [x] 3.8 `model/ScorerCounterfactual`: generalize `MopCounterfactual` to zero one named scorer field (pure, with no RNG, no `resolveAction` and no cache effect); delete `MopCounterfactual` (P3) and move its callers (`SataAgent` `:584`, `:611`, `:1511`, `:1528`; `StateTest`); `ScorerCounterfactualTest` absorbs `MopCounterfactualTest`
+- [x] 3.8b `model/ModelAction`, additive only so the old goldens stay green: the `navFrontierBoost` field with its accessors; the `DecisionSource` owner values `budget`, `restart`, `llm`, `launcher`, `mop`, `sata`; the `PickChannel` values `mop_coin`, `budget`, `restart`. Each wave-1 front sets them in its own files; the obsolete values (`SHORT_CIRCUIT_*`, the boost-attributed sources) are deleted in 11.2
+- [x] 3.9 Run `/sdd-doc-code` on each new file in 3.3–3.8b
+- [x] 3.10 Run `/sdd-test-run`; `mvn clean test` green. **Commit wave 0** (explicit paths; ask the author) and **send the `aperv-tool` session the confirmation that the key contract is frozen at this commit**, with its SHA
 
 ## 4. Wave 1 · F1 — rotation (plan §2.4, D-A9)
 

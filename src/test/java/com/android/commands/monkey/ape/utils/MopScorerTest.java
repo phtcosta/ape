@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -36,6 +38,15 @@ import static org.junit.Assert.*;
  * an Android runtime.
  */
 public class MopScorerTest {
+
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
 
     /**
      * The weights the scorer is asked to apply. Deliberately NOT the jar defaults: a test that
@@ -80,9 +91,9 @@ public class MopScorerTest {
      * @param mopActivities   set of activities that have MOP-reachable methods
      */
     private static MopData buildData(String sourceActivity,
-                                     List<MopData.WtgTransition> transitions,
+                                     List<StaticGuiModel.WtgTransition> transitions,
                                      Set<String> mopActivities) {
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
         if (sourceActivity != null && transitions != null) {
             wtg.put(sourceActivity, transitions);
         }
@@ -108,8 +119,8 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_widgetLeadsToMopActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
@@ -128,8 +139,8 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_widgetLeadsToNonMopActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "about",
                 "com.example.AboutActivity"));
 
@@ -147,8 +158,8 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_noMatchForWidget() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
@@ -187,8 +198,8 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_nullActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
@@ -206,8 +217,8 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_nullOrEmptyShortId() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
@@ -228,11 +239,11 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_menuItemToMopActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "menu_item_cipher",
                 "br.unb.cic.cryptoapp.cipher.CipherActivity"));
-        transitions.add(new MopData.WtgTransition(
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "menu_item_message_digest",
                 "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
 
@@ -256,8 +267,8 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_wrongSourceActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 

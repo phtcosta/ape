@@ -113,6 +113,12 @@ public final class KeyOwnership {
      * the re-derivation.
      */
     public static final String KEY_CORPUS_BASIS = "ape.corpusBasis";
+    /**
+     * {@code ape.variant}: the harness's variant name, echoed as {@code RUN_START.variant}. It
+     * names how the run was launched, not what it is, so it stays out of the plan digest and no
+     * component reads it (run-spec INV-RUN-10).
+     */
+    public static final String KEY_VARIANT = "ape.variant";
 
     static {
         // --- Base exploration parameters: always present, no feature gates them. --------------
@@ -124,10 +130,8 @@ public final class KeyOwnership {
         base("ape.actionRefinementFirst", ValueType.BOOLEAN, "true");
         base("ape.actionRefinmentThreshold", ValueType.INT, "3");
         base("ape.activityManagerType", ValueType.STRING, "state");
-        base("ape.activityStableRestartThreshold", ValueType.INT, "200");
         base("ape.alwaysIgnoreWebView", ValueType.BOOLEAN, "false");
         base("ape.alwaysIgnoreWebViewAction", ValueType.BOOLEAN, "false");
-        base("ape.backMenuPickCap", ValueType.INT, "3");
         // Read at NamingFactory:953 with the caller's current naming as the fallback, so the jar
         // has no single default for it — hence a null default rather than an invented one.
         base("ape.baseNaming", ValueType.STRING, null);
@@ -186,11 +190,18 @@ public final class KeyOwnership {
         base("ape.usePatchNamer", ValueType.BOOLEAN, "true");
 
         // --- Feature-owned keys. ---------------------------------------------------------------
-        feature(Feature.MOP, "ape.mopDataPath", ValueType.STRING, null);
+        // The group keys (guidance-groups, design D-B1): one boolean per group, off by default,
+        // so the jar's defaults are the base cell's plan.
+        feature(Feature.ADDONS, "ape.addons", ValueType.BOOLEAN, "false");
+        feature(Feature.STATIC, "ape.static", ValueType.BOOLEAN, "false");
+        feature(Feature.MOP, "ape.mop", ValueType.BOOLEAN, "false");
+        feature(Feature.LLM, "ape.llm", ValueType.BOOLEAN, "false");
+
+        feature(Feature.STATIC_DATA, "ape.staticDataPath", ValueType.STRING, null);
+        feature(Feature.STATIC_DATA, "ape.mopStrictPackageMatch", ValueType.BOOLEAN, "false");
+
         feature(Feature.MOP, "ape.mopWeightDirect", ValueType.INT, "500");
         feature(Feature.MOP, "ape.mopWeightTransitive", ValueType.INT, "300");
-        feature(Feature.MOP, "ape.mopTargetPickCap", ValueType.INT, "3");
-        feature(Feature.MOP, "ape.mopStrictPackageMatch", ValueType.BOOLEAN, "false");
         // The scoring mode and the distance mode's keys (llm-coordinate-single-base, D18–D20).
         // Plan-owned: no Config field mirrors them, so the default drift guard does not see them
         // and KeyOwnershipTotalityTest pins them against the run-spec delta instead.
@@ -203,15 +214,18 @@ public final class KeyOwnership {
 
         feature(Feature.WTG, "ape.mopWeightWtg", ValueType.INT, "200");
         feature(Feature.MENU_GATEWAY, "ape.mopWeightOpenMenu", ValueType.INT, "250");
-        feature(Feature.FRONTIER, "ape.frontierBoostWeight", ValueType.INT, "200");
         feature(Feature.MOP_FRONTIER, "ape.mopFrontierWeight", ValueType.INT, "0");
 
-        feature(Feature.ACTIVITY_TRIGGER, "ape.activityTriggerEnabled", ValueType.BOOLEAN, "true");
-        feature(Feature.ACTIVITY_TRIGGER, "ape.activityTriggerStagnationStep", ValueType.INT, "50");
-        feature(Feature.ACTIVITY_TRIGGER, "ape.activityTriggerMaxPerRun", ValueType.INT, "0");
+        feature(Feature.MOP_LAUNCHER, "ape.activityTriggerEnabled", ValueType.BOOLEAN, "true");
+        feature(Feature.MOP_LAUNCHER, "ape.activityTriggerStagnationStep", ValueType.INT, "50");
+        feature(Feature.MOP_LAUNCHER, "ape.activityTriggerMaxPerRun", ValueType.INT, "0");
 
-        feature(Feature.COMPONENT_TRIGGER, "ape.componentPercentage", ValueType.DOUBLE, "0.0");
         feature(Feature.MOP_ACTIVITY_SOURCE, "ape.mopActivitySourceComponents", ValueType.BOOLEAN, "false");
+        feature(Feature.MOP_COIN, "ape.mopCoinPercentage", ValueType.DOUBLE, "1.0");
+
+        feature(Feature.NAV_FRONTIER, "ape.frontierBoostWeight", ValueType.INT, "200");
+        feature(Feature.TYPED_FUZZ, "ape.fuzzInputTyped", ValueType.BOOLEAN, "true");
+        feature(Feature.COMPONENT_TRIGGER, "ape.componentPercentage", ValueType.DOUBLE, "0.0");
 
         feature(Feature.LLM, "ape.llmUrl", ValueType.STRING, null);
         feature(Feature.LLM, "ape.llmModel", ValueType.STRING, "default");
@@ -223,15 +237,17 @@ public final class KeyOwnership {
         feature(Feature.LLM, "ape.llmMaxTokens", ValueType.INT, "1024");
         feature(Feature.LLM, "ape.llmSnapTolerancePx", ValueType.INT, "50");
         feature(Feature.LLM, "ape.llmBoundaryTopPct", ValueType.DOUBLE, "0.035");
+        feature(Feature.LLM, "ape.llmGateMinActions", ValueType.INT, "3");
+        feature(Feature.LLM, "ape.llmBreakerFailures", ValueType.INT, "3");
+        feature(Feature.LLM, "ape.llmBreakerOpenMs", ValueType.LONG, "60000");
 
         feature(Feature.LLM_NEW_STATE, "ape.llmOnNewState", ValueType.BOOLEAN, "true");
         feature(Feature.LLM_STAGNATION, "ape.llmOnStagnation", ValueType.BOOLEAN, "true");
-        feature(Feature.LLM_RANDOM, "ape.llmPercentage", ValueType.DOUBLE, "0.02");
-        feature(Feature.LLM_RANDOM, "ape.llmPercentageNoSubstrate", ValueType.DOUBLE, "-1.0");
+        feature(Feature.LLM_COIN, "ape.llmPercentage", ValueType.DOUBLE, "0.02");
+        feature(Feature.LLM_COIN, "ape.llmPercentageNoSubstrate", ValueType.DOUBLE, "-1.0");
 
         feature(Feature.MODEL_MENU, "ape.modelMenuEnabled", ValueType.BOOLEAN, "true");
         feature(Feature.FORM_COMPLETION, "ape.formCompletionEnabled", ValueType.BOOLEAN, "true");
-        feature(Feature.LEAST_VISITED_TIEBREAK, "ape.leastVisitedPriorityTiebreak", ValueType.BOOLEAN, "true");
         feature(Feature.TREE_ENHANCEMENTS, "ape.treeEnhancementsEnabled", ValueType.BOOLEAN, "true");
 
         feature(Feature.ACTIVITY_BUDGET, "ape.activityBudgetEnabled", ValueType.BOOLEAN, "true");
@@ -243,12 +259,14 @@ public final class KeyOwnership {
         feature(Feature.DYNAMIC_EPSILON, "ape.minEpsilon", ValueType.DOUBLE, "0.02");
 
         feature(Feature.HEURISTIC_INPUT, "ape.heuristicInput", ValueType.BOOLEAN, "true");
-        feature(Feature.TYPED_FUZZ, "ape.fuzzInputTyped", ValueType.BOOLEAN, "true");
         feature(Feature.FOREIGN_ACTIVITY_GUARD, "ape.foreignActivityGuard", ValueType.BOOLEAN, "true");
         feature(Feature.TREE_PACKAGE_GUARD, "ape.treePackageGuard", ValueType.BOOLEAN, "true");
 
         feature(Feature.COVERAGE_BOOST, "ape.coverageBoostWeight", ValueType.INT, "100");
         feature(Feature.COVERAGE_BOOST, "ape.coverageMaxStates", ValueType.INT, "2000");
+
+        feature(Feature.BACK_MENU_CAP, "ape.backMenuPickCap", ValueType.INT, "3");
+        feature(Feature.ACTIVITY_STABLE_RESTART, "ape.activityStableRestartThreshold", ValueType.INT, "200");
 
         feature(Feature.FUZZING, "ape.doFuzzing", ValueType.BOOLEAN, "true");
         feature(Feature.FUZZING, "ape.fuzzingRate", ValueType.DOUBLE, "0.02");
@@ -258,6 +276,7 @@ public final class KeyOwnership {
         resolver(KEY_PRESET);
         resolver(KEY_RUN_ID);
         resolver(KEY_CORPUS_BASIS);
+        resolver(KEY_VARIANT);
 
         // --- Retired: the mechanism is gone, and the message says what replaced it. ------------
         RETIRED.put("ape.apePureMode",
@@ -295,6 +314,15 @@ public final class KeyOwnership {
         RETIRED.put("ape.replayLog",
                 "the replay log is a command-line value (--ape-replay <log>), for the same reason "
                         + "as ape.agentType.");
+        RETIRED.put("ape.mopDataPath",
+                "renamed ape.staticDataPath: the artifact feeds STATIC and MOP "
+                        + "(isolate-guidance-groups).");
+        RETIRED.put("ape.leastVisitedPriorityTiebreak",
+                "replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers "
+                        + "(isolate-guidance-groups).");
+        RETIRED.put("ape.mopTargetPickCap",
+                "subsumed by the MOP coin's first-interaction rule (at most one coin pick per "
+                        + "activity and widget; isolate-guidance-groups).");
     }
 
     private KeyOwnership() {

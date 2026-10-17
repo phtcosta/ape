@@ -159,7 +159,7 @@ public class StatefulAgentRunEndTest {
     public void anLlmArmEndsWithTheCountersItsRunAccumulated() throws Exception {
         // The plan carries a server URL, which is what makes the arm an LLM arm at all; the units
         // are built with it and their counters are what teardown asks for.
-        TestRunSpecs.install("ape.llmUrl", "http://10.0.2.2:30000/v1");
+        TestRunSpecs.install("ape.llm", "true", "ape.llmUrl", "http://10.0.2.2:30000/v1");
         RunContext.current().llmTelemetry().countAttempt();
         RunContext.current().llmTelemetry().screenshotFailed("com.foo/.Secure", "uiautomation");
 

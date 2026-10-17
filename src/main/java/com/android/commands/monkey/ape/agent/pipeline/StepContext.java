@@ -18,6 +18,7 @@ package com.android.commands.monkey.ape.agent.pipeline;
 import java.util.List;
 import java.util.Random;
 
+import com.android.commands.monkey.ape.agent.StepRng;
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.State;
@@ -25,6 +26,7 @@ import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 /**
  * What a stage may know about the step it is deciding.
@@ -99,6 +101,19 @@ public interface StepContext {
         MopContext mop = mopContext();
         return mop == null ? null : mop.data();
     }
+
+    /**
+     * The run's static GUI model — the WTG, the widget metadata, the package and the manifest
+     * components — or {@code null} when the artifact was not loaded, which is when neither
+     * {@code STATIC} nor {@code MOP} is mounted (design D-B14.20).
+     */
+    StaticGuiModel staticModel();
+
+    /**
+     * The run's four per-step streams (design D-B9). A stage draws its coin here and never from
+     * {@link #random()}, so mounting it does not move SATA's draws (INV-DP-13).
+     */
+    StepRng stepRng();
 
     /** The exploration graph. */
     Graph graph();

@@ -34,7 +34,14 @@ import java.util.Set;
  * over <em>effective</em> values (explicit input over jar defaults), with one rule that keeps a
  * bare run valid: a default may not activate a feature whose dependencies are unmet. That is why
  * {@code ape.activityTriggerEnabled} defaulting to {@code true} does not conjure a launcher on a
- * run with no MOP data — the feature is simply absent from the plan.
+ * run without the MOP group — the feature is simply absent from the plan.
+ *
+ * <p><b>Groups.</b> Behaviour is organised in groups (guidance-groups): BASE, which has no feature
+ * of its own, and ADDONS, STATIC, MOP and LLM, each a feature switched by one boolean key. Every
+ * member declares its group as a dependency, so the rule above decides membership: a member whose
+ * group is off is absent without an abort, and stating its activation key explicitly aborts.
+ * STATIC and MOP also require {@link #STATIC_DATA}, the artifact path. A use site asks for its
+ * member, never for the group; only composition roots read a group to choose an implementation.
  *
  * <p><b>Neutral values.</b> A key of an inactive feature is accepted only at its neutral value,
  * and the definition is uniform: for an activation key the neutral is the off value ({@code false}
@@ -62,17 +69,31 @@ public enum Feature {
 
     // --- Roots: no dependencies. ------------------------------------------------------------
 
-    /** MOP guidance. Active exactly when the harness pushed a static-analysis artifact. */
-    MOP("ape.mopDataPath", Rule.PRESENT, null),
-    /** LLM routing infrastructure. Active exactly when a server URL was configured. */
-    LLM("ape.llmUrl", Rule.PRESENT, null),
+    /**
+     * The static-analysis artifact. Active exactly when the harness pushed one; it is the data
+     * {@link #STATIC} and {@link #MOP} read, and it mounts no mechanism of its own.
+     */
+    STATIC_DATA("ape.staticDataPath", Rule.PRESENT, null),
+    /** The fork's own improvements, which need no external data (guidance-groups). */
+    ADDONS("ape.addons", Rule.TRUE, "false"),
+    /** LLM routing infrastructure. Needs a server URL, which it owns without a neutral value. */
+    LLM("ape.llm", Rule.TRUE, "false"),
+    /** Random input fuzzing. BASE: a root, not a group member. */
+    FUZZING("ape.doFuzzing", Rule.TRUE, "false"),
+
+    // --- Groups over the static-analysis artifact: each requires STATIC_DATA. ----------------
+
+    /** The consumers of the static GUI model: WTG frontier, typed input, component triggering. */
+    STATIC("ape.static", Rule.TRUE, "false"),
+    /** The consumers of the specification targets. */
+    MOP("ape.mop", Rule.TRUE, "false"),
+
+    // --- ADDONS members: each requires ADDONS. -----------------------------------------------
 
     /** The fork's OPTIONSMENU action in {@code State.getActions()}. */
     MODEL_MENU("ape.modelMenuEnabled", Rule.TRUE, "false"),
     /** The form-completion scoring pass and the deterministic-fill branch. */
     FORM_COMPLETION("ape.formCompletionEnabled", Rule.TRUE, "false"),
-    /** The priority tiebreak in {@code State.greedyPickLeastVisited()}. */
-    LEAST_VISITED_TIEBREAK("ape.leastVisitedPriorityTiebreak", Rule.TRUE, "false"),
     /** The three GUITreeBuilder perception enhancements. */
     TREE_ENHANCEMENTS("ape.treeEnhancementsEnabled", Rule.TRUE, "false"),
     /** The per-activity budget tracker and its check in action selection. */
@@ -81,42 +102,49 @@ public enum Feature {
     DYNAMIC_EPSILON("ape.dynamicEpsilon", Rule.TRUE, "false"),
     /** Heuristic (label-aware) input generation. */
     HEURISTIC_INPUT("ape.heuristicInput", Rule.TRUE, "false"),
-    /** Type-aware input fuzzing; off falls back to the legacy random-string generator. */
-    TYPED_FUZZ("ape.fuzzInputTyped", Rule.TRUE, "false"),
     /** Deflect screens owned by a foreign package with one raw BACK. */
     FOREIGN_ACTIVITY_GUARD("ape.foreignActivityGuard", Rule.TRUE, "false"),
     /** Refetch instead of modeling when the tree's package disagrees with the top activity. */
     TREE_PACKAGE_GUARD("ape.treePackageGuard", Rule.TRUE, "false"),
     /** The UI-coverage scoring pass. */
     COVERAGE_BOOST("ape.coverageBoostWeight", Rule.POSITIVE, "0"),
-    /** Random input fuzzing. */
-    FUZZING("ape.doFuzzing", Rule.TRUE, "false"),
+    /** The per-(activity, type) cap on discretionary BACK/MENU re-picks. */
+    BACK_MENU_CAP("ape.backMenuPickCap", Rule.POSITIVE, "0"),
+    /** The restart after an activity stays stable for a threshold of steps. */
+    ACTIVITY_STABLE_RESTART("ape.activityStableRestartThreshold", Rule.POSITIVE, "0"),
 
-    // --- MOP family: each requires MOP. ------------------------------------------------------
+    // --- STATIC members: each requires STATIC. -----------------------------------------------
+
+    /** Frontier boost on actions whose WTG transition targets an unvisited activity. */
+    NAV_FRONTIER("ape.frontierBoostWeight", Rule.POSITIVE, "0"),
+    /** Type-aware input fuzzing from the analysed {@code inputType}/{@code hint}. */
+    TYPED_FUZZ("ape.fuzzInputTyped", Rule.TRUE, "false"),
+    /** The probabilistic component-trigger pool over the manifest's components. */
+    COMPONENT_TRIGGER("ape.componentPercentage", Rule.POSITIVE, "0"),
+
+    // --- MOP members: each requires MOP. -----------------------------------------------------
 
     /** WTG-reach boost on actions whose transition targets a MOP-reachable activity. */
     WTG("ape.mopWeightWtg", Rule.NONZERO, "0"),
-    /** OPTIONSMENU-gateway boost. Needs both the MOP substrate and the menu action to boost. */
+    /** OPTIONSMENU-gateway boost. Needs both the MOP targets and the menu action to boost. */
     MENU_GATEWAY("ape.mopWeightOpenMenu", Rule.POSITIVE, "0"),
-    /** Frontier boost on actions whose WTG transition targets an unvisited activity. */
-    FRONTIER("ape.frontierBoostWeight", Rule.POSITIVE, "0"),
     /** MOP-conditioned frontier boost. */
     MOP_FRONTIER("ape.mopFrontierWeight", Rule.POSITIVE, "0"),
-    /** The stagnation-bounded activity launcher. */
-    ACTIVITY_TRIGGER("ape.activityTriggerEnabled", Rule.TRUE, "false"),
-    /** The probabilistic component-trigger pool. */
-    COMPONENT_TRIGGER("ape.componentPercentage", Rule.POSITIVE, "0"),
+    /** The cadence-bounded MOP activity launcher. */
+    MOP_LAUNCHER("ape.activityTriggerEnabled", Rule.TRUE, "false"),
     /** Widen the MOP activity set with the component and reachability sources. */
     MOP_ACTIVITY_SOURCE("ape.mopActivitySourceComponents", Rule.TRUE, "false"),
+    /** The MOP coin: a first interaction with a targeted action, at probability {@code p_M}. */
+    MOP_COIN("ape.mopCoinPercentage", Rule.POSITIVE, "0"),
 
-    // --- LLM family: each requires LLM. ------------------------------------------------------
+    // --- LLM members: each requires LLM. -----------------------------------------------------
 
     /** Route to the LLM on entering a new state. */
     LLM_NEW_STATE("ape.llmOnNewState", Rule.TRUE, "false"),
     /** Route to the LLM on stagnation. */
     LLM_STAGNATION("ape.llmOnStagnation", Rule.TRUE, "false"),
-    /** Route to the LLM at random, at a configured rate. */
-    LLM_RANDOM("ape.llmPercentage", Rule.POSITIVE, "0");
+    /** Route to the LLM on a coin, at probability {@code p_L}. */
+    LLM_COIN("ape.llmPercentage", Rule.POSITIVE, "0");
 
     /** How an activation key's value turns its feature on. */
     public enum Rule {
@@ -147,15 +175,16 @@ public enum Feature {
     // may not reference other constants of its own type, and a sub-parameter table is easier to
     // audit as a block than as a constructor argument list.
     static {
+        // The package check is on the static model, so it belongs to the data root (D-B14.3).
+        STATIC_DATA.own("ape.mopStrictPackageMatch", "false");
+
         MOP.own("ape.mopWeightDirect", "0");
         MOP.own("ape.mopWeightTransitive", "0");
-        MOP.own("ape.mopTargetPickCap", "3");
-        MOP.own("ape.mopStrictPackageMatch", "false");
         // The scoring mode and the distance mode's keys (llm-coordinate-single-base, D18–D20):
         // zero for a weight, as for ape.mopWeightDirect; the default for the mode, the retirement
-        // count and the launcher bound, as for ape.mopTargetPickCap. With MOP in the plan, the
-        // keys the selected mode does not read are inert for a second reason (INV-RUN-09), which
-        // RunSpec applies; these neutrals concern only a plan without MOP (INV-RUN-05).
+        // count and the launcher bound. With MOP in the plan, the keys the selected mode does not
+        // read are inert for a second reason (INV-RUN-09), which RunSpec applies; these neutrals
+        // concern only a plan without MOP (INV-RUN-05).
         MOP.own(MopScoring.KEY, "flag");
         MOP.own("ape.mopWeightD1", "0");
         MOP.own("ape.mopWeightD2", "0");
@@ -163,8 +192,8 @@ public enum Feature {
         MOP.own("ape.mopRetireAfter", "3");
         MOP.own("ape.mopLauncherDmax", "6");
 
-        ACTIVITY_TRIGGER.own("ape.activityTriggerStagnationStep", "50");
-        ACTIVITY_TRIGGER.own("ape.activityTriggerMaxPerRun", "0");
+        MOP_LAUNCHER.own("ape.activityTriggerStagnationStep", "50");
+        MOP_LAUNCHER.own("ape.activityTriggerMaxPerRun", "0");
 
         ACTIVITY_BUDGET.own("ape.activityBaseBudget", "50");
         ACTIVITY_BUDGET.own("ape.activityBudgetPerWidget", "5");
@@ -177,6 +206,9 @@ public enum Feature {
         FUZZING.own("ape.fuzzingRate", "0.02");
         FUZZING.own("ape.fuzzingActivityVisitThreshold", "10");
 
+        // The server URL has no neutral value: stating it without the group is a plan error, and
+        // the group without it is one too (RunSpec, design D-B1 and D-B14.4).
+        LLM.own("ape.llmUrl", null);
         LLM.own("ape.llmModel", "default");
         LLM.own("ape.llmTemperature", "0.3");
         LLM.own("ape.llmTopP", "0.6");
@@ -186,19 +218,34 @@ public enum Feature {
         LLM.own("ape.llmMaxTokens", "1024");
         LLM.own("ape.llmSnapTolerancePx", "50");
         LLM.own("ape.llmBoundaryTopPct", "0.035");
+        // The gate and breaker parameters (D-B8): the neutral value is the default, at which
+        // stating the key is indistinguishable from omitting it.
+        LLM.own("ape.llmGateMinActions", "3");
+        LLM.own("ape.llmBreakerFailures", "3");
+        LLM.own("ape.llmBreakerOpenMs", "60000");
 
         // The -1 sentinel means "no override"; it is the value every baseline arm pushes on a run
         // with no LLM, and the reason the inert rule exists at all.
-        LLM_RANDOM.own("ape.llmPercentageNoSubstrate", "-1");
+        LLM_COIN.own("ape.llmPercentageNoSubstrate", "-1");
 
-        for (Feature f : new Feature[] {WTG, MENU_GATEWAY, FRONTIER, MOP_FRONTIER,
-                ACTIVITY_TRIGGER, COMPONENT_TRIGGER, MOP_ACTIVITY_SOURCE}) {
+        STATIC.dependsOn(STATIC_DATA);
+        MOP.dependsOn(STATIC_DATA);
+        for (Feature f : new Feature[] {MODEL_MENU, FORM_COMPLETION, TREE_ENHANCEMENTS,
+                ACTIVITY_BUDGET, DYNAMIC_EPSILON, HEURISTIC_INPUT, FOREIGN_ACTIVITY_GUARD,
+                TREE_PACKAGE_GUARD, COVERAGE_BOOST, BACK_MENU_CAP, ACTIVITY_STABLE_RESTART}) {
+            f.dependsOn(ADDONS);
+        }
+        for (Feature f : new Feature[] {NAV_FRONTIER, TYPED_FUZZ, COMPONENT_TRIGGER}) {
+            f.dependsOn(STATIC);
+        }
+        for (Feature f : new Feature[] {WTG, MENU_GATEWAY, MOP_FRONTIER, MOP_LAUNCHER,
+                MOP_ACTIVITY_SOURCE, MOP_COIN}) {
             f.dependsOn(MOP);
         }
         // The gateway boost steers the menu action, so it needs the action to exist as well as
-        // the substrate that decides the menu is worth opening.
+        // the targets that decide the menu is worth opening.
         MENU_GATEWAY.dependsOn(MODEL_MENU);
-        for (Feature f : new Feature[] {LLM_NEW_STATE, LLM_STAGNATION, LLM_RANDOM}) {
+        for (Feature f : new Feature[] {LLM_NEW_STATE, LLM_STAGNATION, LLM_COIN}) {
             f.dependsOn(LLM);
         }
     }
@@ -225,6 +272,20 @@ public enum Feature {
         return Collections.unmodifiableSet(new LinkedHashSet<>(neutralValues.keySet()));
     }
 
+    /**
+     * The owned keys that have no neutral value and are not the activation key: keys the feature
+     * cannot run without once it is in the plan ({@code ape.llmUrl} for {@link #LLM}).
+     */
+    public Set<String> requiredKeys() {
+        Set<String> required = new LinkedHashSet<>();
+        for (Map.Entry<String, String> entry : neutralValues.entrySet()) {
+            if (entry.getValue() == null && !entry.getKey().equals(activationKey)) {
+                required.add(entry.getKey());
+            }
+        }
+        return Collections.unmodifiableSet(required);
+    }
+
     /** The features that must also be active for this one to be expressible. */
     public Set<Feature> dependencies() {
         return Collections.unmodifiableSet(dependencies);
@@ -232,8 +293,8 @@ public enum Feature {
 
     /**
      * The value at which stating {@code key} for an inactive feature is accepted as inert, or null
-     * when the key has no neutral value (a path or a URL: stating it is what activates the
-     * feature, so it can never be present while the feature is off).
+     * when the key has no neutral value: the artifact path, whose presence activates
+     * {@link #STATIC_DATA}, and the LLM server URL, which {@link #LLM} requires once mounted.
      */
     public String neutralValue(String key) {
         return neutralValues.get(key);

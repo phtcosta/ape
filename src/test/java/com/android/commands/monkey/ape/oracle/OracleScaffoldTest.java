@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
@@ -69,7 +71,7 @@ public class OracleScaffoldTest {
         assertNotNull(state.getBackAction());
         assertNotNull(state.getMenuAction());
         // MODEL_MENU joins the selectable set only under the fork's gate (State.java:58-73).
-        int expected = Config.modelMenuEnabled ? 5 : 4;
+        int expected = RunContext.current().spec().has(Feature.MODEL_MENU) ? 5 : 4;
         assertEquals(expected, state.getActions().size());
         assertEquals("com.example.MainActivity", state.getActivity());
     }

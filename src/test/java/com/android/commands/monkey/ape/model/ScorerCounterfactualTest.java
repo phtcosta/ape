@@ -18,7 +18,10 @@ import static org.junit.Assert.*;
  * bias of exactly the class the calibration autopsy catalogued: every arm would still run, every
  * line would still parse, and the comparison would quietly stop being a comparison.
  */
-public class MopCounterfactualTest {
+public class ScorerCounterfactualTest {
+
+    private static final ScorerCounterfactual.Scorer[] MOP = {
+            ScorerCounterfactual.Scorer.MOP, ScorerCounterfactual.Scorer.MOP_FRONTIER};
 
     private static ModelAction action(int priority, int mopBoost, int mopFrontierBoost, int visits) {
         ModelAction a = new ModelAction(null, ActionType.MODEL_CLICK);
@@ -44,7 +47,7 @@ public class MopCounterfactualTest {
                     RandomHelper.randomPickWithPriorityRecorded(candidates);
             picked.add(draw.getValue());
             if (withCounterfactual) {
-                MopCounterfactual.replayRoulette(candidates, draw.getIndex(), draw.getTotal());
+                ScorerCounterfactual.replayRoulette(candidates, draw.getIndex(), draw.getTotal(), MOP);
             }
         }
         return picked;
@@ -83,7 +86,7 @@ public class MopCounterfactualTest {
         for (int draw = 0; draw < 600; draw++) {
             ModelAction factual = walk(candidates, draw);
             assertSame("draw " + draw, factual,
-                    MopCounterfactual.replayRoulette(candidates, draw, 600));
+                    ScorerCounterfactual.replayRoulette(candidates, draw, 600, MOP));
         }
     }
 
@@ -110,7 +113,7 @@ public class MopCounterfactualTest {
 
         assertSame(boosted, walk(candidates, 400));
         assertSame("the MOP boost is what put the pick on the boosted action",
-                other, MopCounterfactual.replayRoulette(candidates, 400, 1000));
+                other, ScorerCounterfactual.replayRoulette(candidates, 400, 1000, MOP));
     }
 
     @Test
@@ -121,15 +124,15 @@ public class MopCounterfactualTest {
 
         // A draw at 50 is inside the first action both with and without the MOP weight.
         assertSame(plain, walk(candidates, 50));
-        assertSame(plain, MopCounterfactual.replayRoulette(candidates, 50, 700));
+        assertSame(plain, ScorerCounterfactual.replayRoulette(candidates, 50, 700, MOP));
     }
 
     @Test
     public void theMopFrontierBoostIsZeroedToo() {
         ModelAction plain = action(100, 0, 0, 0);
         ModelAction frontier = action(300, 0, 200, 0);
-        assertEquals(100, MopCounterfactual.priorityWithoutMopWeights(frontier));
-        assertEquals(100, MopCounterfactual.priorityWithoutMopWeights(plain));
+        assertEquals(100, ScorerCounterfactual.priorityWithout(frontier, MOP));
+        assertEquals(100, ScorerCounterfactual.priorityWithout(plain, MOP));
     }
 
     @Test
@@ -137,7 +140,7 @@ public class MopCounterfactualTest {
         // Every candidate's priority is pure MOP boost: there is no MOP-free world in which any of
         // them is selectable, so the recomputation reports nothing rather than inventing a pick.
         List<ModelAction> candidates = Arrays.asList(action(500, 500, 0, 0), action(300, 0, 300, 0));
-        assertNull(MopCounterfactual.replayRoulette(candidates, 100, 800));
+        assertNull(ScorerCounterfactual.replayRoulette(candidates, 100, 800, MOP));
     }
 
     // -------------------------------------------------------------------------
@@ -151,37 +154,70 @@ public class MopCounterfactualTest {
         List<ModelAction> candidates = Arrays.asList(mopTarget, neverVisited);
 
         assertSame("without the boost the fall-through takes the least-visited action",
-                neverVisited, MopCounterfactual.leastVisitedWithoutMopWeights(candidates, true));
+                neverVisited, ScorerCounterfactual.leastVisitedWithout(candidates, true, MOP));
     }
 
     @Test
     public void leastVisitedBreaksTiesOnTheMopFreePriority() {
         ModelAction boosted = action(600, 500, 0, 1);     // MOP-free priority 100
         ModelAction stronger = action(400, 0, 0, 1);      // MOP-free priority 400
-        assertSame(stronger, MopCounterfactual.leastVisitedWithoutMopWeights(
-                Arrays.asList(boosted, stronger), true));
+        assertSame(stronger, ScorerCounterfactual.leastVisitedWithout(
+                Arrays.asList(boosted, stronger), true, MOP));
     }
 
     @Test
     public void theZeroStepShortCircuitFallsThroughToTheStrongestMopFreeCandidate() {
         ModelAction mopTarget = action(700, 500, 0, 0);   // MOP-free priority 200
         ModelAction other = action(400, 0, 0, 0);
-        assertSame(other, MopCounterfactual.highestPriorityWithoutMopWeights(
-                Arrays.asList(mopTarget, other)));
+        assertSame(other, ScorerCounterfactual.highestPriorityWithout(
+                Arrays.asList(mopTarget, other), MOP));
     }
 
     @Test
     public void aShortCircuitOnAnUnboostedCandidateSetChangesNothing() {
         ModelAction first = action(400, 0, 0, 0);
         ModelAction second = action(100, 0, 0, 0);
-        assertSame(first, MopCounterfactual.highestPriorityWithoutMopWeights(
-                Arrays.asList(first, second)));
+        assertSame(first, ScorerCounterfactual.highestPriorityWithout(
+                Arrays.asList(first, second), MOP));
     }
 
     @Test
     public void emptyCandidateSetsAreInert() {
-        assertNull(MopCounterfactual.leastVisitedWithoutMopWeights(new ArrayList<ModelAction>(), true));
-        assertNull(MopCounterfactual.highestPriorityWithoutMopWeights(new ArrayList<ModelAction>()));
-        assertNull(MopCounterfactual.replayRoulette(new ArrayList<ModelAction>(), 0, 100));
+        assertNull(ScorerCounterfactual.leastVisitedWithout(new ArrayList<ModelAction>(), true, MOP));
+        assertNull(ScorerCounterfactual.highestPriorityWithout(new ArrayList<ModelAction>(), MOP));
+        assertNull(ScorerCounterfactual.replayRoulette(new ArrayList<ModelAction>(), 0, 100, MOP));
+    }
+
+    /** design D-B14.18: one named scorer is zeroed and the others keep their contribution. */
+    @Test
+    public void zeroingOneScorerLeavesTheOthers() {
+        ModelAction a = new ModelAction(null, ActionType.MODEL_CLICK);
+        a.setPriority(700);
+        a.setNavFrontierBoost(200);
+        a.setCoverageBoost(100);
+        a.setMenuBoost(250);
+        assertEquals(500, ScorerCounterfactual.priorityWithout(a, ScorerCounterfactual.Scorer.NAV_FRONTIER));
+        assertEquals(600, ScorerCounterfactual.priorityWithout(a, ScorerCounterfactual.Scorer.COVERAGE));
+        assertEquals(450, ScorerCounterfactual.priorityWithout(a, ScorerCounterfactual.Scorer.MENU));
+        assertEquals(700, ScorerCounterfactual.priorityWithout(a));
+    }
+
+    @Test
+    public void eachScorerReadsItsOwnFieldUnderItsWireName() {
+        ModelAction a = new ModelAction(null, ActionType.MODEL_CLICK);
+        a.setMopBoost(1);
+        a.setMopFrontierBoost(2);
+        a.setWtgBoost(3);
+        a.setNavFrontierBoost(4);
+        a.setCoverageBoost(5);
+        a.setMenuBoost(6);
+        a.setFormBoost(7);
+        String[] wires = {"mop", "mopf", "wtg", "navf", "cov", "menu", "form"};
+        ScorerCounterfactual.Scorer[] scorers = ScorerCounterfactual.Scorer.values();
+        assertEquals(wires.length, scorers.length);
+        for (int i = 0; i < scorers.length; i++) {
+            assertEquals(wires[i], scorers[i].wire());
+            assertEquals(i + 1, scorers[i].of(a));
+        }
     }
 }

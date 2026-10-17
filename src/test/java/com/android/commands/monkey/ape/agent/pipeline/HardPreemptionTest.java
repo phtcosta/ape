@@ -43,8 +43,8 @@ public class HardPreemptionTest {
      */
     private static RunSpec fullPlan(int cadence) {
         return PipelineFixture.preset(Presets.LLM, PipelineFixture.join(new String[] {
-                "ape.llmUrl", PipelineFixture.LLM_URL,
-                "ape.mopDataPath", TestRunSpecs.MOP_PATH,
+                "ape.llm", "true", "ape.llmUrl", PipelineFixture.LLM_URL,
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true", "ape.static", "true",
                 "ape.activityTriggerEnabled", "true",
                 "ape.activityTriggerStagnationStep", Integer.toString(cadence),
                 "ape.componentPercentage", "1.0"}, PipelineFixture.LIVE_HOOK_KEYS));

@@ -55,10 +55,12 @@ public class LlmClientTest {
 
     /** A plan carrying the LLM feature, from which the client takes every value it sends. */
     private static RunSpec.LlmParams llmParams(String... keyValues) {
-        String[] withUrl = new String[keyValues.length + 2];
-        withUrl[0] = "ape.llmUrl";
-        withUrl[1] = URL;
-        System.arraycopy(keyValues, 0, withUrl, 2, keyValues.length);
+        String[] withUrl = new String[keyValues.length + 4];
+        withUrl[0] = "ape.llm";
+        withUrl[1] = "true";
+        withUrl[2] = "ape.llmUrl";
+        withUrl[3] = URL;
+        System.arraycopy(keyValues, 0, withUrl, 4, keyValues.length);
         return TestRunSpecs.spec(withUrl).llm();
     }
 

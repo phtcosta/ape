@@ -23,10 +23,12 @@ import static org.junit.Assert.*;
 public class CoordinateMapperBoundaryTest {
 
     private static CoordinateMapper mapper(String... keyValues) {
-        String[] keys = new String[keyValues.length + 2];
-        keys[0] = "ape.llmUrl";
-        keys[1] = "http://localhost:9999/v1";
-        System.arraycopy(keyValues, 0, keys, 2, keyValues.length);
+        String[] keys = new String[keyValues.length + 4];
+        keys[0] = "ape.llm";
+        keys[1] = "true";
+        keys[2] = "ape.llmUrl";
+        keys[3] = "http://localhost:9999/v1";
+        System.arraycopy(keyValues, 0, keys, 4, keyValues.length);
         return new CoordinateMapper(TestRunSpecs.spec(keys).llm());
     }
 

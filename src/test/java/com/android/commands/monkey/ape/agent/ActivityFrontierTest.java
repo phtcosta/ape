@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.pipeline.MopLauncherStage;
 import com.android.commands.monkey.ape.model.ActionType;
@@ -60,40 +61,40 @@ public class ActivityFrontierTest {
 
     // ---- Lever A: frontierBoost (INV-WTG-06/07) ------------------------------
 
-    private static MopData.WtgTransition wtg(String widget, String target) {
-        return new MopData.WtgTransition(widget,
+    private static StaticGuiModel.WtgTransition wtg(String widget, String target) {
+        return new StaticGuiModel.WtgTransition(widget,
                 target);
     }
 
     @Test
     public void testFrontierBoostForUnvisitedTarget() {
-        List<MopData.WtgTransition> ts = Arrays.asList(wtg("btn_detail", "com.x.DetailActivity"));
+        List<StaticGuiModel.WtgTransition> ts = Arrays.asList(wtg("btn_detail", "com.x.DetailActivity"));
         Set<String> visited = new HashSet<>(); // DetailActivity unvisited
         assertEquals(200, StatefulAgent.frontierBoost("btn_detail", ts, visited, 200));
     }
 
     @Test
     public void testNoFrontierBoostForVisitedTarget() {
-        List<MopData.WtgTransition> ts = Arrays.asList(wtg("btn_detail", "com.x.DetailActivity"));
+        List<StaticGuiModel.WtgTransition> ts = Arrays.asList(wtg("btn_detail", "com.x.DetailActivity"));
         Set<String> visited = new HashSet<>(Arrays.asList("com.x.DetailActivity"));
         assertEquals(0, StatefulAgent.frontierBoost("btn_detail", ts, visited, 200));
     }
 
     @Test
     public void testFrontierBoostWeightZeroIsOff() {
-        List<MopData.WtgTransition> ts = Arrays.asList(wtg("btn_detail", "com.x.DetailActivity"));
+        List<StaticGuiModel.WtgTransition> ts = Arrays.asList(wtg("btn_detail", "com.x.DetailActivity"));
         assertEquals(0, StatefulAgent.frontierBoost("btn_detail", ts, new HashSet<String>(), 0));
     }
 
     @Test
     public void testFrontierBoostNoMatchingWidget() {
-        List<MopData.WtgTransition> ts = Arrays.asList(wtg("btn_other", "com.x.DetailActivity"));
+        List<StaticGuiModel.WtgTransition> ts = Arrays.asList(wtg("btn_other", "com.x.DetailActivity"));
         assertEquals(0, StatefulAgent.frontierBoost("btn_detail", ts, new HashSet<String>(), 200));
     }
 
     @Test
     public void testFrontierBoostEmptyOrNullShortId() {
-        List<MopData.WtgTransition> ts = Arrays.asList(wtg("btn_detail", "com.x.DetailActivity"));
+        List<StaticGuiModel.WtgTransition> ts = Arrays.asList(wtg("btn_detail", "com.x.DetailActivity"));
         assertEquals(0, StatefulAgent.frontierBoost("", ts, new HashSet<String>(), 200));
         assertEquals(0, StatefulAgent.frontierBoost(null, ts, new HashSet<String>(), 200));
     }
@@ -149,7 +150,7 @@ public class ActivityFrontierTest {
         // fire (INV-DP-03). Asserted where they now live rather than dropped.
         assertFalse("disabled flag → no stage",
                 DecisionPipeline.assembledCandidates(TestRunSpecs.spec(
-                        "ape.mopDataPath", TestRunSpecs.MOP_PATH,
+                        "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true",
                         "ape.activityTriggerEnabled", "false"))
                         .contains(DecisionPipeline.Candidate.MOP_LAUNCHER));
         assertFalse("no MopData → no stage",

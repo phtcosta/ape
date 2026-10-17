@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -53,9 +54,9 @@ public final class FrontierPass implements ScoringPass {
         String activity = state.getActivity();
         // Precompute which transition targets are already visited so the frontier decision is a pure
         // set lookup (INV-WTG-06). isEnabled already guarantees the weight is positive.
-        List<MopData.WtgTransition> transitions = mopData.getWtgTransitions(activity);
+        List<StaticGuiModel.WtgTransition> transitions = mopData.getWtgTransitions(activity);
         Set<String> visitedTargets = new HashSet<>();
-        for (MopData.WtgTransition t : transitions) {
+        for (StaticGuiModel.WtgTransition t : transitions) {
             if (ctx.getGraph().getActivityNode(t.targetActivity) != null) {
                 visitedTargets.add(t.targetActivity);
             }

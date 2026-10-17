@@ -36,7 +36,33 @@ public class ModelAction extends Action {
      * budget-exhausted early-return set their own source explicitly.
      */
     public enum DecisionSource {
-        SATA, MOP, MopFrontier, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form
+        SATA, MOP, MopFrontier, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form,
+        RESTART, LAUNCHER;
+
+        /**
+         * The owner this source names on the wire under isolate-guidance-groups' {@code dec.src}
+         * (design D-B7): {@code budget}, {@code restart}, {@code llm}, {@code launcher},
+         * {@code mop} or {@code sata}; null for the boost-attributed sources, which name no owner
+         * and leave the enum when the wave-2 integration deletes them.
+         */
+        public String owner() {
+            switch (this) {
+            case SATA:
+                return "sata";
+            case MOP:
+                return "mop";
+            case LLM:
+                return "llm";
+            case Budget:
+                return "budget";
+            case RESTART:
+                return "restart";
+            case LAUNCHER:
+                return "launcher";
+            default:
+                return null;
+            }
+        }
     }
 
     /**
@@ -58,7 +84,13 @@ public class ModelAction extends Action {
         LAUNCHER("launcher"),
         LLM("llm"),
         BUFFER("buffer"),
-        SATA_OTHER("sata_other");
+        SATA_OTHER("sata_other"),
+        /** A step the MOP coin took (design D-B10). */
+        MOP_COIN("mop_coin"),
+        /** A step the Budget guard took (design D-B14.17). */
+        BUDGET("budget"),
+        /** A step the RESTART guard took (design D-B14.17). */
+        RESTART("restart");
 
         private final String label;
 
@@ -116,6 +148,11 @@ public class ModelAction extends Action {
     // decision_source=WTG conflated a MOP mechanism with generic WTG navigation and the corpus's
     // stacked 400/600 values could not be decomposed by mechanism.
     private int mopFrontierBoost;
+    /**
+     * The navigation-frontier term ({@code NAV_FRONTIER}, STATIC), in its own field so that the
+     * STATIC frontier and the MOP {@code WtgPass} no longer share {@link #wtgBoost}.
+     */
+    private int navFrontierBoost;
     private int coverageBoost;
     private int menuBoost;
     private int formBoost;
@@ -334,6 +371,7 @@ public class ModelAction extends Action {
         this.wtgBoost = 0;
         this.wtgSource = null;
         this.mopFrontierBoost = 0;
+        this.navFrontierBoost = 0;
         this.coverageBoost = 0;
         this.menuBoost = 0;
         this.formBoost = 0;
@@ -375,6 +413,10 @@ public class ModelAction extends Action {
     public int getMopFrontierBoost() { return this.mopFrontierBoost; }
 
     public void setMopFrontierBoost(int mopFrontierBoost) { this.mopFrontierBoost = mopFrontierBoost; }
+
+    public int getNavFrontierBoost() { return this.navFrontierBoost; }
+
+    public void setNavFrontierBoost(int navFrontierBoost) { this.navFrontierBoost = navFrontierBoost; }
 
     public int getCoverageBoost() { return this.coverageBoost; }
 

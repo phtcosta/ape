@@ -76,7 +76,7 @@ public class RunSpecResolveTest {
 
     @Test
     public void aSubParameterOfAnActiveFeatureIsNotInert() {
-        Map<String, String> arm = entries("ape.mopDataPath", MOP_PATH, "ape.mopWeightDirect", "0");
+        Map<String, String> arm = entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true", "ape.mopWeightDirect", "0");
         RunSpec spec = resolve(arm);
         assertTrue(spec.has(Feature.MOP));
         assertTrue(spec.inertKeys().isEmpty());
@@ -90,7 +90,7 @@ public class RunSpecResolveTest {
 
     @Test
     public void theSixMopScoringKeysResolveToTheirDefaults() {
-        RunSpec spec = resolve(entries("ape.mopDataPath", MOP_PATH));
+        RunSpec spec = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true"));
         Map<String, String> mop = spec.mop().values();
         assertEquals("flag", mop.get("ape.mopScoring"));
         assertEquals("500", mop.get("ape.mopWeightD1"));
@@ -103,7 +103,7 @@ public class RunSpecResolveTest {
 
     @Test
     public void mopParamsReadsTheSixKeysThroughTypedAccessors() {
-        RunSpec.MopParams defaults = resolve(entries("ape.mopDataPath", MOP_PATH)).mop();
+        RunSpec.MopParams defaults = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true")).mop();
         assertEquals(MopScoring.FLAG, defaults.scoring());
         assertEquals(500, defaults.weightD1());
         assertEquals(400, defaults.weightD2());
@@ -112,7 +112,7 @@ public class RunSpecResolveTest {
         assertEquals(6, defaults.launcherDmax());
 
         RunSpec.MopParams stated = resolve(entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopScoring", "distance",
                 "ape.mopWeightD1", "600",
                 "ape.mopWeightD2", "450",
@@ -147,8 +147,8 @@ public class RunSpecResolveTest {
     @Test
     public void theDistanceArmFromTheMopPresetMarksTheFlagWeightsInert() {
         RunSpec spec = resolve(entries(
-                "ape.preset", Presets.MOP,
-                "ape.mopDataPath", MOP_PATH,
+                "ape.preset", Presets.MOP_ARM,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopScoring", "distance"));
         assertTrue(spec.has(Feature.MOP));
         assertEquals("distance", spec.mop().values().get("ape.mopScoring"));
@@ -163,7 +163,7 @@ public class RunSpecResolveTest {
 
     @Test
     public void theFlagArmFromTheMopPresetHasNoModeInertKey() {
-        RunSpec spec = resolve(entries("ape.preset", Presets.MOP, "ape.mopDataPath", MOP_PATH));
+        RunSpec spec = resolve(entries("ape.preset", Presets.MOP_ARM, "ape.staticDataPath", MOP_PATH, "ape.mop", "true"));
         assertFalse(spec.inertKeys().contains("ape.mopWeightDirect"));
         assertFalse(spec.inertKeys().contains("ape.mopWeightTransitive"));
     }
@@ -171,7 +171,7 @@ public class RunSpecResolveTest {
     @Test
     public void distanceKeysStatedUnderFlagAreInertNotRejected() {
         RunSpec spec = resolve(entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopScoring", "flag",
                 "ape.mopWeightD2", "450",
                 "ape.mopRetireAfter", "5"));
@@ -182,10 +182,9 @@ public class RunSpecResolveTest {
     @Test
     public void everyDistanceKeyStatedUnderFlagIsListedAndNoOtherMopKey() {
         RunSpec spec = resolve(entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopWeightDirect", "500",
                 "ape.mopWeightTransitive", "300",
-                "ape.mopTargetPickCap", "3",
                 "ape.mopWeightD1", "500",
                 "ape.mopWeightD2", "400",
                 "ape.mopWeightD3", "300",
@@ -200,7 +199,7 @@ public class RunSpecResolveTest {
         // Unlike a key of an absent feature, a key the mode does not read is accepted at any value
         // of its type (INV-RUN-09): the plan may state both modes' weights.
         Map<String, String> arm = entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopScoring", "distance",
                 "ape.mopWeightDirect", "777");
         RunSpec spec = resolve(arm);
@@ -216,7 +215,7 @@ public class RunSpecResolveTest {
     @Test
     public void theModeSplitsTheFiveDistanceKeysFromTheTwoFlagWeights() {
         Map<String, String> all = entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopWeightDirect", "500",
                 "ape.mopWeightTransitive", "300",
                 "ape.mopWeightD1", "500",
@@ -251,11 +250,11 @@ public class RunSpecResolveTest {
     @Test
     public void anExplicitKeyOverridesThePreset() {
         Map<String, String> input = entries(
-                "ape.preset", Presets.MOP,
-                "ape.mopDataPath", MOP_PATH,
+                "ape.preset", Presets.MOP_ARM,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopWeightDirect", "0");
         RunSpec spec = resolve(input);
-        assertEquals(Presets.MOP, spec.presetName());
+        assertEquals(Presets.MOP_ARM, spec.presetName());
         assertEquals("0", spec.effectiveValues().get("ape.mopWeightDirect"));
         assertEquals("the preset's other weights survive the override",
                 "300", spec.effectiveValues().get("ape.mopWeightTransitive"));
@@ -273,7 +272,7 @@ public class RunSpecResolveTest {
     @Test
     public void theLoadTimeClampsArePreservedAsClamps() {
         Map<String, String> arm = entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.activityTriggerEnabled", "true",
                 "ape.activityTriggerStagnationStep", "0",
                 "ape.activityTriggerMaxPerRun", "-5");
@@ -281,7 +280,7 @@ public class RunSpecResolveTest {
         assertEquals("50", spec.effectiveValues().get("ape.activityTriggerStagnationStep"));
         assertEquals("0", spec.effectiveValues().get("ape.activityTriggerMaxPerRun"));
 
-        RunSpec llm = resolve(entries("ape.llmUrl", LLM_URL, "ape.llmPercentage", "1.5"));
+        RunSpec llm = resolve(entries("ape.llm", "true", "ape.llmUrl", LLM_URL, "ape.llmPercentage", "1.5"));
         assertEquals(1.0d,
                 Double.parseDouble(llm.effectiveValues().get("ape.llmPercentage")), 1e-9);
     }
@@ -293,11 +292,11 @@ public class RunSpecResolveTest {
     @Test
     public void keyOrderDoesNotChangeTheDigest() {
         Map<String, String> forward = entries(
-                "ape.mopDataPath", MOP_PATH, "ape.mopWeightDirect", "400",
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true", "ape.mopWeightDirect", "400",
                 "ape.mopWeightTransitive", "200");
         Map<String, String> reversed = entries(
                 "ape.mopWeightTransitive", "200", "ape.mopWeightDirect", "400",
-                "ape.mopDataPath", MOP_PATH);
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true");
         assertEquals(resolve(forward).digest(), resolve(reversed).digest());
     }
 
@@ -307,9 +306,9 @@ public class RunSpecResolveTest {
         // /data/local/tmp or /sdcard is a fact about the deployment, not about the plan — and it is
         // propertiesDigest, not digest, that records it.
         Map<String, String> single = entries(
-                "ape.mopDataPath", MOP_PATH, "ape.mopWeightDirect", "400");
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true", "ape.mopWeightDirect", "400");
         Map<String, String> merged = new LinkedHashMap<>();
-        merged.putAll(entries("ape.mopDataPath", MOP_PATH, "ape.mopWeightDirect", "999"));
+        merged.putAll(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true", "ape.mopWeightDirect", "999"));
         merged.putAll(entries("ape.mopWeightDirect", "400"));
         assertEquals(resolve(single).digest(), resolve(merged).digest());
     }
@@ -318,10 +317,11 @@ public class RunSpecResolveTest {
     public void aPresetAndTheSamePlanWrittenOutHaveTheSameDigest() {
         // INV-RUN-04's hardest clause: the digest identifies the arm as interpreted, so how the
         // arm was expressed must be invisible to it. This is why the preset name is not hashed.
-        Map<String, String> viaPreset = entries("ape.preset", Presets.MOP,
-                "ape.mopDataPath", MOP_PATH);
-        Map<String, String> written = new LinkedHashMap<>(Presets.resolve(Presets.MOP));
-        written.put("ape.mopDataPath", MOP_PATH);
+        Map<String, String> viaPreset = entries("ape.preset", Presets.MOP_ARM,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true");
+        Map<String, String> written = new LinkedHashMap<>(Presets.resolve(Presets.MOP_ARM));
+        written.put("ape.staticDataPath", MOP_PATH);
+        written.put("ape.mop", "true");
 
         RunSpec fromPreset = resolve(viaPreset);
         RunSpec fromKeys = resolve(written);
@@ -344,12 +344,12 @@ public class RunSpecResolveTest {
 
     @Test
     public void theSeedAndRunIdAreExcludedFromTheDigest() {
-        Map<String, String> arm = entries("ape.mopDataPath", MOP_PATH);
+        Map<String, String> arm = entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true");
         RunSpec first = RunSpec.resolve(arm, RunSpec.CliValues.of("sata", 1L, null));
         RunSpec second = RunSpec.resolve(arm, RunSpec.CliValues.of("sata", 999L, null));
         assertEquals(first.digest(), second.digest());
 
-        Map<String, String> withRunId = entries("ape.mopDataPath", MOP_PATH,
+        Map<String, String> withRunId = entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.runId", "20260803-000000-abcdef01");
         assertEquals(first.digest(), resolve(withRunId).digest());
         assertEquals("20260803-000000-abcdef01", resolve(withRunId).runId());
@@ -357,8 +357,8 @@ public class RunSpecResolveTest {
 
     @Test
     public void theCorpusBasisIsEchoedButNotHashed() {
-        Map<String, String> arm = entries("ape.mopDataPath", MOP_PATH);
-        Map<String, String> withBasis = entries("ape.mopDataPath", MOP_PATH,
+        Map<String, String> arm = entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true");
+        Map<String, String> withBasis = entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.corpusBasis", "subset40:2b9d4c1f");
         assertEquals(resolve(arm).digest(), resolve(withBasis).digest());
         assertEquals("subset40:2b9d4c1f", resolve(withBasis).corpusBasis());
@@ -367,8 +367,8 @@ public class RunSpecResolveTest {
 
     @Test
     public void aRealDifferenceInThePlanDoesChangeTheDigest() {
-        assertNotEquals(resolve(entries("ape.mopDataPath", MOP_PATH)).digest(),
-                resolve(entries("ape.mopDataPath", MOP_PATH, "ape.mopWeightDirect", "400"))
+        assertNotEquals(resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true")).digest(),
+                resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true", "ape.mopWeightDirect", "400"))
                         .digest());
         assertNotEquals("the agent type is part of the plan",
                 RunSpec.resolve(entries(), RunSpec.CliValues.of("sata", 42L, null)).digest(),
@@ -407,7 +407,7 @@ public class RunSpecResolveTest {
 
     @Test
     public void theResolvedPlanCannotBeMutatedThroughItsAccessors() {
-        RunSpec spec = resolve(entries("ape.mopDataPath", MOP_PATH));
+        RunSpec spec = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true"));
         assertThrowsUnsupported(() -> spec.features().clear());
         assertThrowsUnsupported(() -> spec.effectiveValues().put("ape.maxThrottle", "1"));
         assertThrowsUnsupported(() -> spec.inertKeys().add("ape.maxThrottle"));
@@ -416,7 +416,7 @@ public class RunSpecResolveTest {
 
     @Test
     public void mutatingTheInputMapAfterResolutionDoesNotChangeThePlan() {
-        Map<String, String> input = entries("ape.mopDataPath", MOP_PATH);
+        Map<String, String> input = entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true");
         RunSpec spec = resolve(input);
         String before = spec.digest();
         input.put("ape.mopWeightDirect", "1");

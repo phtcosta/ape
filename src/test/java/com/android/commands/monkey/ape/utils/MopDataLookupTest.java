@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 
@@ -24,6 +26,15 @@ import static org.junit.Assert.*;
  * {@code GUITreeBuilder.fillNode} copies from {@code rvsec.click}/{@code rvsec.longClick}.
  */
 public class MopDataLookupTest {
+
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
 
     private static final String CRYPTO = "br.unb.cic.cryptoapp.generated.CryptographyActivity";
     private static final String CRYPTO_LAMBDA =

@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.agent.StepRng;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Random;
@@ -91,6 +93,16 @@ public class BudgetStageTest {
         @Override
         public MopContext mopContext() {
             throw new UnsupportedOperationException("the budget gate does not read MOP data");
+        }
+
+        @Override
+        public StaticGuiModel staticModel() {
+            throw new UnsupportedOperationException("the budget gate does not read the static model");
+        }
+
+        @Override
+        public StepRng stepRng() {
+            throw new UnsupportedOperationException("the budget gate draws nothing (INV-DP-10)");
         }
 
         @Override

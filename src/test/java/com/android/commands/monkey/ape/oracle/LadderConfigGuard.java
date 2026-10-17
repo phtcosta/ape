@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.utils.Config;
 
@@ -57,14 +58,14 @@ final class LadderConfigGuard {
         assertEquals("ape.componentPercentage", 0.0, Config.componentPercentage, 0.0);
         // The SATA chain's own reads: the action set a state carries, how EARLY_STAGE decides what
         // is still worth visiting, and the epsilon-greedy rung's caps and coin.
-        assertTrue("ape.modelMenuEnabled", Config.modelMenuEnabled);
+        assertTrue("ape.modelMenuEnabled", RunContext.current().spec().has(Feature.MODEL_MENU));
         assertTrue("ape.useActionDiffer", Config.useActionDiffer);
-        assertTrue("ape.leastVisitedPriorityTiebreak", Config.leastVisitedPriorityTiebreak);
-        assertEquals("ape.backMenuPickCap", 3, Config.backMenuPickCap);
+        assertEquals("ape.backMenuPickCap", 3,
+                RunContext.current().spec().exploration().backMenuPickCap());
         assertTrue("ape.dynamicEpsilon", Config.dynamicEpsilon);
         assertEquals("ape.defaultEpsilon", 0.05, Config.defaultEpsilon, 0.0);
-        assertEquals("ape.minEpsilon", 0.02, Config.minEpsilon, 0.0);
-        assertEquals("ape.maxEpsilon", 0.15, Config.maxEpsilon, 0.0);
+        assertEquals("ape.minEpsilon", 0.02, RunContext.current().spec().exploration().minEpsilon(), 0.0);
+        assertEquals("ape.maxEpsilon", 0.15, RunContext.current().spec().exploration().maxEpsilon(), 0.0);
     }
 
     /**
@@ -78,9 +79,8 @@ final class LadderConfigGuard {
         // unchanged in substance: a MOP arm at its jar defaults has the launcher enabled, which is
         // the condition every MOP golden was captured under.
         assertTrue("ape.activityTriggerEnabled",
-                RunContext.current().spec().mop().activityTriggerEnabled());
+                RunContext.current().spec().has(Feature.MOP_LAUNCHER));
         assertEquals("ape.activityTriggerStagnationStep", 50, Config.activityTriggerStagnationStep);
         assertEquals("ape.activityTriggerMaxPerRun", 0, Config.activityTriggerMaxPerRun);
-        assertEquals("ape.mopTargetPickCap", 3, Config.mopTargetPickCap);
     }
 }

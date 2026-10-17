@@ -72,11 +72,11 @@ public final class LlmNewStateStage implements DecisionStage {
             return StageResult.continueChain();
         }
         ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
-                ctx.newState().getActions(), ctx.mopContext(), ctx.actionHistory(), "new-state");
+                ctx.newState().getActions(), ctx.actionHistory(), "new-state");
         if (result == null) {
             return StageResult.continueChain();
         }
-        ModelAction accepted = LlmGate.accept(result, resolveSynthesizedTap);
+        ModelAction accepted = LlmAcceptance.accept(result, resolveSynthesizedTap);
         return StageResult.select(accepted, accepted.getDecisionSource().name());
     }
 }

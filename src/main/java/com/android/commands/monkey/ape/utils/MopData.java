@@ -20,9 +20,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
+import com.android.commands.monkey.ape.utils.StaticGuiModel.WtgTransition;
 
 /**
  * Typed model of the compact MOP artifact, plus the activity → shortWidgetId index that
@@ -204,7 +206,7 @@ public class MopData {
     public static MopData load(String path, String expectedPackage,
             String expectedMainActivity, EventSink sink) {
         return load(path, expectedPackage, expectedMainActivity,
-                Config.mopActivitySourceComponents, sink);
+                RunContext.current().spec().has(Feature.MOP_ACTIVITY_SOURCE), sink);
     }
 
     /**
@@ -301,7 +303,7 @@ public class MopData {
                         + "' but artifact has '" + mainActivity + "'");
                 mismatch = true;
             }
-            if (mismatch && RunContext.current().spec().mop().strictPackageMatch()) {
+            if (mismatch && RunContext.current().spec().staticData().strictPackageMatch()) {
                 Logger.wprintln("MopData: strict package match enabled — rejecting " + path);
                 reject(sink, "package-mismatch");
                 return null;
@@ -1231,21 +1233,6 @@ public class MopData {
                 sb.append(",[").append(pair[0]).append(',').append(pair[1]).append(']');
             }
             return sb.append('}').toString();
-        }
-    }
-
-    /**
-     * A click edge of the WTG view: which widget, and which base activity it navigates to. The
-     * producer's {@code widgetClass} is not carried — the three consumers match on
-     * {@code widgetName} and read {@code targetActivity}, and none has ever consulted the class.
-     */
-    public static class WtgTransition {
-        public final String widgetName;
-        public final String targetActivity;
-
-        public WtgTransition(String widgetName, String targetActivity) {
-            this.widgetName = widgetName;
-            this.targetActivity = targetActivity;
         }
     }
 }

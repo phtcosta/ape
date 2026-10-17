@@ -123,11 +123,14 @@ public class KeyOwnershipTotalityTest {
             for (String key : feature.ownedKeys()) {
                 String neutral = feature.neutralValue(key);
                 if (neutral == null) {
-                    // Only PRESENT-activated features may lack a neutral: stating the path or the
-                    // URL is what turns them on, so the key cannot be present while they are off.
-                    assertEquals(key + " has no neutral value but is not an activation path",
-                            Feature.Rule.PRESENT, feature.activationRule());
-                    assertEquals(feature.activationKey(), key);
+                    // Two kinds of key may lack a neutral: a PRESENT activation path, whose
+                    // presence is what turns its feature on, and a key the feature requires once
+                    // mounted (ape.llmUrl for LLM), which resolution enforces.
+                    boolean activationPath = feature.activationKey().equals(key)
+                            && feature.activationRule() == Feature.Rule.PRESENT;
+                    assertTrue(key + " has no neutral value but is neither an activation path nor "
+                            + "a required key", activationPath
+                            || feature.requiredKeys().contains(key));
                 } else {
                     // A neutral value must itself be a valid value of the key's declared type.
                     KeyOwnership.typeOf(key).parse(key, neutral);
@@ -208,11 +211,49 @@ public class KeyOwnershipTotalityTest {
     }
 
     @Test
-    public void theResolverOwnsExactlyPresetRunIdAndCorpusBasis() {
+    public void theResolverOwnsExactlyPresetRunIdCorpusBasisAndVariant() {
         assertEquals(new LinkedHashSet<>(java.util.Arrays.asList(
                         KeyOwnership.KEY_PRESET, KeyOwnership.KEY_RUN_ID,
-                        KeyOwnership.KEY_CORPUS_BASIS)),
+                        KeyOwnership.KEY_CORPUS_BASIS, KeyOwnership.KEY_VARIANT)),
                 KeyOwnership.keysOf(KeyOwnership.OwnerKind.RESOLVER));
+    }
+
+    /**
+     * The keys isolate-guidance-groups adds (design § Key contract v3.2), pinned against the
+     * contract: owner, declared type and jar default. None has a {@code Config} field, so the
+     * drift guard above cannot see them.
+     */
+    @Test
+    public void theGroupContractKeysHaveTheirOwnersTypesAndDefaults() {
+        Object[][] table = {
+                {"ape.addons", Feature.ADDONS, ValueType.BOOLEAN, "false"},
+                {"ape.static", Feature.STATIC, ValueType.BOOLEAN, "false"},
+                {"ape.mop", Feature.MOP, ValueType.BOOLEAN, "false"},
+                {"ape.llm", Feature.LLM, ValueType.BOOLEAN, "false"},
+                {"ape.staticDataPath", Feature.STATIC_DATA, ValueType.STRING, null},
+                {"ape.mopStrictPackageMatch", Feature.STATIC_DATA, ValueType.BOOLEAN, "false"},
+                {"ape.mopCoinPercentage", Feature.MOP_COIN, ValueType.DOUBLE, "1.0"},
+                {"ape.llmGateMinActions", Feature.LLM, ValueType.INT, "3"},
+                {"ape.llmBreakerFailures", Feature.LLM, ValueType.INT, "3"},
+                {"ape.llmBreakerOpenMs", Feature.LLM, ValueType.LONG, "60000"},
+                {"ape.backMenuPickCap", Feature.BACK_MENU_CAP, ValueType.INT, "3"},
+                {"ape.activityStableRestartThreshold", Feature.ACTIVITY_STABLE_RESTART,
+                        ValueType.INT, "200"},
+                {"ape.frontierBoostWeight", Feature.NAV_FRONTIER, ValueType.INT, "200"},
+                {"ape.fuzzInputTyped", Feature.TYPED_FUZZ, ValueType.BOOLEAN, "true"},
+                {"ape.componentPercentage", Feature.COMPONENT_TRIGGER, ValueType.DOUBLE, "0.0"},
+                {"ape.activityTriggerEnabled", Feature.MOP_LAUNCHER, ValueType.BOOLEAN, "true"},
+                {"ape.llmPercentage", Feature.LLM_COIN, ValueType.DOUBLE, "0.02"},
+        };
+        for (Object[] row : table) {
+            String key = (String) row[0];
+            assertTrue(key + " must be owned", KeyOwnership.isKnown(key));
+            assertEquals(key + "'s owner", row[1], KeyOwnership.spec(key).feature());
+            assertEquals(key + "'s type", row[2], KeyOwnership.typeOf(key));
+            assertEquals(key + "'s jar default", row[3], KeyOwnership.defaultOf(key));
+        }
+        assertEquals(KeyOwnership.OwnerKind.RESOLVER,
+                KeyOwnership.spec(KeyOwnership.KEY_VARIANT).ownerKind());
     }
 
     @Test
@@ -221,7 +262,8 @@ public class KeyOwnershipTotalityTest {
                 "ape.apePureMode", "ape.modelFile", "ape.saveObjModel", "ape.saveDotGraph",
                 "ape.saveVisGraph", "ape.saveStates", "ape.enableXPathAction",
                 "ape.mopWeightActivity", "ape.agentType", "ape.replayLog",
-                "ape.llmBoundaryBottomPct"));
+                "ape.llmBoundaryBottomPct", "ape.mopDataPath", "ape.leastVisitedPriorityTiebreak",
+                "ape.mopTargetPickCap"));
         assertEquals(expected, KeyOwnership.retiredKeys());
         for (String key : expected) {
             String reason = KeyOwnership.retiredReason(key);

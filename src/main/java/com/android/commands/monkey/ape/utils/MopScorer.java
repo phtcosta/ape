@@ -335,8 +335,8 @@ public class MopScorer {
         if (activity == null || shortId == null || shortId.isEmpty()) {
             return 0;
         }
-        List<MopData.WtgTransition> transitions = data.getWtgTransitions(activity);
-        for (MopData.WtgTransition t : transitions) {
+        List<StaticGuiModel.WtgTransition> transitions = data.getWtgTransitions(activity);
+        for (StaticGuiModel.WtgTransition t : transitions) {
             if (shortId.equals(t.widgetName) && data.activityHasMop(t.targetActivity)) {
                 return weightWtg;
             }

@@ -156,7 +156,7 @@ public class RunContextTest {
     public void installForTestGivesAFullContextWithoutPropertyFiles() {
         // What the migrated read sites use: a plan stated as a value, not written to a file and
         // not poked into a static field.
-        RunSpec spec = spec(entries("ape.mopDataPath", "/data/local/tmp/sa.json"), 99L);
+        RunSpec spec = spec(entries("ape.staticDataPath", "/data/local/tmp/sa.json", "ape.mop", "true"), 99L);
         RunContext.installForTest(spec);
 
         assertEquals(spec, RunContext.current().spec());

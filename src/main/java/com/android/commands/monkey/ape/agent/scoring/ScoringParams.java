@@ -59,11 +59,12 @@ public final class ScoringParams {
      */
     public static ScoringParams fromSpec(RunSpec spec) {
         RunSpec.MopParams mop = spec.mop();
+        RunSpec.StaticParams staticData = spec.staticData();
         RunSpec.ExplorationParams exploration = spec.exploration();
         return new ScoringParams(
                 mop == null ? 0 : mop.weightOpenMenu(),
                 mop == null ? 0 : mop.weightWtg(),
-                mop == null ? 0 : mop.frontierBoostWeight(),
+                staticData == null ? 0 : staticData.frontierBoostWeight(),
                 mop == null ? 0 : mop.frontierWeight(),
                 exploration.coverageBoostWeight(),
                 exploration.formCompletionEnabled());

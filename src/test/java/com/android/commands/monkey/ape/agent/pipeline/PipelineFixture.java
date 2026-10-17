@@ -22,7 +22,6 @@ import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
-import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 
 /**
@@ -100,7 +99,7 @@ final class PipelineFixture {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopContext mop, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             return answer;
         }
@@ -148,7 +147,7 @@ final class PipelineFixture {
         @Override public ModelAction selectNewActionEarlyStageBackward() { return null; }
         @Override public ModelAction selectNewActionEpsilonGreedyRandomly() { return null; }
         @Override public void logActionSelected(Action action, SataAgent.SataEventType type) { }
-        @Override public int mopComponentTargetCount() { return componentTargets; }
+        @Override public int componentTargetCount() { return componentTargets; }
 
         @Override
         public ModelAction selectNewActionFromBuffer() {
@@ -163,7 +162,7 @@ final class PipelineFixture {
         }
 
         @Override
-        public void triggerMopComponent(int target) {
+        public void triggerComponent(int target) {
             triggerCalls++;
             lastTriggeredTarget = target;
         }
@@ -199,7 +198,7 @@ final class PipelineFixture {
 
     /** The shipped {@code llm} arm: the three LLM stages, then the chain. */
     static RunSpec llmPlan() {
-        return preset(Presets.LLM, join(new String[] {"ape.llmUrl", LLM_URL}, LIVE_HOOK_KEYS));
+        return preset(Presets.LLM, join(new String[] {"ape.llm", "true", "ape.llmUrl", LLM_URL}, LIVE_HOOK_KEYS));
     }
 
     static String[] join(String[] first, String[] second) {
@@ -218,8 +217,8 @@ final class PipelineFixture {
      */
     static RunSpec llmWithLauncherPlan(int cadence) {
         return preset(Presets.LLM, join(new String[] {
-                "ape.llmUrl", LLM_URL,
-                "ape.mopDataPath", TestRunSpecs.MOP_PATH,
+                "ape.llm", "true", "ape.llmUrl", LLM_URL,
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true",
                 "ape.activityTriggerEnabled", "true",
                 "ape.activityTriggerStagnationStep", Integer.toString(cadence)}, LIVE_HOOK_KEYS));
     }

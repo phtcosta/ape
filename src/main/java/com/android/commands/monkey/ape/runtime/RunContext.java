@@ -15,6 +15,7 @@
  */
 package com.android.commands.monkey.ape.runtime;
 
+import com.android.commands.monkey.ape.agent.StepRng;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -100,6 +101,12 @@ public final class RunContext {
     private final EventSink sink;
 
     /**
+     * The four per-step streams (design D-B9), derived from the same seed as the agent and helper
+     * streams, so that a run is reproducible from one number (INV-RUN-08).
+     */
+    private final StepRng stepRng;
+
+    /**
      * The run's LLM, or four nulls when the plan carries no LLM feature.
      *
      * <p>Absence is the whole mechanism, not a disabled mode: a plan without the feature builds no
@@ -140,6 +147,7 @@ public final class RunContext {
         // exist over an unseeded stream (INV-RUN-08, INV-EXPL-14). The value is the same seed
         // Monkey's own Random was built from, so both streams derive from one number.
         RandomHelper.seed(seed);
+        this.stepRng = new StepRng(seed);
         this.runId = resolveRunId(spec, seed);
         this.t0 = System.currentTimeMillis();
         // Built before the LLM units because they record through it, and handed to them rather
@@ -150,8 +158,11 @@ public final class RunContext {
         // and nowhere else (INV-SNK-07's Telemetry Neutrality clause: no arm-level flag disables or
         // alters telemetry). The telemetry scope is unconditional for the same reason, so the
         // heartbeat flag is read directly rather than through an absent-scope fallback.
+        // Whether MOP is mounted is the one plan fact the sink is told: it decides whether an ACT
+        // entry carries its mop member, which a cell without MOP must not (design D-B14.9).
         this.sink = substituteSink != null ? substituteSink
-                : new NdjsonSink(System.out, spec.telemetry().bool("ape.telemetryHeartbeat"));
+                : new NdjsonSink(System.out, spec.telemetry().bool("ape.telemetryHeartbeat"),
+                        spec.has(Feature.MOP));
 
         if (spec.has(Feature.LLM)) {
             RunSpec.LlmParams llm = spec.llm();
@@ -321,6 +332,11 @@ public final class RunContext {
      * The orchestrator the three LLM stages call, or null on a plan with no LLM feature — in which
      * case no stage asks, because none was assembled.
      */
+    /** The run's per-step streams: the LLM, MOP and component coins and the fuzz toss. */
+    public StepRng stepRng() {
+        return stepRng;
+    }
+
     public LlmEngine llmEngine() {
         return llmEngine;
     }

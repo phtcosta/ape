@@ -13,10 +13,11 @@ import java.util.List;
  * the artifact does <em>not</em> carry is as deliberate as the surface it does: {@code exported}
  * is absent because eligibility must never test it (the dispatch path launches non-exported
  * components from uid 2000, so an export test would silently shrink the frontier) — with no field
- * to consult, that prohibition is structural rather than a rule someone must remember. The
- * intent-filter {@code <data>} block is absent because its one consumer wanted a URI, not a
- * structure: the generator assembles {@link #deepLinkUri} from it host-side (INV-DRV-07). The
- * providers' granular {@code readPermission}/{@code writePermission} are absent because only the
+ * to consult, that prohibition is structural rather than a rule someone must remember. An
+ * activity's intent-filter {@code <data>} block reaches the jar as a URI, not a structure: the
+ * generator assembles {@link #deepLinkUri} from it host-side (INV-DRV-07). A receiver's or a
+ * service's filter carries a reduced {@link IntentFilter.Data} instead, because the component
+ * trigger addresses the intent with it (design D-B13). The providers' granular {@code readPermission}/{@code writePermission} are absent because only the
  * component-level {@code permission} gate was ever read.
  */
 public class ComponentInfo {
@@ -88,16 +89,54 @@ public class ComponentInfo {
         return permission != null && !permission.isEmpty();
     }
 
-    /** A single intent filter: the actions and categories the broadcast/service tuples read. */
+    /**
+     * A single intent filter: the actions and categories the broadcast/service tuples read, and the
+     * reduced {@code <data>} block the trigger addresses its intent with.
+     */
     public static class IntentFilter {
         public final List<String> actions;
         public final List<String> categories;
+        /** The filter's {@code data} member, or null when the wire omits it (no data). */
+        public final Data data;
 
         public IntentFilter(List<String> actions, List<String> categories) {
+            this(actions, categories, null);
+        }
+
+        public IntentFilter(List<String> actions, List<String> categories, Data data) {
             this.actions = actions != null
                     ? Collections.unmodifiableList(actions) : Collections.<String>emptyList();
             this.categories = categories != null
                     ? Collections.unmodifiableList(categories) : Collections.<String>emptyList();
+            this.data = data;
+        }
+
+        /**
+         * The reduced {@code <data>} block of a receiver or service filter (design D-B13,
+         * D-B14.11): the five lists the derive keeps, each empty when the wire omits it.
+         * {@code ports} and {@code pathPatterns} are not carried, since a pattern is not a path.
+         */
+        public static final class Data {
+            public final List<String> schemes;
+            public final List<String> hosts;
+            public final List<String> paths;
+            public final List<String> pathPrefixes;
+            public final List<String> mimeTypes;
+
+            public Data(List<String> schemes, List<String> hosts, List<String> paths,
+                    List<String> pathPrefixes, List<String> mimeTypes) {
+                this.schemes = immutable(schemes);
+                this.hosts = immutable(hosts);
+                this.paths = immutable(paths);
+                this.pathPrefixes = immutable(pathPrefixes);
+                this.mimeTypes = immutable(mimeTypes);
+            }
+
+            private static List<String> immutable(List<String> values) {
+                return values != null
+                        ? Collections.unmodifiableList(new ArrayList<>(values))
+                        : Collections.<String>emptyList();
+            }
         }
     }
 

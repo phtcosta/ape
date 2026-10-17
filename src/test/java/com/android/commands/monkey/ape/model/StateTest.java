@@ -286,7 +286,7 @@ public class StateTest {
     }
 
     /**
-     * The same contrast through {@code MopCounterfactual}, which mirrors the tie rule. A
+     * The same contrast through {@code ScorerCounterfactual}, which mirrors the tie rule. A
      * counterfactual that disagreed with the branch it stands in for would misreport {@code
      * cf_changed} on every {@code ape_pure} run, and no factual assertion would notice.
      */
@@ -298,9 +298,9 @@ public class StateTest {
         java.util.List<ModelAction> candidates = java.util.Arrays.asList(first, boosted);
 
         assertSame("tiebreak on: higher priority wins the tie", boosted,
-                MopCounterfactual.leastVisitedWithoutMopWeights(candidates, true));
+                ScorerCounterfactual.leastVisitedWithout(candidates, true, ScorerCounterfactual.Scorer.MOP, ScorerCounterfactual.Scorer.MOP_FRONTIER));
         assertSame("tiebreak off: candidate order wins the tie", first,
-                MopCounterfactual.leastVisitedWithoutMopWeights(candidates, false));
+                ScorerCounterfactual.leastVisitedWithout(candidates, false, ScorerCounterfactual.Scorer.MOP, ScorerCounterfactual.Scorer.MOP_FRONTIER));
     }
 
     // -----------------------------------------------------------------------

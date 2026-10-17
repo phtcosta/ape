@@ -79,13 +79,6 @@ public class StaticConfigReadGuardTest {
         APE + "/agent/SataAgent.java", APE + "/agent/StatefulAgent.java", APE + "/model/State.java",
     };
 
-    /**
-     * The one read design D9 accepts: it gates which actions a {@code State} is <em>built</em> with,
-     * during model construction, from a value the plan freezes at load. Pinned at exactly one
-     * occurrence so the residue cannot grow a sibling.
-     */
-    private static final String ALLOWED_RESIDUE = "modelMenuEnabled";
-
     private static final Pattern STATIC_IMPORT =
             Pattern.compile("import\\s+static\\s+com\\.android\\.commands\\.monkey\\.ape\\.utils"
                     + "\\.Config\\.(\\w+)\\s*;");
@@ -96,15 +89,12 @@ public class StaticConfigReadGuardTest {
     private static final Pattern AMBIENT = Pattern.compile("RunContext\\s*\\.\\s*current\\s*\\(\\s*\\)");
 
     @Test
-    public void theDecisionPathReadsConfigNowhereButTheOneAcceptedResidue() throws IOException {
+    public void theDecisionPathReadsConfigNowhere() throws IOException {
         List<String> offences = new ArrayList<>();
         List<Path> guarded = guardedFiles();
         for (Path file : guarded) {
             String code = codeOf(file);
             for (String field : configReads(code)) {
-                if (field.equals(ALLOWED_RESIDUE)) {
-                    continue;
-                }
                 offences.add(SRC.relativize(file) + ": " + field);
             }
         }
@@ -136,43 +126,22 @@ public class StaticConfigReadGuardTest {
                 + "stops being checked in that file", Collections.emptyList(), offences);
     }
 
+    /**
+     * The menu action was design D9's one accepted residue: a {@code Config} read that gated which
+     * actions a {@code State} is built with. It is an ADDONS member now and {@code State} asks the
+     * plan (guidance-groups INV-GRP-06), so the residue is gone and must stay gone.
+     */
     @Test
-    public void theAcceptedResidueIsExactlyOneOccurrence() throws IOException {
+    public void theMenuActionResidueIsGone() throws IOException {
         int occurrences = 0;
         for (Path file : guardedFiles()) {
             for (String field : configReads(codeOf(file))) {
-                if (field.equals(ALLOWED_RESIDUE)) {
+                if (field.equals("modelMenuEnabled")) {
                     occurrences++;
                 }
             }
         }
-        assertEquals(ALLOWED_RESIDUE + " is design D9's single accepted residue; it is pinned at "
-                + "one occurrence so a second read cannot arrive under cover of the first",
-                1, occurrences);
-    }
-
-    /**
-     * Task 6.3 made the least-visited tiebreak a parameter. A residual static read anywhere in
-     * {@code src/main} would keep the old behaviour while the injected value travelled unused —
-     * and nothing else would report differently, because this seam changes which action is picked,
-     * not which stage picks it.
-     */
-    @Test
-    public void nothingInTheJarStillReadsTheLeastVisitedTiebreakStatically() throws IOException {
-        List<String> offences = new ArrayList<>();
-        for (Path file : javaFilesUnder(SRC)) {
-            if (file.endsWith("Config.java") || file.endsWith("KeyOwnership.java")
-                    || file.endsWith("Feature.java") || file.endsWith("Presets.java")) {
-                continue; // the declaration, its ownership table, and the plans that state it
-            }
-            if (configReads(codeOf(file)).contains("leastVisitedPriorityTiebreak")) {
-                offences.add(SRC.relativize(file).toString());
-            }
-        }
-        Collections.sort(offences);
-        assertEquals("leastVisitedPriorityTiebreak travels as an argument from the SataChain call "
-                + "site; a static read would silently override it", Collections.emptyList(),
-                offences);
+        assertEquals("modelMenuEnabled is read from the plan, never from Config", 0, occurrences);
     }
 
     @Test

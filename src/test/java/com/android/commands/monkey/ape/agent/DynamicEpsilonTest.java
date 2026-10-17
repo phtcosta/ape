@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.runtime.KeyOwnership;
 import static org.junit.Assert.*;
 import org.junit.Test;
 
@@ -58,8 +59,8 @@ public class DynamicEpsilonTest {
     @Test
     public void testINV_EPS_03_configDefaults() {
         assertTrue(Config.dynamicEpsilon);
-        assertEquals(0.15, Config.maxEpsilon, 1e-6);
-        assertEquals(0.02, Config.minEpsilon, 1e-6);
+        assertEquals("0.15", KeyOwnership.defaultOf("ape.maxEpsilon"));
+        assertEquals("0.02", KeyOwnership.defaultOf("ape.minEpsilon"));
     }
 
     @Test

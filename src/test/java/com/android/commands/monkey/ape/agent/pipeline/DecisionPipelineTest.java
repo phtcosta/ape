@@ -248,7 +248,7 @@ public class DecisionPipelineTest {
     public void aPlanWithNoMopAndNoLlmAssemblesTheMinimalPipeline() {
         // The bare plan is the aperv arm: the activity budget is on by jar default
         // (Config.activityBudgetEnabled), so the minimal roster is two stages, not one.
-        RunSpec aperv = TestRunSpecs.spec();
+        RunSpec aperv = TestRunSpecs.spec("ape.addons", "true");
 
         assertEquals(
                 Arrays.asList(DecisionPipeline.Candidate.BUDGET,
@@ -258,7 +258,7 @@ public class DecisionPipelineTest {
 
     @Test
     public void aPlanWithTheBudgetOffAssemblesOnlyTheTerminalStage() {
-        RunSpec noBudget = TestRunSpecs.spec("ape.activityBudgetEnabled", "false");
+        RunSpec noBudget = TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false");
 
         assertEquals(Arrays.asList(DecisionPipeline.Candidate.SATA_CHAIN),
                 DecisionPipeline.assembledCandidates(noBudget));
@@ -267,11 +267,12 @@ public class DecisionPipelineTest {
     @Test
     public void aFullPlanAssemblesEveryCandidateInTheFixedOrder() {
         RunSpec full = TestRunSpecs.spec(
+                "ape.addons", "true", "ape.static", "true",
                 "ape.activityBudgetEnabled", "true",
-                "ape.mopDataPath", TestRunSpecs.MOP_PATH,
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true",
                 "ape.activityTriggerEnabled", "true",
                 "ape.componentPercentage", "0.1",
-                "ape.llmUrl", "http://10.0.2.2:30000/v1",
+                "ape.llm", "true", "ape.llmUrl", "http://10.0.2.2:30000/v1",
                 "ape.llmOnNewState", "true",
                 "ape.llmOnStagnation", "true",
                 "ape.llmPercentage", "0.3");

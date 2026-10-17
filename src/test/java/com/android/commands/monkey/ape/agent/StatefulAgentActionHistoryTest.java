@@ -46,7 +46,7 @@ public class StatefulAgentActionHistoryTest {
 
     @Before
     public void setUp() throws Exception {
-        TestRunSpecs.install("ape.llmUrl", "http://127.0.0.1:30000/v1");
+        TestRunSpecs.install("ape.llm", "true", "ape.llmUrl", "http://127.0.0.1:30000/v1");
         agent = allocate(SataAgent.class);
         agent._actionHistory = new ArrayList<>();
     }

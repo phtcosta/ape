@@ -15,6 +15,7 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.agent.SataAgent.SataEventType;
 import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
@@ -169,13 +170,54 @@ public interface StageCollaborators {
      * @return the size of the combined (component × filter × action) and (provider × operation)
      *         pool; zero when the census yields no triggerable target
      */
-    int mopComponentTargetCount();
+    int componentTargetCount();
 
     /**
      * Fires the component-trigger target at {@code target}, which the caller took from the range
-     * {@link #mopComponentTargetCount} reported.
+     * {@link #componentTargetCount} reported.
      *
      * @param target the index of the target to fire
      */
-    void triggerMopComponent(int target);
+    void triggerComponent(int target);
+
+    /**
+     * Whether a restart is due on this step (decision-pipeline "Restart Guard Stage", design D-B7):
+     * the stability flag the graph update raised, or the periodic threshold passed with the
+     * previous step's selection not disabling it.
+     *
+     * @return whether the RESTART guard takes the step
+     */
+    default boolean restartDue() {
+        throw new UnsupportedOperationException("restartDue is implemented in wave 1 (F5, 8.1)");
+    }
+
+    /**
+     * The restart action the RESTART guard dispatches when {@link #restartDue} holds; starting it
+     * opens a new episode.
+     *
+     * @return the restart action, never {@code null}
+     */
+    default Action restartAction() {
+        throw new UnsupportedOperationException("restartAction is implemented in wave 1 (F5, 8.1)");
+    }
+
+    /**
+     * Clears a non-empty SATA buffer that a preempting owner is taking the step from, without
+     * weakening the planned edge, and records {@code dec.buf} (action-selection, P-4).
+     *
+     * @param owner the owner taking the step: {@code budget}, {@code llm}, {@code launcher} or
+     *        {@code mop}
+     */
+    default void abandonBuffer(String owner) {
+        throw new UnsupportedOperationException("abandonBuffer is implemented in wave 1 (F5, 8.2)");
+    }
+
+    /**
+     * The run's record of first MOP interactions, or {@code null} when {@code MOP} is not mounted.
+     *
+     * @return the ledger the MOP coin and target retirement read
+     */
+    default MopInteractionLedger mopLedger() {
+        throw new UnsupportedOperationException("mopLedger is implemented in wave 1 (F5, 8.3)");
+    }
 }

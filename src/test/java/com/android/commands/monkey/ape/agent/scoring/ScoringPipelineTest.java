@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -121,9 +122,9 @@ public class ScoringPipelineTest {
     // ---- fromParams assembly matrix: weights x substrate (2.4) --------------
 
     private static MopData mopWithWtg() {
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
         wtg.put("com.x.Main", Collections.singletonList(
-                new MopData.WtgTransition("btn", "com.x.Detail")));
+                new StaticGuiModel.WtgTransition("btn", "com.x.Detail")));
         return MopData.forTest(null, null, wtg);
     }
 

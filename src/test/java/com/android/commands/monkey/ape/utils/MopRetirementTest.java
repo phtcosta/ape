@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.utils;
 
+import org.junit.Before;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -28,6 +29,15 @@ import static org.junit.Assert.*;
  * {@code StatefulAgentMopRetirementTest}.
  */
 public class MopRetirementTest {
+
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
 
     private static final String ACT = "com.x.MainActivity";
 

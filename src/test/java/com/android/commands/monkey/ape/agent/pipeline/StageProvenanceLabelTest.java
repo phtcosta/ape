@@ -120,8 +120,8 @@ public class StageProvenanceLabelTest {
     private static RunSpec fullRosterPlan() {
         return TestRunSpecs.spec(
                 "ape.preset", Presets.LLM,
-                "ape.llmUrl", PipelineFixture.LLM_URL,
-                "ape.mopDataPath", TestRunSpecs.MOP_PATH,
+                "ape.llm", "true", "ape.llmUrl", PipelineFixture.LLM_URL,
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true", "ape.static", "true",
                 "ape.activityTriggerEnabled", "true",
                 "ape.activityTriggerStagnationStep", "1",
                 "ape.componentPercentage", "1.0",
