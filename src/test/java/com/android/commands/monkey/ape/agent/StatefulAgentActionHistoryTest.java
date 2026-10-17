@@ -29,8 +29,8 @@ import static org.junit.Assert.*;
 /**
  * exploration "StatefulAgent — Action History Ring Buffer" (llm-coordinate-single-base D5, D9,
  * D12, D13): what {@code recordActionHistory} stores, how the next state update fills the
- * entry's result with the outcome of the entry's own action, and how {@code checkRestart} removes
- * the entry of an action it replaces.
+ * entry's result with the outcome of the entry's own action, and that a restart step leaves
+ * the history alone.
  *
  * <p>The agent is {@code Unsafe}-allocated as in {@code StatefulAgentTearDownTest}: no constructor
  * runs, and the fields these two methods read are set by hand. {@code updateStateInternal} itself
@@ -270,12 +270,13 @@ public class StatefulAgentActionHistoryTest {
         assertTrue(agent._actionHistory.isEmpty());
     }
 
+
     // -------------------------------------------------------------------------
-    // An action a restart replaces leaves no entry (D12, review WR-01)
+    // A restart step leaves the history alone (exploration "Action History Ring Buffer", Restart)
     // -------------------------------------------------------------------------
 
     /**
-     * {@code checkRestart} replaces the selected action with {@code getStartAction}, which reads
+     * {@code restartAction} returns {@code getStartAction}, which reads
      * {@code ape.randomlyPickMainApp()}; the subclass answers without a device.
      */
     static class RestartingAgent extends SataAgent {
@@ -289,16 +290,20 @@ public class StatefulAgentActionHistoryTest {
         }
     }
 
-    /** Swaps in an agent whose {@code checkRestart} can run; {@code restart} requests one. */
+    /** Swaps in an agent whose RESTART guard can run; {@code restart} raises the graph flag. */
     private void restartingAgent(boolean restart) throws Exception {
         agent = allocate(RestartingAgent.class);
         agent._actionHistory = new ArrayList<>();
         setField(agent, "actionBuffer", new LinkedList<StateTransition>());
         setField(agent, "restart", restart);
+        setField(agent, "restartKind", restart ? ApeAgent.RESTART_GRAPH : null);
         setField(agent, "nextRestartThreshold", Integer.MAX_VALUE);
     }
 
-    /** Scenario "a model action replaced by a restart leaves no entry". */
+    /**
+     * Scenario "a model action replaced by a restart leaves no entry": the RESTART guard selects the
+     * start action before any model action, so the step appends nothing and A1 stays last.
+     */
     @Test
     public void aModelActionReplacedByARestartLeavesNoEntry() throws Exception {
         restartingAgent(true);
@@ -307,12 +312,11 @@ public class StatefulAgentActionHistoryTest {
         agent.newState = s1;
         select(button("A1", new Rect(0, 105, 1080, 252)));
         update(state("S2"));
-        ModelAction a2 = button("A2", new Rect(0, 300, 1080, 400));
-        select(a2);
 
-        Action dispatched = agent.checkRestart(a2);
+        assertTrue(agent.restartDue());
+        Action dispatched = agent.restartAction();
 
-        assertNotSame(a2, dispatched);
+        assertFalse(dispatched.isModelAction());
         assertEquals(1, agent._actionHistory.size());
         assertEquals("A1", last().widgetText);
         assertEquals("new screen", last().result);
@@ -322,18 +326,15 @@ public class StatefulAgentActionHistoryTest {
     @Test
     public void aRestartThatReplacesNoModelActionRemovesNothing() throws Exception {
         restartingAgent(true);
-        State s1 = state("S1");
-        agent.currentState = s1;
-        agent.newState = s1;
-        select(button("A1", new Rect(0, 105, 1080, 252)));
-        update(state("S2"));
+        ModelAction a1 = button("A1", new Rect(0, 105, 1080, 252));
+        agent.currentState = state("S1");
+        select(a1);
 
-        Action origin = new Action(ActionType.EVENT_START);
-        Action dispatched = agent.checkRestart(origin);
+        assertTrue(agent.restartDue());
+        agent.restartAction();
 
-        assertNotSame(origin, dispatched);
-        assertEquals(1, agent._actionHistory.size());
-        assertEquals("new screen", last().result);
+        assertEquals("even an unfilled last entry stays", 1, agent._actionHistory.size());
+        assertEquals("", last().result);
     }
 
     @Test
@@ -343,26 +344,8 @@ public class StatefulAgentActionHistoryTest {
         agent.currentState = state("S1");
         select(a1);
 
-        assertSame(a1, agent.checkRestart(a1));
+        assertFalse(agent.restartDue());
         assertEquals(1, agent._actionHistory.size());
         assertEquals("", last().result);
-    }
-
-    /** A recording that failed leaves the filled entry of the previous action last: it stays. */
-    @Test
-    public void aRestartAfterAFailedRecordingRemovesNothing() throws Exception {
-        restartingAgent(true);
-        State s1 = state("S1");
-        agent.currentState = s1;
-        agent.newState = s1;
-        select(button("A1", new Rect(0, 105, 1080, 252)));
-        update(state("S2"));
-
-        // A2 is selected but never recorded
-        agent.checkRestart(button("A2", new Rect(0, 300, 1080, 400)));
-
-        assertEquals(1, agent._actionHistory.size());
-        assertEquals("A1", last().widgetText);
-        assertEquals("new screen", last().result);
     }
 }

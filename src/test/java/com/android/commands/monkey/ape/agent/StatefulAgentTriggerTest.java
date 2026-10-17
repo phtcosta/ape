@@ -17,11 +17,13 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 /**
- * gh13 §19 — StatefulAgent tuple-based component triggering (T1.4+T1.5).
+ * gh13 §19 — StatefulAgent tuple-based component triggering (T1.4+T1.5), as a STATIC member
+ * (component-triggering, design D-B13).
  *
- * Exercises the static, side-effect-free tuple/command/log builders. The dispatch side
- * (Intent send / shell exec) requires the Android runtime and is covered by the deferred
- * integration smoke (§22).
+ * Exercises the static, side-effect-free tuple/command/log/intent-data builders. The pool reads
+ * the static manifest's receivers, services and providers and no MOP data (INV-CT-16); activities
+ * never reach it, since only receivers and services are handed to it. The dispatch side (Intent
+ * send / shell exec) requires the Android runtime and is covered by the device smoke.
  */
 public class StatefulAgentTriggerTest {
 
@@ -38,50 +40,63 @@ public class StatefulAgentTriggerTest {
         return new ComponentInfo.IntentFilter(actions, cats);
     }
 
-    private static MopData data(List<ComponentInfo.ReceiverInfo> r,
-                                List<ComponentInfo.ServiceInfo> s,
-                                List<ComponentInfo.ActivityInfo> a,
-                                List<ComponentInfo.ProviderInfo> p) {
-        return MopData.forTest(null, null, null, r, s, a, p);
+    private static ComponentInfo.IntentFilter filterWithData(String action,
+            ComponentInfo.IntentFilter.Data data) {
+        return new ComponentInfo.IntentFilter(Arrays.asList(action),
+                Collections.<String>emptyList(), data);
     }
 
-    @Test // 19.1
-    public void testTriggerSkipsNonReachableComponents() {
-        ComponentInfo.ReceiverInfo reaches = new ComponentInfo.ReceiverInfo("p.R1", false,
-                Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
-                true, Collections.<String>emptyList());
-        ComponentInfo.ReceiverInfo noReach = new ComponentInfo.ReceiverInfo("p.R2", false,
-                Arrays.asList(filter(Arrays.asList("b"), Collections.<String>emptyList())),
-                false, Collections.<String>emptyList());
-        MopData d = data(Arrays.asList(reaches, noReach), null, null, null);
-        List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(d);
-        for (StatefulAgent.TriggerTuple t : tuples) {
-            assertNotEquals("p.R2", t.component.className);
-        }
-        assertEquals(1, tuples.size());
+    private static List<String> list(String... values) {
+        return Arrays.asList(values);
     }
 
-    @Test // 19.2 (activity-frontier): activities NEVER enter the probabilistic tuple pool,
-    // exported or not — the old activityTriggerEnabled branch is deleted; activities are launched
-    // only by the stagnation launcher (EVENT_TRIGGER_ACTIVITY).
-    public void testTriggerNeverIncludesActivities() {
-        ComponentInfo.ActivityInfo exported = new ComponentInfo.ActivityInfo("p.Exported", false,
-                Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
-                true, Collections.<String>emptyList());
-        ComponentInfo.ActivityInfo nonExported = new ComponentInfo.ActivityInfo("p.Hidden", false,
-                Arrays.asList(filter(Arrays.asList("b"), Collections.<String>emptyList())),
-                true, Collections.<String>emptyList());
-        MopData d = data(null, null, Arrays.asList(exported, nonExported), null);
-        assertTrue(StatefulAgent.buildTriggerTuples(d).isEmpty());
+    private static List<String> none() {
+        return Collections.<String>emptyList();
+    }
+
+    private static ComponentInfo.ReceiverInfo receiver(String name, boolean reaches,
+            List<String> targetMethods, ComponentInfo.IntentFilter... filters) {
+        return new ComponentInfo.ReceiverInfo(name, false, Arrays.asList(filters), reaches,
+                targetMethods);
+    }
+
+    private static ComponentInfo.ServiceInfo service(String name, boolean reaches,
+            List<String> targetMethods, ComponentInfo.IntentFilter... filters) {
+        return new ComponentInfo.ServiceInfo(name, false, Arrays.asList(filters), reaches,
+                targetMethods);
+    }
+
+    private static ComponentInfo.ProviderInfo provider(String name, boolean reaches, String auth) {
+        return new ComponentInfo.ProviderInfo(name, false,
+                Collections.<ComponentInfo.IntentFilter>emptyList(), reaches, none(), auth);
+    }
+
+    private static List<String> names(List<StatefulAgent.TriggerTuple> tuples) {
+        List<String> names = new ArrayList<>();
+        for (StatefulAgent.TriggerTuple t : tuples) names.add(t.component.className);
+        return names;
+    }
+
+    @Test // INV-CT-16: reachability and target methods do not decide membership or order
+    public void thePoolReadsNoMopData() {
+        List<ComponentInfo.ReceiverInfo> reaching = Arrays.asList(
+                receiver("p.R1", true, list("<m>"), filter(list("a"), none())),
+                receiver("p.R2", false, none(), filter(list("b"), none())));
+        List<ComponentInfo.ReceiverInfo> flipped = Arrays.asList(
+                receiver("p.R1", false, none(), filter(list("a"), none())),
+                receiver("p.R2", true, list("<m>"), filter(list("b"), none())));
+        assertEquals(list("p.R1", "p.R2"), names(StatefulAgent.buildTriggerTuples(reaching, null)));
+        assertEquals(list("p.R1", "p.R2"), names(StatefulAgent.buildTriggerTuples(flipped, null)));
+        List<StatefulAgent.ProviderTuple> providers = StatefulAgent.buildProviderTuples(
+                Arrays.asList(provider("p.P", false, "p.auth")));
+        assertEquals("a provider that reaches no target is still triggered", 3, providers.size());
     }
 
     @Test // 19.3
     public void testTriggerRoundRobinsAllIntentFilterActions() {
-        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false,
-                Arrays.asList(filter(Arrays.asList("action1", "action2"), Collections.<String>emptyList())),
-                true, Collections.<String>emptyList());
-        List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(data(
-                Arrays.asList(r), null, null, null));
+        List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(
+                Arrays.asList(receiver("p.R", true, none(), filter(list("action1", "action2"), none()))),
+                null);
         assertEquals(2, tuples.size());
         List<String> actions = new ArrayList<>();
         for (StatefulAgent.TriggerTuple t : tuples) actions.add(t.action);
@@ -91,11 +106,8 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.4
     public void testTriggerProviderRoundRobinsOperations() {
-        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.Prov", false,
-                Collections.<ComponentInfo.IntentFilter>emptyList(), true,
-                Collections.<String>emptyList(), "p.auth");
-        List<StatefulAgent.ProviderTuple> tuples = StatefulAgent.buildProviderTuples(data(
-                null, null, null, Arrays.asList(p)));
+        List<StatefulAgent.ProviderTuple> tuples = StatefulAgent.buildProviderTuples(
+                Arrays.asList(provider("p.Prov", true, "p.auth")));
         assertEquals(3, tuples.size());
         assertEquals("query", tuples.get(0).operation);
         assertEquals("insert", tuples.get(1).operation);
@@ -104,72 +116,84 @@ public class StatefulAgentTriggerTest {
 
     @Test // 19.5
     public void testTriggerLogsContainExpectedFields() {
-        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false,
-                Arrays.asList(filter(Arrays.asList("a1"), Arrays.asList("c1", "c2"))),
-                true, Collections.<String>emptyList());
-        StatefulAgent.TriggerTuple t = StatefulAgent.buildTriggerTuples(data(
-                Arrays.asList(r), null, null, null)).get(0);
+        StatefulAgent.TriggerTuple t = StatefulAgent.buildTriggerTuples(Arrays.asList(
+                receiver("p.R", true, none(), filter(list("a1"), list("c1", "c2")))), null).get(0);
         String line = StatefulAgent.triggerLogLine(t);
         assertTrue(line.contains("p.R"));
         assertTrue(line.contains("action=a1"));
         assertTrue(line.contains("categories=c1,c2"));
-        assertTrue(line.contains("reachesTarget=true"));
+        assertFalse("the line claims no reachability (INV-CT-16)", line.contains("reachesTarget"));
     }
 
-    @Test // 19.6 (activity-frontier, INV-MOP-15): activities are excluded from the tuple pool
-    // unconditionally — Config.activityTriggerEnabled now gates ONLY the stagnation launcher, not
-    // buildTriggerTuples. Only the receiver survives; the activity never appears regardless of flag.
-    public void testActivityExcludedFromTupleListUnconditionally() {
-        ComponentInfo.ActivityInfo act = new ComponentInfo.ActivityInfo("p.A", false,
-                Arrays.asList(filter(Arrays.asList("a"), Collections.<String>emptyList())),
-                true, Collections.<String>emptyList());
-        ComponentInfo.ReceiverInfo rec = new ComponentInfo.ReceiverInfo("p.R", false,
-                Arrays.asList(filter(Arrays.asList("b"), Collections.<String>emptyList())),
-                true, Collections.<String>emptyList());
-        MopData d = data(Arrays.asList(rec), null, Arrays.asList(act), null);
-
-        List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(d);
-        assertEquals(1, tuples.size());
-        assertEquals("p.R", tuples.get(0).component.className);
+    @Test // 19.7: a provider without authorities and a filterless receiver yield nothing
+    public void testTriggerReturnsEmptyWhenNothingIsTriggerable() {
+        assertTrue(StatefulAgent.buildTriggerTuples(
+                Arrays.asList(receiver("p.R", true, list("<p.R: void onReceive()>"))), null).isEmpty());
+        assertTrue(StatefulAgent.buildProviderTuples(
+                Arrays.asList(provider("p.P", true, ""))).isEmpty());
+        assertTrue(StatefulAgent.buildTriggerTuples(null, null).isEmpty());
+        assertTrue(StatefulAgent.buildProviderTuples(null).isEmpty());
     }
 
-    @Test // 19.7
-    public void testTriggerReturnsFalseOnEmptyComponentList() {
-        // cryptoapp-like: all components reachesTarget=false ⇒ no tuples ⇒ triggerComponent no-op.
-        ComponentInfo.ActivityInfo a = new ComponentInfo.ActivityInfo("p.A", true,
-                Collections.<ComponentInfo.IntentFilter>emptyList(), false, Collections.<String>emptyList());
-        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.P", false,
-                Collections.<ComponentInfo.IntentFilter>emptyList(), false,
-                Collections.<String>emptyList(), "p.auth");
-        MopData d = data(null, null, Arrays.asList(a), Arrays.asList(p));
-        assertTrue(StatefulAgent.buildTriggerTuples(d).isEmpty());
-        assertTrue(StatefulAgent.buildProviderTuples(d).isEmpty());
-    }
-
-    @Test // 19.8 (D15)
-    public void testTriggerEmitsComponentNameOnlyTupleWhenFiltersEmpty() {
-        ComponentInfo.ReceiverInfo r = new ComponentInfo.ReceiverInfo("p.R", false,
-                Collections.<ComponentInfo.IntentFilter>emptyList(), true,
-                Arrays.asList("<p.R: void onReceive()>"));
-        List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(data(
-                Arrays.asList(r), null, null, null));
+    @Test // 19.8 (D-B14.15): a filterless service yields a name-only tuple whatever its targetMethods
+    public void testFilterlessServiceYieldsComponentNameOnlyTuple() {
+        List<StatefulAgent.TriggerTuple> tuples = StatefulAgent.buildTriggerTuples(null,
+                Arrays.asList(service("p.S", false, none())));
         assertEquals(1, tuples.size());
         assertNull("component-name-only ⇒ no filter", tuples.get(0).filter);
         assertNull("component-name-only ⇒ no action", tuples.get(0).action);
+        assertEquals("service", StatefulAgent.triggerKind(tuples.get(0).component));
     }
 
     @Test // 19.9
     public void testProviderContentCommandShape() {
-        ComponentInfo.ProviderInfo p = new ComponentInfo.ProviderInfo("p.Prov", false,
-                Collections.<ComponentInfo.IntentFilter>emptyList(), true,
-                Collections.<String>emptyList(), "p.auth");
-        List<StatefulAgent.ProviderTuple> tuples = StatefulAgent.buildProviderTuples(data(
-                null, null, null, Arrays.asList(p)));
+        List<StatefulAgent.ProviderTuple> tuples = StatefulAgent.buildProviderTuples(
+                Arrays.asList(provider("p.Prov", true, "p.auth")));
         String[] query = StatefulAgent.buildContentCommand(tuples.get(0));
         assertArrayEquals(new String[]{"content", "query", "--uri", "content://p.auth"}, query);
         String[] insert = StatefulAgent.buildContentCommand(tuples.get(1));
         assertEquals("insert", insert[1]);
         assertEquals("--bind", insert[4]);
+    }
+
+    // 8.9.5 — INV-CT-17: the intent carries the filter's data and type
+
+    @Test // scheme + MIME: setDataAndType
+    public void bothSchemeAndMimeYieldDataAndType() {
+        ComponentInfo.IntentFilter f = filterWithData("com.x.IMPORT", new ComponentInfo.IntentFilter.Data(
+                list("content"), list("com.x.files"), list("/in"), none(), list("text/csv", "text/plain")));
+        assertArrayEquals(new String[] {"content://com.x.files/in", "text/csv"},
+                StatefulAgent.intentDataAndType(f));
+    }
+
+    @Test // scheme only: setData, with empty host and path
+    public void aSchemeOnlyYieldsDataWithoutType() {
+        ComponentInfo.IntentFilter f = filterWithData("a", new ComponentInfo.IntentFilter.Data(
+                list("myapp"), none(), none(), none(), none()));
+        assertArrayEquals(new String[] {"myapp://", null}, StatefulAgent.intentDataAndType(f));
+    }
+
+    @Test // MIME only: setType
+    public void aMimeOnlyYieldsTypeWithoutData() {
+        ComponentInfo.IntentFilter f = filterWithData("a", new ComponentInfo.IntentFilter.Data(
+                none(), none(), none(), none(), list("image/png")));
+        assertArrayEquals(new String[] {null, "image/png"}, StatefulAgent.intentDataAndType(f));
+    }
+
+    @Test // the first path prefix stands in for an absent path
+    public void aPathPrefixStandsInForAnAbsentPath() {
+        ComponentInfo.IntentFilter f = filterWithData("a", new ComponentInfo.IntentFilter.Data(
+                list("https"), list("x.org"), none(), list("/docs"), none()));
+        assertArrayEquals(new String[] {"https://x.org/docs", null},
+                StatefulAgent.intentDataAndType(f));
+    }
+
+    @Test // no data member, or a name-only tuple: no data and no type
+    public void noDataMemberYieldsNeither() {
+        assertArrayEquals(new String[] {null, null},
+                StatefulAgent.intentDataAndType(filter(list("a"), none())));
+        assertArrayEquals(new String[] {null, null}, StatefulAgent.intentDataAndType(null));
+        assertEquals("broadcast", StatefulAgent.triggerKind(receiver("p.R", false, none())));
     }
 
     // 5.4 — INV-MOP-22 fail-fast: mopDataPath set but load failed → abort, never run as pure SATA
@@ -185,7 +209,7 @@ public class StatefulAgentTriggerTest {
 
     @Test
     public void testRequireMopArmPassesThroughWhenLoaded() {
-        MopData d = data(null, null, null, null);
+        MopData d = MopData.forTest(null, null, null, null, null, null, null);
         assertSame(d, StatefulAgent.requireMopArm(d, "/data/local/tmp/ape.mop.json"));
     }
 
