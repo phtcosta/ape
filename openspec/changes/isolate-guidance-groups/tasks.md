@@ -181,14 +181,14 @@ Owns: `llm/ApePromptBuilder.java`, `llm/MopPromptContribution.java` (new), `llm/
 (new), `llm/LlmEngine.java`, the LLM composition block of `runtime/RunContext.java` (`:155-166`, after 3.2b),
 their tests.
 
-- [ ] 9.1 `MopPromptContribution`: the `[DM]`/`[M]` marker (`:472-504`), the `N/M MOP.` count and the `MOP NAVIGATION` section (`:619-653`, `:830-832`), and the MOP sentences of every system prompt (`:223`, `:245`, `:262`, `:281`, `:283`, `:292`, and the user-text closing lines `:763` and `:835`), through the helper call sites `:371`, `:416`, `:740`, `:798`, `:863`. The v17 exploration block keeps its visit part in every cell: `MOP NAVIGATION:` with MOP (unchanged), `NAVIGATION:` without (verification A8). `StaticPromptContribution`: the widget metadata (`:515-541`, `:748`, `:818`), read from `StaticGuiModel`
-- [ ] 9.2 `ApePromptBuilder` assembles its text from the list of mounted contributions. It never tests `mop != null`, and the MOP-free wording of each sentence is the one in the llm-prompt delta. `RunContext` (`:164`) builds the builder with the contributions of the mounted groups (MOP iff `MOP`, STATIC iff `STATIC`), and `LlmEngine.selectAction` stops taking a `MopContext` from the stages (F4 drops the `ctx.mopContext()` argument at `LlmRandomStage:85-86`, `LlmNewStateStage:74-75`, `LlmStagnationStage:111-112`, against the signature fixed in 3.4)
-- [ ] 9.3 Tests:
-  - [ ] 9.3.1 with no contribution, no `[DM]`, `[M]`, `MOP` or `monitored` token appears in any variant's system or user text;
-  - [ ] 9.3.2 with MOP, the prompt equals today's for v13 and v17 on the existing fixtures;
-  - [ ] 9.3.3 with STATIC alone, the metadata appears and the markers do not;
-  - [ ] 9.3.4 v17 without MOP carries `NAVIGATION:` and `NEW state.`/`Visited Nx.`, and the `SCREEN … elements tested | visits:` line
-- [ ] 9.4 Run `/sdd-doc-code` on both new contributions, then `/sdd-test-run`
+- [x] 9.1 `MopPromptContribution`: the `[DM]`/`[M]` marker (`:472-504`), the `N/M MOP.` count and the `MOP NAVIGATION` section (`:619-653`, `:830-832`), and the MOP sentences of every system prompt (`:223`, `:245`, `:262`, `:281`, `:283`, `:292`, and the user-text closing lines `:763` and `:835`), through the helper call sites `:371`, `:416`, `:740`, `:798`, `:863`. The v17 exploration block keeps its visit part in every cell: `MOP NAVIGATION:` with MOP (unchanged), `NAVIGATION:` without (verification A8). `StaticPromptContribution`: the widget metadata (`:515-541`, `:748`, `:818`), read from `StaticGuiModel`
+- [x] 9.2 `ApePromptBuilder` assembles its text from the list of mounted contributions. It never tests `mop != null`, and the MOP-free wording of each sentence is the one in the llm-prompt delta. `RunContext` (`:164`) builds the builder with the contributions of the mounted groups (MOP iff `MOP`, STATIC iff `STATIC`), and `LlmEngine.selectAction` stops taking a `MopContext` from the stages (F4 drops the `ctx.mopContext()` argument at `LlmRandomStage:85-86`, `LlmNewStateStage:74-75`, `LlmStagnationStage:111-112`, against the signature fixed in 3.4)
+- [x] 9.3 Tests:
+  - [x] 9.3.1 with no contribution, no `[DM]`, `[M]`, `MOP` or `monitored` token appears in any variant's system or user text;
+  - [x] 9.3.2 with MOP, the prompt equals today's for v13 and v17 on the existing fixtures;
+  - [x] 9.3.3 with STATIC alone, the metadata appears and the markers do not;
+  - [x] 9.3.4 v17 without MOP carries `NAVIGATION:` and `NEW state.`/`Visited Nx.`, and the `SCREEN … elements tested | visits:` line
+- [x] 9.4 Run `/sdd-doc-code` on both new contributions, then `/sdd-test-run`
 
 ## 10. Wave 1 · F7 — rv-android sister change (owned by the `aperv-tool` session)
 

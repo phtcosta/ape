@@ -1,0 +1,618 @@
+=== flag-new / ape_current / system
+You are an Android UI testing agent exploring an app.
+DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
+PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
+AVOID: status bar (top), navigation bar (bottom).
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press element
+  type_text(x, y, text) — type into field
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-new / ape_current / user
+Screen "MainActivity":
+[0] MODEL_BACK (key)
+[1] MODEL_MENU (key)
+[2] Button "Encrypt" @(500,83) [DM] (v:0)
+[3] Button "Settings" @(500,150) [M] (v:2)
+[4] TextView "Row label" @(500,284) [DM] (v:0)
+[5] EditText "Name" @(500,351) [M] (v:0)
+[6] EditText "Name" @(500,351) [DM] (v:6)
+[7] Spinner "id=spin" @(500,418) (v:0)
+[8] ImageView "id=plain_icon" @(500,484) (v:0)
+[9] View "" (v:0)
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+NEW state. 5/8 MOP.
+=== flag-new / ape_reasoning / system
+You are an Android UI testing agent exploring an app.
+DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
+PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
+AVOID: status bar (top), navigation bar (bottom).
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press element
+  type_text(x, y, text) — type into field
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-new / ape_reasoning / user
+Screen "MainActivity":
+[0] MODEL_BACK (key)
+[1] MODEL_MENU (key)
+[2] Button "Encrypt" @(500,83) [DM] (v:0)
+[3] Button "Settings" @(500,150) [M] (v:2)
+[4] TextView "Row label" @(500,284) [DM] (v:0)
+[5] EditText "Name" @(500,351) [M] (v:0)
+[6] EditText "Name" @(500,351) [DM] (v:6)
+[7] Spinner "id=spin" @(500,418) (v:0)
+[8] ImageView "id=plain_icon" @(500,484) (v:0)
+[9] View "" (v:0)
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+NEW state. 5/8 MOP.
+=== flag-new / compact_v1 / system
+You are an Android UI testing agent.
+CRITICAL RULES:
+1. You MUST call a tool — NEVER respond with text only.
+2. Dismiss dialogs first (click Allow/OK).
+3. Prioritize [DM]/[M] > unvisited (v:0) > visited.
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y)
+  long_click(x, y)
+  type_text(x, y, text)
+  back()
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-new / compact_v1 / user
+Screen "MainActivity":
+[0] MODEL_BACK (key)
+[1] MODEL_MENU (key)
+[2] Button "Encrypt" @(500,83) [DM] (v:0)
+[3] Button "Settings" @(500,150) [M] (v:2)
+[4] TextView "Row label" @(500,284) [DM] (v:0)
+[5] EditText "Name" @(500,351) [M] (v:0)
+[6] EditText "Name" @(500,351) [DM] (v:6)
+[7] Spinner "id=spin" @(500,418) (v:0)
+[8] ImageView "id=plain_icon" @(500,484) (v:0)
+[9] View "" (v:0)
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+NEW state. 5/8 MOP.
+=== flag-new / v13 / system
+You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.
+DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.
+  If you see an error or modal dialog, dismiss it before any other action.
+PRIORITY: [DM]/[M] elements > navigation to new screens.
+Available actions:
+  click(x, y) — tap an element at normalized coordinates [0,1000)
+  long_click(x, y) — long press at normalized coordinates
+  type_text(x, y, text) — type text into an input field
+  back() — press the system back button
+RULE: Do not click the same position twice in a row.
+Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-new / v13 / user
+Current activity: MainActivity
+
+UI elements:
+  Button "Encrypt" @(500,83) [DM] hint="tap me"
+  Button "Settings" @(500,150) [M]
+  TextView "Row label" @(500,284) [DM]
+  EditText "Name" @(500,351) [DM] entries=[a, b] inputType="textEmailAddress" hint="Your \"name\""
+  Spinner "id=spin" @(500,418) prompt="Pick one" spinnerMode="dropdown" contentDescription="cd" tooltipText="tip" entries=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, …]
+  ImageView "id=plain_icon" @(500,484)
+  View
+
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+
+Choose ONE action to explore new UI states or trigger monitored operations.
+=== flag-new / v17 / system
+You are an Android UI automation assistant.
+
+REASONING STEPS:
+1. SCREEN: Identify screen type (dialog, form, list, menu).
+2. DIALOG: If blocking dialog present, handle it first.
+3. MOP CHECK: If [DM] or [M] elements are shown, prioritize them.
+4. NAVIGATION: Check for actions leading to unvisited screens.
+5. ELEMENTS: Select unvisited element if no navigation or MOP target available.
+6. ACTION: Call the action with normalized coordinates [0,1000).
+
+DIALOG HANDLING:
+- Permission dialogs: Click "Allow", "Accept", "OK"
+- Error dialogs: Dismiss before other actions
+- Use back() if no dismiss button visible
+
+PRIORITY:
+- Elements reaching monitored operations ([DM] direct / [M] transitive) > other actions
+- Actions leading to NEW screens > same-screen actions
+- Unvisited (v:0) > visited
+
+RULES:
+- Do not click the same position consecutively
+- If last action had no effect, try a different element
+- Explore new screens before testing same screen deeply
+
+AVOID: navigation bar (bottom), status bar (top)
+
+Available actions:
+  click(x, y) — tap at normalized coordinates [0,1000)
+  long_click(x, y) — long press
+  type_text(x, y, text) — type into input field
+  back() — press system back
+
+Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-new / v17 / user
+Recent: click@(500,83), back
+
+ELEMENTS:
+  Button "Encrypt" @(500,83) [UNTESTED] [DM] hint="tap me"
+  Button "Settings" @(500,150) [TESTED-2x] [M]
+  TextView "Row label" @(500,284) [UNTESTED] [DM]
+  EditText "Name" @(500,351) [WELL-TESTED] [DM] entries=[a, b] inputType="textEmailAddress" hint="Your \"name\""
+  Spinner "id=spin" @(500,418) [UNTESTED] prompt="Pick one" spinnerMode="dropdown" contentDescription="cd" tooltipText="tip" entries=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, …]
+  ImageView "id=plain_icon" @(500,484) [UNTESTED]
+  View [UNTESTED]
+
+SCREEN: MainActivity | 2/7 elements tested | visits: 0
+
+MOP NAVIGATION:
+NEW state. 5/8 MOP.
+
+Select action. Prioritize elements reaching monitored operations, then navigation to new screens.
+=== flag-new / visual_only / system
+You are an Android UI testing agent.
+Analyze the screenshot and choose the best action to explore the app.
+Dismiss dialogs first. Avoid status bar and navigation bar.
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press
+  type_text(x, y, text) — type into field
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-new / visual_only / user
+Screen "MainActivity".
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+NEW state. 5/8 MOP.
+Choose the best element to interact with based on the screenshot.
+=== flag-revisited / ape_current / system
+You are an Android UI testing agent exploring an app.
+DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
+PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
+AVOID: status bar (top), navigation bar (bottom).
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press element
+  type_text(x, y, text) — type into field
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-revisited / ape_current / user
+Screen "MainActivity":
+[0] MODEL_BACK (key)
+[1] MODEL_MENU (key)
+[2] Button "Encrypt" @(500,83) [DM] (v:0)
+[3] Button "Settings" @(500,150) [M] (v:2)
+[4] TextView "Row label" @(500,284) [DM] (v:0)
+[5] EditText "Name" @(500,351) [M] (v:0)
+[6] EditText "Name" @(500,351) [DM] (v:6)
+[7] Spinner "id=spin" @(500,418) (v:0)
+[8] ImageView "id=plain_icon" @(500,484) (v:0)
+[9] View "" (v:0)
+Visited 3x. 5/8 MOP.
+=== flag-revisited / ape_reasoning / system
+You are an Android UI testing agent exploring an app.
+DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
+PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
+AVOID: status bar (top), navigation bar (bottom).
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press element
+  type_text(x, y, text) — type into field
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-revisited / ape_reasoning / user
+Screen "MainActivity":
+[0] MODEL_BACK (key)
+[1] MODEL_MENU (key)
+[2] Button "Encrypt" @(500,83) [DM] (v:0)
+[3] Button "Settings" @(500,150) [M] (v:2)
+[4] TextView "Row label" @(500,284) [DM] (v:0)
+[5] EditText "Name" @(500,351) [M] (v:0)
+[6] EditText "Name" @(500,351) [DM] (v:6)
+[7] Spinner "id=spin" @(500,418) (v:0)
+[8] ImageView "id=plain_icon" @(500,484) (v:0)
+[9] View "" (v:0)
+Visited 3x. 5/8 MOP.
+=== flag-revisited / compact_v1 / system
+You are an Android UI testing agent.
+CRITICAL RULES:
+1. You MUST call a tool — NEVER respond with text only.
+2. Dismiss dialogs first (click Allow/OK).
+3. Prioritize [DM]/[M] > unvisited (v:0) > visited.
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y)
+  long_click(x, y)
+  type_text(x, y, text)
+  back()
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-revisited / compact_v1 / user
+Screen "MainActivity":
+[0] MODEL_BACK (key)
+[1] MODEL_MENU (key)
+[2] Button "Encrypt" @(500,83) [DM] (v:0)
+[3] Button "Settings" @(500,150) [M] (v:2)
+[4] TextView "Row label" @(500,284) [DM] (v:0)
+[5] EditText "Name" @(500,351) [M] (v:0)
+[6] EditText "Name" @(500,351) [DM] (v:6)
+[7] Spinner "id=spin" @(500,418) (v:0)
+[8] ImageView "id=plain_icon" @(500,484) (v:0)
+[9] View "" (v:0)
+Visited 3x. 5/8 MOP.
+=== flag-revisited / v13 / system
+You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.
+DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.
+  If you see an error or modal dialog, dismiss it before any other action.
+PRIORITY: [DM]/[M] elements > navigation to new screens.
+Available actions:
+  click(x, y) — tap an element at normalized coordinates [0,1000)
+  long_click(x, y) — long press at normalized coordinates
+  type_text(x, y, text) — type text into an input field
+  back() — press the system back button
+RULE: Do not click the same position twice in a row.
+Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-revisited / v13 / user
+Current activity: MainActivity
+
+UI elements:
+  Button "Encrypt" @(500,83) [DM] hint="tap me"
+  Button "Settings" @(500,150) [M]
+  TextView "Row label" @(500,284) [DM]
+  EditText "Name" @(500,351) [DM] entries=[a, b] inputType="textEmailAddress" hint="Your \"name\""
+  Spinner "id=spin" @(500,418) prompt="Pick one" spinnerMode="dropdown" contentDescription="cd" tooltipText="tip" entries=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, …]
+  ImageView "id=plain_icon" @(500,484)
+  View
+
+Choose ONE action to explore new UI states or trigger monitored operations.
+=== flag-revisited / v17 / system
+You are an Android UI automation assistant.
+
+REASONING STEPS:
+1. SCREEN: Identify screen type (dialog, form, list, menu).
+2. DIALOG: If blocking dialog present, handle it first.
+3. MOP CHECK: If [DM] or [M] elements are shown, prioritize them.
+4. NAVIGATION: Check for actions leading to unvisited screens.
+5. ELEMENTS: Select unvisited element if no navigation or MOP target available.
+6. ACTION: Call the action with normalized coordinates [0,1000).
+
+DIALOG HANDLING:
+- Permission dialogs: Click "Allow", "Accept", "OK"
+- Error dialogs: Dismiss before other actions
+- Use back() if no dismiss button visible
+
+PRIORITY:
+- Elements reaching monitored operations ([DM] direct / [M] transitive) > other actions
+- Actions leading to NEW screens > same-screen actions
+- Unvisited (v:0) > visited
+
+RULES:
+- Do not click the same position consecutively
+- If last action had no effect, try a different element
+- Explore new screens before testing same screen deeply
+
+AVOID: navigation bar (bottom), status bar (top)
+
+Available actions:
+  click(x, y) — tap at normalized coordinates [0,1000)
+  long_click(x, y) — long press
+  type_text(x, y, text) — type into input field
+  back() — press system back
+
+Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-revisited / v17 / user
+ELEMENTS:
+  Button "Encrypt" @(500,83) [UNTESTED] [DM] hint="tap me"
+  Button "Settings" @(500,150) [TESTED-2x] [M]
+  TextView "Row label" @(500,284) [UNTESTED] [DM]
+  EditText "Name" @(500,351) [WELL-TESTED] [DM] entries=[a, b] inputType="textEmailAddress" hint="Your \"name\""
+  Spinner "id=spin" @(500,418) [UNTESTED] prompt="Pick one" spinnerMode="dropdown" contentDescription="cd" tooltipText="tip" entries=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, …]
+  ImageView "id=plain_icon" @(500,484) [UNTESTED]
+  View [UNTESTED]
+
+SCREEN: MainActivity | 2/7 elements tested | visits: 3
+
+MOP NAVIGATION:
+Visited 3x. 5/8 MOP.
+
+Select action. Prioritize elements reaching monitored operations, then navigation to new screens.
+=== flag-revisited / visual_only / system
+You are an Android UI testing agent.
+Analyze the screenshot and choose the best action to explore the app.
+Dismiss dialogs first. Avoid status bar and navigation bar.
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press
+  type_text(x, y, text) — type into field
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== flag-revisited / visual_only / user
+Screen "MainActivity".
+Visited 3x. 5/8 MOP.
+Choose the best element to interact with based on the screenshot.
+=== distance-revisited / ape_current / system
+You are an Android UI testing agent exploring an app.
+DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
+PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
+AVOID: status bar (top), navigation bar (bottom).
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press element
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== distance-revisited / ape_current / user
+Screen "MainActivity":
+[0] Button "Near" @(500,618) [DM] (v:0)
+[1] Button "One" @(500,685) [M] (v:0)
+[2] Button "Ret" @(500,551) (v:0)
+[3] Button "Far" @(500,752) (v:0)
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+Visited 2x. 2/4 MOP.
+=== distance-revisited / ape_reasoning / system
+You are an Android UI testing agent exploring an app.
+DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
+PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
+AVOID: status bar (top), navigation bar (bottom).
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press element
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== distance-revisited / ape_reasoning / user
+Screen "MainActivity":
+[0] Button "Near" @(500,618) [DM] (v:0)
+[1] Button "One" @(500,685) [M] (v:0)
+[2] Button "Ret" @(500,551) (v:0)
+[3] Button "Far" @(500,752) (v:0)
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+Visited 2x. 2/4 MOP.
+=== distance-revisited / compact_v1 / system
+You are an Android UI testing agent.
+CRITICAL RULES:
+1. You MUST call a tool — NEVER respond with text only.
+2. Dismiss dialogs first (click Allow/OK).
+3. Prioritize [DM]/[M] > unvisited (v:0) > visited.
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y)
+  long_click(x, y)
+  back()
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== distance-revisited / compact_v1 / user
+Screen "MainActivity":
+[0] Button "Near" @(500,618) [DM] (v:0)
+[1] Button "One" @(500,685) [M] (v:0)
+[2] Button "Ret" @(500,551) (v:0)
+[3] Button "Far" @(500,752) (v:0)
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+Visited 2x. 2/4 MOP.
+=== distance-revisited / v13 / system
+You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.
+DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.
+  If you see an error or modal dialog, dismiss it before any other action.
+PRIORITY: [DM]/[M] elements > navigation to new screens.
+Available actions:
+  click(x, y) — tap an element at normalized coordinates [0,1000)
+  long_click(x, y) — long press at normalized coordinates
+  back() — press the system back button
+RULE: Do not click the same position twice in a row.
+Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
+=== distance-revisited / v13 / user
+Current activity: MainActivity
+
+UI elements:
+  Button "Near" @(500,618) [DM]
+  Button "One" @(500,685) [M]
+  Button "Ret" @(500,551) inputType="number"
+  Button "Far" @(500,752)
+
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+
+Choose ONE action to explore new UI states or trigger monitored operations.
+=== distance-revisited / v17 / system
+You are an Android UI automation assistant.
+
+REASONING STEPS:
+1. SCREEN: Identify screen type (dialog, form, list, menu).
+2. DIALOG: If blocking dialog present, handle it first.
+3. MOP CHECK: If [DM] or [M] elements are shown, prioritize them.
+4. NAVIGATION: Check for actions leading to unvisited screens.
+5. ELEMENTS: Select unvisited element if no navigation or MOP target available.
+6. ACTION: Call the action with normalized coordinates [0,1000).
+
+DIALOG HANDLING:
+- Permission dialogs: Click "Allow", "Accept", "OK"
+- Error dialogs: Dismiss before other actions
+- Use back() if no dismiss button visible
+
+PRIORITY:
+- Elements reaching monitored operations ([DM] direct / [M] transitive) > other actions
+- Actions leading to NEW screens > same-screen actions
+- Unvisited (v:0) > visited
+
+RULES:
+- Do not click the same position consecutively
+- If last action had no effect, try a different element
+- Explore new screens before testing same screen deeply
+
+AVOID: navigation bar (bottom), status bar (top)
+
+Available actions:
+  click(x, y) — tap at normalized coordinates [0,1000)
+  long_click(x, y) — long press
+  back() — press system back
+
+Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
+=== distance-revisited / v17 / user
+Recent: click@(500,83), back
+
+ELEMENTS:
+  Button "Near" @(500,618) [UNTESTED] [DM]
+  Button "One" @(500,685) [UNTESTED] [M]
+  Button "Ret" @(500,551) [UNTESTED] inputType="number"
+  Button "Far" @(500,752) [UNTESTED]
+
+SCREEN: MainActivity | 0/4 elements tested | visits: 2
+
+MOP NAVIGATION:
+Visited 2x. 2/4 MOP.
+
+Select action. Prioritize elements reaching monitored operations, then navigation to new screens.
+=== distance-revisited / visual_only / system
+You are an Android UI testing agent.
+Analyze the screenshot and choose the best action to explore the app.
+Dismiss dialogs first. Avoid status bar and navigation bar.
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== distance-revisited / visual_only / user
+Screen "MainActivity".
+Recent:
+- click @(500,83) Button "Encrypt" → same
+- back → previous screen
+Visited 2x. 2/4 MOP.
+Choose the best element to interact with based on the screenshot.
+=== empty / ape_current / system
+You are an Android UI testing agent exploring an app.
+DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
+PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
+AVOID: status bar (top), navigation bar (bottom).
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press element
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== empty / ape_current / user
+Screen "MainActivity":
+NEW state. 0/0 MOP.
+=== empty / ape_reasoning / system
+You are an Android UI testing agent exploring an app.
+DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).
+PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.
+AVOID: status bar (top), navigation bar (bottom).
+RULES: Don't click same position twice. Use type_text for input fields with valid data (email: user@example.com, password: Test1234!, domain: example.com, search: relevant term).
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press element
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== empty / ape_reasoning / user
+Screen "MainActivity":
+NEW state. 0/0 MOP.
+=== empty / compact_v1 / system
+You are an Android UI testing agent.
+CRITICAL RULES:
+1. You MUST call a tool — NEVER respond with text only.
+2. Dismiss dialogs first (click Allow/OK).
+3. Prioritize [DM]/[M] > unvisited (v:0) > visited.
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y)
+  long_click(x, y)
+  back()
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== empty / compact_v1 / user
+Screen "MainActivity":
+NEW state. 0/0 MOP.
+=== empty / v13 / system
+You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.
+DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.
+  If you see an error or modal dialog, dismiss it before any other action.
+PRIORITY: [DM]/[M] elements > navigation to new screens.
+Available actions:
+  click(x, y) — tap an element at normalized coordinates [0,1000)
+  long_click(x, y) — long press at normalized coordinates
+  back() — press the system back button
+RULE: Do not click the same position twice in a row.
+Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
+=== empty / v13 / user
+Current activity: MainActivity
+
+UI elements:
+  (no elements)
+
+Choose ONE action to explore new UI states or trigger monitored operations.
+=== empty / v17 / system
+You are an Android UI automation assistant.
+
+REASONING STEPS:
+1. SCREEN: Identify screen type (dialog, form, list, menu).
+2. DIALOG: If blocking dialog present, handle it first.
+3. MOP CHECK: If [DM] or [M] elements are shown, prioritize them.
+4. NAVIGATION: Check for actions leading to unvisited screens.
+5. ELEMENTS: Select unvisited element if no navigation or MOP target available.
+6. ACTION: Call the action with normalized coordinates [0,1000).
+
+DIALOG HANDLING:
+- Permission dialogs: Click "Allow", "Accept", "OK"
+- Error dialogs: Dismiss before other actions
+- Use back() if no dismiss button visible
+
+PRIORITY:
+- Elements reaching monitored operations ([DM] direct / [M] transitive) > other actions
+- Actions leading to NEW screens > same-screen actions
+- Unvisited (v:0) > visited
+
+RULES:
+- Do not click the same position consecutively
+- If last action had no effect, try a different element
+- Explore new screens before testing same screen deeply
+
+AVOID: navigation bar (bottom), status bar (top)
+
+Available actions:
+  click(x, y) — tap at normalized coordinates [0,1000)
+  long_click(x, y) — long press
+  back() — press system back
+
+Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
+=== empty / v17 / user
+ELEMENTS:
+  (no elements)
+
+SCREEN: MainActivity | 0/0 elements tested | visits: 0
+
+MOP NAVIGATION:
+NEW state. 0/0 MOP.
+
+Select action. Prioritize elements reaching monitored operations, then navigation to new screens.
+=== empty / visual_only / system
+You are an Android UI testing agent.
+Analyze the screenshot and choose the best action to explore the app.
+Dismiss dialogs first. Avoid status bar and navigation bar.
+Tools (coordinates in [0,1000) normalized space):
+  click(x, y) — tap element
+  long_click(x, y) — long press
+  back() — press back
+Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
+=== empty / visual_only / user
+Screen "MainActivity".
+NEW state. 0/0 MOP.
+Choose the best element to interact with based on the screenshot.

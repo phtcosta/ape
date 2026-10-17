@@ -7,9 +7,7 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
-import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
-import com.android.commands.monkey.ape.utils.MopScorer;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,6 +30,11 @@ import java.util.Set;
  * {@link CoordinateNormalizer#toNormalized} with the display dimensions {@link #build} received:
  * the pair the caller determined for the decision, which the screenshot was captured at and the
  * answer is mapped with. Never the root node's bounds (INV-PRM-06).
+ *
+ * <p>The text is a base prompt plus what the mounted {@link PromptContribution}s add at its
+ * extension points (llm-prompt "Prompt Built From Group Contributions"). The base is the group-free
+ * wording; the builder never asks whether a group or its data is present (INV-PRM-08), it renders
+ * what the contributions return, in the order they were mounted (STATIC before MOP).
  */
 public class ApePromptBuilder {
 
@@ -66,6 +69,23 @@ public class ApePromptBuilder {
     static final String VARIANT_V17 = "v17";
     static final String VARIANT_VISUAL_ONLY = "visual_only";
 
+    // -------------------------------------------------------------------------
+    // Extension points of the text, as PromptContribution.systemSentence receives them. A
+    // variant's own name is the clause after "PRIORITY: " (after "3. Prioritize " in compact_v1);
+    // these are the others.
+    // -------------------------------------------------------------------------
+
+    /** {@code v17}'s reasoning step after {@code DIALOG}; the builder numbers the steps. */
+    static final String POINT_V17_STEP = "v17.step";
+    /** {@code v17}'s {@code ELEMENTS} step, after "if no navigation". */
+    static final String POINT_V17_ELEMENTS = "v17.elements";
+    /** {@code v17}'s {@code PRIORITY} list, lines before its first line. */
+    static final String POINT_V17_PRIORITY = "v17.priority";
+    /** {@code v13}'s closing line, after "explore new UI states". */
+    static final String POINT_V13_CLOSE = "v13.close";
+    /** {@code v17}'s closing line, after "Prioritize ". */
+    static final String POINT_V17_CLOSE = "v17.close";
+
     /**
      * The prompt variant this builder writes, injected at construction from the resolved plan
      * (INV-DP-12). The variant is run-frozen, so taking it once is the same value the read site
@@ -74,8 +94,26 @@ public class ApePromptBuilder {
      */
     private final String promptVariant;
 
+    /** The mounted groups' contributions, in mounting order; empty for the base prompt. */
+    private final List<PromptContribution> contributions;
+
+    /** A builder of the base prompt: no group contributes. */
     public ApePromptBuilder(String promptVariant) {
+        this(promptVariant, Collections.<PromptContribution>emptyList());
+    }
+
+    /**
+     * @param promptVariant the run's prompt variant
+     * @param contributions the contributions of the plan's mounted groups, STATIC before MOP
+     */
+    public ApePromptBuilder(String promptVariant, List<PromptContribution> contributions) {
         this.promptVariant = promptVariant;
+        this.contributions = Collections.unmodifiableList(new ArrayList<>(contributions));
+    }
+
+    /** The mounted contributions, in mounting order. */
+    public List<PromptContribution> contributions() {
+        return contributions;
     }
 
     // -------------------------------------------------------------------------
@@ -136,9 +174,8 @@ public class ApePromptBuilder {
      *                      coordinate is normalized against it, never against the root node
      * @param deviceHeight  display height in pixels, from the same pair
      * @param state         current abstract state (for activity name and visit count)
-     * @param actions       candidate ModelActions to present to the LLM
-     * @param mop           the run's MOP context (may be null → MOP markers and the MOP count
-     *                      omitted); both are the scoring's verdict under its mode (design D22)
+     * @param actions       candidate ModelActions to present to the LLM; the state's own actions,
+     *                      so each action's state is {@code state}
      * @param base64Image   base-64 encoded JPEG screenshot
      * @param recentActions up to MAX_HISTORY past actions (oldest first); may be null/empty
      * @return list of exactly 2 messages: [system, user]
@@ -147,7 +184,6 @@ public class ApePromptBuilder {
                                             int deviceHeight,
                                             State state,
                                             List<ModelAction> actions,
-                                            MopContext mop,
                                             String base64Image,
                                             List<ActionHistoryEntry> recentActions) {
         // Derive activity names safely
@@ -164,22 +200,22 @@ public class ApePromptBuilder {
         switch (variant) {
             case VARIANT_V13:
                 userText = buildRvsmartV13UserText(
-                        state, actions, mop, recentActions, activity, activitySimple,
+                        state, actions, recentActions, activity, activitySimple,
                         deviceWidth, deviceHeight);
                 break;
             case VARIANT_V17:
                 userText = buildRvsmartV17UserText(
-                        state, actions, mop, recentActions, activity, activitySimple,
+                        state, actions, recentActions, activity, activitySimple,
                         deviceWidth, deviceHeight);
                 break;
             case VARIANT_VISUAL_ONLY:
                 userText = buildVisualOnlyUserText(
-                        state, actions, mop, recentActions, activity, activitySimple,
+                        state, actions, recentActions, activity, activitySimple,
                         deviceWidth, deviceHeight);
                 break;
             default:
                 userText = buildUserText(
-                        state, actions, mop, recentActions,
+                        state, actions, recentActions,
                         activity, activitySimple, deviceWidth, deviceHeight);
                 break;
         }
@@ -204,7 +240,7 @@ public class ApePromptBuilder {
     // System message — dispatched by variant
     // -------------------------------------------------------------------------
 
-    private static String buildSystemMessageForVariant(String variant, boolean includeTypeText) {
+    private String buildSystemMessageForVariant(String variant, boolean includeTypeText) {
         switch (variant) {
             case VARIANT_COMPACT_V1:    return buildCompactV1System(includeTypeText);
             case VARIANT_V13:   return buildV13System(includeTypeText);
@@ -212,15 +248,16 @@ public class ApePromptBuilder {
             case VARIANT_VISUAL_ONLY:   return buildVisualOnlySystem(includeTypeText);
             case VARIANT_APE_REASONING:
             case VARIANT_APE_CURRENT:
-            default:                    return buildApeCurrentSystem(includeTypeText);
+            default:                    return buildApeCurrentSystem(variant, includeTypeText);
         }
     }
 
-    private static String buildApeCurrentSystem(boolean includeTypeText) {
+    /** @param variant {@code ape_current} or {@code ape_reasoning}, which share this message */
+    private String buildApeCurrentSystem(String variant, boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are an Android UI testing agent exploring an app.\n");
         sb.append("DIALOG: If permission/error dialog visible, dismiss it first (click Allow/OK).\n");
-        sb.append("PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.\n");
+        sb.append("PRIORITY: ").append(sentence(variant)).append("unvisited (v:0) > visited.\n");
         sb.append("AVOID: status bar (top), navigation bar (bottom).\n");
         sb.append("RULES: Don't click same position twice. ");
         sb.append("Use type_text for input fields with valid data ");
@@ -236,13 +273,13 @@ public class ApePromptBuilder {
         return sb.toString();
     }
 
-    private static String buildCompactV1System(boolean includeTypeText) {
+    private String buildCompactV1System(boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are an Android UI testing agent.\n");
         sb.append("CRITICAL RULES:\n");
         sb.append("1. You MUST call a tool — NEVER respond with text only.\n");
         sb.append("2. Dismiss dialogs first (click Allow/OK).\n");
-        sb.append("3. Prioritize [DM]/[M] > unvisited (v:0) > visited.\n");
+        sb.append("3. Prioritize ").append(sentence(VARIANT_COMPACT_V1)).append("unvisited (v:0) > visited.\n");
         sb.append("Tools (coordinates in [0,1000) normalized space):\n");
         sb.append("  click(x, y)\n");
         sb.append("  long_click(x, y)\n");
@@ -254,12 +291,12 @@ public class ApePromptBuilder {
         return sb.toString();
     }
 
-    private static String buildV13System(boolean includeTypeText) {
+    private String buildV13System(boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.\n");
         sb.append("DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.\n");
         sb.append("  If you see an error or modal dialog, dismiss it before any other action.\n");
-        sb.append("PRIORITY: [DM]/[M] elements > navigation to new screens.\n");
+        sb.append("PRIORITY: ").append(sentence(VARIANT_V13)).append("navigation to new screens.\n");
         sb.append("Available actions:\n");
         sb.append("  click(x, y) — tap an element at normalized coordinates [0,1000)\n");
         sb.append("  long_click(x, y) — long press at normalized coordinates\n");
@@ -272,39 +309,47 @@ public class ApePromptBuilder {
         return sb.toString();
     }
 
-    private static final String SYSTEM_V17_HEADER =
-            "You are an Android UI automation assistant.\n" +
-            "\n" +
-            "REASONING STEPS:\n" +
-            "1. SCREEN: Identify screen type (dialog, form, list, menu).\n" +
-            "2. DIALOG: If blocking dialog present, handle it first.\n" +
-            "3. MOP CHECK: If [DM] or [M] elements are shown, prioritize them.\n" +
-            "4. NAVIGATION: Check for actions leading to unvisited screens.\n" +
-            "5. ELEMENTS: Select unvisited element if no navigation or MOP target available.\n" +
-            "6. ACTION: Call the action with normalized coordinates [0,1000).\n" +
-            "\n" +
-            "DIALOG HANDLING:\n" +
-            "- Permission dialogs: Click \"Allow\", \"Accept\", \"OK\"\n" +
-            "- Error dialogs: Dismiss before other actions\n" +
-            "- Use back() if no dismiss button visible\n" +
-            "\n" +
-            "PRIORITY:\n" +
-            "- Elements reaching monitored operations ([DM] direct / [M] transitive) > other actions\n" +
-            "- Actions leading to NEW screens > same-screen actions\n" +
-            "- Unvisited (v:0) > visited\n" +
-            "\n" +
-            "RULES:\n" +
-            "- Do not click the same position consecutively\n" +
-            "- If last action had no effect, try a different element\n" +
-            "- Explore new screens before testing same screen deeply\n" +
-            "\n" +
-            "AVOID: navigation bar (bottom), status bar (top)\n" +
-            "\n" +
-            "Available actions:\n";
+    /**
+     * {@code v17}'s system message. The reasoning steps are numbered here, because a contribution
+     * may add one ({@link #POINT_V17_STEP}) and the steps after it follow on.
+     */
+    private String buildV17System(boolean includeTypeText) {
+        List<String> steps = new ArrayList<>();
+        steps.add("SCREEN: Identify screen type (dialog, form, list, menu).");
+        steps.add("DIALOG: If blocking dialog present, handle it first.");
+        String contributedStep = sentence(POINT_V17_STEP);
+        if (!contributedStep.isEmpty()) steps.add(contributedStep);
+        steps.add("NAVIGATION: Check for actions leading to unvisited screens.");
+        steps.add("ELEMENTS: Select unvisited element if no navigation" + sentence(POINT_V17_ELEMENTS)
+                + " target available.");
+        steps.add("ACTION: Call the action with normalized coordinates [0,1000).");
 
-    private static String buildV17System(boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
-        sb.append(SYSTEM_V17_HEADER);
+        sb.append("You are an Android UI automation assistant.\n");
+        sb.append("\n");
+        sb.append("REASONING STEPS:\n");
+        for (int i = 0; i < steps.size(); i++) {
+            sb.append(i + 1).append(". ").append(steps.get(i)).append('\n');
+        }
+        sb.append("\n");
+        sb.append("DIALOG HANDLING:\n");
+        sb.append("- Permission dialogs: Click \"Allow\", \"Accept\", \"OK\"\n");
+        sb.append("- Error dialogs: Dismiss before other actions\n");
+        sb.append("- Use back() if no dismiss button visible\n");
+        sb.append("\n");
+        sb.append("PRIORITY:\n");
+        sb.append(sentence(POINT_V17_PRIORITY));
+        sb.append("- Actions leading to NEW screens > same-screen actions\n");
+        sb.append("- Unvisited (v:0) > visited\n");
+        sb.append("\n");
+        sb.append("RULES:\n");
+        sb.append("- Do not click the same position consecutively\n");
+        sb.append("- If last action had no effect, try a different element\n");
+        sb.append("- Explore new screens before testing same screen deeply\n");
+        sb.append("\n");
+        sb.append("AVOID: navigation bar (bottom), status bar (top)\n");
+        sb.append("\n");
+        sb.append("Available actions:\n");
         sb.append("  click(x, y) — tap at normalized coordinates [0,1000)\n");
         sb.append("  long_click(x, y) — long press\n");
         if (includeTypeText) {
@@ -315,7 +360,7 @@ public class ApePromptBuilder {
         return sb.toString();
     }
 
-    private static String buildVisualOnlySystem(boolean includeTypeText) {
+    private String buildVisualOnlySystem(boolean includeTypeText) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are an Android UI testing agent.\n");
         sb.append("Analyze the screenshot and choose the best action to explore the app.\n");
@@ -337,7 +382,6 @@ public class ApePromptBuilder {
 
     private String buildUserText(State state,
                                  List<ModelAction> actions,
-                                 MopContext mop,
                                  List<ActionHistoryEntry> recentActions,
                                  String activity,
                                  String activitySimple,
@@ -352,7 +396,7 @@ public class ApePromptBuilder {
         if (actions != null) {
             for (int i = 0; i < actions.size(); i++) {
                 ModelAction action = actions.get(i);
-                String line = formatActionLine(i, action, state, mop, deviceWidth, deviceHeight);
+                String line = formatActionLine(i, action, deviceWidth, deviceHeight);
                 sb.append(line).append('\n');
             }
         }
@@ -368,7 +412,7 @@ public class ApePromptBuilder {
         }
 
         // Exploration context
-        String explorationContext = buildExplorationContext(state, actions, mop);
+        String explorationContext = buildExplorationContext(state, actions);
         if (!explorationContext.isEmpty()) {
             sb.append(explorationContext).append('\n');
         }
@@ -382,8 +426,6 @@ public class ApePromptBuilder {
 
     private String formatActionLine(int index,
                                     ModelAction action,
-                                    State state,
-                                    MopContext mop,
                                     int deviceWidth,
                                     int deviceHeight) {
         if (action == null) {
@@ -412,8 +454,8 @@ public class ApePromptBuilder {
         // Visit count
         int visitCount = action.getVisitedCount();
 
-        // MOP marker: the line's one action (design D22)
-        String mopMarker = buildMopMarker(Collections.singletonList(action), state, mop);
+        // The contributions' marker of the line's one action (design D22)
+        String marker = lineMarker(Collections.singletonList(action));
 
         // Determine if this is an input-hint widget
         boolean isInputField = isInputClass(node);
@@ -438,8 +480,8 @@ public class ApePromptBuilder {
             sb.append(' ').append(at(norm));
         }
 
-        if (!mopMarker.isEmpty()) {
-            sb.append(' ').append(mopMarker);
+        if (!marker.isEmpty()) {
+            sb.append(' ').append(marker);
         }
 
         sb.append(" (v:").append(visitCount).append(')');
@@ -448,122 +490,42 @@ public class ApePromptBuilder {
     }
 
     // -------------------------------------------------------------------------
-    // MOP marker (3.4)
+    // Contributions: what the mounted groups add at each extension point
     // -------------------------------------------------------------------------
 
-    /** {@link #mopVerdict}: the action is not MOP (weight 0, no resolved node, or no context). */
-    private static final int MOP_NONE = 0;
-    /** {@link #mopVerdict}: the action has a positive MOP weight ({@code [M]}). */
-    private static final int MOP_WEIGHTED = 1;
-    /** {@link #mopVerdict}: the action has a positive MOP weight and is direct ({@code [DM]}). */
-    private static final int MOP_DIRECT = 2;
-
-    /**
-     * The MOP verdict of one action under the run's mode (llm-prompt "MOP Marker Annotation",
-     * design D22): the one per-action test behind both the marker ({@link #buildMopMarker}) and
-     * the {@code N/M MOP.} count ({@link #buildExplorationContext}).
-     *
-     * <p>The weight and its lookup are the scoring's own ({@link MopScorer#weigh}: the D17 lookup
-     * over the containment nodes, under {@code distance} ignoring retired targets), before the tie
-     * split. A positive weight is {@link #MOP_WEIGHTED}; it is {@link #MOP_DIRECT} when the action
-     * is also direct under the mode: under {@code flag} the weight's lookup is a direct flag, under
-     * {@code distance} its smallest unretired distance is 0.
-     */
-    private static int mopVerdict(MopContext mop, State state, ModelAction action) {
-        if (mop == null || state == null || action == null) return MOP_NONE;
-        try {
-            MopScorer.Scored scored = MopScorer.weigh(mop, state, action);
-            if (scored.weight <= 0) return MOP_NONE;
-            switch (mop.scoring()) {
-                case FLAG:
-                    return scored.lookup.direct ? MOP_DIRECT : MOP_WEIGHTED;
-                case DISTANCE:
-                    return scored.distance == 0 ? MOP_DIRECT : MOP_WEIGHTED;
-                default:
-                    return MOP_WEIGHTED;
-            }
-        } catch (RuntimeException ignored) {
-            return MOP_NONE; // never throw (build's contract)
-        }
-    }
-
-    /**
-     * Returns "[DM]", "[M]", or "" for a line, from the verdicts of the line's actions (design
-     * D22): {@code [DM]} when one of them is {@link #MOP_DIRECT}, else {@code [M]} when one is
-     * {@link #MOP_WEIGHTED}, else "". A line of the shared formatter has one action; a
-     * {@code v13}/{@code v17} line has every target-requiring action of its widget (design D10).
-     */
-    private static String buildMopMarker(List<ModelAction> lineActions, State state,
-                                         MopContext mop) {
-        int verdict = MOP_NONE;
-        for (ModelAction action : lineActions) {
-            verdict = Math.max(verdict, mopVerdict(mop, state, action));
-        }
-        if (verdict == MOP_DIRECT) return "[DM]";
-        if (verdict == MOP_WEIGHTED) return "[M]";
-        return "";
-    }
-
-    // -------------------------------------------------------------------------
-    // gh13 T1.1: widget metadata in LLM context
-    // -------------------------------------------------------------------------
-
-    private static final int META_FIELD_CAP = 80;
-    private static final int META_ENTRY_CAP = 10;
-
-    /** Resolve the widget for a node and render its T1.1 metadata suffix, or "". */
-    private String buildWidgetMetadata(GUITreeNode node, MopContext mop, String activity) {
-        if (mop == null || node == null) return "";
-        try {
-            String shortId = MopData.extractShortId(node.getResourceID());
-            if (shortId.isEmpty()) return "";
-            return widgetMetadata(mop.data().getWidget(activity, shortId));
-        } catch (Exception ignored) { return ""; }
-    }
-
-    /**
-     * Render the T1.1 metadata suffix for a widget: prompt / spinnerMode /
-     * contentDescription / tooltipText / entries / inputType / hint, each emitted only when
-     * non-null/non-empty (INV-MOP-10). Per-value 80-char cap, newlines flattened, quotes escaped;
-     * entries capped to 10 with a trailing ", …".
-     */
-    static String widgetMetadata(MopData.Widget w) {
-        if (w == null) return "";
+    /** The contributions' text at the extension point {@code point}, in mounting order. */
+    private String sentence(String point) {
         StringBuilder sb = new StringBuilder();
-        appendMetaField(sb, "prompt", w.prompt);
-        appendMetaField(sb, "spinnerMode", w.spinnerMode);
-        appendMetaField(sb, "contentDescription", w.contentDescription);
-        appendMetaField(sb, "tooltipText", w.tooltipText);
-        appendMetaEntries(sb, w.entries);
-        appendMetaField(sb, "inputType", w.inputType);
-        appendMetaField(sb, "hint", w.hint);
+        for (PromptContribution c : contributions) sb.append(c.systemSentence(point));
         return sb.toString();
     }
 
-    private static void appendMetaField(StringBuilder sb, String name, String value) {
-        if (value == null || value.isEmpty()) return;
-        sb.append(' ').append(name).append("=\"").append(capMeta(value)).append('"');
+    /** The contributions' marker of a line rendering {@code lineActions}, or "". */
+    private String lineMarker(List<ModelAction> lineActions) {
+        StringBuilder sb = new StringBuilder();
+        for (PromptContribution c : contributions) sb.append(c.lineMarker(lineActions));
+        return sb.toString();
     }
 
-    private static void appendMetaEntries(StringBuilder sb, List<String> entries) {
-        if (entries == null || entries.isEmpty()) return;
-        sb.append(" entries=[");
-        int n = Math.min(entries.size(), META_ENTRY_CAP);
-        for (int i = 0; i < n; i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(capMeta(entries.get(i)));
-        }
-        if (entries.size() > META_ENTRY_CAP) sb.append(", …");
-        sb.append(']');
+    /** The contributions' detail of the line {@code action} is rendered from, or "". */
+    private String lineDetail(ModelAction action) {
+        StringBuilder sb = new StringBuilder();
+        for (PromptContribution c : contributions) sb.append(c.lineDetail(action));
+        return sb.toString();
     }
 
-    /** Flatten newlines, escape quotes, and cap at 80 chars with an ellipsis. */
-    private static String capMeta(String value) {
-        String flat = value.replace('\n', ' ').replace('\r', ' ').replace("\"", "\\\"");
-        if (flat.length() > META_FIELD_CAP) {
-            return flat.substring(0, META_FIELD_CAP) + "…";
-        }
-        return flat;
+    /** The contributions' text after the visit context, or "". */
+    private String contextLine(State state, List<ModelAction> actions) {
+        StringBuilder sb = new StringBuilder();
+        for (PromptContribution c : contributions) sb.append(c.contextLine(state, actions));
+        return sb.toString();
+    }
+
+    /** The {@code v17} navigation heading: the contributions', else the neutral one. */
+    private String navigationHeading(State state, List<ModelAction> actions) {
+        StringBuilder sb = new StringBuilder();
+        for (PromptContribution c : contributions) sb.append(c.section(state, actions));
+        return sb.length() > 0 ? sb.toString() : "NAVIGATION:";
     }
 
     // -------------------------------------------------------------------------
@@ -616,41 +578,21 @@ public class ApePromptBuilder {
     // Exploration context (3.6)
     // -------------------------------------------------------------------------
 
-    private String buildExplorationContext(State state,
-                                           List<ModelAction> actions,
-                                           MopContext mop) {
+    /**
+     * The visit context, {@code NEW state.} or {@code Visited <N>x.}, which every cell shows, then
+     * what the contributions add to it (MOP's {@code  <N>/<M> MOP.}). Empty without a state.
+     */
+    private String buildExplorationContext(State state, List<ModelAction> actions) {
         if (state == null) return "";
 
         int stateVisits = state.getVisitedCount();
-        boolean hasMopData = (mop != null);
-
-        // Count the MOP actions, per action, with the marker's test (design D22)
-        int mopCount = 0;
-        int totalTargets = 0;
-        if (hasMopData && actions != null) {
-            for (ModelAction action : actions) {
-                if (action != null && action.requireTarget()) {
-                    totalTargets++;
-                    if (mopVerdict(mop, state, action) != MOP_NONE) {
-                        mopCount++;
-                    }
-                }
-            }
-        }
-
         StringBuilder sb = new StringBuilder();
-        boolean isNewState = (stateVisits == 0);
-
-        if (isNewState) {
+        if (stateVisits == 0) {
             sb.append("NEW state.");
         } else {
             sb.append("Visited ").append(stateVisits).append("x.");
         }
-
-        if (hasMopData) {
-            sb.append(' ').append(mopCount).append('/').append(totalTargets).append(" MOP.");
-        }
-
+        sb.append(contextLine(state, actions));
         return sb.toString();
     }
 
@@ -724,7 +666,7 @@ public class ApePromptBuilder {
     // RVSmart V13 user text — simple element list
     // -------------------------------------------------------------------------
 
-    private String buildRvsmartV13UserText(State state, List<ModelAction> actions, MopContext mop,
+    private String buildRvsmartV13UserText(State state, List<ModelAction> actions,
                                             List<ActionHistoryEntry> recentActions,
                                             String activity, String activitySimple,
                                             int deviceWidth, int deviceHeight) {
@@ -737,15 +679,15 @@ public class ApePromptBuilder {
             GUITreeNode node = safeGetResolvedNode(widget.get(0));
             String className = simpleClassName(node);
             String displayText = safeGetDisplayText(node);
-            String mopMarker = buildMopMarker(widget, state, mop);
+            String marker = lineMarker(widget);
             int[] norm = normalizedCentre(safeGetBounds(node), deviceWidth, deviceHeight);
             sb.append("  ").append(className);
             if (!displayText.isEmpty()) {
                 sb.append(" \"").append(truncate(displayText, 40)).append("\"");
             }
             if (norm != null) sb.append(" ").append(at(norm));
-            if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
-            sb.append(buildWidgetMetadata(node, mop, activity));
+            if (!marker.isEmpty()) sb.append(" ").append(marker);
+            sb.append(lineDetail(widget.get(0)));
             sb.append("\n");
         }
         if (widgets.isEmpty()) sb.append("  (no elements)\n");
@@ -760,16 +702,16 @@ public class ApePromptBuilder {
             }
         }
 
-        sb.append("\nChoose ONE action to explore new UI states or trigger monitored operations.");
+        sb.append("\nChoose ONE action to explore new UI states").append(sentence(POINT_V13_CLOSE))
+                .append('.');
         return sb.toString().trim();
     }
 
     // -------------------------------------------------------------------------
-    // RVSmart V17 user text — status tags, MOP navigation, screen info
+    // RVSmart V17 user text — status tags, screen info, navigation block
     // -------------------------------------------------------------------------
 
     private String buildRvsmartV17UserText(State state, List<ModelAction> actions,
-                                            MopContext mop,
                                             List<ActionHistoryEntry> recentActions,
                                             String activity, String activitySimple,
                                             int deviceWidth, int deviceHeight) {
@@ -795,7 +737,7 @@ public class ApePromptBuilder {
             GUITreeNode node = safeGetResolvedNode(widget.get(0));
             String className = simpleClassName(node);
             String displayText = safeGetDisplayText(node);
-            String mopMarker = buildMopMarker(widget, state, mop);
+            String marker = lineMarker(widget);
             int visitCount = 0;
             for (ModelAction action : widget) visitCount += action.getVisitedCount();
             if (visitCount > 0) testedCount++;
@@ -814,8 +756,8 @@ public class ApePromptBuilder {
             }
             if (norm != null) sb.append(" ").append(at(norm));
             sb.append(" ").append(statusTag);
-            if (!mopMarker.isEmpty()) sb.append(" ").append(mopMarker);
-            sb.append(buildWidgetMetadata(node, mop, activity));
+            if (!marker.isEmpty()) sb.append(" ").append(marker);
+            sb.append(lineDetail(widget.get(0)));
             sb.append("\n");
         }
         if (widgets.isEmpty()) sb.append("  (no elements)\n");
@@ -826,13 +768,15 @@ public class ApePromptBuilder {
                 .append(" | ").append(testedCount).append("/").append(widgets.size())
                 .append(" elements tested | visits: ").append(stateVisits).append("\n");
 
-        // MOP navigation context
-        String explorationCtx = buildExplorationContext(state, actions, mop);
+        // Navigation block: the visit context, in every cell, under the contributions' heading
+        String explorationCtx = buildExplorationContext(state, actions);
         if (!explorationCtx.isEmpty()) {
-            sb.append("\nMOP NAVIGATION:\n").append(explorationCtx).append("\n");
+            sb.append('\n').append(navigationHeading(state, actions)).append('\n')
+                    .append(explorationCtx).append("\n");
         }
 
-        sb.append("\nSelect action. Prioritize elements reaching monitored operations, then navigation to new screens.");
+        sb.append("\nSelect action. Prioritize ").append(sentence(POINT_V17_CLOSE))
+                .append("navigation to new screens.");
         return sb.toString().trim();
     }
 
@@ -842,7 +786,6 @@ public class ApePromptBuilder {
 
     private String buildVisualOnlyUserText(State state,
                                             List<ModelAction> actions,
-                                            MopContext mop,
                                             List<ActionHistoryEntry> recentActions,
                                             String activity,
                                             String activitySimple,
@@ -860,7 +803,7 @@ public class ApePromptBuilder {
             }
         }
 
-        String explorationContext = buildExplorationContext(state, actions, mop);
+        String explorationContext = buildExplorationContext(state, actions);
         if (!explorationContext.isEmpty()) {
             sb.append(explorationContext).append('\n');
         }

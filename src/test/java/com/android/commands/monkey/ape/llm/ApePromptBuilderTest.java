@@ -4,6 +4,7 @@ import android.graphics.Rect;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import org.junit.Test;
 
@@ -131,7 +132,7 @@ public class ApePromptBuilderTest {
     public void build_withAllNulls_returnsExactlyTwoMessages() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null);
 
         assertNotNull("messages must not be null", messages);
         assertEquals("must produce exactly 2 messages", 2, messages.size());
@@ -141,7 +142,7 @@ public class ApePromptBuilderTest {
     public void build_withAllNulls_firstMessageIsSystem() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null);
 
         SglangClient.Message systemMsg = messages.get(0);
         assertEquals("system", systemMsg.getRole());
@@ -154,7 +155,7 @@ public class ApePromptBuilderTest {
     public void build_withAllNulls_secondMessageIsUser() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null);
 
         SglangClient.Message userMsg = messages.get(1);
         assertEquals("user", userMsg.getRole());
@@ -167,7 +168,7 @@ public class ApePromptBuilderTest {
     public void build_userMessage_imagePartFirst_textPartSecond() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null);
 
         List<SglangClient.ContentPart> parts = messages.get(1).getContentParts();
         assertEquals("image_url", parts.get(0).getType());
@@ -178,7 +179,7 @@ public class ApePromptBuilderTest {
     public void build_withNullBase64Image_imageUrlStillEmitsPrefix() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null);
 
         String imageUrl = messages.get(1).getContentParts().get(0).getImageUrl();
         assertNotNull(imageUrl);
@@ -191,7 +192,7 @@ public class ApePromptBuilderTest {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         String fakeBase64 = "abc123";
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, fakeBase64, null);
+                builder.build(1080, 1920, null, null, fakeBase64, null);
 
         String imageUrl = messages.get(1).getContentParts().get(0).getImageUrl();
         assertTrue("image URL must embed the base64 data",
@@ -207,7 +208,7 @@ public class ApePromptBuilderTest {
         // build() with null actions → hasInputField returns false → type_text omitted
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null);
 
         String systemText = messages.get(0).getTextContent();
         assertFalse("type_text should be absent when no input fields present",
@@ -218,7 +219,7 @@ public class ApePromptBuilderTest {
     public void systemMessage_alwaysContainsCoreTools() {
         ApePromptBuilder builder = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT);
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, null, null);
+                builder.build(1080, 1920, null, null, null, null);
 
         String systemText = messages.get(0).getTextContent();
         assertTrue("system message must mention click",  systemText.contains("click(x, y)"));
@@ -229,11 +230,12 @@ public class ApePromptBuilderTest {
     // llm-prompt "System Message of the v13 Variant" (design D14)
     // -------------------------------------------------------------------------
 
+    /** The {@code v13} head in a cell without MOP; {@link #V13_MOP_PRIORITY} is the MOP cell's line. */
     private static final String V13_SYSTEM_HEAD =
             "You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.\n"
             + "DIALOG HANDLING: If you see a permission dialog, click Allow/Accept/OK.\n"
             + "  If you see an error or modal dialog, dismiss it before any other action.\n"
-            + "PRIORITY: [DM]/[M] elements > navigation to new screens.\n"
+            + "PRIORITY: navigation to new screens.\n"
             + "Available actions:\n"
             + "  click(x, y) \u2014 tap an element at normalized coordinates [0,1000)\n"
             + "  long_click(x, y) \u2014 long press at normalized coordinates\n";
@@ -244,12 +246,28 @@ public class ApePromptBuilderTest {
             + "RULE: Do not click the same position twice in a row.\n"
             + "Respond with exactly one action as JSON: {\"name\": \"<action>\", \"arguments\": {<args>}}";
 
-    /** Scenario "v13 PRIORITY line has no visit ranks". */
+    private static final String V13_MOP_PRIORITY =
+            "PRIORITY: [DM]/[M] elements > navigation to new screens.\n";
+
+    /** The {@code v13} system text of a cell with MOP: the MOP contribution mounted. */
+    private static String v13SystemWithMop(List<ModelAction> actions) {
+        return new ApePromptBuilder(ApePromptBuilder.VARIANT_V13,
+                Collections.<PromptContribution>singletonList(new MopPromptContribution()))
+                .build(PromptFixtures.W, PromptFixtures.H, null, actions, "data", null)
+                .get(0).getTextContent();
+    }
+
+    /** Scenario "v13 PRIORITY line has no visit ranks", in both cells. */
     @Test
     public void v13SystemMessage_priorityLineHasNoVisitRanks() {
-        String system = PromptFixtures.systemText(ApePromptBuilder.VARIANT_V13, null);
-        assertTrue(system, system.contains("PRIORITY: [DM]/[M] elements > navigation to new screens.\n"));
-        assertFalse(system, system.contains("visited"));
+        String withMop = v13SystemWithMop(null);
+        assertTrue(withMop, withMop.contains(V13_MOP_PRIORITY));
+        assertFalse(withMop, withMop.contains("visited"));
+
+        String withoutMop = PromptFixtures.systemText(ApePromptBuilder.VARIANT_V13, null);
+        assertTrue(withoutMop, withoutMop.contains("\nPRIORITY: navigation to new screens.\n"));
+        assertFalse(withoutMop, withoutMop.contains("visited"));
+        assertFalse(withoutMop, withoutMop.contains("[DM]") || withoutMop.contains("[M]"));
     }
 
     /** Scenario "v13 system message offers type_text only with an input widget": the whole text. */
@@ -259,6 +277,10 @@ public class ApePromptBuilderTest {
                 PromptFixtures.click("android.widget.Button", "OK", new Rect(0, 105, 1080, 252)));
         assertEquals(V13_SYSTEM_HEAD + V13_SYSTEM_TAIL,
                 PromptFixtures.systemText(ApePromptBuilder.VARIANT_V13, actions));
+        assertEquals("with MOP, only the PRIORITY line differs",
+                (V13_SYSTEM_HEAD + V13_SYSTEM_TAIL).replace(
+                        "PRIORITY: navigation to new screens.\n", V13_MOP_PRIORITY),
+                v13SystemWithMop(actions));
     }
 
     @Test
@@ -281,7 +303,7 @@ public class ApePromptBuilderTest {
                         new Rect(0, 105, 1080, 252), null, "ok");
 
         List<SglangClient.Message> messages =
-                builder.build(1080, 1920, null, null, null, null,
+                builder.build(1080, 1920, null, null, null,
                         Collections.singletonList(histEntry));
 
         String userText = messages.get(1).getContentParts().get(1).getText();
@@ -291,15 +313,21 @@ public class ApePromptBuilderTest {
     }
 
     // =========================================================================
-    // gh13 §20 — widget metadata in LLM context (T1.1) via ApePromptBuilder.widgetMetadata
+    // gh13 §20 — widget metadata in LLM context (T1.1) via StaticPromptContribution.widgetMetadata
     // =========================================================================
+
+    /** The suffix the STATIC contribution renders for {@code w}, read as {@code StaticGuiModel} reads it. */
+    private static String widgetMetadata(MopData.Widget w) {
+        return StaticPromptContribution.widgetMetadata(new StaticGuiModel.WidgetMeta(w.idName, w.hint,
+                w.inputType, w.entries, w.prompt, w.spinnerMode, w.contentDescription, w.tooltipText));
+    }
 
     @Test // 20.1
     public void testWidgetMetadataAppearsInPrompt() {
         MopData.Widget w = new MopData.Widget();
         w.contentDescription = "Encrypt button";
         w.tooltipText = "Tap to encrypt";
-        String m = ApePromptBuilder.widgetMetadata(w);
+        String m = widgetMetadata(w);
         assertTrue(m.contains("contentDescription=\"Encrypt button\""));
         assertTrue(m.contains("tooltipText=\"Tap to encrypt\""));
         assertFalse(m.contains("prompt="));
@@ -310,7 +338,7 @@ public class ApePromptBuilderTest {
 
     @Test // 20.2
     public void testNullWidgetMetadataOmittedFromPrompt() {
-        String m = ApePromptBuilder.widgetMetadata(new MopData.Widget());
+        String m = widgetMetadata(new MopData.Widget());
         assertEquals("", m);
     }
 
@@ -320,7 +348,7 @@ public class ApePromptBuilderTest {
         StringBuilder big = new StringBuilder();
         for (int i = 0; i < 200; i++) big.append('x');
         w.contentDescription = big.toString();
-        String m = ApePromptBuilder.widgetMetadata(w);
+        String m = widgetMetadata(w);
         assertTrue("ellipsis on overflow", m.contains("…\""));
         // value capped at 80 chars (between the opening quote and the ellipsis)
         int start = m.indexOf("contentDescription=\"") + "contentDescription=\"".length();
@@ -332,12 +360,12 @@ public class ApePromptBuilderTest {
     public void testSpinnerEntriesAppearInPromptCappedAt10() {
         MopData.Widget w = new MopData.Widget();
         w.entries.addAll(Arrays.asList("MD2", "MD5", "SHA-1", "SHA-256", "SHA-512"));
-        assertTrue(ApePromptBuilder.widgetMetadata(w)
+        assertTrue(widgetMetadata(w)
                 .contains("entries=[MD2, MD5, SHA-1, SHA-256, SHA-512]"));
 
         MopData.Widget w15 = new MopData.Widget();
         for (int i = 0; i < 15; i++) w15.entries.add("e" + i);
-        String m = ApePromptBuilder.widgetMetadata(w15);
+        String m = widgetMetadata(w15);
         assertTrue("capped with trailing ellipsis", m.contains(", …]"));
         assertTrue(m.contains("e9"));
         assertFalse("11th entry not shown", m.contains("e10"));
@@ -347,7 +375,7 @@ public class ApePromptBuilderTest {
     public void testMetadataNewlinesFlattened() {
         MopData.Widget w = new MopData.Widget();
         w.contentDescription = "line1\nline2";
-        assertTrue(ApePromptBuilder.widgetMetadata(w).contains("line1 line2"));
+        assertTrue(widgetMetadata(w).contains("line1 line2"));
     }
 
     @Test // 20.6
@@ -355,7 +383,7 @@ public class ApePromptBuilderTest {
         MopData.Widget w = new MopData.Widget();
         w.inputType = "textPassword";
         w.hint = "Your password";
-        String m = ApePromptBuilder.widgetMetadata(w);
+        String m = widgetMetadata(w);
         assertTrue(m.contains("inputType=\"textPassword\""));
         assertTrue(m.contains("hint=\"Your password\""));
     }
@@ -364,7 +392,7 @@ public class ApePromptBuilderTest {
     public void testSpecialCharsInMetadataDoNotBreakPrompt() {
         MopData.Widget w = new MopData.Widget();
         w.contentDescription = "a\"b[c]d\\e";
-        String m = ApePromptBuilder.widgetMetadata(w);
+        String m = widgetMetadata(w);
         assertTrue("embedded quote escaped", m.contains("\\\""));
         // field stays well-formed: opens and closes with a quote
         assertTrue(m.trim().startsWith("contentDescription=\""));

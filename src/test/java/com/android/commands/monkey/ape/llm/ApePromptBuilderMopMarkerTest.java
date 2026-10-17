@@ -25,6 +25,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.List;
 
 import static com.android.commands.monkey.ape.llm.PromptFixtures.H;
@@ -119,8 +120,12 @@ public class ApePromptBuilderMopMarkerTest {
         f.set(target, value);
     }
 
-    /** A state of {@link #ACT} offering {@code actions}, visited {@code visits} times. */
-    private static State state(int visits, List<ModelAction> actions) throws Exception {
+    /**
+     * A state of {@link #ACT} offering {@code actions}, visited {@code visits} times. Each action
+     * becomes the state's own, as {@code State} builds them: the contributions read the activity
+     * from the action's state.
+     */
+    static State state(int visits, List<ModelAction> actions) throws Exception {
         StateKey key = (StateKey) allocate(StateKey.class);
         set(key, StateKey.class, "activity", ACT);
         set(key, StateKey.class, "widgets", new Name[0]);
@@ -130,6 +135,7 @@ public class ApePromptBuilderMopMarkerTest {
         Field visited = GraphElement.class.getDeclaredField("visitedCount");
         visited.setAccessible(true);
         visited.setInt(state, visits);
+        for (ModelAction action : actions) set(action, ModelAction.class, "state", state);
         return state;
     }
 
@@ -161,10 +167,18 @@ public class ApePromptBuilderMopMarkerTest {
         return act(ActionType.MODEL_CLICK, node);
     }
 
+    /** The MOP contribution bound to {@code mop}, as a cell with MOP mounts it; none for null. */
+    static List<PromptContribution> mopContribution(MopContext mop) {
+        if (mop == null) return Collections.emptyList();
+        MopPromptContribution contribution = new MopPromptContribution();
+        contribution.bind(mop);
+        return Collections.<PromptContribution>singletonList(contribution);
+    }
+
     private static String userText(String variant, MopContext mop, State state,
             List<ModelAction> actions) {
-        List<SglangClient.ContentPart> parts = new ApePromptBuilder(variant)
-                .build(W, H, state, actions, mop, "data", null).get(1).getContentParts();
+        List<SglangClient.ContentPart> parts = new ApePromptBuilder(variant, mopContribution(mop))
+                .build(W, H, state, actions, "data", null).get(1).getContentParts();
         for (SglangClient.ContentPart part : parts) {
             if ("text".equals(part.getType())) return part.getText();
         }
