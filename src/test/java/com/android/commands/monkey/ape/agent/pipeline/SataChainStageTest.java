@@ -135,24 +135,16 @@ public class SataChainStageTest {
     }
 
     @Test
-    public void testTheLabelIsReadAfterTheAttributionWriteNotBefore() {
+    public void testTheLabelIsTheChainsOwnerWhateverTheStamp() {
         ModelAction answer = action();
         answer.setDecisionSource(ModelAction.DecisionSource.MOP);
         Log log = new Log();
-        // The agent's logActionSelected attributes the action as it logs it; a stage that captured
-        // the label first would report the stale source telemetry will not print (INV-DP-04).
-        SataChainStage stage = chainAnsweringAt(0, answer, new ArrayList<>(),
-                new Log() {
-                    @Override
-                    void record(Action action, SataEventType event) {
-                        ((ModelAction) action).setDecisionSource(ModelAction.DecisionSource.SATA);
-                        log.record(action, event);
-                    }
-                });
+        SataChainStage stage = chainAnsweringAt(0, answer, new ArrayList<>(), log);
 
         StageResult result = stage.decide(null);
 
-        assertEquals(ModelAction.DecisionSource.SATA.name(), result.decisionSource());
+        assertEquals("every step the chain takes is owned by sata (design D-B7)", "sata",
+                result.decisionSource());
         assertTrue("the log ran", log.events.size() == 1);
     }
 }

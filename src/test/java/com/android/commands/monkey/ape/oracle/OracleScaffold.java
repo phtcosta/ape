@@ -3,9 +3,15 @@ package com.android.commands.monkey.ape.oracle;
 import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
+import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.pipeline.BreakerGate;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionStage;
+import com.android.commands.monkey.ape.agent.pipeline.LlmCall;
+import com.android.commands.monkey.ape.agent.pipeline.LlmGate;
+import com.android.commands.monkey.ape.agent.pipeline.StepContext;
+import com.android.commands.monkey.ape.agent.pipeline.StepRouting;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.agent.scoring.ScoringParams;
 import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
@@ -598,6 +604,8 @@ public final class OracleScaffold {
         // D-B14.20): the model over the loaded fixture, the streams from the installed context.
         setField(agent, "_staticModel", staticModel);
         setField(agent, "_stepRng", RunContext.current().stepRng());
+        // The MOP interaction ledger, as the constructor builds it: present iff MOP is mounted.
+        setField(agent, "_mopLedger", spec.has(Feature.MOP) ? new MopInteractionLedger() : null);
         setField(agent, "_coverageTracker", coverageTracker);
         // Config.activityBudgetEnabled defaults true, so the constructor builds a real tracker and
         // the ladder's first block dereferences it unconditionally (SataAgent.java:468).
@@ -631,6 +639,10 @@ public final class OracleScaffold {
         setField(agent, "graphStableCounter", 0);
         setField(agent, "backToActivity", null);
         setField(agent, "epsilon", Config.defaultEpsilon);
+        // A restart never falls due: its start action leaves the JVM (getStartAction reads the
+        // device through ape), so the RESTART guard is assembled but never selects (the boundary
+        // below). Unsafe left the threshold at 0, which would make a periodic restart due at once.
+        setField(agent, "nextRestartThreshold", Integer.MAX_VALUE);
         // The selection ladder's own parameters now arrive by injection rather than off Config's
         // statics, so the scaffold takes them from the same plan it installed above — the injection
         // profile adapting to a relocated collaborator, the one adaptation INV-ORA-07 permits while
@@ -663,21 +675,18 @@ public final class OracleScaffold {
     }
 
     /**
-     * Replaces each LLM stage's engine and breaker gate with the script's, on the stage that owns
-     * them.
+     * Replaces, on each LLM stage, the engine and the breaker gate with the script's.
      *
-     * <p>Per-stage rather than per-run because the gate is where a hook's verdict now lives: the
-     * stage evaluates its own condition first and consults the gate last, so a gate that could not
-     * tell which hook was asking could not express a script (design D3). The engine is shared —
-     * only the hook whose gate answered true can reach it.
+     * <p>Per-stage rather than per-run because the gate is where a hook's verdict lives: the stage
+     * evaluates its own trigger first and consults the gate chain last, so a gate that could not
+     * tell which hook was asking could not express a script (design D3). Assembly hands the three
+     * stages one {@link LlmCall}; each gets its own here, built from the assembled one with the same
+     * {@code StepRouting}, so the step's one-call budget (INV-RTR-26) is still shared, the
+     * {@link com.android.commands.monkey.ape.agent.pipeline.MinActionsGate} is still the plan's, and
+     * only the breaker — which reads the wall clock — is replaced by the hook's scripted verdict.
      *
-     * <p>The probabilistic stage's coin is substituted as well, and that is the one substitution
-     * that would move a golden if it were omitted: assembly hands the stage the agent's own
-     * generator, and a draw taken from it here would shift every later epsilon-greedy draw the
-     * ladder makes — four committed goldens moved by an artifact of the harness. Overwriting the
-     * field leaves the agent's pinned stream untouched. The pre-decomposition harness replaced the
-     * coin outright by overriding the predicate that held it; this replaces the stream it draws
-     * from, which is the same replacement one layer down.
+     * <p>The coin needs no substitution: {@code u_L} is drawn at step open from its own stream
+     * ({@code StepRng}), never from the agent's pinned one, so no epsilon-greedy draw can move.
      */
     private static void installScriptedLlm(DecisionPipeline pipeline, ScriptedLlm llm)
             throws Exception {
@@ -687,15 +696,34 @@ public final class OracleScaffold {
                 hook = ScriptedLlm.NEW_STATE;
             } else if (stage.name().equals(DecisionPipeline.Candidate.LLM_STAGNATION.stageName())) {
                 hook = ScriptedLlm.STAGNATION;
-            } else if (stage.name().equals(DecisionPipeline.Candidate.LLM_RANDOM.stageName())) {
+            } else if (stage.name().equals(DecisionPipeline.Candidate.LLM_COIN.stageName())) {
                 hook = ScriptedLlm.RANDOM;
-                setField(stage, "random", new Random(0L));
             }
             if (hook != null) {
-                setField(stage, "engine", llm.engine());
-                setField(stage, "breakerAllows", llm.gateFor(hook));
+                setField(stage, "llm", scriptedCall((LlmCall) getField(stage, "llm"), llm, hook));
             }
         }
+    }
+
+    /** {@code assembled} with the script's engine, and the hook's verdict in the breaker's place. */
+    @SuppressWarnings("unchecked")
+    private static LlmCall scriptedCall(LlmCall assembled, ScriptedLlm llm, String hook)
+            throws Exception {
+        List<LlmGate> gates = new ArrayList<>();
+        for (LlmGate gate : assembled.gates()) {
+            if (!BreakerGate.NAME.equals(gate.name())) {
+                gates.add(gate);
+            }
+        }
+        java.util.function.BooleanSupplier verdict = llm.gateFor(hook);
+        gates.add(new LlmGate() {
+            @Override public String name() { return BreakerGate.NAME; }
+            @Override public boolean admits(StepContext ctx) { return verdict.getAsBoolean(); }
+        });
+        return new LlmCall(llm.engine(), gates, (StepRouting) getField(assembled, "routing"),
+                (java.util.function.Consumer<ModelAction>) getField(assembled, "resolveSynthesizedTap"),
+                (java.util.function.Consumer<String>) getField(assembled, "abandonBuffer"),
+                () -> null);
     }
 
     /**

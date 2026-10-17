@@ -50,6 +50,8 @@ class FakeStepContext implements StepContext {
     ActivityBudgetTracker budgetTracker;
     List<ApePromptBuilder.ActionHistoryEntry> actionHistory = new ArrayList<>();
     int graphStableCounterResets;
+    /** What the pipeline and the stages wrote to the sink on this context's steps. */
+    final RecordingSink recorder = new RecordingSink();
 
     @Override public State newState() { return newState; }
     @Override public GUITree newGUITree() { return newGUITree; }
@@ -66,6 +68,9 @@ class FakeStepContext implements StepContext {
                 : mopData != null ? StaticGuiModel.EMPTY : null;
     }
     @Override public StepRng stepRng() { return stepRng; }
+    @Override public com.android.commands.monkey.ape.telemetry.EventSink sink() {
+        return recorder.sink;
+    }
     @Override public Graph graph() { return graph; }
     @Override public ActivityBudgetTracker budgetTracker() { return budgetTracker; }
     @Override public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() { return actionHistory; }

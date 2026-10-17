@@ -15,10 +15,6 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
-import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
-
-import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StateTransition;
 
@@ -30,10 +26,11 @@ import com.android.commands.monkey.ape.model.StateTransition;
  * sees a way out that the chain does not. One call, because a second at the same standstill would ask
  * the same question about the same screen and pay for the same answer.
  *
- * <p><b>The shot is spent by asking, not by succeeding.</b> The flag burns as soon as the trigger
- * fires, before the engine is called, so a null answer is a failed attempt rather than an unused one
- * and the restart at the full threshold is what follows if the standstill persists. This is the one
- * place where "fired" and "helped" are deliberately not the same predicate.
+ * <p><b>The shot is spent by asking, not by succeeding.</b> The flag burns when the gates admit and
+ * the engine is called, so a null answer is a failed attempt rather than an unused one and the
+ * restart at the full threshold is what follows if the standstill persists. A gate that bars, or an
+ * earlier LLM stage that already made the step's one call (INV-RTR-26), leaves the flag armed: no
+ * call was made by this stage. The trigger consumes no coin (D-A17).
  *
  * <p><b>What re-arms it is an edge, and what resets the counter is not.</b> A new edge means
  * exploration moved, which ends the episode: {@link #onStateTransition} re-arms the flag on exactly
@@ -54,28 +51,20 @@ import com.android.commands.monkey.ape.model.StateTransition;
  */
 public final class LlmStagnationStage implements DecisionStage {
 
-    private final LlmEngine engine;
-    private final BooleanSupplier breakerAllows;
+    private final LlmCall llm;
     private final int restartThreshold;
-    private final Consumer<ModelAction> resolveSynthesizedTap;
 
     /** Whether this stagnation episode has already spent its one call. */
     private boolean firedThisEpisode;
 
     /**
-     * @param engine the run's LLM orchestrator; non-null, because this stage exists only on a plan
-     *        carrying the stagnation LLM feature and such a plan has one
-     * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
+     * @param llm the gate chain, call budget and acceptance the three LLM stages share
      * @param restartThreshold the agent's forced-restart threshold, whose half is this hook's
      *        firing point
-     * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      */
-    public LlmStagnationStage(LlmEngine engine, BooleanSupplier breakerAllows, int restartThreshold,
-                              Consumer<ModelAction> resolveSynthesizedTap) {
-        this.engine = engine;
-        this.breakerAllows = breakerAllows;
+    public LlmStagnationStage(LlmCall llm, int restartThreshold) {
+        this.llm = llm;
         this.restartThreshold = restartThreshold;
-        this.resolveSynthesizedTap = resolveSynthesizedTap;
     }
 
     /**
@@ -101,21 +90,19 @@ public final class LlmStagnationStage implements DecisionStage {
 
     @Override
     public StageResult decide(StepContext ctx) {
-        if (!LlmGate.allows(ctx)
+        if (llm.spent()
                 || !stagnationMidpointReached(ctx.graphStableCounter(), restartThreshold,
                         firedThisEpisode)
-                || !breakerAllows.getAsBoolean()) {
+                || !llm.admits(ctx, StepRouting.TRIGGER_STAGNATION)) {
             return StageResult.continueChain();
         }
         firedThisEpisode = true;
-        ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
-                ctx.newState().getActions(), ctx.actionHistory(), "stagnation");
+        ModelAction result = llm.call(ctx, StepRouting.TRIGGER_STAGNATION, "stagnation");
         if (result == null) {
             return StageResult.continueChain();
         }
         ctx.resetGraphStableCounter();
-        ModelAction accepted = LlmAcceptance.accept(result, resolveSynthesizedTap);
-        return StageResult.select(accepted, accepted.getDecisionSource().name());
+        return llm.select(ctx, result);
     }
 
     /**

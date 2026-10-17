@@ -392,6 +392,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         return _stepRng;
     }
 
+    /** The run's sink, read here because the pipeline's stages may not reach for it (INV-DP-12). */
+    @Override
+    public EventSink sink() {
+        return RunContext.current().sink();
+    }
+
     @Override
     public Graph graph() {
         return getGraph();

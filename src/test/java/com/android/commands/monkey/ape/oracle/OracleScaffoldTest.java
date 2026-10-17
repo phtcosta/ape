@@ -41,7 +41,7 @@ public class OracleScaffoldTest {
     private static final List<String> LLM_STAGE_NAMES = java.util.Arrays.asList(
             DecisionPipeline.Candidate.LLM_NEW_STATE.stageName(),
             DecisionPipeline.Candidate.LLM_STAGNATION.stageName(),
-            DecisionPipeline.Candidate.LLM_RANDOM.stageName());
+            DecisionPipeline.Candidate.LLM_COIN.stageName());
 
     private static ScenarioScript oneScreenScript(int widgetCount) {
         ScenarioScript.Widget[] widgets = new ScenarioScript.Widget[widgetCount];

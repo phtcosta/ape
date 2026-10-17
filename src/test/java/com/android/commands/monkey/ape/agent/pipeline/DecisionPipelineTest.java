@@ -115,7 +115,7 @@ public class DecisionPipelineTest {
         StubStage decider = selects("LlmNewState", picked, "LLM");
         StubStage later = selects("SataChain", action(), "SATA");
 
-        Action decided = pipelineOf(first, decider, later).decide(null);
+        Action decided = pipelineOf(first, decider, later).decide(new FakeStepContext());
 
         assertSame(picked, decided);
         assertTrue("a stage before the decider is still consulted", first.wasAsked());
@@ -130,7 +130,7 @@ public class DecisionPipelineTest {
         StubStage llm = passes("LlmNewState");
         StubStage terminal = selects("SataChain", action(), "SATA");
 
-        pipelineOf(budget, llm, terminal).decide(null);
+        pipelineOf(budget, llm, terminal).decide(new FakeStepContext());
 
         assertTrue(budget.wasAsked());
         assertTrue(llm.wasAsked());
@@ -146,7 +146,7 @@ public class DecisionPipelineTest {
         StubStage terminal = selects("SataChain", picked, "SATA");
 
         DecisionPipeline pipeline = pipelineOf(trigger, terminal);
-        Action decided = pipeline.decide(null);
+        Action decided = pipeline.decide(new FakeStepContext());
 
         assertSame("the side effect stage acts, the chain still decides", picked, decided);
         assertTrue(terminal.wasAsked());
@@ -159,12 +159,12 @@ public class DecisionPipelineTest {
         DecisionPipeline pipeline = pipelineOf(acts("ComponentTrigger", "broadcast dispatched"),
                 selects("SataChain", action(), "SATA"));
 
-        pipeline.decide(null);
+        pipeline.decide(new FakeStepContext());
         assertEquals(1, pipeline.lastStepSideEffects().size());
 
         // A record that accumulated across steps would attribute the previous step's broadcast to
         // this one, which is exactly the confusion the per-step record exists to prevent.
-        pipeline.decide(null);
+        pipeline.decide(new FakeStepContext());
         assertEquals(1, pipeline.lastStepSideEffects().size());
     }
 
@@ -172,7 +172,7 @@ public class DecisionPipelineTest {
     public void aStepWithNoSideEffectRecordsNone() {
         DecisionPipeline pipeline = pipelineOf(selects("SataChain", action(), "SATA"));
 
-        pipeline.decide(null);
+        pipeline.decide(new FakeStepContext());
 
         assertTrue(pipeline.lastStepSideEffects().isEmpty());
     }
@@ -184,7 +184,7 @@ public class DecisionPipelineTest {
         StubStage terminal = passes("SataChain");
 
         try {
-            pipelineOf(passes("Budget"), terminal).decide(null);
+            pipelineOf(passes("Budget"), terminal).decide(new FakeStepContext());
             fail("the terminal stage selects or throws; falling off the roster is a wiring bug");
         } catch (IllegalStateException expected) {
             assertTrue("the message must name the roster that decided nothing, got: "
@@ -195,7 +195,7 @@ public class DecisionPipelineTest {
     @Test
     public void anEmptyRosterFailsLoudlyRatherThanReturningNothing() {
         try {
-            pipelineOf().decide(null);
+            pipelineOf().decide(new FakeStepContext());
             fail("a pipeline with no terminal stage cannot decide a step");
         } catch (IllegalStateException expected) {
             assertEquals(0, pipelineOf().size());
@@ -246,22 +246,34 @@ public class DecisionPipelineTest {
 
     @Test
     public void aPlanWithNoMopAndNoLlmAssemblesTheMinimalPipeline() {
-        // The bare plan is the aperv arm: the activity budget is on by jar default
-        // (Config.activityBudgetEnabled), so the minimal roster is two stages, not one.
+        // With ADDONS the activity budget is on by its jar default, and the restart guard follows
+        // ape.checkRestart (BASE, default true), so the minimal roster is three stages.
         RunSpec aperv = TestRunSpecs.spec("ape.addons", "true");
 
         assertEquals(
                 Arrays.asList(DecisionPipeline.Candidate.BUDGET,
+                        DecisionPipeline.Candidate.RESTART,
                         DecisionPipeline.Candidate.SATA_CHAIN),
                 DecisionPipeline.assembledCandidates(aperv));
     }
 
     @Test
-    public void aPlanWithTheBudgetOffAssemblesOnlyTheTerminalStage() {
+    public void aPlanWithTheBudgetOffAssemblesTheRestartGuardAndTheTerminalStage() {
         RunSpec noBudget = TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false");
 
-        assertEquals(Arrays.asList(DecisionPipeline.Candidate.SATA_CHAIN),
+        assertEquals(Arrays.asList(DecisionPipeline.Candidate.RESTART,
+                        DecisionPipeline.Candidate.SATA_CHAIN),
                 DecisionPipeline.assembledCandidates(noBudget));
+    }
+
+    @Test
+    public void theRestartGuardFollowsCheckRestart() {
+        // Design D-B14.12: RESTART is mounted iff ape.checkRestart, a BASE key and no feature.
+        RunSpec noRestart = TestRunSpecs.spec("ape.checkRestart", "false");
+
+        assertEquals(null, DecisionPipeline.Candidate.RESTART.gate());
+        assertEquals(Arrays.asList(DecisionPipeline.Candidate.SATA_CHAIN),
+                DecisionPipeline.assembledCandidates(noRestart));
     }
 
     @Test
@@ -275,7 +287,8 @@ public class DecisionPipelineTest {
                 "ape.llm", "true", "ape.llmUrl", "http://10.0.2.2:30000/v1",
                 "ape.llmOnNewState", "true",
                 "ape.llmOnStagnation", "true",
-                "ape.llmPercentage", "0.3");
+                "ape.llmPercentage", "0.3",
+                "ape.mopCoinPercentage", "1.0");
 
         assertEquals(Arrays.asList(DecisionPipeline.Candidate.values()),
                 DecisionPipeline.assembledCandidates(full));
@@ -292,11 +305,13 @@ public class DecisionPipelineTest {
     @Test
     public void candidateNamesAreTheStageNames() {
         assertEquals("Budget", DecisionPipeline.Candidate.BUDGET.stageName());
+        assertEquals("Restart", DecisionPipeline.Candidate.RESTART.stageName());
         assertEquals("LlmNewState", DecisionPipeline.Candidate.LLM_NEW_STATE.stageName());
         assertEquals("LlmStagnation", DecisionPipeline.Candidate.LLM_STAGNATION.stageName());
-        assertEquals("LlmRandom", DecisionPipeline.Candidate.LLM_RANDOM.stageName());
+        assertEquals("LlmCoin", DecisionPipeline.Candidate.LLM_COIN.stageName());
         assertEquals("MopLauncher", DecisionPipeline.Candidate.MOP_LAUNCHER.stageName());
         assertEquals("ComponentTrigger", DecisionPipeline.Candidate.COMPONENT_TRIGGER.stageName());
+        assertEquals("MopCoin", DecisionPipeline.Candidate.MOP_COIN.stageName());
         assertEquals("SataChain", DecisionPipeline.Candidate.SATA_CHAIN.stageName());
     }
 }

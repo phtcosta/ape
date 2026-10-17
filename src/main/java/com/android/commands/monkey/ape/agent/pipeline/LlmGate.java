@@ -29,20 +29,11 @@ public interface LlmGate {
     String name();
 
     /**
-     * Whether this gate lets the step call the LLM. Pure: it reads the step and draws nothing.
+     * Whether this gate lets the step call the LLM. Pure: it reads the step, draws nothing and
+     * writes no record. {@link BreakerGate} is the one exception to purity: its single breaker
+     * consultation may move the breaker from OPEN to HALF_OPEN.
      *
      * @param ctx the step being decided
      */
     boolean admits(StepContext ctx);
-
-    /**
-     * The precondition the three LLM stages share until the gate chain replaces it (wave 1, task
-     * 7.2): an empty action buffer and more than two actions on the screen.
-     *
-     * @param ctx the step being decided
-     * @return whether an LLM stage may consult its trigger predicate
-     */
-    static boolean allows(StepContext ctx) {
-        return ctx.actionBufferSize() == 0 && ctx.newState().getActions().size() > 2;
-    }
 }

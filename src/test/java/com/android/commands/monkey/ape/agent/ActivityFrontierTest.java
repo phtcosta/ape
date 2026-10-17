@@ -128,16 +128,17 @@ public class ActivityFrontierTest {
 
     // ---- Lever B: cadence firing predicate (mop-census-launcher, INV-CT-05/12) ----
     // shouldFire(stepsSinceFiring, cadence, launchesSoFar, maxPerRun).
-    // Fires iff stepsSinceFiring == cadence && (maxPerRun == 0 || launchesSoFar < maxPerRun); being
-    // enabled and having MOP data are assembly conditions, so a stage that exists has both. The call site resets the dedicated per-pass counter at every
-    // firing point, so equality (not >=) never overshoots while firing is active. Decoupled from
-    // graphStableCounter: firing is periodic in selection steps, independent of graph growth.
+    // Fires iff stepsSinceFiring >= cadence && (maxPerRun == 0 || launchesSoFar < maxPerRun) (D-B11):
+    // a step decided by an earlier stage still advances the counter, so the launcher fires at the
+    // first step it is reached at or past its cadence. Being enabled and having MOP data are
+    // assembly conditions, so a stage that exists has both. Decoupled from graphStableCounter:
+    // firing is periodic in selection steps, independent of graph growth.
 
     @Test
-    public void testLauncherFiresOnlyAtCadencePoint() {
+    public void testLauncherFiresAtOrPastTheCadencePoint() {
         assertTrue(MopLauncherStage.shouldFire(10, 10, 0, 0));
         assertFalse("below cadence", MopLauncherStage.shouldFire(9, 10, 0, 0));
-        assertFalse("above cadence", MopLauncherStage.shouldFire(11, 10, 0, 0));
+        assertTrue("past cadence: the stage was not reached at its point", MopLauncherStage.shouldFire(11, 10, 0, 0));
         // same shape at the default cadence 50
         assertTrue(MopLauncherStage.shouldFire(50, 50, 0, 0));
         assertFalse(MopLauncherStage.shouldFire(49, 50, 0, 0));

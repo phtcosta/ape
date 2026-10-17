@@ -13,6 +13,7 @@ import com.android.commands.monkey.ape.llm.ApePromptBuilder;
 import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -119,15 +120,19 @@ final class PipelineFixture {
         private final ModelAction fromTheChain;
         private final int componentTargets;
 
-        /**
-         * The stream the probabilistic hook draws from. Seeded and its own, so the coin never
-         * competes with {@link FakeStepContext#random}, which is the component trigger's.
-         */
+        /** The agent's own stream; no stage reads it, the coins come from the step's routing. */
         private final Random agentRandom = new Random(11L);
 
         int chainCalls;
         int triggerCalls;
         int lastTriggeredTarget = -1;
+        /** Whether a restart is due; {@link #restartDue} is read once per step, as the agent's is. */
+        boolean restartDue;
+        int restartDueCalls;
+        /** The owners that abandoned the buffer, in order. */
+        final List<String> abandoned = new ArrayList<>();
+        /** The run's first-interaction ledger, as a plan with MOP holds one. */
+        final MopInteractionLedger ledger = new MopInteractionLedger();
 
         FakeAgent(StubLlm llm, ModelAction fromTheChain) {
             this(llm, fromTheChain, 1);
@@ -166,6 +171,30 @@ final class PipelineFixture {
         public void triggerComponent(int target) {
             triggerCalls++;
             lastTriggeredTarget = target;
+        }
+
+        @Override
+        public boolean restartDue() {
+            restartDueCalls++;
+            return restartDue;
+        }
+
+        @Override
+        public Action restartAction() {
+            if (!restartDue) {
+                throw new IllegalStateException("no restart is due");
+            }
+            return new ModelAction(null, ActionType.MODEL_BACK);
+        }
+
+        @Override
+        public void abandonBuffer(String owner) {
+            abandoned.add(owner);
+        }
+
+        @Override
+        public MopInteractionLedger mopLedger() {
+            return ledger;
         }
 
         @Override

@@ -46,6 +46,12 @@ public class LlmEngine {
     private final LlmTelemetry telemetry;
 
     /**
+     * Why the last {@link #selectAction} returned null — {@code error}, {@code no_match} or
+     * {@code decline} (llm-routing "Declared LLM Fallback") — and null after a call that selected.
+     */
+    private String lastFallback;
+
+    /**
      * @param screenshot the screen-to-string step
      * @param promptBuilder the prompt assembler
      * @param client the run's single door to the model, breaker included
@@ -120,6 +126,8 @@ public class LlmEngine {
                                     String mode) {
         telemetry.countAttempt();
         long startMs = System.currentTimeMillis();
+        // Every exit before mapping is an abandoned attempt; the mapped exit below overwrites it.
+        lastFallback = FALLBACK_ERROR;
 
         int[] dimensions = screenshot.deviceDimensions(tree);
         int deviceWidth = dimensions[0];
@@ -214,6 +222,12 @@ public class LlmEngine {
                     nearest, response, elapsedMs);
 
             // Step 10
+            if (match == null) {
+                lastFallback = "no_match".equals(verdict.result) ? FALLBACK_NO_MATCH
+                        : FALLBACK_DECLINE;
+            } else {
+                lastFallback = null;
+            }
             return match;
 
         } catch (Exception e) {
@@ -225,6 +239,23 @@ public class LlmEngine {
             base64 = null;
             messages = null;
         }
+    }
+
+    /** {@link #lastFallback()}: the attempt was abandoned before mapping. */
+    public static final String FALLBACK_ERROR = "error";
+    /** {@link #lastFallback()}: the answer was refused at mapping. */
+    public static final String FALLBACK_NO_MATCH = "no_match";
+    /** {@link #lastFallback()}: no action for any other reason. */
+    public static final String FALLBACK_DECLINE = "decline";
+
+    /**
+     * Why the last {@link #selectAction} returned null, for {@code dec.own.fb}: {@code error} when
+     * the attempt was abandoned before mapping (screenshot, image, HTTP, timeout or parse),
+     * {@code no_match} when the answer was refused at mapping, {@code decline} otherwise; null
+     * after a call that selected, or before any call.
+     */
+    public String lastFallback() {
+        return lastFallback;
     }
 
     // -------------------------------------------------------------------------

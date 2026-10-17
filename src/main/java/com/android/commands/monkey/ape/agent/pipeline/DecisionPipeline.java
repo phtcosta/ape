@@ -18,7 +18,9 @@ package com.android.commands.monkey.ape.agent.pipeline;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Predicate;
 
+import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.runtime.Feature;
@@ -29,12 +31,20 @@ import com.android.commands.monkey.ape.utils.Logger;
  * The action-selection policy, as an ordered list of named stages instead of a column of guarded
  * {@code if} blocks.
  *
- * <p>The policy itself is unchanged and deliberately so: the stage order below is the verified ladder
- * (V1 of {@code docs/analise_fable-selecao.md}), it is hard precedence — the first stage that selects
- * ends the step and no later stage runs, including the counter increments and RNG draws it would have
- * performed (INV-DP-02) — and it is fixed in code. Precedence is research semantics, stable per
- * release; there is no configuration key that reorders stages and no weighted arbitration between
- * them (owner decision Q1, report Sec. 7).
+ * <p>The stage order is a fixed sequence of <b>owners</b> (design D-B7): the guards ({@code Budget},
+ * {@code Restart}), the LLM ({@code LlmNewState}, {@code LlmStagnation}, {@code LlmCoin}), the MOP
+ * launcher, the component trigger (a side effect), the MOP coin, and the SATA chain. It is hard
+ * precedence — the first stage that selects ends the step and no later stage's {@code decide()}
+ * runs (INV-DP-02) — and it is fixed in code: there is no configuration key that reorders stages
+ * and no weighted arbitration between them (owner decision Q1, report Sec. 7).
+ *
+ * <p><b>Step open.</b> Before any stage decides, {@link #decide} opens the step's
+ * {@link StepRouting}, which draws the coins of the mounted groups from their own streams
+ * (INV-DP-13), and broadcasts {@link DecisionStage#onStepOpen} to every assembled stage, so per-step
+ * bookkeeping such as the launcher's cadence does not depend on which stage takes the step
+ * (INV-DP-08). <b>Step close.</b> The selecting stage's label is the step's executed owner
+ * ({@code dec.src}); the pipeline writes {@code dec.own} on every step, with the first claimer as
+ * {@code i} (design D-B14.6).
  *
  * <p>What the pipeline adds is that the policy can be <em>read</em>. The roster is a list of names
  * echoed once per run, so a trace states which stages ran instead of leaving it to be inferred from
@@ -54,33 +64,45 @@ public final class DecisionPipeline {
      * enumerate at runtime.
      *
      * <p>Each condition names the leaf feature only. {@code LLM_NEW_STATE} cannot be in a plan whose
-     * {@code LLM} is absent and {@code ACTIVITY_TRIGGER} cannot be in one without {@code MOP} —
+     * {@code LLM} is absent and {@code MOP_LAUNCHER} cannot be in one without {@code MOP} —
      * {@link Feature} declares those dependencies and plan resolution enforces them, so repeating the
-     * root here would be a second guard for a fact the plan already guarantees.
+     * root here would be a second guard for a fact the plan already guarantees. The one candidate
+     * gated by a BASE key rather than a feature is {@code RESTART} ({@code ape.checkRestart}, design
+     * D-B14.12).
      */
     public enum Candidate {
 
-        /** The gh9 activity-budget gate: navigates away from an exhausted activity, or passes. */
+        /** The activity-budget guard: navigates away from an exhausted activity, or passes. */
         BUDGET("Budget", Feature.ACTIVITY_BUDGET),
+        /** The restart guard: selects the restart action when a restart is due. */
+        RESTART("Restart", null, spec -> spec.exploration().checkRestart()),
         /** LLM routing on entering a new state. */
         LLM_NEW_STATE("LlmNewState", Feature.LLM_NEW_STATE),
         /** LLM routing at the stagnation midpoint, once per episode. */
         LLM_STAGNATION("LlmStagnation", Feature.LLM_STAGNATION),
-        /** LLM routing at a configured rate. */
-        LLM_RANDOM("LlmRandom", Feature.LLM_COIN),
-        /** The cadence-based MOP activity launcher. */
+        /** LLM routing on the coin {@code u_L < p_L}. */
+        LLM_COIN("LlmCoin", Feature.LLM_COIN),
+        /** The MOP activity launcher, on a global cadence. */
         MOP_LAUNCHER("MopLauncher", Feature.MOP_LAUNCHER),
         /** The probabilistic component trigger — the one stage that acts without deciding. */
         COMPONENT_TRIGGER("ComponentTrigger", Feature.COMPONENT_TRIGGER),
+        /** The MOP coin: the first interaction with a MOP-targeted action, at {@code p_M}. */
+        MOP_COIN("MopCoin", Feature.MOP_COIN),
         /** The SATA strategy chain: the terminal stage of every plan (INV-DP-06). */
         SATA_CHAIN("SataChain", null);
 
         private final String stageName;
         private final Feature gate;
+        private final Predicate<RunSpec> condition;
 
         Candidate(String stageName, Feature gate) {
+            this(stageName, gate, spec -> gate == null || spec.has(gate));
+        }
+
+        Candidate(String stageName, Feature gate, Predicate<RunSpec> condition) {
             this.stageName = stageName;
             this.gate = gate;
+            this.condition = condition;
         }
 
         /** The name this candidate's stage reports, and the label in both echo lines. */
@@ -90,7 +112,7 @@ public final class DecisionPipeline {
 
         /**
          * The feature whose presence assembles this candidate, or {@code null} for the terminal
-         * stage, which every plan carries.
+         * stage, which every plan carries, and for {@code RESTART}, which a BASE key mounts.
          */
         public Feature gate() {
             return gate;
@@ -98,11 +120,14 @@ public final class DecisionPipeline {
 
         /** Whether {@code spec} assembles this candidate. */
         public boolean assembledFor(RunSpec spec) {
-            return gate == null || spec.has(gate);
+            return condition.test(spec);
         }
     }
 
     private final List<DecisionStage> stages;
+
+    /** The step's coins, claimer and LLM call budget, shared with the stages that read them. */
+    private final StepRouting routing;
 
     /** What the side-effect stages did on the step being decided; cleared at each {@link #decide}. */
     private final List<String> sideEffects = new ArrayList<>();
@@ -116,10 +141,21 @@ public final class DecisionPipeline {
      *
      * @param stages the roster in the order {@link #decide} consults it — copied, so the caller's list
      *        cannot reorder a run's policy after the echo has already reported it
+     * @param routing the routing record the stages were built with, opened at every step
+     */
+    DecisionPipeline(List<DecisionStage> stages, StepRouting routing) {
+        this.stages = Collections.unmodifiableList(new ArrayList<>(stages));
+        this.routing = routing;
+        Logger.iformat("[APE-ARCH] stages=[%s]", String.join(", ", stageNames()));
+    }
+
+    /**
+     * A pipeline over stub stages that read no coin: its routing draws nothing.
+     *
+     * @param stages the roster, as for {@link #DecisionPipeline(List, StepRouting)}
      */
     DecisionPipeline(List<DecisionStage> stages) {
-        this.stages = Collections.unmodifiableList(new ArrayList<>(stages));
-        Logger.iformat("[APE-ARCH] stages=[%s]", String.join(", ", stageNames()));
+        this(stages, new StepRouting(false, false, false));
     }
 
     /**
@@ -145,39 +181,44 @@ public final class DecisionPipeline {
      * @return the pipeline for this run; never empty, since the terminal candidate has no gate
      */
     public static DecisionPipeline fromSpec(RunSpec spec, StageCollaborators collaborators) {
+        StepRouting routing = new StepRouting(spec.has(Feature.LLM), spec.has(Feature.MOP),
+                spec.has(Feature.COMPONENT_TRIGGER));
+        LlmCall llm = spec.has(Feature.LLM) ? llmCall(spec, collaborators, routing) : null;
         List<DecisionStage> stages = new ArrayList<>();
         for (Candidate candidate : assembledCandidates(spec)) {
             switch (candidate) {
                 case BUDGET:
-                    stages.add(new BudgetStage(collaborators::selectNewActionForTrivialActivity));
+                    stages.add(new BudgetStage(collaborators::selectNewActionForTrivialActivity,
+                            collaborators::abandonBuffer));
+                    break;
+                case RESTART:
+                    stages.add(new RestartStage(collaborators::restartDue,
+                            collaborators::restartAction));
                     break;
                 case LLM_NEW_STATE:
-                    stages.add(new LlmNewStateStage(collaborators.llmEngine(),
-                            collaborators::llmBreakerAllows,
-                            collaborators::resolveSynthesizedTap));
+                    stages.add(new LlmNewStateStage(llm));
                     break;
                 case LLM_STAGNATION:
-                    stages.add(new LlmStagnationStage(collaborators.llmEngine(),
-                            collaborators::llmBreakerAllows,
-                            spec.exploration().graphStableRestartThreshold(),
-                            collaborators::resolveSynthesizedTap));
+                    stages.add(new LlmStagnationStage(llm,
+                            spec.exploration().graphStableRestartThreshold()));
                     break;
-                case LLM_RANDOM:
-                    stages.add(new LlmRandomStage(collaborators.llmEngine(),
-                            collaborators::llmBreakerAllows,
-                            spec.llm().dbl("ape.llmPercentage"),
-                            collaborators.agentRandom(),
-                            collaborators::resolveSynthesizedTap));
+                case LLM_COIN:
+                    stages.add(new LlmCoinStage(llm, spec.llm().dbl("ape.llmPercentage")));
                     break;
                 case MOP_LAUNCHER:
                     stages.add(new MopLauncherStage(spec.mop().activityTriggerStagnationStep(),
                             spec.mop().activityTriggerMaxPerRun(), spec.mop().scoring(),
-                            spec.mop().launcherDmax()));
+                            spec.mop().launcherDmax(), routing, collaborators::abandonBuffer));
                     break;
                 case COMPONENT_TRIGGER:
                     stages.add(new ComponentTriggerStage(spec.staticData().componentPercentage(),
-                            collaborators::componentTargetCount,
+                            routing, collaborators::componentTargetCount,
                             collaborators::triggerComponent));
+                    break;
+                case MOP_COIN:
+                    stages.add(new MopCoinStage(spec.mop().coinPercentage(),
+                            spec.has(Feature.FORM_COMPLETION), routing, collaborators::mopLedger,
+                            collaborators::abandonBuffer));
                     break;
                 case SATA_CHAIN:
                     stages.add(new SataChainStage(collaborators::logActionSelected,
@@ -196,7 +237,28 @@ public final class DecisionPipeline {
                     throw new IllegalStateException("no construction step for candidate " + candidate);
             }
         }
-        return new DecisionPipeline(stages);
+        return new DecisionPipeline(stages, routing);
+    }
+
+    /**
+     * The LLM stages' shared unit: the gate chain the plan parameterizes, mounted in the order
+     * {@link MinActionsGate}, then {@link BreakerGate}, a gate whose key is {@code 0} not mounted
+     * (llm-routing INV-RTR-23).
+     *
+     * <p>A null answer's {@code dec.own.fb} is the engine's own account of it,
+     * {@link LlmEngine#lastFallback()}.
+     */
+    static LlmCall llmCall(RunSpec spec, StageCollaborators collaborators, StepRouting routing) {
+        List<LlmGate> gates = new ArrayList<>();
+        if (spec.llm().gateMinActions() > 0) {
+            gates.add(new MinActionsGate(spec.llm().gateMinActions()));
+        }
+        if (spec.llm().breakerFailures() > 0) {
+            gates.add(new BreakerGate(collaborators::llmBreakerAllows));
+        }
+        LlmEngine engine = collaborators.llmEngine();
+        return new LlmCall(engine, gates, routing, collaborators::resolveSynthesizedTap,
+                collaborators::abandonBuffer, engine::lastFallback);
     }
 
     /**
@@ -221,12 +283,14 @@ public final class DecisionPipeline {
     }
 
     /**
-     * Runs the step's decision: the first stage that selects decides it.
+     * Runs the step's decision: opens the step, then the first stage that selects decides it.
      *
-     * <p>A {@code SIDE_EFFECT} is recorded and the walk continues (INV-DP-05) — the component trigger
-     * dispatches a broadcast and the step is still decided by a later stage. A {@code CONTINUE}
-     * advances. Nothing else happens: a stage that cannot decide never throws, which is what makes the
-     * LLM's fallback structural rather than an error path (INV-DP-11).
+     * <p>The step opens with the routing's coin draws and the {@link DecisionStage#onStepOpen}
+     * broadcast to every assembled stage, before any {@code decide()}. A {@code SIDE_EFFECT} is
+     * recorded and the walk continues (INV-DP-05) — the component trigger dispatches a broadcast and
+     * the step is still decided by a later stage. A {@code CONTINUE} advances. A stage that cannot
+     * decide never throws, which is what makes the LLM's fallback structural rather than an error
+     * path (INV-DP-11). On the {@code SELECT} the step's {@code dec.own} is written.
      *
      * @param ctx the step being decided
      * @return the action the step will execute
@@ -237,10 +301,12 @@ public final class DecisionPipeline {
      */
     public Action decide(StepContext ctx) {
         sideEffects.clear();
+        openStep(ctx);
         for (DecisionStage stage : stages) {
             StageResult result = stage.decide(ctx);
             switch (result.kind()) {
                 case SELECT:
+                    routing.record(result.decisionSource(), ctx.sink());
                     return result.action();
                 case SIDE_EFFECT:
                     sideEffects.add(stage.name() + ": " + result.description());
@@ -256,6 +322,20 @@ public final class DecisionPipeline {
         throw new IllegalStateException(
                 "the pipeline " + stageNames() + " decided nothing: its last stage passed instead of"
                         + " selecting or throwing");
+    }
+
+    /**
+     * Opens the step: the routing draws the mounted groups' coins (INV-DP-13), then every assembled
+     * stage's {@link DecisionStage#onStepOpen} runs, in roster order, before any {@code decide()}.
+     * Package-private so a test can open a step and then ask one stage directly.
+     *
+     * @param ctx the step that opened
+     */
+    void openStep(StepContext ctx) {
+        routing.open(ctx.stepRng());
+        for (DecisionStage stage : stages) {
+            stage.onStepOpen(ctx);
+        }
     }
 
     /**
