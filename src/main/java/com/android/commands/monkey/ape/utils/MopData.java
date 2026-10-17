@@ -31,8 +31,8 @@ import com.android.commands.monkey.ape.utils.StaticGuiModel.WtgTransition;
  * translation happens host-side: the artifact generator is the one component that reads the
  * analyser's document, so it performs the rename and ships {@code mop}, {@code mopActivities} and
  * {@code reachesMop} (design D7, relocated by D2). One {@code Target} name survives on the wire,
- * {@code hasTargetMethods}, the generator's own compaction of a component's signature list, served
- * here by {@link #hasTargetMethods}.
+ * {@code hasTargetMethods}, the generator's own compaction of a component's signature list, which
+ * no reader consumes: the component trigger reads no MOP data (component-triggering INV-CT-16).
  *
  * <h3>Reader, not parser</h3>
  *
@@ -53,8 +53,6 @@ public class MopData {
     private final Set<String> activitiesWithMopOptionsMenu;
     /** Class names of the components whose wire {@code reachesMop} is true. */
     private final Set<String> componentsReachingMop;
-    /** Class names of the components whose wire {@code hasTargetMethods} is true. */
-    private final Set<String> componentsWithTargetMethods;
 
     /** The shared empty answer of every distance accessor: no pair. Callers read only. */
     static final int[][] NO_PAIRS = new int[0][];
@@ -78,14 +76,13 @@ public class MopData {
     /** Built by {@link StaticArtifactLoader} and by the test factories; every argument non-null. */
     MopData(Map<String, Map<String, Widget>> widgetData, Set<String> mopActivities,
             Set<String> activitiesWithMopOptionsMenu, Set<String> componentsReachingMop,
-            Set<String> componentsWithTargetMethods, int targetCount,
+            int targetCount,
             Map<String, int[][]> activityDist, Map<String, Handler> handlers,
             int droppedFlaggedNoId) {
         this.widgetData = widgetData;
         this.mopActivities = mopActivities;
         this.activitiesWithMopOptionsMenu = activitiesWithMopOptionsMenu;
         this.componentsReachingMop = componentsReachingMop;
-        this.componentsWithTargetMethods = componentsWithTargetMethods;
         this.targetCount = targetCount;
         this.activityDist = activityDist;
         this.handlers = handlers;
@@ -108,23 +105,11 @@ public class MopData {
      */
     public static MopData forTest(Map<String, Map<String, Widget>> widgetData,
             Set<String> mopActivities) {
-        return forTest(widgetData, mopActivities, null, null);
-    }
-
-    /**
-     * {@link #forTest(Map, Set)} with the component facts: the class names whose
-     * {@code reachesMop} and whose {@code hasTargetMethods} are true.
-     */
-    public static MopData forTest(Map<String, Map<String, Widget>> widgetData,
-            Set<String> mopActivities, Set<String> componentsReachingMop,
-            Set<String> componentsWithTargetMethods) {
         return new MopData(
                 widgetData != null ? widgetData : new HashMap<String, Map<String, Widget>>(),
                 mopActivities != null ? mopActivities : new HashSet<String>(),
                 new HashSet<String>(),
-                componentsReachingMop != null ? componentsReachingMop : new HashSet<String>(),
-                componentsWithTargetMethods != null ? componentsWithTargetMethods
-                        : new HashSet<String>(),
+                new HashSet<String>(),
                 0, new HashMap<String, int[][]>(), new HashMap<String, Handler>(), 0);
     }
 
@@ -371,14 +356,6 @@ public class MopData {
      */
     public boolean reachesMop(String className) {
         return componentsReachingMop.contains(className);
-    }
-
-    /**
-     * The wire's {@code hasTargetMethods} for the component of that class name. False for a class
-     * the artifact does not list.
-     */
-    public boolean hasTargetMethods(String className) {
-        return componentsWithTargetMethods.contains(className);
     }
 
     /**

@@ -155,25 +155,25 @@ Owns: `agent/pipeline/*`, `llm/LlmCircuitBreaker.java`, `llm/LlmClient.java`, th
 Owns: `agent/StatefulAgent.java`, `agent/ApeAgent.java`, `agent/FormCompletion.java`, their tests
 (`StatefulAgentTriggerTest`, `ApeAgentLlmInputTest`, `FormCompletionTest`, …).
 
-- [ ] 8.1 Restart as a guard: implement `restartDue()` / `restartAction()` (stability flags from step 2; periodic threshold with the previous step's `disableRestart`), and skip the post-selection `checkRestart` wrapping in `ApeAgent.java:363` for agents that have a pipeline. `RandomAgent` and `ReplayAgent` keep it (D-B14.12). The `disableRestart` latch is read and cleared by `RESTART` (D-B14.16). The restart kind feeds `dec.restart`, and `restarts` counts each one
-- [ ] 8.2 `abandonBuffer(owner)` clears the buffer **without** `weakenStateTransition`, records `dec.buf`, and counts `bufAbandoned`. A real path failure keeps `clearBuffer` with weakening
-- [ ] 8.3 Target retirement composes on `MopInteractionLedger` (`moveForward`, `pendingRetirement`). `mopLedger()` exposes the ledger; it exists iff `MOP` is mounted
-- [ ] 8.4 `recordModelDecision`: `dec.src` is the executed owner (the setter at `:1264` uses the 3.8b values; the `PickChannel` switch at `:1300-1301` loses `SHORT_CIRCUIT_*`); the `navf` field; no `cf`. The `ACT.mop` dictionary bit is written only when `MOP` is mounted (D-B14.9)
-- [ ] 8.5 `dec.inp` at the text refiner (`ApeAgent.java:199-200`, `generateInputText`), with the origins `typed`, `heuristic`, `random`, `form` and `llm`. Typed text reads `StaticGuiModel` through the wave-0 API when `TYPED_FUZZ` is mounted; the lookup helper (`ApeAgent.java:235-250`) is this front's
-- [ ] 8.6 Addon F (P-6): the deterministic fill (`ApeAgent.java:199`, `StatefulAgent.java:305`) applies only when `FORM_COMPLETION` is mounted. The submit candidate (`agent/FormCompletion.java`) is chosen by lone button or submit word, without reading `mopBoost` (D-B14.10)
-- [ ] 8.7 Component triggering (D-B13):
-  - [ ] 8.7.1 `buildTriggerTuples` reads `StaticGuiModel` components without the `reachesTarget` filter (`:1355`, `:1374`), with a name-only tuple for each filterless service whatever its `targetMethods` (today `:1363` requires them, D-B14.15); provider tuples are kept;
-  - [ ] 8.7.2 `dispatchTrigger` sets data/type from the filter's `data` (`paths[0]`, falling back to `pathPrefixes[0]`, D-B14.11), takes the package from `StaticGuiModel` (today `getMopData().getPackageName()`, `:1445`, null in `as`), and records `sink().componentTrigger(kind, className)` (`dec.trig`);
-  - [ ] 8.7.3 the log line drops `reachesTarget=true`;
-  - [ ] 8.7.4 `SystemBroadcastCatalog` loads iff `COMPONENT_TRIGGER` is mounted (`:218`)
-- [ ] 8.8 The loader call site (`:204-206`) uses `StaticArtifactLoader` iff `STATIC` or `MOP` is mounted (D-B14.20), and hands each provider only to the mounted consumers
-- [ ] 8.9 Tests:
-  - [ ] 8.9.1 `BufferAbandonTest`: preemption leaves the edge weights unchanged, and a path failure still weakens;
-  - [ ] 8.9.2 restart guard;
-  - [ ] 8.9.3 `dec.inp` origins;
-  - [ ] 8.9.4 form fill off without `FORM_COMPLETION`;
-  - [ ] 8.9.5 trigger intent data/type for scheme-only, MIME-only and both
-- [ ] 8.10 Run `/sdd-test-run`
+- [x] 8.1 Restart as a guard: implement `restartDue()` / `restartAction()` (stability flags from step 2; periodic threshold with the previous step's `disableRestart`), and skip the post-selection `checkRestart` wrapping in `ApeAgent.java:363` for agents that have a pipeline. `RandomAgent` and `ReplayAgent` keep it (D-B14.12). The `disableRestart` latch is read and cleared by `RESTART` (D-B14.16). The restart kind feeds `dec.restart`, and `restarts` counts each one
+- [x] 8.2 `abandonBuffer(owner)` clears the buffer **without** `weakenStateTransition`, records `dec.buf`, and counts `bufAbandoned`. A real path failure keeps `clearBuffer` with weakening
+- [x] 8.3 Target retirement composes on `MopInteractionLedger` (`moveForward`, `pendingRetirement`). `mopLedger()` exposes the ledger; it exists iff `MOP` is mounted
+- [x] 8.4 `recordModelDecision`: `dec.src` is the executed owner (the setter at `:1264` uses the 3.8b values; the `PickChannel` switch at `:1300-1301` loses `SHORT_CIRCUIT_*`); the `navf` field; no `cf`. The `ACT.mop` dictionary bit is written only when `MOP` is mounted (D-B14.9)
+- [x] 8.5 `dec.inp` at the text refiner (`ApeAgent.java:199-200`, `generateInputText`), with the origins `typed`, `heuristic`, `random`, `form` and `llm`. Typed text reads `StaticGuiModel` through the wave-0 API when `TYPED_FUZZ` is mounted; the lookup helper (`ApeAgent.java:235-250`) is this front's
+- [x] 8.6 Addon F (P-6): the deterministic fill (`ApeAgent.java:199`, `StatefulAgent.java:305`) applies only when `FORM_COMPLETION` is mounted. The submit candidate (`agent/FormCompletion.java`) is chosen by lone button or submit word, without reading `mopBoost` (D-B14.10)
+- [x] 8.7 Component triggering (D-B13):
+  - [x] 8.7.1 `buildTriggerTuples` reads `StaticGuiModel` components without the `reachesTarget` filter (`:1355`, `:1374`), with a name-only tuple for each filterless service whatever its `targetMethods` (today `:1363` requires them, D-B14.15); provider tuples are kept;
+  - [x] 8.7.2 `dispatchTrigger` sets data/type from the filter's `data` (`paths[0]`, falling back to `pathPrefixes[0]`, D-B14.11), takes the package from `StaticGuiModel` (today `getMopData().getPackageName()`, `:1445`, null in `as`), and records `sink().componentTrigger(kind, className)` (`dec.trig`);
+  - [x] 8.7.3 the log line drops `reachesTarget=true`;
+  - [x] 8.7.4 `SystemBroadcastCatalog` loads iff `COMPONENT_TRIGGER` is mounted (`:218`)
+- [x] 8.8 The loader call site (`:204-206`) uses `StaticArtifactLoader` iff `STATIC` or `MOP` is mounted (D-B14.20), and hands each provider only to the mounted consumers
+- [x] 8.9 Tests:
+  - [x] 8.9.1 `BufferAbandonTest`: preemption leaves the edge weights unchanged, and a path failure still weakens;
+  - [x] 8.9.2 restart guard;
+  - [x] 8.9.3 `dec.inp` origins;
+  - [x] 8.9.4 form fill off without `FORM_COMPLETION`;
+  - [x] 8.9.5 trigger intent data/type for scheme-only, MIME-only and both
+- [x] 8.10 Run `/sdd-test-run`
 
 ## 9. Wave 1 · F6 — prompt by contributions (§4.6, D-A3, D-A18 Q-8)
 

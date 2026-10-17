@@ -122,6 +122,7 @@ public class StatefulAgentMopTelemetryTest {
     private MopContext context(MopData data) throws Exception {
         MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY, RunContext.current().spec().mop());
         setField(agent, "_mopContext", mop);
+        setField(agent, "_mopLedger", new MopInteractionLedger());
         return mop;
     }
 
@@ -156,7 +157,7 @@ public class StatefulAgentMopTelemetryTest {
 
     /**
      * One step as {@code updateStateInternal} runs it for a model action: the record opens, the
-     * decision is recorded, {@code moveForward} takes the retirement count, and the restart check applies it.
+     * decision is recorded, and {@code moveForward} applies the retirement count.
      */
     private void select(State state, ModelAction action) {
         RunContext.current().sink().beginStep(++step, step, ACT, true, "S1");
@@ -164,7 +165,6 @@ public class StatefulAgentMopTelemetryTest {
         agent.newState = state;
         agent.newAction = action;
         agent.moveForward();
-        agent.checkRestart(action);
     }
 
     /** The {@code dec} of the one step record {@link #select} wrote for {@code action}. */

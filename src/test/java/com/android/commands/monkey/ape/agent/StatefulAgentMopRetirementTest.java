@@ -56,6 +56,7 @@ public class StatefulAgentMopRetirementTest {
 
     private SataAgent agent;
     private UICoverageTracker tracker;
+    private MopInteractionLedger ledger;
     private final List<int[]> retiredCalls = new ArrayList<>();
 
     @Before
@@ -124,10 +125,15 @@ public class StatefulAgentMopRetirementTest {
         return data;
     }
 
-    /** The run's context, built as {@code StatefulAgent} builds it, installed on the agent. */
+    /**
+     * The run's context and ledger, built as {@code StatefulAgent} builds them under {@code MOP},
+     * installed on the agent.
+     */
     private MopContext install(MopData data) throws Exception {
         MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY, RunContext.current().spec().mop());
         setField(agent, "_mopContext", mop);
+        ledger = new MopInteractionLedger();
+        setField(agent, "_mopLedger", ledger);
         return mop;
     }
 
@@ -161,17 +167,16 @@ public class StatefulAgentMopRetirementTest {
     }
 
     /**
-     * {@code updateStateInternal}'s selection of {@code action} on {@code state} (moveForward), then
-     * the restart check {@code ApeAgent.updateState} applies to the action it returns.
+     * {@code updateStateInternal}'s selection of {@code action} on {@code state} (moveForward). No
+     * restart follows a selection: the restart is the RESTART guard, before selection.
      */
-    private Action select(State state, ModelAction action) {
+    private void select(State state, ModelAction action) {
         agent.newState = state;
         agent.newAction = action;
         agent.moveForward();
-        return agent.checkRestart(action);
     }
 
-    /** {@code checkRestart} replaces the selected action with {@code getStartAction}; no device. */
+    /** {@code restartAction} answers {@code getStartAction} without a device. */
     static class RestartingAgent extends SataAgent {
         RestartingAgent() {
             super(null, null);
@@ -294,37 +299,57 @@ public class StatefulAgentMopRetirementTest {
     }
 
     /**
-     * Scenario "an action a restart replaces counts nothing": the count taken at selection is
-     * discarded when {@code checkRestart} replaces the action, which then never runs.
+     * Scenario "a restart step counts nothing": the RESTART guard selects the start action before
+     * any model action, so no counter changes and the ledger records nothing; a later selection
+     * of the same widget is still its first interaction.
      */
     @Test
-    public void anActionARestartReplacesCountsNothing() throws Exception {
+    public void aRestartStepCountsNothing() throws Exception {
         RestartingAgent restarting = allocate(RestartingAgent.class);
         setField(restarting, "_coverageTracker", tracker);
         setField(restarting, "actionBuffer", new LinkedList<StateTransition>());
         setField(restarting, "restart", true);
+        setField(restarting, "restartKind", ApeAgent.RESTART_GRAPH);
         agent = restarting;
         MopRetirement r = install(artifact(
                 "\"w\":{\"dist\":{\"click\":[[22,2]]}}")).retirement();
         ModelAction click = action("//w", ActionType.MODEL_CLICK, node(null, "Button", "w"));
 
-        Action dispatched = select(state(ACT), click);
-        assertNotSame("the restart replaced the selected action", click, dispatched);
+        assertTrue(agent.restartDue());
+        Action start = agent.restartAction();
+        assertTrue(start.getType() == ActionType.EVENT_RESTART
+                || start.getType() == ActionType.EVENT_CLEAN_RESTART);
         assertEquals(0, count(r, 22));
+        assertFalse(ledger.tried(ACT, UICoverageTracker.widgetId(click)));
         assertTrue(retiredCalls.isEmpty());
 
-        // The same selection that survives the restart check counts.
-        assertSame(click, select(state(OTHER), click));
+        select(state(ACT), click);
         assertEquals(1, count(r, 22));
+        assertTrue(ledger.tried(ACT, UICoverageTracker.widgetId(click)));
+    }
+
+    /** INV-MOP-40: the ledger records every executed first interaction, in both modes, once. */
+    @Test
+    public void theLedgerRecordsTheExecutedKeyOnce() throws Exception {
+        install(artifact("\"w\":{\"dist\":{\"click\":[[3,9]]}}"));
+        ModelAction click = action("//w", ActionType.MODEL_CLICK, node(null, "Button", "w"));
+        String key = UICoverageTracker.widgetId(click);
+        assertFalse(ledger.tried(ACT, key));
+        select(state(ACT), click);
+        assertTrue("a weight-0 action is recorded too", ledger.tried(ACT, key));
+        assertFalse("per activity", ledger.tried(OTHER, key));
     }
 
     /** Scenario "an off-tree LLM tap never counts". */
     @Test
     public void anOffTreeLlmTapNeverCounts() throws Exception {
         MopRetirement r = install(artifact("\"w\":{\"dist\":{\"click\":[[3,0]]}}")).retirement();
-        select(state(ACT), new LlmTapAction(null, 540, 900, false));
+        LlmTapAction tap = new LlmTapAction(null, 540, 900, false);
+        select(state(ACT), tap);
         assertEquals(0, count(r, 3));
         assertTrue(retiredCalls.isEmpty());
+        assertFalse("a tap without a node records no key",
+                ledger.tried(ACT, UICoverageTracker.widgetId(tap)));
     }
 
     /** Scenario "no counting under flag": no retirement exists, and moveForward still records. */
@@ -336,13 +361,16 @@ public class StatefulAgentMopRetirementTest {
         ModelAction click = action("//w", ActionType.MODEL_CLICK, node(null, "Button", "w"));
         select(state(ACT), click);
         assertTrue(tracker.hasActivityInteraction(ACT, UICoverageTracker.widgetId(click)));
+        assertTrue("the ledger records in both modes",
+                ledger.tried(ACT, UICoverageTracker.widgetId(click)));
         assertTrue(retiredCalls.isEmpty());
     }
 
-    /** Without an artifact there is no context, and moveForward records as before. */
+    /** Without MOP there is no context and no ledger, and moveForward records as before. */
     @Test
     public void noArtifactNoCounting() throws Exception {
         setField(agent, "_mopContext", null);
+        setField(agent, "_mopLedger", null);
         ModelAction click = action("//w", ActionType.MODEL_CLICK, node(null, "Button", "w"));
         select(state(ACT), click);
         assertTrue(tracker.hasActivityInteraction(ACT, UICoverageTracker.widgetId(click)));

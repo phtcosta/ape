@@ -38,6 +38,7 @@ import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.StopTestingException;
+import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
 import com.android.commands.monkey.ape.events.ApeEvent;
 import com.android.commands.monkey.ape.events.ApeFuzzer;
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
@@ -49,6 +50,7 @@ import com.android.commands.monkey.ape.model.FuzzAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.telemetry.RunCounter;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -108,8 +110,18 @@ public abstract class ApeAgent implements Agent {
 
     private final InputValueGenerator inputValueGenerator = new InputValueGenerator();
 
+    /** The restart kinds {@code dec.restart} names (decision-pipeline "Restart Guard Stage"). */
+    public static final String RESTART_GRAPH = "graph";
+    public static final String RESTART_STATE = "state";
+    public static final String RESTART_ACTIVITY = "activity";
+    public static final String RESTART_PERIODIC = "periodic";
+
     protected boolean disableFuzzing;
     private boolean restart;
+    /** The stability check that raised {@link #restart}: {@code graph}, {@code state} or {@code activity}. */
+    private String restartKind;
+    /** The kind {@link #restartDue} found due on this step, for {@link #restartAction}; null when none. */
+    private String dueRestartKind;
     private int nextRestartThreshold;
     private int lastRestartStep;
     boolean newActivityStarting;
@@ -197,12 +209,37 @@ public abstract class ApeAgent implements Agent {
                 // the *what* half of fixTextEdit (B6(iv)), where CoordinateMapper already decided
                 // the decision is a text entry rather than a bare press. The generator is the
                 // same one a SATA-selected input action uses — the LLM is never asked for the text.
-                if (llmTextEntry || inFormCompletionContext() || RandomHelper.toss(inputRate)) {
-                    node.setInputText(generateInputText(node));
+                boolean formFill = !llmTextEntry && inFormCompletionContext();
+                if (llmTextEntry || formFill || RandomHelper.toss(inputRate)) {
+                    InputText input = generateInputText(node);
+                    node.setInputText(input.text);
+                    // dec.inp (heuristic-input INV-INP-10): llm > form > the generator's origin.
+                    RunContext.current().sink().input(llmTextEntry ? InputText.LLM
+                            : formFill ? InputText.FORM : input.origin);
                 }
             }
         }
         return action;
+    }
+
+    /**
+     * A generated input text and the generator that produced it, the origin {@code dec.inp}
+     * records when no higher-precedence origin ({@code llm}, {@code form}) applies.
+     */
+    static final class InputText {
+        static final String TYPED = "typed";
+        static final String HEURISTIC = "heuristic";
+        static final String RANDOM = "random";
+        static final String FORM = "form";
+        static final String LLM = "llm";
+
+        final String text;
+        final String origin;
+
+        InputText(String text, String origin) {
+            this.text = text;
+            this.origin = origin;
+        }
     }
 
     /**
@@ -219,52 +256,55 @@ public abstract class ApeAgent implements Agent {
     }
 
     /**
-     * Overridden by {@link StatefulAgent}: true when the current state carries at least one
-     * unfilled {@code EditText} (the form-completion context). The base agent has no state model,
-     * so it returns false and {@link #checkInput} keeps the legacy {@code inputRate} toss.
+     * Overridden by {@link StatefulAgent}: true when the plan mounts {@code FORM_COMPLETION} and the
+     * current state carries at least one unfilled {@code EditText} (the form-completion context).
+     * The base agent has no state model, so it returns false and {@link #checkInput} keeps the
+     * legacy {@code inputRate} toss.
      */
     protected boolean inFormCompletionContext() {
         return false;
     }
 
     /**
-     * Generate input text for an EditText node. gh13 T1.3: when static-analysis MOP data is
-     * available and carries a non-empty inputType/hint for the widget, use the type-aware
-     * generator; otherwise fall back to the legacy heuristic / random generator (no regression
-     * on non-instrumented apps). Bypassed entirely when the plan's fuzzInputTyped is false.
+     * The text for an EditText node, from the first generator the plan admits (heuristic-input
+     * "ApeAgent.checkInput() Integration"):
+     * <ol>
+     * <li>{@code typed}: with {@code TYPED_FUZZ} mounted, the static model's {@code inputType} or
+     * {@code hint} for the node or one of its containment nodes (node first, INV-MOP-23), read from
+     * {@link StaticGuiModel} and never from {@code MopData} (INV-INP-09);</li>
+     * <li>{@code heuristic}: with {@code HEURISTIC_INPUT} mounted, {@link InputValueGenerator};</li>
+     * <li>{@code random}: {@link StringCache#nextString()}.</li>
+     * </ol>
      */
-    protected String generateInputText(GUITreeNode node) {
-        RunSpec.StaticParams staticData = RunContext.current().spec().staticData();
-        if (staticData != null && staticData.fuzzInputTyped()) {
-            MopData md = getMopData();
-            if (md != null) {
-                String activity = ape.getTopActivityClassName();
-                // INV-MOP-23: walk the same containment nodes as the MOP scoring pass,
-                // not an exact-id-only lookup. Typed input reads the id key on each node, because
-                // the static metadata is keyed by id; the node itself is tried first.
-                for (GUITreeNode candidate : MopScorer.containmentNodes(node)) {
-                    StaticGuiModel.WidgetMeta w = staticModel().widget(activity,
-                            MopData.extractShortId(candidate.getResourceID()));
-                    if (w != null && (notEmpty(w.inputType) || notEmpty(w.hint))) {
-                        return TypedInputGenerator.generateForType(w.inputType, w.hint, RandomHelper.getRandom());
-                    }
+    protected InputText generateInputText(GUITreeNode node) {
+        RunSpec spec = RunContext.current().spec();
+        StaticGuiModel staticModel = staticModel();
+        if (spec.has(Feature.TYPED_FUZZ) && staticModel != null) {
+            String activity = ape.getTopActivityClassName();
+            // The containment walk is a tree-only helper: it reads no MOP data.
+            for (GUITreeNode candidate : MopScorer.containmentNodes(node)) {
+                StaticGuiModel.WidgetMeta w = staticModel.widget(activity,
+                        MopData.extractShortId(candidate.getResourceID()));
+                if (w != null && (notEmpty(w.inputType) || notEmpty(w.hint))) {
+                    return new InputText(TypedInputGenerator.generateForType(w.inputType, w.hint,
+                            RandomHelper.getRandom()), InputText.TYPED);
                 }
             }
         }
-        return RunContext.current().spec().has(Feature.HEURISTIC_INPUT)
-                ? inputValueGenerator.generateForNode(node) : StringCache.nextString();
+        if (spec.has(Feature.HEURISTIC_INPUT)) {
+            return new InputText(inputValueGenerator.generateForNode(node), InputText.HEURISTIC);
+        }
+        return new InputText(StringCache.nextString(), InputText.RANDOM);
     }
 
     private static boolean notEmpty(String s) {
         return s != null && !s.isEmpty();
     }
 
-    /** Overridden by StatefulAgent to expose loaded MOP data; null disables T1.3. */
-    protected MopData getMopData() {
-        return null;
-    }
-
-    /** Overridden by StatefulAgent to expose the loaded static GUI model; null when none. */
+    /**
+     * The run's static GUI model, or null when no group reads the artifact. Overridden by
+     * {@link StatefulAgent}, which holds the model; the base agent has none.
+     */
     public StaticGuiModel staticModel() {
         return null;
     }
@@ -284,12 +324,20 @@ public abstract class ApeAgent implements Agent {
         return ActionType.EVENT_RESTART;
     }
 
+    /**
+     * The post-selection restart of an agent without a decision pipeline ({@code RandomAgent},
+     * {@code ReplayAgent}; design D-B14.12): replaces the selected action with a start action when
+     * the stability flag is up, or when the periodic threshold passed and this step's selection did
+     * not disable the restart. An agent with a pipeline restarts through the RESTART guard instead
+     * ({@link #restartDue}, {@link #restartAction}).
+     */
     protected Action checkRestart(Action origin) {
         if (!RunContext.current().spec().exploration().checkRestart()) {
             return origin;
         }
         if (restart) {
             restart = false;
+            restartKind = null;
             lastRestartStep = getTimestamp();
             this.startNewEpisode();
             return getStartAction(nextRestartAction());
@@ -305,6 +353,67 @@ public abstract class ApeAgent implements Agent {
             return getStartAction(nextRestartAction());
         }
         return origin;
+    }
+
+    /**
+     * Whether the RESTART guard takes this step (decision-pipeline "Restart Guard Stage", design
+     * D-B7): the stability flag that step 2 raised is up, or the steps since the last restart
+     * exceed the periodic threshold and the <em>previous</em> step's selection did not call
+     * {@link #disableRestart()}. The guard runs before selection, so the latch it reads is the one
+     * the previous selection left; this call reads it and clears it (design D-B14.16), which is
+     * why a step that an earlier guard (Budget) takes leaves the latch for the next step.
+     *
+     * <p>Called once per step by the RESTART stage, which is mounted iff {@code ape.checkRestart}.
+     *
+     * @return whether a restart is due
+     */
+    public boolean restartDue() {
+        boolean latched = disableRestart;
+        disableRestart = false;
+        if (restart) {
+            dueRestartKind = restartKind;
+        } else if (!latched && getTimestamp() - lastRestartStep > nextRestartThreshold) {
+            dueRestartKind = RESTART_PERIODIC;
+        } else {
+            dueRestartKind = null;
+        }
+        return dueRestartKind != null;
+    }
+
+    /**
+     * The start action of the restart {@link #restartDue} found due: lowers the stability flag,
+     * sets {@code lastRestartStep}, redraws the periodic threshold for a periodic restart, starts a
+     * new episode, and records the kind as {@code dec.restart} with one {@code restarts} count.
+     * The start action keeps APE's kind toss ({@code EVENT_CLEAN_RESTART} with probability 0.2);
+     * the threshold and the toss stay on the helper stream, in APE's order.
+     *
+     * @return the start action, never null
+     * @throws IllegalStateException when no restart is due on this step
+     */
+    public Action restartAction() {
+        String kind = dueRestartKind;
+        if (kind == null) {
+            throw new IllegalStateException("restartAction without a due restart");
+        }
+        dueRestartKind = null;
+        restart = false;
+        restartKind = null;
+        lastRestartStep = getTimestamp();
+        if (RESTART_PERIODIC.equals(kind)) {
+            updateRestartThreshold();
+        }
+        this.startNewEpisode();
+        RunContext.current().sink().restart(kind);
+        RunContext.current().sink().count(RunCounter.RESTARTS);
+        return getStartAction(nextRestartAction());
+    }
+
+    /**
+     * Whether this agent restarts through the RESTART guard of a decision pipeline rather than
+     * after selection. The agent with a pipeline is the one that implements its collaborators.
+     */
+    private boolean restartIsAGuard() {
+        return this instanceof StageCollaborators;
     }
 
     protected void updateRestartThreshold() {
@@ -324,8 +433,15 @@ public abstract class ApeAgent implements Agent {
         this.start = true;
     }
 
-    public void requestRestart() {
+    /**
+     * Raises the restart flag.
+     *
+     * @param kind the stability check that raised it: {@link #RESTART_GRAPH},
+     *        {@link #RESTART_STATE} or {@link #RESTART_ACTIVITY}
+     */
+    public void requestRestart(String kind) {
         this.restart = true;
+        this.restartKind = kind;
     }
 
     protected Random getRandom() {
@@ -366,8 +482,13 @@ public abstract class ApeAgent implements Agent {
             printExploredActivity();
             printMemoryUsage();
             try {
-                disableRestart = false;
                 disableFuzzing = false;
+                if (restartIsAGuard()) {
+                    // The RESTART guard reads and clears the latch the previous step left
+                    // (INV-DP-14): no restart replaces the action selected here.
+                    return checkInput(checkFuzzing(updateStateInternal(topComp, info)));
+                }
+                disableRestart = false;
                 return checkInput(checkFuzzing(checkRestart(updateStateInternal(topComp, info))));
             } catch (BadStateException e) {
                 Logger.wprintln("Bad state, retrieve the Window node.");

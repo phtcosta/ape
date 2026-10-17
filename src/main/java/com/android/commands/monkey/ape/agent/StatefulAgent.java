@@ -56,6 +56,7 @@ import com.android.commands.monkey.ape.runtime.MopScoring;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.telemetry.EventSink;
+import com.android.commands.monkey.ape.telemetry.RunCounter;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
@@ -84,6 +85,7 @@ import com.android.commands.monkey.ape.utils.Utils;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.net.Uri;
 import android.graphics.Rect;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -145,11 +147,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     private final StepRng _stepRng;
 
     /**
-     * The weight's lookup of the model action selected at this step when it is a counted first
-     * interaction (design D19), held from {@code moveForward} until {@link #checkRestart} decides
-     * whether the action runs; null otherwise.
+     * The run's first MOP interactions per (activity, {@code xpath|ActionType}), which the MOP coin
+     * and target retirement share (mop-guidance "MopInteractionLedger"); null iff {@code MOP} is not
+     * mounted.
      */
-    private MopData.Lookup _pendingRetirement;
+    private final MopInteractionLedger _mopLedger;
 
     /**
      * {@code RUN_END.counters.stampNodes} (design D23): the nodes, over every GUI tree this agent
@@ -219,10 +221,13 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // Built once, right after the artifact loads (design D17, Plumbing); null without MOP.
         this._mopContext = MopContext.fromSpec(spec.has(Feature.MOP) ? mopData : null,
                 _staticModel, spec.mop());
+        this._mopLedger = spec.has(Feature.MOP) ? new MopInteractionLedger() : null;
         if (RunContext.current().llmEngine() != null) {
             // The engine was built before the artifact loaded; the prompt's MOP text reads the
-            // context from here on (llm-routing "Action Selection Pipeline").
+            // context, and its widget metadata the static model, from here on (llm-routing
+            // "Action Selection Pipeline").
             RunContext.current().llmEngine().bindMopContext(_mopContext);
+            RunContext.current().llmEngine().bindStaticModel(_staticModel);
         }
         this._coverageTracker = new UICoverageTracker();
         // rv-scoring-pipeline (activityBudgetEnabled): the activity budget is a fork addition; upstream
@@ -231,7 +236,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 ? new ActivityBudgetTracker(exploration.integer("ape.activityBaseBudget"),
                         exploration.integer("ape.activityBudgetPerWidget"))
                 : null;
-        this._broadcastCatalog = mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
+        // The catalog is read iff the component trigger is mounted (INV-CT-18): the tool pushes
+        // system-broadcast.json only for the cells that trigger.
+        this._broadcastCatalog = spec.has(Feature.COMPONENT_TRIGGER) ? SystemBroadcastCatalog.load() : null;
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
         // and assemble the pipeline once, now that _mopContext/_coverageTracker/graph/timestamp are set.
         // Pass isEnabled() reads only its injected weight and the run-fixed providers here, so no
@@ -263,8 +270,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         return names;
     }
 
-    /** The run's static-analysis data, or null when MOP is disabled: the context's artifact. */
-    @Override
+    /**
+     * The run's MOP data, the context's artifact; null iff {@code MOP} is not mounted, even when the
+     * artifact was loaded for STATIC (design D-B14.21).
+     */
     protected MopData getMopData() {
         return _mopContext == null ? null : _mopContext.data();
     }
@@ -313,15 +322,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * The form-completion context for the current state: true when {@code currentState} carries at
-     * least one unfilled {@code EditText}. Read by {@link ApeAgent#checkInput} to fill
-     * deterministically (bypassing the inputRate toss). {@code checkInput} runs after
-     * {@code moveForward} has promoted {@code newState} to {@code currentState} and nulled
-     * {@code newState}, so this reads {@code currentState} (INV-FORM-07).
+     * The form-completion context for the current state: true when the plan mounts
+     * {@code FORM_COMPLETION} (INV-FORM-08) and {@code currentState} carries at least one unfilled
+     * {@code EditText}. Read by {@link ApeAgent#checkInput} to fill deterministically (bypassing the
+     * inputRate toss). {@code checkInput} runs after {@code moveForward} has promoted
+     * {@code newState} to {@code currentState} and nulled {@code newState}, so this reads
+     * {@code currentState} (INV-FORM-07).
      */
     @Override
     protected boolean inFormCompletionContext() {
-        return currentState != null && FormCompletion.hasUnfilledEditText(currentState, timestamp);
+        return RunContext.current().spec().has(Feature.FORM_COMPLETION)
+                && currentState != null && FormCompletion.hasUnfilledEditText(currentState, timestamp);
     }
 
     protected ActivityBudgetTracker getBudgetTracker() {
@@ -587,12 +598,54 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         }
     }
 
+    /**
+     * Clears the buffer after a path failure inside SATA, weakening the next planned edge, as in
+     * APE. A buffer that a preempting owner takes the step from is abandoned through
+     * {@link #abandonBuffer} instead, which does not weaken.
+     */
     protected void clearBuffer() {
         if (!actionBuffer.isEmpty()) {
             StateTransition transition = actionBuffer.removeFirst();
             getGraph().weakenStateTransition(transition.getSource(), transition.getAction(), transition.getTarget());
             actionBuffer.clear();
         }
+    }
+
+    /**
+     * Abandons a non-empty SATA buffer that a preempting owner is taking the step from, without
+     * weakening the planned edge: that edge did not fail (decision-pipeline "Buffer Abandonment by
+     * a Preempting Owner", P-4, INV-DP-15). Records {@code dec.buf} and counts
+     * {@code bufAbandoned}. An empty buffer is left alone and records nothing.
+     *
+     * @param owner the owner taking the step: {@code budget}, {@code llm}, {@code launcher} or
+     *        {@code mop}
+     */
+    public void abandonBuffer(String owner) {
+        if (actionBuffer.isEmpty()) {
+            return;
+        }
+        actionBuffer.clear();
+        RunContext.current().sink().bufferAbandoned(owner);
+        RunContext.current().sink().count(RunCounter.BUF_ABANDONED);
+    }
+
+    /**
+     * The restart action of the RESTART guard (see {@link ApeAgent#restartAction}). The new episode
+     * clears a non-empty buffer without weakening and without {@code dec.buf} (design D-B14.13), so
+     * the buffer is dropped here, before the episode reset whose {@link #clearBuffer} would weaken.
+     */
+    @Override
+    public Action restartAction() {
+        actionBuffer.clear();
+        return super.restartAction();
+    }
+
+    /**
+     * The run's first MOP interactions, which the MOP coin reads; null iff {@code MOP} is not
+     * mounted, in which case no stage that reads it is assembled.
+     */
+    public MopInteractionLedger mopLedger() {
+        return _mopLedger;
     }
 
     public int actionBufferSize() {
@@ -1219,7 +1272,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     public boolean onActivityStable(int counter) {
         if (counter > exploration.activityStableRestartThreshold()) {
             Logger.format("Activity is stable for %d", counter);
-            requestRestart();
+            requestRestart(RESTART_ACTIVITY);
             return true;
         }
         return false;
@@ -1229,7 +1282,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     public boolean onGraphStable(int counter) {
         if (counter > exploration.graphStableRestartThreshold()) {
             Logger.format("Graph is stable for %d", counter);
-            requestRestart();
+            requestRestart(RESTART_GRAPH);
             return true;
         }
         return false;
@@ -1283,14 +1336,31 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * activity-frontier (INV-CT-07): the decision source for a non-model action's step record
-     * line. {@code EVENT_TRIGGER_ACTIVITY} (the stagnation launcher) is a {@code Component} decision;
-     * every other non-model action stays on the {@code SATA} chain that produced it. Pure.
+     * The owner of a non-model action's step (event-sink INV-SNK-15, design D-B7): the MOP
+     * launcher's {@code EVENT_TRIGGER_ACTIVITY} is {@code launcher}, the RESTART guard's start
+     * actions are {@code restart}, and every other non-model action stays on the {@code SATA}
+     * chain that produced it. Pure.
      */
     static ModelAction.DecisionSource nonModelDecisionSource(ActionType type) {
-        return type == ActionType.EVENT_TRIGGER_ACTIVITY
-                ? ModelAction.DecisionSource.Component
-                : ModelAction.DecisionSource.SATA;
+        switch (type) {
+        case EVENT_TRIGGER_ACTIVITY:
+            return ModelAction.DecisionSource.LAUNCHER;
+        case EVENT_RESTART:
+        case EVENT_CLEAN_RESTART:
+            return ModelAction.DecisionSource.RESTART;
+        default:
+            return ModelAction.DecisionSource.SATA;
+        }
+    }
+
+    /**
+     * The {@code dec.src} owner of a model action (INV-SNK-15): the owner its source names. A
+     * boost-attributed source names no owner; it is set on SATA's paths only, so it reads as
+     * {@code sata}.
+     */
+    static String ownerOf(ModelAction.DecisionSource source) {
+        String owner = source.owner();
+        return owner != null ? owner : ModelAction.DecisionSource.SATA.owner();
     }
 
     /**
@@ -1313,8 +1383,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
 
     /**
      * The {@code dec.cf.changed} bit, or {@link EventSink#ABSENT} for a channel where MOP boosts do
-     * not participate in the pick (INV-SEL-08). Only the four MOP-sensitive channels carry it; the
-     * LLM, the launcher, the buffer and every other path carry none.
+     * not participate in the pick (INV-SEL-08). Only the two roulette channels carry it; the LLM,
+     * the launcher, the MOP coin, the buffer and every other path carry none.
      *
      * <p>A recomputation that failed reports {@code 0}: the factual pick was already made, so a
      * failure costs the record its contrast and nothing else.
@@ -1325,8 +1395,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      */
     static int counterfactualChanged(ModelAction action) {
         switch (action.getPickChannel()) {
-        case SHORT_CIRCUIT_UNVISITED:
-        case SHORT_CIRCUIT_0STEP:
         case ROULETTE_GREEDY:
         case ROULETTE_EARLY:
             break;
@@ -1349,38 +1417,45 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * The pick channel for a non-model action's step record (INV-SEL-05). These actions
-     * carry no provenance field of their own — they are not {@code ModelAction}s — so the channel is
-     * read off the type: {@code EVENT_TRIGGER_ACTIVITY} is the stagnation activity launcher, and
-     * every other non-model action is outside the four MOP-sensitive channels. Pure.
+     * The pick channel for a non-model action's step record (INV-SEL-05, design D-B14.17). These
+     * actions carry no provenance field of their own — they are not {@code ModelAction}s — so the
+     * channel is read off the type: {@code EVENT_TRIGGER_ACTIVITY} is the MOP launcher's, a start
+     * action is the RESTART guard's, and every other non-model action is SATA's. Pure.
      */
     static ModelAction.PickChannel nonModelPickChannel(ActionType type) {
-        return type == ActionType.EVENT_TRIGGER_ACTIVITY
-                ? ModelAction.PickChannel.LAUNCHER
-                : ModelAction.PickChannel.SATA_OTHER;
+        switch (type) {
+        case EVENT_TRIGGER_ACTIVITY:
+            return ModelAction.PickChannel.LAUNCHER;
+        case EVENT_RESTART:
+        case EVENT_CLEAN_RESTART:
+            return ModelAction.PickChannel.RESTART;
+        default:
+            return ModelAction.PickChannel.SATA_OTHER;
+        }
     }
 
     private static final String[] PROVIDER_OPERATIONS = {"query", "insert", "update"};
 
     /**
-     * gh13 T1.4+T1.5: build the round-robin trigger candidates from MOP data. Package-visible
-     * and side-effect-free so it can be unit-tested without the Android runtime.
+     * gh13 T1.4: build the round-robin receiver and service trigger candidates from the static
+     * manifest. Package-visible and side-effect-free so it can be unit-tested without the Android
+     * runtime.
      *
-     * Rules (INV-MOP-15): the probabilistic tuple pool holds only BroadcastReceivers and Services
-     * (ContentProviders keep their separate provider path; activities are handled exclusively by
-     * the stagnation launcher — EVENT_TRIGGER_ACTIVITY, decision_source=Component — and never enter
-     * this pool). Skip components with reachesTarget=false. Each surviving component yields one
-     * tuple per (intentFilter × action); a component with no filters but non-empty targetMethods
-     * yields one component-name-only tuple (filter=null, action=null).
+     * <p>Rules (component-triggering INV-CT-03, INV-CT-16): each receiver and service yields one
+     * tuple per (intent filter × action); a service with no filter action yields one
+     * component-name-only tuple (filter=null, action=null), and a receiver with none yields
+     * nothing. Activities never enter the pool (the MOP launcher launches them), and providers have
+     * their own tuples. The pool reads no MOP data — no reachability, no target methods — so two
+     * artifacts that differ only in MOP data yield the same pool in the same order.
      */
-    static java.util.List<TriggerTuple> buildTriggerTuples(StaticGuiModel statics, MopData data) {
+    static java.util.List<TriggerTuple> buildTriggerTuples(
+            java.util.List<? extends ComponentInfo> receivers,
+            java.util.List<? extends ComponentInfo> services) {
         java.util.List<TriggerTuple> tuples = new java.util.ArrayList<>();
-        if (data == null) return tuples;
         java.util.List<ComponentInfo> candidates = new java.util.ArrayList<>();
-        candidates.addAll(statics.receivers());
-        candidates.addAll(statics.services());
+        if (receivers != null) candidates.addAll(receivers);
+        if (services != null) candidates.addAll(services);
         for (ComponentInfo c : candidates) {
-            if (!data.reachesMop(c.className)) continue;
             boolean emitted = false;
             for (ComponentInfo.IntentFilter f : c.intentFilters) {
                 for (String action : f.actions) {
@@ -1388,18 +1463,23 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                     emitted = true;
                 }
             }
-            if (!emitted && data.hasTargetMethods(c.className)) {
-                tuples.add(new TriggerTuple(c, null, null)); // component-name-only (D15)
+            if (!emitted && c instanceof ComponentInfo.ServiceInfo) {
+                tuples.add(new TriggerTuple(c, null, null)); // component-name-only (D-B14.15)
             }
         }
         return tuples;
     }
 
-    static java.util.List<ProviderTuple> buildProviderTuples(StaticGuiModel statics, MopData data) {
+    /**
+     * gh13 T1.5: one tuple per (provider with a non-empty {@code authorities} × operation
+     * {@code query}, {@code insert}, {@code update}), whatever the MOP data says (INV-CT-16).
+     */
+    static java.util.List<ProviderTuple> buildProviderTuples(
+            java.util.List<ComponentInfo.ProviderInfo> providers) {
         java.util.List<ProviderTuple> tuples = new java.util.ArrayList<>();
-        if (data == null) return tuples;
-        for (ComponentInfo.ProviderInfo p : statics.providers()) {
-            if (!data.reachesMop(p.className) || p.authorities == null || p.authorities.isEmpty()) continue;
+        if (providers == null) return tuples;
+        for (ComponentInfo.ProviderInfo p : providers) {
+            if (p.authorities == null || p.authorities.isEmpty()) continue;
             for (String op : PROVIDER_OPERATIONS) {
                 tuples.add(new ProviderTuple(p, op));
             }
@@ -1408,16 +1488,20 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * The size of the MOP-reachable trigger pool: every (component × filter × action) tuple
-     * followed by every (provider × operation) tuple (gh13 T1.4+T1.5). Built on the first ask and
-     * cached for the session, so the count a caller walks over cannot change under it.
+     * The size of the component trigger pool: every (component × filter × action) tuple followed
+     * by every (provider × operation) tuple, read from the static model (gh13 T1.4+T1.5, design
+     * D-B13). Built on the first ask and cached for the session, so the count a caller walks over
+     * cannot change under it.
      *
      * @return the pool size; zero when the census yields no triggerable target
      */
     public int componentTargetCount() {
         if (!_tuplesBuilt) {
-            _triggerTuples = buildTriggerTuples(staticModel(), getMopData());
-            _providerTuples = buildProviderTuples(staticModel(), getMopData());
+            StaticGuiModel model = staticModel();
+            _triggerTuples = model == null ? new java.util.ArrayList<TriggerTuple>()
+                    : buildTriggerTuples(model.receivers(), model.services());
+            _providerTuples = model == null ? new java.util.ArrayList<ProviderTuple>()
+                    : buildProviderTuples(model.providers());
             _tuplesBuilt = true;
         }
         return _triggerTuples.size() + _providerTuples.size();
@@ -1454,8 +1538,41 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // gh60 D15: surface the permission gate so a SecurityException trigger failure is diagnosable.
         String perm = t.component.hasPermissionGate() ? t.component.permission : "none";
         return String.format(
-                "[APE-RV] Triggering %s: %s action=%s categories=%s permission=%s reachesTarget=true",
+                "[APE-RV] Triggering %s: %s action=%s categories=%s permission=%s",
                 t.component.componentType, t.component.className, t.action, cats.toString(), perm);
+    }
+
+    /**
+     * The data URI and MIME type a trigger intent carries from the filter that supplied its
+     * action (component-triggering INV-CT-17, design D-B14.11): the URI is
+     * {@code scheme://host + path} from the first scheme, first host and first path (falling back
+     * to the first path prefix), {@code host} and {@code path} empty when absent; the type is the
+     * first MIME type. A filter with no scheme yields no URI and one with no MIME type no type.
+     * Pure, so the three dispatch shapes ({@code setDataAndType}, {@code setData},
+     * {@code setType}) are testable without the Android runtime.
+     *
+     * @param filter the tuple's filter, or null for a component-name-only tuple
+     * @return {@code {uri, mimeType}}, each null when absent
+     */
+    static String[] intentDataAndType(ComponentInfo.IntentFilter filter) {
+        if (filter == null || filter.data == null) {
+            return new String[] {null, null};
+        }
+        ComponentInfo.IntentFilter.Data data = filter.data;
+        String uri = null;
+        if (!data.schemes.isEmpty()) {
+            String host = data.hosts.isEmpty() ? "" : data.hosts.get(0);
+            String path = !data.paths.isEmpty() ? data.paths.get(0)
+                    : !data.pathPrefixes.isEmpty() ? data.pathPrefixes.get(0) : "";
+            uri = data.schemes.get(0) + "://" + host + path;
+        }
+        String type = data.mimeTypes.isEmpty() ? null : data.mimeTypes.get(0);
+        return new String[] {uri, type};
+    }
+
+    /** The {@code dec.trig} kind of a tuple's component: {@code broadcast} or {@code service}. */
+    static String triggerKind(ComponentInfo component) {
+        return component instanceof ComponentInfo.ReceiverInfo ? "broadcast" : "service";
     }
 
     /** Build the `content` shell command for a provider operation (static for testability). */
@@ -1470,6 +1587,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     private boolean dispatchTrigger(TriggerTuple t) {
         ComponentInfo c = t.component;
         Intent intent = new Intent();
+        // The package is the artifact's, read from the static model (INV-CT-04): MopData is null
+        // in a cell without MOP.
         intent.setComponent(new ComponentName(staticModel().packageName(), c.className));
         if (t.action != null) {
             intent.setAction(t.action);
@@ -1479,7 +1598,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 intent.addCategory(category);
             }
         }
+        String[] dataAndType = intentDataAndType(t.filter);
+        if (dataAndType[0] != null && dataAndType[1] != null) {
+            intent.setDataAndType(Uri.parse(dataAndType[0]), dataAndType[1]);
+        } else if (dataAndType[0] != null) {
+            intent.setData(Uri.parse(dataAndType[0]));
+        } else if (dataAndType[1] != null) {
+            intent.setType(dataAndType[1]);
+        }
         Logger.iprintln(triggerLogLine(t));
+        // dec.trig: the side effect of this step, whatever the platform answers.
+        RunContext.current().sink().componentTrigger(triggerKind(c), c.className);
         if (c instanceof ComponentInfo.ReceiverInfo) {
             if (_broadcastCatalog != null && t.action != null) {
                 for (SystemBroadcastCatalog.IntentExtra extra : _broadcastCatalog.lookup(t.action)) {
@@ -1487,18 +1616,16 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 }
             }
             return AndroidDevice.sendBroadcast(intent);
-        } else if (c instanceof ComponentInfo.ServiceInfo) {
-            return AndroidDevice.startService(intent);
         }
-        // activity-frontier: the tuple pool no longer carries ActivityInfo (activities are launched
-        // only by the stagnation launcher's own startActivity path). Providers use dispatchProvider.
-        return false;
+        // The pool holds receivers and services only; providers use dispatchProvider.
+        return AndroidDevice.startService(intent);
     }
 
     private boolean dispatchProvider(ProviderTuple t) {
         String[] cmd = buildContentCommand(t);
-        Logger.iformat("[APE-RV] Triggering provider: %s op=%s uri=content://%s reachesTarget=true",
+        Logger.iformat("[APE-RV] Triggering provider: %s op=%s uri=content://%s",
                 t.provider.className, t.operation, t.provider.authorities);
+        RunContext.current().sink().componentTrigger("provider", t.provider.className);
         int exit = runContentCommand(cmd);
         if (exit != 0) {
             Logger.wformat("[APE-RV] provider %s op=%s exit=%d", t.provider.className, t.operation, exit);
@@ -1538,7 +1665,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     public boolean onStateStable(int counter) {
         if (counter > exploration.stateStableRestartThreshold()) {
             Logger.format("State is stable for %d", counter);
-            requestRestart();
+            requestRestart(RESTART_STATE);
             return true;
         }
         return false;
@@ -1573,8 +1700,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     protected void moveForward() {
         // gh9: record interaction and budget iteration before shifting state pointers
         if (newAction != null && newState != null) {
-            // Retirement counts the first interaction, so it reads the tracker before it records.
-            _pendingRetirement = pendingRetirement(newState, newAction);
+            recordMopInteraction(newState, newAction);
             _coverageTracker.recordInteraction(newState, newAction);
             if (_budgetTracker != null) {
                 _budgetTracker.recordIteration(newState.getActivity());
@@ -1584,40 +1710,40 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * Target retirement, taken at selection (mop-guidance "Target Retirement", design D19,
-     * INV-MOP-37): under {@code ape.mopScoring=distance}, when the selected action is the first
-     * interaction of its widget in its activity ({@code hasActivityInteraction(activity,
-     * widgetId(action))} false; novelty per {@code xpath|ActionType}), the action's weight's lookup
-     * is the pending count, which {@link #checkRestart} applies once the action survives it. The weight's lookup is the one {@link MopScorer#weigh} gave the action its weight from
-     * — the containment lookup holding its smallest unretired distance, ties to the earlier node —
-     * so what gives an action its weight is what retires. Only a weighted action counts: nothing is
-     * counted when its weight before the tie split is 0 (no unretired pair, or none within d <= 3;
-     * a target does not retire through exploration it did not attract), when the action has no
-     * resolved node (an off-tree LLM tap), or under {@code flag}, where the context carries no
-     * retirement.
+     * Records the executed model action in the MOP ledger and, on a first interaction, counts
+     * target retirement (mop-guidance "MopInteractionLedger", "Target Retirement", INV-MOP-37,
+     * INV-MOP-40). Every executed action with a resolved target is recorded, whatever owner
+     * selected it; an off-tree LLM tap has no node and records nothing. Novelty is per activity and
+     * per {@code xpath|ActionType}, read before the key is recorded.
      *
-     * @return the weight's lookup to count, or null when nothing is to be counted
+     * <p>Under {@code ape.mopScoring=distance}, a first interaction counts the targets of the
+     * action's weight's lookup — the one {@link MopScorer#weigh} gave the action its weight from,
+     * the containment lookup holding its smallest unretired distance — so what gives an action its
+     * weight is what retires. Nothing is counted when the weight before the tie split is 0 or under
+     * {@code flag}, where the context carries no retirement. The count applies here, at selection:
+     * the restart is a guard stage before selection, so no selected action is replaced afterwards.
+     * Targets that retire reach the open step record through {@link EventSink#mopRetired}
+     * ({@code dec.ret}, design D23), because the decision call has already run.
      */
-    private MopData.Lookup pendingRetirement(State state, ModelAction action) {
-        MopContext mop = _mopContext;
-        if (mop == null || mop.retirement() == null) {
-            return null;
+    private void recordMopInteraction(State state, ModelAction action) {
+        if (_mopLedger == null || !action.requireTarget() || action.getResolvedNode() == null) {
+            return;
         }
-        if (_coverageTracker.hasActivityInteraction(state.getActivity(),
-                UICoverageTracker.widgetId(action))) {
-            return null;
+        String activity = state.getActivity();
+        String key = UICoverageTracker.widgetId(action);
+        if (_mopLedger.tried(activity, key)) {
+            return;
         }
-        MopScorer.Scored scored = MopScorer.weigh(mop, state, action);
-        return scored.weight > 0 ? scored.lookup : null;
-    }
-
-    /**
-     * Counts the pending first interaction (design D19). Targets that retire on this call reach the
-     * open step record through {@link EventSink#mopRetired} ({@code dec.ret}, design D23), because
-     * the decision call has already run in {@code resolveNewAction}.
-     */
-    private void countTargetRetirement(MopData.Lookup weightLookup) {
-        int[] retired = _mopContext.retirement().onFirstInteraction(weightLookup);
+        _mopLedger.record(activity, key);
+        MopRetirement retirement = _mopContext == null ? null : _mopContext.retirement();
+        if (retirement == null) {
+            return;
+        }
+        MopScorer.Scored scored = MopScorer.weigh(_mopContext, state, action);
+        if (scored.weight <= 0) {
+            return;
+        }
+        int[] retired = retirement.onFirstInteraction(scored.lookup);
         if (retired.length > 0) {
             RunContext.current().sink().mopRetired(retired);
         }
@@ -1706,7 +1832,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             // (EVENT_TRIGGER_ACTIVITY) is a Component decision (INV-CT-07); every other non-model
             // action stays on the SATA chain that produced it (INV-SEL-04).
             RunContext.current().sink().decisionNonModel(action.toString(),
-                    nonModelDecisionSource(action.getType()).name(),
+                    nonModelDecisionSource(action.getType()).owner(),
                     nonModelPickChannel(action.getType()).getLabel());
             // Non-model actions produce no transition under their own identity; clear the buffer so
             // a stale model decision cannot be resurrected as currentAction by state recovery.
@@ -1730,7 +1856,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     protected void recordModelDecision(State state, ModelAction action) {
         MopScorer.Scored scored = MopScorer.weigh(_mopContext, state, action);
         RunContext.current().sink().decision(action.toString(),
-                action.getDecisionSource().name(),
+                ownerOf(action.getDecisionSource()),
                 action.getPickChannel().getLabel(),
                 action.getPriority(),
                 action.getMopBoost(), action.getMopFrontierBoost(),
@@ -2047,35 +2173,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             result = "new screen";
         }
         _actionHistory.set(last, entry.withResult(result));
-    }
-
-    /**
-     * A model action the restart check replaces is never dispatched, so the entry
-     * updateStateInternal recorded for it is removed rather than filled with the restart's outcome
-     * (design D12). The entry is the last one with an empty result: the update fills every earlier
-     * entry before resolveNewAction runs, so a recording that failed, or a run without the LLM,
-     * leaves nothing to remove. The other startNewEpisode callers do not come through here.
-     *
-     * <p>The same holds for target retirement (design D19): the count {@code moveForward} took for
-     * the selected action is applied only when the action survives, and discarded when the restart
-     * replaces it.
-     */
-    @Override
-    protected Action checkRestart(Action origin) {
-        Action action = super.checkRestart(origin);
-        MopData.Lookup pending = _pendingRetirement;
-        _pendingRetirement = null;
-        if (pending != null && action == origin) {
-            countTargetRetirement(pending);
-        }
-        if (action != origin && origin.isModelAction() && _actionHistory != null
-                && !_actionHistory.isEmpty()) {
-            int last = _actionHistory.size() - 1;
-            if (_actionHistory.get(last).result.isEmpty()) {
-                _actionHistory.remove(last);
-            }
-        }
-        return action;
     }
 
     /**

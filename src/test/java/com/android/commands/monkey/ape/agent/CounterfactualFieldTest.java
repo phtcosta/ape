@@ -9,8 +9,9 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 /**
- * A3 (INV-SEL-08), emission half: {@code dec.cf} is defined on exactly the four MOP-sensitive
- * channels and absent on every other, and a failed recomputation is inert rather than absent.
+ * A3 (INV-SEL-08), emission half: {@code dec.cf} is defined on exactly the two roulette channels
+ * and absent on every other (the MOP shortcut channels left SATA), and a failed recomputation is
+ * inert rather than absent.
  *
  * <p>The counterfactual action itself is carried only when it diverges. That is not an omission:
  * an unchanged counterfactual <em>is</em> the factual pick, which the record already carries as
@@ -29,7 +30,7 @@ public class CounterfactualFieldTest {
     @Test
     public void aDivergentPickReportsTheCounterfactualAction() {
         ModelAction alternative = new ModelAction(null, ActionType.MODEL_CLICK);
-        ModelAction picked = action(ModelAction.PickChannel.SHORT_CIRCUIT_UNVISITED, alternative);
+        ModelAction picked = action(ModelAction.PickChannel.ROULETTE_GREEDY, alternative);
 
         assertEquals(1, StatefulAgent.counterfactualChanged(picked));
         assertEquals(alternative.toString(), StatefulAgent.counterfactualAction(picked));
@@ -47,10 +48,8 @@ public class CounterfactualFieldTest {
     }
 
     @Test
-    public void allFourMopSensitiveChannelsCarryTheFields() {
+    public void bothRouletteChannelsCarryTheFields() {
         ModelAction.PickChannel[] channels = {
-                ModelAction.PickChannel.SHORT_CIRCUIT_UNVISITED,
-                ModelAction.PickChannel.SHORT_CIRCUIT_0STEP,
                 ModelAction.PickChannel.ROULETTE_GREEDY,
                 ModelAction.PickChannel.ROULETTE_EARLY
         };

@@ -10,8 +10,8 @@ import java.util.List;
  * key (activities/receivers/services/providers), not from a per-element field (D19).
  *
  * <p>Every field here has a production reader on the trigger or launch path, and none is a MOP
- * fact: the wire's {@code reachesMop} and {@code hasTargetMethods} are MOP data and are served by
- * {@link MopData} ({@link MopData#reachesMop}), so the STATIC component trigger can read this
+ * fact: the wire's {@code reachesMop} is MOP data and is served by {@link MopData}
+ * ({@link MopData#reachesMop}), so the STATIC component trigger can read this
  * class with MOP off (design D-B13). The manifest surface the artifact does <em>not</em> carry is
  * as deliberate as the surface it does: {@code exported} is absent because eligibility must never
  * test it (the dispatch path launches non-exported components from uid 2000, so an export test

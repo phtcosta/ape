@@ -163,9 +163,8 @@ public final class StaticArtifactLoader {
             List<ComponentInfo.ActivityInfo> activities = new ArrayList<>();
             List<ComponentInfo.ProviderInfo> providers = new ArrayList<>();
             Set<String> reachingMop = new HashSet<>();
-            Set<String> withTargetMethods = new HashSet<>();
             parseComponents(root.optJSONObject("components"), receivers, services, activities,
-                    providers, reachingMop, withTargetMethods);
+                    providers, reachingMop);
 
             StaticGuiModel staticModel = new StaticGuiModel(packageName, mainActivity,
                     parseWtg(root.optJSONObject("wtg")), widgetMeta,
@@ -204,7 +203,7 @@ public final class StaticArtifactLoader {
                     MopData.recomputeMopOptionsMenus(
                             parseOptionsMenus(root.optJSONArray("optionsMenus")),
                             staticModel, selectedActivities),
-                    reachingMop, withTargetMethods, pairs.targets, activityDist, handlers,
+                    reachingMop, pairs.targets, activityDist, handlers,
                     stats.optInt("droppedFlaggedNoId", 0));
 
             // The provenance pair: which wire contract was read, and the digest of the
@@ -484,13 +483,14 @@ public final class StaticArtifactLoader {
     /**
      * Decode the wire {@code components} block. Each entry carries only the trigger surface the
      * inventory records a production reader for; the component type comes from the parent array
-     * key (D19). The two MOP facts of an entry, {@code reachesMop} and {@code hasTargetMethods},
-     * go to {@link MopData} by class name; everything else to the static model.
+     * key (D19). The entry's MOP fact, {@code reachesMop}, goes to {@link MopData} by class name;
+     * the trigger surface to the static model. {@code hasTargetMethods} has no reader and is not
+     * decoded.
      */
     private static void parseComponents(JSONObject components,
             List<ComponentInfo.ReceiverInfo> receivers, List<ComponentInfo.ServiceInfo> services,
             List<ComponentInfo.ActivityInfo> activities, List<ComponentInfo.ProviderInfo> providers,
-            Set<String> reachingMop, Set<String> withTargetMethods) throws JSONException {
+            Set<String> reachingMop) throws JSONException {
         if (components == null) {
             return;
         }
@@ -501,7 +501,7 @@ public final class StaticArtifactLoader {
                 receivers.add(new ComponentInfo.ReceiverInfo(optStringOrNull(co, "className"),
                         co.optBoolean("isMain", false), parseIntentFilters(co),
                         optStringOrNull(co, "permission")));
-                recordMopFacts(co, reachingMop, withTargetMethods);
+                recordMopFacts(co, reachingMop);
             }
         }
         JSONArray svcArr = components.optJSONArray("services");
@@ -511,7 +511,7 @@ public final class StaticArtifactLoader {
                 services.add(new ComponentInfo.ServiceInfo(optStringOrNull(co, "className"),
                         co.optBoolean("isMain", false), parseIntentFilters(co),
                         optStringOrNull(co, "permission")));
-                recordMopFacts(co, reachingMop, withTargetMethods);
+                recordMopFacts(co, reachingMop);
             }
         }
         JSONArray actArr = components.optJSONArray("activities");
@@ -522,7 +522,7 @@ public final class StaticArtifactLoader {
                         co.optBoolean("isMain", false),
                         new ArrayList<ComponentInfo.IntentFilter>(),
                         optStringOrNull(co, "permission"), optStringOrNull(co, "deepLinkUri")));
-                recordMopFacts(co, reachingMop, withTargetMethods);
+                recordMopFacts(co, reachingMop);
             }
         }
         JSONArray provArr = components.optJSONArray("providers");
@@ -533,23 +533,19 @@ public final class StaticArtifactLoader {
                         co.optBoolean("isMain", false),
                         new ArrayList<ComponentInfo.IntentFilter>(),
                         optStringOrNull(co, "authorities"), optStringOrNull(co, "permission")));
-                recordMopFacts(co, reachingMop, withTargetMethods);
+                recordMopFacts(co, reachingMop);
             }
         }
     }
 
-    /** The entry's {@code reachesMop} and {@code hasTargetMethods}, recorded by class name. */
-    private static void recordMopFacts(JSONObject co, Set<String> reachingMop,
-            Set<String> withTargetMethods) {
+    /** The entry's {@code reachesMop}, recorded by class name. */
+    private static void recordMopFacts(JSONObject co, Set<String> reachingMop) {
         String className = optStringOrNull(co, "className");
         if (className == null) {
             return;
         }
         if (co.optBoolean("reachesMop", false)) {
             reachingMop.add(className);
-        }
-        if (co.optBoolean("hasTargetMethods", false)) {
-            withTargetMethods.add(className);
         }
     }
 

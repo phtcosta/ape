@@ -103,7 +103,7 @@ public class ActivityFrontierTest {
 
     @Test
     public void testNonModelDecisionSource() {
-        assertEquals(ModelAction.DecisionSource.Component,
+        assertEquals(ModelAction.DecisionSource.LAUNCHER,
                 StatefulAgent.nonModelDecisionSource(ActionType.EVENT_TRIGGER_ACTIVITY));
         assertEquals(ModelAction.DecisionSource.SATA,
                 StatefulAgent.nonModelDecisionSource(ActionType.EVENT_NOP));

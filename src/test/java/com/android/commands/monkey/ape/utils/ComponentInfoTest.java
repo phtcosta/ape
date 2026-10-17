@@ -14,8 +14,8 @@ import static org.junit.Assert.*;
  * helpers over it.
  *
  * <p>The loader splits each entry: the trigger surface goes to {@link StaticGuiModel} as a
- * {@link ComponentInfo}, and the two MOP facts, {@code reachesMop} and {@code hasTargetMethods},
- * go to {@link MopData} by class name. The manifest surface the artifact drops — {@code exported},
+ * {@link ComponentInfo}, and the MOP fact, {@code reachesMop}, goes to {@link MopData} by class
+ * name. The manifest surface the artifact drops — {@code exported},
  * an activity's intent-filter {@code <data>} block, the providers' granular read/write permissions
  * — has no test here because it has no field. The reduced {@code data} of a receiver's or service's
  * filter is {@code StaticGuiModelTest}'s.
@@ -51,19 +51,6 @@ public class ComponentInfoTest {
         assertFalse(r.isMain);
         assertTrue("the MOP fact is MopData's", d.mopData.reachesMop("p.R"));
         assertEquals(Arrays.asList("a1"), r.getActions());
-    }
-
-    /** {@code hasTargetMethods} decodes to a per-class fact on the MOP side, absent ⇒ false. */
-    @Test
-    public void testTargetMethodsDecodeToAMopFact() throws Exception {
-        StaticArtifactLoader.Loaded d = load("{\"receivers\":["
-                + "{\"className\":\"p.Has\",\"reachesMop\":true,\"hasTargetMethods\":true},"
-                + "{\"className\":\"p.None\",\"reachesMop\":true,\"hasTargetMethods\":false},"
-                + "{\"className\":\"p.Absent\",\"reachesMop\":true}]}");
-        assertTrue(d.mopData.hasTargetMethods("p.Has"));
-        assertFalse(d.mopData.hasTargetMethods("p.None"));
-        assertFalse("absent key defaults to false", d.mopData.hasTargetMethods("p.Absent"));
-        assertFalse("a class the artifact does not list", d.mopData.hasTargetMethods("p.X"));
     }
 
     @Test
