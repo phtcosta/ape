@@ -177,6 +177,7 @@ public class StageProvenanceLabelTest {
         ctx.actionBufferSize = 0;
         ctx.timestamp = 7;
         ctx.mopData = PipelineFixture.census();
+        ctx.staticModel = PipelineFixture.staticCensus();
         ctx.graph = PipelineFixture.emptyGraph();
         ctx.random = new Random(3L);
         ActivityBudgetTracker tracker = new ActivityBudgetTracker(0, 0);

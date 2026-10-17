@@ -52,8 +52,7 @@ public class MopDataLookupTest {
     private static MopData cryptoapp() {
         java.net.URL url = MopDataLookupTest.class.getResource("/cryptoapp.apk.mop.json");
         assertNotNull("fixture not on classpath", url);
-        MopData data = MopData.load(new File(url.getFile()).getAbsolutePath(), null, null,
-                new NoopSink());
+        MopData data = StaticArtifactLoader.load(new File(url.getFile()).getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
@@ -70,7 +69,7 @@ public class MopDataLookupTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(artifact);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull("synthetic artifact must load", data);
         return data;
     }

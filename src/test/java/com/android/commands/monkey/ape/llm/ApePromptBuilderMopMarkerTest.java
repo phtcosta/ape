@@ -15,6 +15,8 @@ import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
 import com.android.commands.monkey.ape.utils.MopRetirement;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.TestMopContexts;
@@ -74,7 +76,7 @@ public class ApePromptBuilderMopMarkerTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(json);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull("synthetic artifact must load", data);
         return data;
     }
@@ -100,7 +102,7 @@ public class ApePromptBuilderMopMarkerTest {
     }
 
     private static MopContext distance(MopData data, MopRetirement retirement) {
-        return new MopContext(data, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 3, 6,
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 3, 6,
                 retirement);
     }
 

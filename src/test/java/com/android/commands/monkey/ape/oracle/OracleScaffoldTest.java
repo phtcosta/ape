@@ -149,7 +149,7 @@ public class OracleScaffoldTest {
             if (preset.hasMopData()) {
                 assertNotNull(preset + " wires MopData", mopData);
                 assertEquals(preset + " loads the committed fixture",
-                        "br.unb.cic.cryptoapp", mopData.getPackageName());
+                        "br.unb.cic.cryptoapp", agent.staticModel().packageName());
             } else {
                 assertNull(preset + " leaves MopData null", mopData);
             }

@@ -9,9 +9,9 @@ import com.android.commands.monkey.ape.utils.Logger;
  * rv-scoring-pipeline: the form-completion boost, extracted verbatim from the inline block in
  * {@code StatefulAgent.adjustActionsByGUITree()}. When the state carries ≥1 unfilled EditText, raises
  * the priority of every unfilled field and of a single submit candidate so the form is filled then
- * submitted. Scoring semantics owned by {@code form-completion}. It is the one pass gated by a
- * boolean rather than by a weight or by the presence of MOP data: form completion has no natural
- * "zero" to switch it off with.
+ * submitted. Scoring semantics owned by {@code form-completion}. The ADDONS member
+ * {@code FORM_COMPLETION}: the one pass gated by a boolean rather than by a weight, since form
+ * completion has no natural "zero" to switch it off with.
  * No-op (no boost, no log) on states with no unfilled EditText (INV-FORM-01).
  */
 public final class FormCompletionPass implements ScoringPass {
@@ -36,21 +36,26 @@ public final class FormCompletionPass implements ScoringPass {
     public void apply(State state, ModelAction[] actions, ScoringContext ctx) {
         int timestamp = ctx.getTimestamp();
         if (FormCompletion.hasUnfilledEditText(state, timestamp)) {
+            ModelAction submit = FormCompletion.selectSubmitCandidate(state, timestamp);
             int fields = 0;
             for (ModelAction action : actions) {
+                // Rule R1: the term is computed whole and written once, never read back. The submit
+                // candidate may itself be an unfilled EditText, and then it carries both parts.
+                int term = 0;
                 if (FormCompletion.isUnfilledEditText(action, timestamp)) {
-                    action.setPriority(action.getPriority() + FormCompletion.W_FILL);
-                    action.setFormBoost(FormCompletion.W_FILL);
+                    term += FormCompletion.W_FILL;
                     fields++;
                 }
+                if (action == submit) {
+                    term += FormCompletion.W_SUBMIT;
+                }
+                if (term > 0) {
+                    action.setPriority(action.getPriority() + term);
+                    action.setFormBoost(term);
+                }
             }
-            ModelAction submit = FormCompletion.selectSubmitCandidate(state, timestamp);
             String submitId = "none";
             if (submit != null) {
-                submit.setPriority(submit.getPriority() + FormCompletion.W_SUBMIT);
-                // Accumulate: the submit candidate may itself be an unfilled EditText already boosted
-                // by W_FILL above; don't clobber that provenance (the priority added both).
-                submit.setFormBoost(submit.getFormBoost() + FormCompletion.W_SUBMIT);
                 submitId = submit.getTarget() != null ? submit.getTarget().toString() : submit.toString();
             }
             Logger.iformat("[APE-RV] FORM boost: state=%s#%s, fields=%d, submit=%s",

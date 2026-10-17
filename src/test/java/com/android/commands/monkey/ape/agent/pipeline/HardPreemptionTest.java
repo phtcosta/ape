@@ -54,6 +54,7 @@ public class HardPreemptionTest {
     private static FakeStepContext contendedStep() throws Exception {
         FakeStepContext ctx = PipelineFixture.routableStep();
         ctx.mopData = PipelineFixture.census();
+        ctx.staticModel = PipelineFixture.staticCensus();
         ctx.graph = PipelineFixture.emptyGraph();
         ctx.random = new Random(7L); // the component coin's stream; at rate 1.0 any draw fires
         return ctx;
@@ -161,6 +162,7 @@ public class HardPreemptionTest {
     private static FakeStepContext launcherStep() throws Exception {
         FakeStepContext ctx = PipelineFixture.routableStep();
         ctx.mopData = PipelineFixture.census();
+        ctx.staticModel = PipelineFixture.staticCensus();
         ctx.graph = PipelineFixture.emptyGraph();
         return ctx;
     }

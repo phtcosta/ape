@@ -191,8 +191,7 @@ public class ActivityFrontierTest {
      * type (INV-CT-10).
      */
     private static ActivityInfo activity(String className, boolean isMain, String permission) {
-        return new ActivityInfo(className, isMain, Collections.<IntentFilter>emptyList(),
-                true, Collections.<String>emptyList(), permission);
+        return new ActivityInfo(className, isMain, Collections.<IntentFilter>emptyList(), permission);
     }
 
     private static Set<String> mopSet(String... names) {
@@ -410,8 +409,7 @@ public class ActivityFrontierTest {
     // the stage hands to the action — which is the whole of the jar's contribution now.
 
     private static ActivityInfo deepLinked(String uri) {
-        return new ActivityInfo("com.x.Deep", false, Collections.<IntentFilter>emptyList(),
-                true, Collections.<String>emptyList(), null, uri);
+        return new ActivityInfo("com.x.Deep", false, Collections.<IntentFilter>emptyList(), null, uri);
     }
 
     /**
@@ -442,13 +440,10 @@ public class ActivityFrontierTest {
     @Test
     public void testOnlyActivitiesCanCarryADeepLink() {
         assertNull(new ComponentInfo.ReceiverInfo("com.x.R", false,
-                Collections.<IntentFilter>emptyList(), true,
-                Collections.<String>emptyList()).deepLinkUri);
+                Collections.<IntentFilter>emptyList()).deepLinkUri);
         assertNull(new ComponentInfo.ServiceInfo("com.x.S", false,
-                Collections.<IntentFilter>emptyList(), true,
-                Collections.<String>emptyList()).deepLinkUri);
+                Collections.<IntentFilter>emptyList()).deepLinkUri);
         assertNull(new ComponentInfo.ProviderInfo("com.x.P", false,
-                Collections.<IntentFilter>emptyList(), true,
-                Collections.<String>emptyList(), "auth").deepLinkUri);
+                Collections.<IntentFilter>emptyList(), "auth").deepLinkUri);
     }
 }

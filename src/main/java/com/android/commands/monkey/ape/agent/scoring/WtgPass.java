@@ -6,18 +6,18 @@ import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopScorer;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 /**
- * rv-scoring-pipeline: the WTG-reach boost, extracted from the (formerly interleaved) WTG/frontier
- * loop in {@code StatefulAgent.adjustActionsByGUITree()}. Boosts widgets whose WTG transition targets
- * a MOP-reachable activity. Scoring semantics owned by {@code mop-guidance} (WTG Scoring Pass).
+ * The WTG-reach scorer, the MOP member {@code WTG}: boosts widgets whose WTG transition targets a
+ * MOP-reachable activity. Scoring semantics owned by {@code mop-guidance} (WTG Scoring Pass) and
+ * {@code wtg-navigation} ({@link MopScorer#scoreWtg}). It reads both providers (plan P-1): the WTG
+ * edges from {@link StaticGuiModel}, the MOP activity set from {@code MopData}.
  *
- * <p>Splitting the WTG term from the frontier term ({@link FrontierPass}) is parity-safe: both were a
- * read-modify-write on the same {@code wtgBoost} and both add to {@code priority}, so the sum is
- * order-independent, and WtgPass runs before FrontierPass in pipeline order exactly as in the inline
- * loop (WTG boost then frontier boost). Enabled only when {@code mopData != null && hasWtgData() &&
- * mopWeightWtg != 0} — {@link MopScorer#scoreWtg} already returns 0 when {@code mopWeightWtg == 0}, so
- * the extra gate is an inert short-circuit.
+ * <p>Enabled iff {@code WTG} is mounted (a non-zero {@code mopWeightWtg}), MOP data is present and
+ * the static model carries WTG data. Under rule R1 its term is written to {@code wtgBoost}, of which
+ * it is the only writer, and added to the priority; it is independent of the navigation frontier
+ * ({@link NavFrontierPass}), which writes its own field.
  */
 public final class WtgPass implements ScoringPass {
 
@@ -25,9 +25,10 @@ public final class WtgPass implements ScoringPass {
     private final int weightWtg;
 
     public WtgPass(ScoringContext ctx, ScoringParams params) {
-        MopData mopData = ctx.getMopData();
+        StaticGuiModel staticModel = ctx.getStaticModel();
         this.weightWtg = params.mopWeightWtg();
-        this.enabled = mopData != null && mopData.hasWtgData() && weightWtg != 0;
+        this.enabled = weightWtg != 0 && ctx.getMopData() != null && staticModel != null
+                && staticModel.hasWtgData();
     }
 
     @Override
@@ -43,6 +44,7 @@ public final class WtgPass implements ScoringPass {
     @Override
     public void apply(State state, ModelAction[] actions, ScoringContext ctx) {
         MopData mopData = ctx.getMopData();
+        StaticGuiModel staticModel = ctx.getStaticModel();
         int timestamp = ctx.getTimestamp();
         String activity = state.getActivity();
         int wtgBoostedCount = 0;
@@ -55,11 +57,11 @@ public final class WtgPass implements ScoringPass {
             GUITreeNode node = action.getResolvedNode();
             if (node == null) continue;
             String shortId = MopData.extractShortId(node.getResourceID());
-            int boost = MopScorer.scoreWtg(activity, shortId, mopData, weightWtg);
+            int boost = MopScorer.scoreWtg(activity, shortId, staticModel, mopData,
+                    weightWtg);
             if (boost > 0) {
                 action.setPriority(action.getPriority() + boost);
                 action.setWtgBoost(boost);
-                action.markWtgSource(ModelAction.WTG_SOURCE_WTG);
                 wtgBoostedCount++;
                 if (boost > wtgMaxBoost) wtgMaxBoost = boost;
             }

@@ -18,6 +18,7 @@ import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopRetirement;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -46,34 +47,53 @@ public class MopLauncherStageTest {
 
     private static ComponentInfo.ActivityInfo activity(String className) {
         return new ComponentInfo.ActivityInfo(className, false,
-                java.util.Collections.<ComponentInfo.IntentFilter>emptyList(), true,
-                java.util.Collections.<String>emptyList(), null);
+                java.util.Collections.<ComponentInfo.IntentFilter>emptyList(), null);
     }
 
     /**
-     * MopData carrying just the census the launcher reads. Allocated rather than parsed: the loader
-     * wants a JSON artifact, and every field below is one the stage names directly.
+     * The census the launcher reads, split as the loader splits it: the activities, package and
+     * main activity in the static model, the MOP activity set (and, below, the distances) in the
+     * MOP data.
      */
-    private static MopData censusOf(String... classNames) throws Exception {
-        Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-        java.lang.reflect.Field theUnsafe = unsafeClass.getDeclaredField("theUnsafe");
-        theUnsafe.setAccessible(true);
-        MopData data = (MopData) unsafeClass.getMethod("allocateInstance", Class.class)
-                .invoke(theUnsafe.get(null), MopData.class);
+    private static final class Census {
+        final MopData mop;
+        final StaticGuiModel statics;
+
+        Census(MopData mop, StaticGuiModel statics) {
+            this.mop = mop;
+            this.statics = statics;
+        }
+
+        List<ComponentInfo.ActivityInfo> getActivities() {
+            return statics.activities();
+        }
+
+        String getMainActivity() {
+            return statics.mainActivity();
+        }
+
+        Set<String> getMopActivities() {
+            return mop.getMopActivities();
+        }
+    }
+
+    private static StaticGuiModel staticsOf(List<ComponentInfo.ActivityInfo> activities) {
+        return new StaticGuiModel(PACKAGE, MAIN, null, null, null, null, activities, null);
+    }
+
+    private static Census censusOf(String... classNames) {
         List<ComponentInfo.ActivityInfo> activities = new ArrayList<>();
         for (String className : classNames) {
             activities.add(activity(className));
         }
-        FakeStepContext.setField(data, "activities", activities);
-        FakeStepContext.setField(data, "packageName", PACKAGE);
-        FakeStepContext.setField(data, "mainActivity", MAIN);
-        FakeStepContext.setField(data, "mopActivities", new HashSet<>(Arrays.asList(classNames)));
-        return data;
+        return new Census(MopData.forTest(null, new HashSet<>(Arrays.asList(classNames))),
+                staticsOf(activities));
     }
 
-    private static FakeStepContext stepOver(MopData data) {
+    private static FakeStepContext stepOver(Census data) {
         FakeStepContext ctx = new FakeStepContext();
-        ctx.mopData = data;
+        ctx.mopData = data.mop;
+        ctx.staticModel = data.statics;
         ctx.graph = new Graph(); // no activity node has been visited
         return ctx;
     }
@@ -119,7 +139,9 @@ public class MopLauncherStageTest {
         // The gate is equality against the cadence, so a firing point that failed to reset would
         // leave the counter climbing past it and the launcher would never fire again for the rest of
         // the run. Stocking the census proves the next firing point still arrives on schedule.
-        ctx.mopData = censusOf("com.example.app.A");
+        Census stocked = censusOf("com.example.app.A");
+        ctx.mopData = stocked.mop;
+        ctx.staticModel = stocked.statics;
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
         assertEquals("the counter restarted at the empty firing point",
                 StageResult.Kind.SELECT, stage.decide(ctx).kind());
@@ -157,7 +179,7 @@ public class MopLauncherStageTest {
     @Test
     public void testTheRoundRobinCursorPersistsAcrossFirings() throws Exception {
         MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.FLAG, 6);
-        MopData census = censusOf("com.example.app.A", "com.example.app.B", "com.example.app.C");
+        Census census = censusOf("com.example.app.A", "com.example.app.B", "com.example.app.C");
         FakeStepContext ctx = stepOver(census);
 
         String first = launchedClass(stage.decide(ctx));
@@ -184,10 +206,10 @@ public class MopLauncherStageTest {
     private static final String R = "com.example.app.R";
 
     /** The census of {@code classNames} with the given {@code activityDist} entries. */
-    private static MopData withDistances(Map<String, int[][]> activityDist, String... classNames)
+    private static Census withDistances(Map<String, int[][]> activityDist, String... classNames)
             throws Exception {
-        MopData data = censusOf(classNames);
-        FakeStepContext.setField(data, "activityDist", activityDist);
+        Census data = censusOf(classNames);
+        FakeStepContext.setField(data.mop, "activityDist", activityDist);
         return data;
     }
 
@@ -227,16 +249,16 @@ public class MopLauncherStageTest {
         return r;
     }
 
-    private static MopContext distanceContext(MopData data, MopRetirement retirement, int dmax) {
-        return new MopContext(data, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 1, dmax,
+    private static MopContext distanceContext(Census data, MopRetirement retirement, int dmax) {
+        return new MopContext(data.mop, data.statics, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 1, dmax,
                 retirement);
     }
 
     /** The class the pure distance walk selects after {@code last}, or null. */
-    private static String byDistance(MopData data, Set<String> visited, MopRetirement retirement,
+    private static String byDistance(Census data, Set<String> visited, MopRetirement retirement,
             int dmax, long last) {
         long position = MopLauncherStage.selectByDistance(data.getActivities(), visited,
-                data.getMainActivity(), data.getMopActivities(), data, retirement, dmax, last);
+                data.getMainActivity(), data.getMopActivities(), data.mop, retirement, dmax, last);
         return position < 0 ? null
                 : data.getActivities().get(MopLauncherStage.manifestIndex(position)).className;
     }
@@ -244,7 +266,7 @@ public class MopLauncherStageTest {
     /** Scenario "distance mode launches the nearest eligible activity first". */
     @Test
     public void testDistanceOrdersByNearestThenManifestOrderAndVisitedLeave() throws Exception {
-        MopData data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
+        Census data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
                 P, Q, R);
         Set<String> visited = new HashSet<>();
         long none = MopLauncherStage.NO_SELECTION;
@@ -262,7 +284,7 @@ public class MopLauncherStageTest {
     /** Scenario "distances beyond the bound and retired targets do not count". */
     @Test
     public void testDistancesBeyondDmaxAndRetiredTargetsDoNotCount() throws Exception {
-        MopData data = withDistances(dist(P, pairs(1, 7), Q, pairs(3, 1, 5, 4)), P, Q, R);
+        Census data = withDistances(dist(P, pairs(1, 7), Q, pairs(3, 1, 5, 4)), P, Q, R);
         MopRetirement retirement = retirement(3);
         Set<String> visited = new HashSet<>();
         long none = MopLauncherStage.NO_SELECTION;
@@ -285,7 +307,7 @@ public class MopLauncherStageTest {
     /** Ties by manifest order; activities without a distance after every one with one. */
     @Test
     public void testTiesGoToManifestOrderAndKeylessActivitiesComeLast() throws Exception {
-        MopData data = withDistances(dist(Q, pairs(1, 3), R, pairs(2, 3)), P, Q, R);
+        Census data = withDistances(dist(Q, pairs(1, 3), R, pairs(2, 3)), P, Q, R);
         Set<String> visited = new HashSet<>();
         assertEquals("Q and R tie at 3, Q first in the manifest; keyless P is last", Q,
                 byDistance(data, visited, null, 6, MopLauncherStage.NO_SELECTION));
@@ -300,11 +322,11 @@ public class MopLauncherStageTest {
     public void testDistanceNeverWidensEligibility() throws Exception {
         String about = "com.example.app.About";
         String framework = "androidx.activity.ComponentActivity";
-        MopData data = withDistances(dist(MAIN, pairs(0, 0), about, pairs(1, 0),
+        Census data = withDistances(dist(MAIN, pairs(0, 0), about, pairs(1, 0),
                 framework, pairs(2, 0), Q, pairs(3, 5)), MAIN, framework, Q);
         List<ComponentInfo.ActivityInfo> activities = new ArrayList<>(data.getActivities());
         activities.add(activity(about)); // declared, outside the census
-        FakeStepContext.setField(data, "activities", activities);
+        data = new Census(data.mop, staticsOf(activities));
 
         assertEquals(Q, byDistance(data, new HashSet<String>(), null, 6,
                 MopLauncherStage.NO_SELECTION));
@@ -319,7 +341,7 @@ public class MopLauncherStageTest {
      */
     @Test
     public void testARefusedLaunchIsPassedByTheRotationAndWraps() throws Exception {
-        MopData data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
+        Census data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
                 P, Q, R);
         MopRetirement retirement = retirement();
         MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.DISTANCE, 6);
@@ -340,7 +362,7 @@ public class MopLauncherStageTest {
     /** The order is recomputed at each firing: a target retired since then no longer counts. */
     @Test
     public void testTheOrderIsRecomputedAtEachFiring() throws Exception {
-        MopData data = withDistances(dist(P, pairs(1, 1), Q, pairs(2, 2), R, pairs(3, 3)), P, Q, R);
+        Census data = withDistances(dist(P, pairs(1, 1), Q, pairs(2, 2), R, pairs(3, 3)), P, Q, R);
         MopRetirement retirement = retirement();
         MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.DISTANCE, 6);
         FakeStepContext ctx = stepOver(data);
@@ -355,7 +377,7 @@ public class MopLauncherStageTest {
     /** Scenario "flag mode keeps the round-robin": activityDist and retirement are not read. */
     @Test
     public void testFlagModeKeepsTheRoundRobin() throws Exception {
-        MopData data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
+        Census data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
                 P, Q, R);
         MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.FLAG, 6);
         FakeStepContext ctx = stepOver(data);

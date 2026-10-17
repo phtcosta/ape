@@ -15,55 +15,95 @@
  */
 package com.android.commands.monkey.ape.utils;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The static GUI model of the analysed app, read-only: its window transition graph, the static
  * metadata of its widgets, its package and main activity, and its manifest components with their
- * intent filters (guidance-groups "Static Data Root and Split Providers", plan P-1).
+ * intent filters, the filter's reduced {@code data} included (guidance-groups "Static Data Root
+ * and Split Providers", plan P-1).
  *
- * <p>It is one of the two providers the artifact is split into; {@link MopData} is the other, and
- * holds the specification targets. The STATIC members read this model only. The MOP members that
- * need the WTG or the components read it too, and read {@code MopData} for the targets. Nothing in
- * this model is a MOP fact, which is what lets the STATIC group run on the same artifact with MOP
- * off.
+ * <p>It is one of the two providers {@link StaticArtifactLoader} splits the artifact into;
+ * {@link MopData} is the other, and holds the specification targets. The STATIC members read this
+ * model only. The MOP members that need the WTG or the components read it too, and read
+ * {@code MopData} for the targets. Nothing in this model is a MOP fact — no flag, no distance, no
+ * {@code reachesMop} — which is what lets the STATIC group run on the same artifact with MOP off.
  *
- * <p>The queries answer from the artifact the run loaded, which is parsed once per run.
+ * <p>Immutable; built once per run by the loader, which parses the artifact once.
  */
 public final class StaticGuiModel {
 
-    private final MopData source;
+    /** A model with no edge, no widget, no component and no package; for tests that read none. */
+    public static final StaticGuiModel EMPTY =
+            new StaticGuiModel(null, null, null, null, null, null, null, null);
+
+    private final String packageName;
+    private final String mainActivity;
+    /** Base source activity → its click-only WTG edges (INV-WTG-04). */
+    private final Map<String, List<WtgTransition>> wtg;
+    /** Base activity → short resource id → the widget's static metadata. */
+    private final Map<String, Map<String, WidgetMeta>> widgets;
+    private final List<ComponentInfo.ReceiverInfo> receivers;
+    private final List<ComponentInfo.ServiceInfo> services;
+    private final List<ComponentInfo.ActivityInfo> activities;
+    private final List<ComponentInfo.ProviderInfo> providers;
 
     /**
-     * @param source the loaded artifact the queries answer from
+     * Public because the suites outside this package state the model they need instead of
+     * authoring an artifact that loads to it; production builds it through
+     * {@link StaticArtifactLoader}. A null map or list reads as empty.
+     *
+     * @param wtg base source activity → click edges
+     * @param widgets base activity → short resource id → metadata
      */
-    public StaticGuiModel(MopData source) {
-        this.source = source;
+    public StaticGuiModel(String packageName, String mainActivity,
+            Map<String, List<WtgTransition>> wtg, Map<String, Map<String, WidgetMeta>> widgets,
+            List<ComponentInfo.ReceiverInfo> receivers, List<ComponentInfo.ServiceInfo> services,
+            List<ComponentInfo.ActivityInfo> activities,
+            List<ComponentInfo.ProviderInfo> providers) {
+        this.packageName = packageName;
+        this.mainActivity = mainActivity;
+        this.wtg = wtg != null ? wtg : new HashMap<String, List<WtgTransition>>();
+        this.widgets = widgets != null ? widgets : new HashMap<String, Map<String, WidgetMeta>>();
+        this.receivers = immutable(receivers);
+        this.services = immutable(services);
+        this.activities = immutable(activities);
+        this.providers = immutable(providers);
+    }
+
+    private static <T> List<T> immutable(List<T> list) {
+        return list != null ? Collections.unmodifiableList(new ArrayList<>(list))
+                : Collections.<T>emptyList();
     }
 
     /** The analysed app's package, which the component trigger addresses its intents to. */
     public String packageName() {
-        return source.getPackageName();
+        return packageName;
     }
 
     /** The analysed app's main activity. */
     public String mainActivity() {
-        return source.getMainActivity();
+        return mainActivity;
     }
 
-    /** Whether the artifact carries at least one WTG click edge. */
+    /** Whether the artifact carries at least one WTG source activity. */
     public boolean hasWtgData() {
-        return source.hasWtgData();
+        return !wtg.isEmpty();
     }
 
     /**
      * The WTG click edges out of {@code activity}, or an empty list.
      *
-     * @param activity the activity class name
+     * @param activity the base source activity (the view is keyed by base activity, with any
+     *                 {@code #OptionsMenu}/fragment suffix stripped host-side — INV-WTG-04/05)
      */
     public List<WtgTransition> wtgTransitions(String activity) {
-        return source.getWtgTransitions(activity);
+        List<WtgTransition> list = wtg.get(activity);
+        return list != null ? list : Collections.<WtgTransition>emptyList();
     }
 
     /**
@@ -74,41 +114,40 @@ public final class StaticGuiModel {
      * @param shortId the widget's resource-id entry name ({@link MopData#extractShortId})
      */
     public WidgetMeta widget(String activity, String shortId) {
-        MopData.Widget widget = source.getWidget(activity, shortId);
-        return widget == null ? null : new WidgetMeta(widget.idName, widget.hint, widget.inputType,
-                widget.entries, widget.prompt, widget.spinnerMode, widget.contentDescription,
-                widget.tooltipText);
+        Map<String, WidgetMeta> byId = widgets.get(activity);
+        return byId == null ? null : byId.get(shortId);
     }
 
     /** The manifest's receivers, with their intent filters. */
     public List<ComponentInfo.ReceiverInfo> receivers() {
-        return source.getReceivers();
+        return receivers;
     }
 
     /** The manifest's services, with their intent filters. */
     public List<ComponentInfo.ServiceInfo> services() {
-        return source.getServices();
+        return services;
     }
 
     /** The manifest's activities, in manifest order. */
     public List<ComponentInfo.ActivityInfo> activities() {
-        return source.getActivities();
+        return activities;
     }
 
     /** The manifest's providers. */
     public List<ComponentInfo.ProviderInfo> providers() {
-        return source.getProviders();
+        return providers;
     }
 
     /** Whether the manifest lists any component. */
     public boolean hasComponents() {
-        return source.hasComponents();
+        return !receivers.isEmpty() || !services.isEmpty()
+                || !activities.isEmpty() || !providers.isEmpty();
     }
 
     /**
      * A click edge of the WTG view: which widget, and which base activity it navigates to. The
-     * producer's {@code widgetClass} is not carried — the three consumers match on
-     * {@code widgetName} and read {@code targetActivity}, and none has ever consulted the class.
+     * producer's {@code widgetClass} is not carried — the consumers match on {@code widgetName}
+     * and read {@code targetActivity}, and none has ever consulted the class.
      */
     public static class WtgTransition {
         public final String widgetName;
@@ -141,7 +180,7 @@ public final class StaticGuiModel {
             this.hint = hint;
             this.inputType = inputType;
             this.entries = entries == null ? Collections.<String>emptyList()
-                    : Collections.unmodifiableList(new java.util.ArrayList<>(entries));
+                    : Collections.unmodifiableList(new ArrayList<>(entries));
             this.prompt = prompt;
             this.spinnerMode = spinnerMode;
             this.contentDescription = contentDescription;

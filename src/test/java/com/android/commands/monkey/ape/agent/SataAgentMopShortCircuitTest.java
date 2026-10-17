@@ -12,6 +12,8 @@ import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
 import com.android.commands.monkey.ape.utils.MopRetirement;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
@@ -305,7 +307,7 @@ public class SataAgentMopShortCircuitTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(json);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
@@ -319,12 +321,12 @@ public class SataAgentMopShortCircuitTest {
         for (int i : retired) {
             counters[i] = 1;
         }
-        return new MopContext(data, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 1, 6,
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 1, 6,
                 retirement);
     }
 
     private static MopContext flag(MopData data) {
-        return new MopContext(data, MopScoring.FLAG, 500, 300, 500, 400, 300, 3, 6, null);
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.FLAG, 500, 300, 500, 400, 300, 3, 6, null);
     }
 
     private static State state(String activity) throws Exception {

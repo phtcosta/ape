@@ -135,18 +135,18 @@ public final class MopLauncherStage implements DecisionStage {
         MopData data = ctx.mopData();
         ComponentInfo candidate;
         if (scoring == MopScoring.DISTANCE) {
-            long position = selectByDistance(data.getActivities(), visited,
-                    data.getMainActivity(), data.getMopActivities(), data,
+            long position = selectByDistance(ctx.staticModel().activities(), visited,
+                    ctx.staticModel().mainActivity(), data.getMopActivities(), data,
                     ctx.mopContext().retirement(), launcherDmax, roundRobinIndex);
             if (position == NO_SELECTION) {
                 candidate = null;
             } else {
                 roundRobinIndex = position; // the last selection, whatever the launch result
-                candidate = data.getActivities().get(manifestIndex(position));
+                candidate = ctx.staticModel().activities().get(manifestIndex(position));
             }
         } else {
-            candidate = selectTriggerCandidate(data.getActivities(), visited,
-                    data.getMainActivity(), (int) roundRobinIndex, data.getMopActivities());
+            candidate = selectTriggerCandidate(ctx.staticModel().activities(), visited,
+                    ctx.staticModel().mainActivity(), (int) roundRobinIndex, data.getMopActivities());
             roundRobinIndex++;
         }
         if (candidate == null) {
@@ -155,7 +155,7 @@ public final class MopLauncherStage implements DecisionStage {
         launchCount++; // budget consumed only on an actual launch (INV-CT-12)
         Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);
         // Package captured from MopData (never from the class name — INV-CT-04).
-        ActivityTriggerAction trigger = new ActivityTriggerAction(ctx.mopData().getPackageName(),
+        ActivityTriggerAction trigger = new ActivityTriggerAction(ctx.staticModel().packageName(),
                 candidate.className, candidate.deepLinkUri);
         return StageResult.select(trigger, ModelAction.DecisionSource.Component.name());
     }

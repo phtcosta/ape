@@ -83,7 +83,7 @@ public class MopScorerContainmentTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(json);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }

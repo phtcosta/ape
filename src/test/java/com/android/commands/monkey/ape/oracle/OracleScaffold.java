@@ -28,6 +28,7 @@ import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.RandomHelper;
+import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 import com.android.commands.monkey.ape.utils.Utils;
 
@@ -468,15 +469,17 @@ public final class OracleScaffold {
     // ---- preset wiring ---------------------------------------------------------------------
 
     /** Loads the committed MOP fixture through the production path, as {@code MopDataTest} does. */
-    static MopData loadMopFixture() {
+    static StaticArtifactLoader.Loaded loadMopFixture() {
         URL url = OracleScaffold.class.getResource("/" + MOP_FIXTURE);
         if (url == null) {
             throw new IllegalStateException("MOP fixture not on the test classpath: " + MOP_FIXTURE);
         }
-        MopData data = MopData.load(new File(url.getFile()).getAbsolutePath(),
+        StaticArtifactLoader.Loaded data = StaticArtifactLoader.load(
+                new File(url.getFile()).getAbsolutePath(),
                 MOP_FIXTURE_PACKAGE, MOP_FIXTURE_MAIN_ACTIVITY, new NoopSink());
         if (data == null) {
-            throw new IllegalStateException("MopData.load returned null for " + MOP_FIXTURE);
+            throw new IllegalStateException("StaticArtifactLoader.load returned null for "
+                    + MOP_FIXTURE);
         }
         return data;
     }
@@ -574,7 +577,9 @@ public final class OracleScaffold {
         Graph graph = new Graph();
         Model model = new Model(graph);
         UICoverageTracker coverageTracker = new UICoverageTracker();
-        MopData mopData = preset.hasMopData() ? loadMopFixture() : null;
+        StaticArtifactLoader.Loaded loaded = preset.hasMopData() ? loadMopFixture() : null;
+        MopData mopData = loaded == null ? null : loaded.mopData;
+        final StaticGuiModel staticModel = loaded == null ? null : loaded.staticModel;
         State entryState = buildState(script.getEntryScreen());
         registerInGraph(graph, entryState);
 
@@ -588,22 +593,22 @@ public final class OracleScaffold {
         // The artifact reaches the agent inside its MOP context (design D17, Plumbing), built from
         // the plan installed above exactly as the constructor builds it — the injection profile
         // adapting to a relocated collaborator (INV-ORA-07); the agent derives getMopData() from it.
-        final MopContext mopContext = MopContext.fromSpec(mopData, spec.mop());
+        final MopContext mopContext = MopContext.fromSpec(mopData, staticModel, spec.mop());
         setField(agent, "_mopContext", mopContext);
         // The static model and the per-step streams, as the constructor takes them (design D-B9,
         // D-B14.20): the model over the loaded fixture, the streams from the installed context.
-        setField(agent, "_staticModel", mopData == null ? null : new StaticGuiModel(mopData));
+        setField(agent, "_staticModel", staticModel);
         setField(agent, "_stepRng", RunContext.current().stepRng());
         setField(agent, "_coverageTracker", coverageTracker);
         // Config.activityBudgetEnabled defaults true, so the constructor builds a real tracker and
         // the ladder's first block dereferences it unconditionally (SataAgent.java:468).
         setField(agent, "_budgetTracker", budgetTracker(script));
         ScoringContext scoringContext = new ScoringContext() {
+            @Override public StaticGuiModel getStaticModel() { return staticModel; }
             @Override public MopContext getMopContext() { return mopContext; }
             @Override public UICoverageTracker getCoverageTracker() { return coverageTracker; }
             @Override public Graph getGraph() { return graph; }
             @Override public int getTimestamp() { return agent.getTimestamp(); }
-            @Override public boolean menuPickEligible(String activity) { return true; }
         };
         setField(agent, "scoringContext", scoringContext);
         // The scoring parameters now arrive by injection rather than off static Config, so the

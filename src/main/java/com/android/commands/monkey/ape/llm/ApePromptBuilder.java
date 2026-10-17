@@ -10,6 +10,7 @@ import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopScorer;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -517,7 +518,7 @@ public class ApePromptBuilder {
         try {
             String shortId = MopData.extractShortId(node.getResourceID());
             if (shortId.isEmpty()) return "";
-            return widgetMetadata(mop.data().getWidget(activity, shortId));
+            return widgetMetadata(mop.staticModel().widget(activity, shortId));
         } catch (Exception ignored) { return ""; }
     }
 
@@ -527,7 +528,7 @@ public class ApePromptBuilder {
      * non-null/non-empty (INV-MOP-10). Per-value 80-char cap, newlines flattened, quotes escaped;
      * entries capped to 10 with a trailing ", …".
      */
-    static String widgetMetadata(MopData.Widget w) {
+    static String widgetMetadata(StaticGuiModel.WidgetMeta w) {
         if (w == null) return "";
         StringBuilder sb = new StringBuilder();
         appendMetaField(sb, "prompt", w.prompt);

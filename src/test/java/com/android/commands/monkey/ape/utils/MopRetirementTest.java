@@ -64,7 +64,7 @@ public class MopRetirementTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(json);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
@@ -118,7 +118,7 @@ public class MopRetirementTest {
     }
 
     private static MopContext distance(MopData data, MopRetirement retirement) {
-        return new MopContext(data, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 3, 6,
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 3, 6,
                 retirement);
     }
 
@@ -319,9 +319,9 @@ public class MopRetirementTest {
     @Test
     public void onlyTheDistanceModeBuildsARetirement() throws Exception {
         MopData data = artifact("");
-        assertNull(MopContext.fromSpec(data, TestRunSpecs.mopSpec().mop()).retirement());
+        assertNull(MopContext.fromSpec(data, StaticGuiModel.EMPTY, TestRunSpecs.mopSpec().mop()).retirement());
 
-        MopContext mop = MopContext.fromSpec(data,
+        MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY,
                 TestRunSpecs.mopSpec("ape.mopScoring", "distance", "ape.mopRetireAfter", "2").mop());
         MopRetirement r = mop.retirement();
         assertNotNull(r);

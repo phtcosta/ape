@@ -2,17 +2,19 @@ package com.android.commands.monkey.ape.utils;
 
 import java.util.Random;
 
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
-import com.android.commands.monkey.ape.runtime.RunSpec;
 
 /**
- * gh13 T1.3: type-aware input generation for EditText fuzzing.
+ * gh13 T1.3: type-aware input generation for EditText fuzzing, the STATIC member
+ * {@code TYPED_FUZZ} (heuristic-input INV-INP-08/09).
  *
  * Pure Java (no Android dependencies) so it is unit-testable in plain JVM — unlike
  * {@code ApeFuzzer}, whose static initializer references {@code android.view.KeyEvent}.
- * Callers (see {@code ApeAgent.generateInputText}) consult the static-analysis
- * {@code inputType}/{@code hint} and delegate here; the rollback knob
- * {@code ape.fuzzInputTyped=false} restores the legacy random-string generator.
+ * Callers (see {@code ApeAgent.generateInputText}) read the widget's {@code inputType}/{@code hint}
+ * from {@link StaticGuiModel} and delegate here; it reads no MOP data. With {@code TYPED_FUZZ}
+ * absent from the plan ({@code ape.fuzzInputTyped=false}, or {@code STATIC} off) it falls back to
+ * the legacy random-string generator.
  */
 public final class TypedInputGenerator {
 
@@ -26,12 +28,11 @@ public final class TypedInputGenerator {
     /**
      * Generate a domain-correct random string for the given Android {@code inputType}
      * (INV-MOP-16). Falls back to hint-based heuristics when {@code inputType} is empty, and to
-     * a legacy random string for anything unrecognized. When the plan's {@code fuzzInputTyped} is
-     * false the typed path is bypassed entirely (rollback knob).
+     * a legacy random string for anything unrecognized. When {@code TYPED_FUZZ} is not in the plan
+     * the typed path is bypassed entirely (rollback knob).
      */
     public static String generateForType(String inputType, String hint, Random rnd) {
-        RunSpec.StaticParams staticData = RunContext.current().spec().staticData();
-        if (staticData == null || !staticData.fuzzInputTyped()) {
+        if (!RunContext.current().spec().has(Feature.TYPED_FUZZ)) {
             return legacyString(rnd);
         }
         String it = inputType == null ? "" : inputType;
