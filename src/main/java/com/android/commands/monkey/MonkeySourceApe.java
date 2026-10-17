@@ -51,6 +51,7 @@ import com.android.commands.monkey.ape.model.StartAction;
 import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.telemetry.RunCounter;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.RandomHelper;
@@ -811,7 +812,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 // is deflected with one raw BACK and never modeled — closing the TOCTOU
                 // window at the modeling boundary (INV-EXPL-20). Whitelist packages and a
                 // null topComp bypass the guard. The BACK is raw (no step record): it is
-                // not counted as a step and is invisible to the BACK/MENU pick cap.
+                // not counted as a step and is invisible to the BACK/MENU pick cap, so
+                // RUN_END.counters.guardBacks is its only trace.
                 if (RunContext.current().spec().has(Feature.FOREIGN_ACTIVITY_GUARD)
                         && topComp != null) {
                     String pkg = topComp.getPackageName();
@@ -823,6 +825,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
                         }
                         generateKeyBackEvent();
                         generateThrottleEvent(mThrottle);
+                        RunContext.current().sink().count(RunCounter.GUARD_BACKS);
                         return; // no updateState, no modeling
                     }
                 }
@@ -850,10 +853,14 @@ public class MonkeySourceApe implements MonkeyEventSource {
                     }
                 }
                 nullInfoCounter = 0;
+                // dec.rot: the display's rotation as the step's screen is fetched, -1 when it
+                // cannot be read. It is written once updateState has opened the step's record.
+                int rotation = AndroidDevice.getRotation();
                 action = mAgent.updateState(topComp, info);
                 if (action == null) {
                     throw new NullPointerException("Resolved action should not be null");
                 }
+                RunContext.current().sink().rotation(rotation);
                 break;
             }
         }
@@ -872,8 +879,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
             action = Action.NOP;
         }
         generateEventsForAction(action);
+        // The fuzz toss draws from its own stream on every step, fuzzing on or off, so enabling
+        // fuzzing or changing its rate never shifts another draw (exploration, INV-DP-13).
         RunSpec spec = RunContext.current().spec();
-        if (spec.has(Feature.FUZZING) && RandomHelper.toss(spec.exploration().fuzzingRate())) {
+        boolean fuzzToss = RunContext.current().stepRng().fuzzToss(spec.exploration().fuzzingRate());
+        if (spec.has(Feature.FUZZING) && fuzzToss) {
             if (mAgent.canFuzzing()) {
                 Action fuzzingAction = mAgent.generateFuzzingAction();
                 generateEventsForAction(fuzzingAction);
