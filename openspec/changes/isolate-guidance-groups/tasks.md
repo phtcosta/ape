@@ -80,14 +80,14 @@
 Owns: `llm/ScreenshotCapture.java`, `AndroidDevice.java`, `MonkeySourceApe.java`,
 `src/test/.../llm/ScreenshotCaptureStageTest.java`.
 
-- [ ] 4.1 Port the code of `f993081f` into `llm/ScreenshotCapture.java` (`git show f993081f -- src/main/java/com/android/commands/monkey/ape/llm/ScreenshotCapture.java`): `displayRotation(int)` clamps to 0..3, and the SurfaceControl path passes `displayRotation(AndroidDevice.getRotation())`. Bring the test hunk of `ScreenshotCaptureStageTest.java`. **Do not** port `CLAUDE.md` or `openspec/changes/llm-opaque-screen/tasks.md`; never merge `llm-opaque-screen`
-- [ ] 4.2 Port the code of `3b35073a` into `AndroidDevice.java` and its javadoc line in `ScreenshotCapture.java`: `getRotation()` reads `DisplayManagerGlobal.getInstance().getRealDisplay(DEFAULT_DISPLAY).getRotation()`, and `catch (Exception)` returns `-1`
-- [ ] 4.3 `MonkeySourceApe`:
-  - [ ] 4.3.1 write `dec.rot` every step through `sink().rotation(AndroidDevice.getRotation())`;
-  - [ ] 4.3.2 the fuzz toss (`:876`) draws from `StepRng.fuzzToss`;
-  - [ ] 4.3.3 the foreign/tree guard BACKs increment `guardBacks`
-- [ ] 4.4 Tests: `displayRotation` clamp cases (`-1`, `0..3`, `4`), and that a guard BACK increments its counter
-- [ ] 4.5 Run `/sdd-test-run`
+- [x] 4.1 Port the code of `f993081f` into `llm/ScreenshotCapture.java` (`git show f993081f -- src/main/java/com/android/commands/monkey/ape/llm/ScreenshotCapture.java`): `displayRotation(int)` clamps to 0..3, and the SurfaceControl path passes `displayRotation(AndroidDevice.getRotation())`. Bring the test hunk of `ScreenshotCaptureStageTest.java`. **Do not** port `CLAUDE.md` or `openspec/changes/llm-opaque-screen/tasks.md`; never merge `llm-opaque-screen`
+- [x] 4.2 Port the code of `3b35073a` into `AndroidDevice.java` and its javadoc line in `ScreenshotCapture.java`: `getRotation()` reads `DisplayManagerGlobal.getInstance().getRealDisplay(DEFAULT_DISPLAY).getRotation()`, and `catch (Exception)` returns `-1`
+- [x] 4.3 `MonkeySourceApe`:
+  - [x] 4.3.1 write `dec.rot` every step through `sink().rotation(AndroidDevice.getRotation())`;
+  - [x] 4.3.2 the fuzz toss (`:876`) draws from `StepRng.fuzzToss`;
+  - [x] 4.3.3 the foreign/tree guard BACKs increment `guardBacks`
+- [x] 4.4 Tests: `displayRotation` clamp cases (`-1`, `0..3`, `4`), and that a guard BACK increments its counter
+- [x] 4.5 Run `/sdd-test-run`
 
 ## 5. Wave 1 · F2 — data split and scorers (P-1, D-A1, D-B13, R1)
 
