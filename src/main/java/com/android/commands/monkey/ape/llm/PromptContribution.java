@@ -32,16 +32,35 @@ import com.android.commands.monkey.ape.model.State;
 public interface PromptContribution {
 
     /**
-     * The sentences this group adds to the system prompt of {@code variant}.
+     * The text this group inserts at one extension point of a message. The builder calls it once
+     * per point, and the text goes in exactly where the point is, so a point the group leaves empty
+     * reads as the group-free sentence. The point keys are:
+     * <ul>
+     *   <li>{@code ape_current}, {@code ape_reasoning}, {@code compact_v1}, {@code v13}: the
+     *       system message's priority clause, after {@code "PRIORITY: "} ({@code "3. Prioritize "}
+     *       in {@code compact_v1});
+     *   <li>{@code v17.step}: a reasoning step after {@code DIALOG}, with no number (the builder
+     *       numbers the steps, so they stay consecutive whether or not this one is present);
+     *   <li>{@code v17.elements}: the {@code ELEMENTS} step, after {@code "if no navigation"};
+     *   <li>{@code v17.priority}: whole lines at the head of the {@code PRIORITY} list;
+     *   <li>{@code v13.close}: the user text's closing line, after {@code "explore new UI states"};
+     *   <li>{@code v17.close}: the user text's closing line, after {@code "Prioritize "}.
+     * </ul>
+     * {@code visual_only} has no point.
      *
-     * @param variant the prompt variant ({@code ape.llmPromptVariant})
+     * @param point {@code "<variant>"}, or {@code "<variant>.<slot>"} where a message has more than
+     *        one point
      */
-    default String systemSentence(String variant) {
+    default String systemSentence(String point) {
         return "";
     }
 
-    /** The marker this group puts on an action's line, such as {@code [M]}. */
-    default String lineMarker(ModelAction a) {
+    /**
+     * The one marker this group puts on a line, such as {@code [M]}, from every action the line
+     * renders: one action in the shared line formatter, all the target-requiring actions of the
+     * widget in {@code v13}/{@code v17}. Ranking the actions' verdicts is the group's.
+     */
+    default String lineMarker(List<ModelAction> lineActions) {
         return "";
     }
 
@@ -50,12 +69,15 @@ public interface PromptContribution {
         return "";
     }
 
-    /** The line this group adds to the screen context, such as the MOP count. */
+    /** The text this group appends to the visit context, such as the MOP count. */
     default String contextLine(State s, List<ModelAction> actions) {
         return "";
     }
 
-    /** The section this group adds to the user text, such as {@code MOP NAVIGATION}. */
+    /**
+     * The heading this group gives the {@code v17} navigation block, in place of the builder's
+     * neutral {@code NAVIGATION:}, such as {@code MOP NAVIGATION:}.
+     */
     default String section(State s, List<ModelAction> actions) {
         return "";
     }

@@ -7,6 +7,7 @@ import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopContext;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import java.util.List;
 
@@ -45,14 +46,6 @@ public class LlmEngine {
     private final LlmTelemetry telemetry;
 
     /**
-     * The run's MOP context, bound once by the agent that built it, or null on a plan without
-     * {@code MOP}. The engine is built before the artifact is loaded, so the context cannot be a
-     * constructor argument; the stages no longer carry it per call (llm-routing "Action Selection
-     * Pipeline").
-     */
-    private MopContext mop;
-
-    /**
      * @param screenshot the screen-to-string step
      * @param promptBuilder the prompt assembler
      * @param client the run's single door to the model, breaker included
@@ -71,13 +64,31 @@ public class LlmEngine {
     }
 
     /**
-     * Binds the run's MOP context, which the prompt's MOP text reads. Called once, by the agent,
-     * right after the artifact loads; a plan without {@code MOP} binds nothing.
+     * Binds the run's MOP context to the prompt's mounted MOP contribution, which its markers and
+     * count read. Called once, by the agent, right after the artifact loads: the engine is built
+     * before that, so the context cannot be a constructor argument. A plan without {@code MOP}
+     * mounts no MOP contribution, and the call changes nothing.
      *
      * @param mop the run's MOP context, or null
      */
     public void bindMopContext(MopContext mop) {
-        this.mop = mop;
+        for (PromptContribution c : promptBuilder.contributions()) {
+            if (c instanceof MopPromptContribution) ((MopPromptContribution) c).bind(mop);
+        }
+    }
+
+    /**
+     * Binds the run's static GUI model to the prompt's mounted STATIC contribution, which its
+     * widget metadata reads. Called once, by the agent, right after the artifact loads, as
+     * {@link #bindMopContext}. A plan without {@code STATIC} mounts no STATIC contribution, and the
+     * call changes nothing.
+     *
+     * @param model the run's static GUI model, or null
+     */
+    public void bindStaticModel(StaticGuiModel model) {
+        for (PromptContribution c : promptBuilder.contributions()) {
+            if (c instanceof StaticPromptContribution) ((StaticPromptContribution) c).bind(model);
+        }
     }
 
     /**
@@ -89,8 +100,9 @@ public class LlmEngine {
      * <p><b>The per-step values arrive as arguments and that is deliberate.</b> This object is
      * built once per run and owned by {@code RunContext}, while {@code recentActions} belongs to the
      * step the calling stage is deciding; sourcing it here would mean holding the agent or its step
-     * view, which is exactly the coupling design D2 exists to prevent. The MOP context is the run's,
-     * not the step's, so it is bound once ({@link #bindMopContext}).
+     * view, which is exactly the coupling design D2 exists to prevent. What the mounted groups add
+     * to the prompt reads the run's data, not the step's, so it is bound once
+     * ({@link #bindMopContext}, {@link #bindStaticModel}).
      *
      * @param tree the current tree, the dimension fallback of {@code ScreenshotStep.deviceDimensions}
      *        when the display cannot be read; not a prompt input
@@ -138,7 +150,7 @@ public class LlmEngine {
             }
 
             // Step 4: build the prompt and record it
-            messages = promptBuilder.build(deviceWidth, deviceHeight, state, actions, mop, base64,
+            messages = promptBuilder.build(deviceWidth, deviceHeight, state, actions, base64,
                     recentActions);
             telemetry.logPrompt(messages);
 

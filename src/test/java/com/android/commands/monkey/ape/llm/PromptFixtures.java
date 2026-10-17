@@ -86,7 +86,7 @@ public final class PromptFixtures {
 
     public static List<SglangClient.Message> build(String variant, int w, int h, List<ModelAction> actions,
                                             List<ApePromptBuilder.ActionHistoryEntry> recent) {
-        return new ApePromptBuilder(variant).build(w, h, null, actions, null, "data", recent);
+        return new ApePromptBuilder(variant).build(w, h, null, actions, "data", recent);
     }
 
     /** The user text as the model receives it. */

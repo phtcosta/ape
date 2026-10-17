@@ -17,7 +17,9 @@ package com.android.commands.monkey.ape.runtime;
 
 import com.android.commands.monkey.ape.agent.StepRng;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 import java.util.TimeZone;
@@ -27,7 +29,10 @@ import com.android.commands.monkey.ape.llm.CoordinateMapper;
 import com.android.commands.monkey.ape.llm.LlmClient;
 import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.llm.LlmTelemetry;
+import com.android.commands.monkey.ape.llm.MopPromptContribution;
+import com.android.commands.monkey.ape.llm.PromptContribution;
 import com.android.commands.monkey.ape.llm.ScreenshotStep;
+import com.android.commands.monkey.ape.llm.StaticPromptContribution;
 import com.android.commands.monkey.ape.llm.ToolCallParser;
 import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.telemetry.NdjsonSink;
@@ -172,7 +177,13 @@ public final class RunContext {
             this.llmTelemetry = new LlmTelemetry(llmClient::getTripCount, sink,
                     spec.telemetry().bool("ape.llmPromptDump"));
             this.coordinateMapper = new CoordinateMapper(llm);
-            this.llmEngine = new LlmEngine(new ScreenshotStep(), new ApePromptBuilder(llm.promptVariant()), llmClient,
+            // The prompt carries what the mounted groups contribute, STATIC before MOP
+            // (llm-prompt INV-PRM-08); their data is bound once the agent has loaded the artifact.
+            List<PromptContribution> contributions = new ArrayList<>();
+            if (spec.has(Feature.STATIC)) contributions.add(new StaticPromptContribution());
+            if (spec.has(Feature.MOP)) contributions.add(new MopPromptContribution());
+            this.llmEngine = new LlmEngine(new ScreenshotStep(),
+                    new ApePromptBuilder(llm.promptVariant(), contributions), llmClient,
                     new ToolCallParser(), coordinateMapper, llmTelemetry);
         } else {
             this.llmClient = null;
