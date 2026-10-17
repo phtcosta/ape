@@ -3,8 +3,11 @@ package com.android.commands.monkey.ape.agent.pipeline;
 import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.agent.StepRng;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Random;
+import java.util.function.Consumer;
 
 import org.junit.Test;
 
@@ -21,6 +24,7 @@ import com.android.commands.monkey.ape.utils.MopContext;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 /**
  * The budget gate's three outcomes, and the one thing about it that is easy to get wrong.
@@ -35,6 +39,11 @@ public class BudgetStageTest {
 
     private static final String ACTIVITY = "com.example.MainActivity";
 
+    /** An abandonment the test never expects: the context's buffer is empty. */
+    private static final Consumer<String> NO_BUFFER = owner -> {
+        throw new AssertionError("nothing to abandon on an empty buffer");
+    };
+
     /**
      * A context that answers only what the stage under test is entitled to read; everything else
      * fails the test rather than returning a plausible default, which is how the stage's read surface
@@ -44,6 +53,7 @@ public class BudgetStageTest {
 
         private final State state;
         private final ActivityBudgetTracker tracker;
+        private int bufferSize;
 
         BudgetContext(State state, ActivityBudgetTracker tracker) {
             this.state = state;
@@ -72,7 +82,7 @@ public class BudgetStageTest {
 
         @Override
         public int actionBufferSize() {
-            throw new UnsupportedOperationException("the budget gate does not read the buffer");
+            return bufferSize;
         }
 
         @Override
@@ -164,7 +174,7 @@ public class BudgetStageTest {
 
     @Test
     public void testStageNameIsItsCandidateName() {
-        BudgetStage stage = new BudgetStage(BudgetStageTest::navigation);
+        BudgetStage stage = new BudgetStage(BudgetStageTest::navigation, NO_BUFFER);
         assertEquals("the echo and the census must name the same stage",
                 DecisionPipeline.Candidate.BUDGET.stageName(), stage.name());
     }
@@ -172,22 +182,38 @@ public class BudgetStageTest {
     @Test
     public void testExhaustedWithTrivialActivitySelectsIt() throws Exception {
         ModelAction trivial = navigation();
-        BudgetStage stage = new BudgetStage(() -> trivial);
+        List<String> abandoned = new ArrayList<>();
+        BudgetStage stage = new BudgetStage(() -> trivial, abandoned::add);
 
         StageResult result = stage.decide(new BudgetContext(stateOn(ACTIVITY), exhausted()));
 
         assertEquals(StageResult.Kind.SELECT, result.kind());
         assertSame(trivial, result.action());
-        assertEquals("Budget", result.decisionSource());
-        assertEquals("the label is the provenance stamped on the action itself (INV-DP-04)",
-                trivial.getDecisionSource().name(), result.decisionSource());
+        assertEquals("budget", result.decisionSource());
+        assertEquals("the label is the owner of the provenance stamped on the action (INV-DP-04)",
+                trivial.getDecisionSource().owner(), result.decisionSource());
         assertEquals(ModelAction.DecisionSource.Budget, trivial.getDecisionSource());
-        assertEquals(ModelAction.PickChannel.SATA_OTHER, trivial.getPickChannel());
+        assertEquals("a guard step carries its own channel (D-B14.17)",
+                ModelAction.PickChannel.BUDGET, trivial.getPickChannel());
+        assertTrue("an empty buffer has nothing to abandon", abandoned.isEmpty());
+    }
+
+    @Test
+    public void testSelectingOverANonEmptyBufferAbandonsIt() throws Exception {
+        List<String> abandoned = new ArrayList<>();
+        BudgetStage stage = new BudgetStage(BudgetStageTest::navigation, abandoned::add);
+        BudgetContext ctx = new BudgetContext(stateOn(ACTIVITY), exhausted());
+        ctx.bufferSize = 2;
+
+        stage.decide(ctx);
+
+        assertEquals("the guard abandons the buffer, without weakening (D-B14.13)",
+                Collections.singletonList("budget"), abandoned);
     }
 
     @Test
     public void testExhaustedWithoutTrivialActivityPasses() throws Exception {
-        BudgetStage stage = new BudgetStage(() -> null);
+        BudgetStage stage = new BudgetStage(() -> null, NO_BUFFER);
 
         StageResult result = stage.decide(new BudgetContext(stateOn(ACTIVITY), exhausted()));
 
@@ -201,7 +227,7 @@ public class BudgetStageTest {
         BudgetStage stage = new BudgetStage(() -> {
             searched[0] = true;
             return navigation();
-        });
+        }, NO_BUFFER);
 
         StageResult result = stage.decide(new BudgetContext(stateOn(ACTIVITY), fresh()));
 

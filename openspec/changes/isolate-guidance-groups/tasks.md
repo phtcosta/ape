@@ -133,22 +133,22 @@ Owns: `agent/SataAgent.java`, `model/State.java`, `agent/sata/*` (implementation
 
 Owns: `agent/pipeline/*`, `llm/LlmCircuitBreaker.java`, `llm/LlmClient.java`, their tests.
 
-- [ ] 7.1 `DecisionPipeline.Candidate` order: `BUDGET`, `RESTART`, `LLM_NEW_STATE`, `LLM_STAGNATION`, `LLM_COIN`, `MOP_LAUNCHER`, `COMPONENT_TRIGGER`, `MOP_COIN`, `SATA_CHAIN`. Each candidate is mounted by its feature (`MOP_LAUNCHER` by the renamed feature); `onStepOpen` is broadcast to every mounted stage at step open. The pipeline writes `dec.src` (the selecting stage's owner) and `dec.own` on **every** step, whatever is mounted (`i` = the first claimer, D-B14.6); the guard stages set `dec.ch` `budget`/`restart` (D-B14.17) and the owner values of 3.8b (`BudgetStage:74-76`, `LlmGate:65`, `MopLauncherStage:160`)
-- [ ] 7.2 `MinActionsGate` (admits `size() >= min`) and `BreakerGate`, composed from `LlmParams` (a gate with parameter 0 is not mounted) and shared by the three LLM stages; a step lost to a gate counts `gateMinActions`/`gateBreaker`. The buffer condition is deleted from the LLM path. **At most one LLM call per step** (D-B8): once an LLM stage has called, the later LLM stages return `Continue` without calling. `LlmCircuitBreaker` and `LlmClient` (`:57`, today the default constructor) read `ape.llmBreakerFailures` and `ape.llmBreakerOpenMs` from `LlmParams`
+- [x] 7.1 `DecisionPipeline.Candidate` order: `BUDGET`, `RESTART`, `LLM_NEW_STATE`, `LLM_STAGNATION`, `LLM_COIN`, `MOP_LAUNCHER`, `COMPONENT_TRIGGER`, `MOP_COIN`, `SATA_CHAIN`. Each candidate is mounted by its feature (`MOP_LAUNCHER` by the renamed feature); `onStepOpen` is broadcast to every mounted stage at step open. The pipeline writes `dec.src` (the selecting stage's owner) and `dec.own` on **every** step, whatever is mounted (`i` = the first claimer, D-B14.6); the guard stages set `dec.ch` `budget`/`restart` (D-B14.17) and the owner values of 3.8b (`BudgetStage:74-76`, `LlmGate:65`, `MopLauncherStage:160`)
+- [x] 7.2 `MinActionsGate` (admits `size() >= min`) and `BreakerGate`, composed from `LlmParams` (a gate with parameter 0 is not mounted) and shared by the three LLM stages; a step lost to a gate counts `gateMinActions`/`gateBreaker`. The buffer condition is deleted from the LLM path. **At most one LLM call per step** (D-B8): once an LLM stage has called, the later LLM stages return `Continue` without calling. `LlmCircuitBreaker` and `LlmClient` (`:57`, today the default constructor) read `ape.llmBreakerFailures` and `ape.llmBreakerOpenMs` from `LlmParams`
 - [ ] 7.3 `LlmRandomStage` → `LlmCoinStage`: it reads `u_L` from `StepRng` (drawn at step open), checks the gates, then calls the engine. Whenever the LLM is mounted it records the LLM part of `dec.own` (`trg`, `uL`, the gate that barred, the fallback reason); a won coin counts `coinLlm`. The new-state and stagnation stages are unchanged except for using the gate chain and recording `trg` (D-A17)
-- [ ] 7.4 `RestartStage` (guard), mounted iff `ape.checkRestart`: when `collaborators.restartDue()`, it selects `collaborators.restartAction()` with `src=restart` and `dec.restart` set to the kind
-- [ ] 7.5 `MopLauncherStage`: `stepsSinceFiring` advances in `onStepOpen`, and the stage fires when the count is at or past the cadence and the stage is reached (D-B11). It reads the activity list, main activity and package through `ctx.staticModel()` and the distances/MOP activities through `MopData` (today `:138-157` reads all of them from `MopData`). Each launch increments `launches`
-- [ ] 7.6 `MopCoinStage` (new), as in D-B10: eligibility, `u_M < p_M`, then the ordering weight → unretired target count (distance) → `getActions()` order, and the submit exclusion when `FORM_COMPLETION` is mounted. It records `dec.own`, `dec.mopd`, `dec.mops` and `dec.ch:mop_coin`, and `coinMop`. `MopInteractionLedger` comes through `collaborators.mopLedger()`
-- [ ] 7.7 `ComponentTriggerStage`: the coin comes from `StepRng.componentCoin`, and the stage is mounted by `COMPONENT_TRIGGER` (now STATIC). It reads its pool through `ctx.staticModel()`, not `ctx.mopData().hasComponents()` (`:69`, null in `as`), and `DecisionPipeline` passes `spec.staticData().componentPercentage()` (today `spec.mop()`, `:178`)
-- [ ] 7.8 Every preempting stage (the three LLM stages, the launcher, the MOP coin, and Budget, D-B14.13) calls `collaborators.abandonBuffer(owner)` before it selects, whenever the buffer is non-empty
-- [ ] 7.9 Tests:
-  - [ ] 7.9.1 `LlmGateTest`: MinActions at 2/3/4 actions and the breaker; one LLM call per step (a failed new-state call is not followed by a coin call);
-  - [ ] 7.9.2 `LlmCoinStageTest`: the coin is drawn every step even when a gate bars;
-  - [ ] 7.9.3 `MopCoinStageTest`: eligibility, ordering, `p_M=0`, submit exclusion;
-  - [ ] 7.9.4 `MopLauncherStageTest`: LLM steps advance the cadence;
-  - [ ] 7.9.5 `RestartStageTest`;
-  - [ ] 7.9.6 `PipelineParityTest`: order and mounting per cell
-- [ ] 7.10 Run `/sdd-doc-code` on each new stage and gate, then `/sdd-test-run`
+- [x] 7.4 `RestartStage` (guard), mounted iff `ape.checkRestart`: when `collaborators.restartDue()`, it selects `collaborators.restartAction()` with `src=restart` and `dec.restart` set to the kind
+- [x] 7.5 `MopLauncherStage`: `stepsSinceFiring` advances in `onStepOpen`, and the stage fires when the count is at or past the cadence and the stage is reached (D-B11). It reads the activity list, main activity and package through `ctx.staticModel()` and the distances/MOP activities through `MopData` (today `:138-157` reads all of them from `MopData`). Each launch increments `launches`
+- [x] 7.6 `MopCoinStage` (new), as in D-B10: eligibility, `u_M < p_M`, then the ordering weight → unretired target count (distance) → `getActions()` order, and the submit exclusion when `FORM_COMPLETION` is mounted. It records `dec.own`, `dec.mopd`, `dec.mops` and `dec.ch:mop_coin`, and `coinMop`. `MopInteractionLedger` comes through `collaborators.mopLedger()`
+- [x] 7.7 `ComponentTriggerStage`: the coin comes from `StepRng.componentCoin`, and the stage is mounted by `COMPONENT_TRIGGER` (now STATIC). It reads its pool through `ctx.staticModel()`, not `ctx.mopData().hasComponents()` (`:69`, null in `as`), and `DecisionPipeline` passes `spec.staticData().componentPercentage()` (today `spec.mop()`, `:178`)
+- [x] 7.8 Every preempting stage (the three LLM stages, the launcher, the MOP coin, and Budget, D-B14.13) calls `collaborators.abandonBuffer(owner)` before it selects, whenever the buffer is non-empty
+- [x] 7.9 Tests:
+  - [x] 7.9.1 `LlmGateTest`: MinActions at 2/3/4 actions and the breaker; one LLM call per step (a failed new-state call is not followed by a coin call);
+  - [x] 7.9.2 `LlmCoinStageTest`: the coin is drawn every step even when a gate bars;
+  - [x] 7.9.3 `MopCoinStageTest`: eligibility, ordering, `p_M=0`, submit exclusion;
+  - [x] 7.9.4 `MopLauncherStageTest`: LLM steps advance the cadence;
+  - [x] 7.9.5 `RestartStageTest`;
+  - [x] 7.9.6 `PipelineParityTest`: order and mounting per cell
+- [x] 7.10 Run `/sdd-doc-code` on each new stage and gate, then `/sdd-test-run`
 
 ## 8. Wave 1 · F5 — agent (P-2, P-4, P-6, D-B10, D-B13)
 

@@ -137,7 +137,7 @@ public class LlmCircuitBreakerTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testShouldAttempt_trueWhenClosed() {
-        LlmCircuitBreaker cb = new LlmCircuitBreaker();
+        LlmCircuitBreaker cb = new LlmCircuitBreaker(3, 60_000L);
         assertTrue("shouldAttempt must return true when CLOSED", cb.shouldAttempt());
     }
 

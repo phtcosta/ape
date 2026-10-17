@@ -14,10 +14,12 @@ import org.junit.Test;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.runtime.MopScoring;
+import com.android.commands.monkey.ape.telemetry.RunCounter;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopRetirement;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
@@ -27,7 +29,8 @@ import static org.junit.Assert.assertTrue;
 /**
  * The launcher's three counters, which are three different things people conflate.
  *
- * <p>The cadence counter is reset at the firing point whatever the scan finds; the launch budget is
+ * <p>The cadence counter advances at every step open and is reset at the firing point whatever the
+ * scan finds; the launch budget is
  * spent only on an actual launch; the round-robin cursor advances at every firing and persists across
  * them. A stage that reset all three together, or none, would still fire at plausible-looking
  * intervals — which is why each has its own assertion here rather than one end-to-end one.
@@ -78,6 +81,42 @@ public class MopLauncherStageTest {
         return ctx;
     }
 
+    /**
+     * The stage under test with the pipeline's step open around it: each {@link #decide} opens a
+     * step on the routing, broadcasts {@code onStepOpen}, and then asks the stage — the path every
+     * step that reaches the launcher takes. {@link #skip} is a step an earlier stage took.
+     */
+    private static final class Launcher {
+
+        final StepRouting routing = new StepRouting(false, true, false);
+        final List<String> abandoned = new ArrayList<>();
+        final MopLauncherStage stage;
+
+        Launcher(int cadence, int maxPerRun, MopScoring scoring, int dmax) {
+            this.stage = new MopLauncherStage(cadence, maxPerRun, scoring, dmax, routing,
+                    abandoned::add);
+        }
+
+        String name() {
+            return stage.name();
+        }
+
+        StageResult decide(FakeStepContext ctx) {
+            routing.open(Double.NaN, 0.5, Double.NaN);
+            stage.onStepOpen(ctx);
+            return stage.decide(ctx);
+        }
+
+        void skip(FakeStepContext ctx) {
+            routing.open(Double.NaN, 0.5, Double.NaN);
+            stage.onStepOpen(ctx);
+        }
+    }
+
+    private static Launcher launcher(int cadence, int maxPerRun, MopScoring scoring, int dmax) {
+        return new Launcher(cadence, maxPerRun, scoring, dmax);
+    }
+
     private static String launchedClass(StageResult result) {
         return ((ActivityTriggerAction) result.action()).getClassName();
     }
@@ -85,12 +124,12 @@ public class MopLauncherStageTest {
     @Test
     public void testStageNameIsItsCandidateName() {
         assertEquals(DecisionPipeline.Candidate.MOP_LAUNCHER.stageName(),
-                new MopLauncherStage(50, 0, MopScoring.FLAG, 6).name());
+                launcher(50, 0, MopScoring.FLAG, 6).name());
     }
 
     @Test
     public void testItFiresExactlyAtTheCadenceAndThenEveryCadencePasses() throws Exception {
-        MopLauncherStage stage = new MopLauncherStage(3, 0, MopScoring.FLAG, 6);
+        Launcher stage = launcher(3, 0, MopScoring.FLAG, 6);
         FakeStepContext ctx = stepOver(censusOf("com.example.app.A", "com.example.app.B"));
 
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
@@ -98,8 +137,9 @@ public class MopLauncherStageTest {
         StageResult third = stage.decide(ctx);
 
         assertEquals(StageResult.Kind.SELECT, third.kind());
-        assertEquals("a launch is a non-model decision attributed to the trigger",
-                "Component", third.decisionSource());
+        assertEquals("a launch is owned by the launcher (design D-B7)",
+                "launcher", third.decisionSource());
+        assertEquals(1, ctx.recorder.count(RunCounter.LAUNCHES));
 
         // The counter restarted at the firing point, so the next firing is a full cadence away.
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
@@ -109,16 +149,16 @@ public class MopLauncherStageTest {
 
     @Test
     public void testTheCadenceResetsEvenWhenTheScanFindsNothing() throws Exception {
-        MopLauncherStage stage = new MopLauncherStage(2, 0, MopScoring.FLAG, 6);
+        Launcher stage = launcher(2, 0, MopScoring.FLAG, 6);
         FakeStepContext ctx = stepOver(censusOf()); // an empty census: nothing to launch
 
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
         assertEquals("the firing point came up empty", StageResult.Kind.CONTINUE,
                 stage.decide(ctx).kind());
 
-        // The gate is equality against the cadence, so a firing point that failed to reset would
-        // leave the counter climbing past it and the launcher would never fire again for the rest of
-        // the run. Stocking the census proves the next firing point still arrives on schedule.
+        // A firing point that failed to reset would leave the counter at or past the cadence and
+        // the launcher would fire on every step. Stocking the census proves the next firing point
+        // arrives a full cadence later.
         ctx.mopData = censusOf("com.example.app.A");
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
         assertEquals("the counter restarted at the empty firing point",
@@ -126,10 +166,71 @@ public class MopLauncherStageTest {
     }
 
     @Test
+    public void testStepsAnotherStageTookAdvanceTheCadence() throws Exception {
+        // Task 7.9.4, INV-DP-08: the counter advances at every step open, so LLM-taken steps bring
+        // the next launch closer, and a due step the LLM took defers the firing to the next step
+        // that reaches the launcher.
+        Launcher stage = launcher(3, 0, MopScoring.FLAG, 6);
+        FakeStepContext ctx = stepOver(censusOf("com.example.app.A"));
+
+        stage.skip(ctx);
+        stage.skip(ctx);
+        stage.skip(ctx); // due here, but the LLM took the step
+        stage.skip(ctx); // and here
+        StageResult fired = stage.decide(ctx);
+
+        assertEquals("the first step that reaches the launcher past its cadence fires",
+                StageResult.Kind.SELECT, fired.kind());
+        assertEquals("the counter restarted at the firing point", StageResult.Kind.CONTINUE,
+                stage.decide(ctx).kind());
+    }
+
+    @Test
+    public void testADueLauncherClaimsTheStepAndAnEmptyScanFallsBackAsIneligible()
+            throws Exception {
+        Launcher stage = launcher(1, 0, MopScoring.FLAG, 6);
+        FakeStepContext ctx = stepOver(censusOf());
+
+        assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
+        stage.routing.record("sata", ctx.sink());
+
+        RecordingSink.Own own = ctx.recorder.lastOwner();
+        assertEquals("a due launcher is the first claimer (D-B14.6)", "launcher", own.i);
+        assertEquals("ineligible", own.fb);
+        assertEquals(0, ctx.recorder.count(RunCounter.LAUNCHES));
+    }
+
+    @Test
+    public void testALaunchOverANonEmptyBufferAbandonsIt() throws Exception {
+        Launcher stage = launcher(1, 0, MopScoring.FLAG, 6);
+        FakeStepContext ctx = stepOver(censusOf("com.example.app.A"));
+        ctx.actionBufferSize = 2;
+
+        assertEquals(StageResult.Kind.SELECT, stage.decide(ctx).kind());
+        assertEquals(Collections.singletonList("launcher"), stage.abandoned);
+    }
+
+    @Test
+    public void testThePackageAndActivitiesComeFromTheStaticModel() throws Exception {
+        Launcher stage = launcher(1, 0, MopScoring.FLAG, 6);
+        FakeStepContext ctx = stepOver(censusOf("com.example.app.A"));
+        // The MOP census still names A; the static model is a second provider over another
+        // artifact, whose package is the one the launch must carry.
+        MopData model = censusOf("com.example.app.A");
+        FakeStepContext.setField(model, "packageName", "com.example.other");
+        ctx.staticModel = new StaticGuiModel(model);
+
+        StageResult result = stage.decide(ctx);
+
+        assertEquals("com.example.other",
+                ((ActivityTriggerAction) result.action()).getPackageName());
+    }
+
+    @Test
     public void testTheBudgetIsSpentOnlyByAnActualLaunch() throws Exception {
         // Cap of 1. The first firing finds nothing (empty census) and must not consume the budget;
         // a stage that decremented at the firing point would never launch anything at all.
-        MopLauncherStage stage = new MopLauncherStage(1, 1, MopScoring.FLAG, 6);
+        Launcher stage = launcher(1, 1, MopScoring.FLAG, 6);
         FakeStepContext empty = stepOver(censusOf());
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(empty).kind());
 
@@ -146,7 +247,7 @@ public class MopLauncherStageTest {
 
     @Test
     public void testACapOfZeroIsUnlimited() throws Exception {
-        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.FLAG, 6);
+        Launcher stage = launcher(1, 0, MopScoring.FLAG, 6);
 
         for (int i = 0; i < 5; i++) {
             FakeStepContext ctx = stepOver(censusOf("com.example.app.A" + i));
@@ -156,7 +257,7 @@ public class MopLauncherStageTest {
 
     @Test
     public void testTheRoundRobinCursorPersistsAcrossFirings() throws Exception {
-        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.FLAG, 6);
+        Launcher stage = launcher(1, 0, MopScoring.FLAG, 6);
         MopData census = censusOf("com.example.app.A", "com.example.app.B", "com.example.app.C");
         FakeStepContext ctx = stepOver(census);
 
@@ -322,7 +423,7 @@ public class MopLauncherStageTest {
         MopData data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
                 P, Q, R);
         MopRetirement retirement = retirement();
-        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.DISTANCE, 6);
+        Launcher stage = launcher(1, 0, MopScoring.DISTANCE, 6);
         FakeStepContext ctx = stepOver(data);
         ctx.mopContext = distanceContext(data, retirement, 6);
 
@@ -342,7 +443,7 @@ public class MopLauncherStageTest {
     public void testTheOrderIsRecomputedAtEachFiring() throws Exception {
         MopData data = withDistances(dist(P, pairs(1, 1), Q, pairs(2, 2), R, pairs(3, 3)), P, Q, R);
         MopRetirement retirement = retirement();
-        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.DISTANCE, 6);
+        Launcher stage = launcher(1, 0, MopScoring.DISTANCE, 6);
         FakeStepContext ctx = stepOver(data);
         ctx.mopContext = distanceContext(data, retirement, 6);
 
@@ -357,7 +458,7 @@ public class MopLauncherStageTest {
     public void testFlagModeKeepsTheRoundRobin() throws Exception {
         MopData data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
                 P, Q, R);
-        MopLauncherStage stage = new MopLauncherStage(1, 0, MopScoring.FLAG, 6);
+        Launcher stage = launcher(1, 0, MopScoring.FLAG, 6);
         FakeStepContext ctx = stepOver(data);
 
         Set<String> none = Collections.emptySet();

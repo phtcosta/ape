@@ -1,8 +1,8 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
-import java.util.Random;
 
 import org.junit.Test;
 
@@ -38,30 +38,33 @@ import static org.junit.Assert.assertSame;
 public class HardPreemptionTest {
 
     /**
-     * Every stage assembled: the budget gate, the three LLM modes, the launcher at the cadence the
-     * caller names, a component coin that always comes up, and the terminal chain.
+     * Every stage assembled — the {@code as_mop_llm} cell: the two guards, the three LLM modes, the
+     * launcher at the cadence the caller names, a component coin that always comes up, the MOP coin
+     * and the terminal chain.
      */
     private static RunSpec fullPlan(int cadence) {
-        return PipelineFixture.preset(Presets.LLM, PipelineFixture.join(new String[] {
-                "ape.llm", "true", "ape.llmUrl", PipelineFixture.LLM_URL,
-                "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true", "ape.static", "true",
-                "ape.activityTriggerEnabled", "true",
+        return PipelineFixture.preset(Presets.AS_MOP_LLM, PipelineFixture.join(new String[] {
+                "ape.llmUrl", PipelineFixture.LLM_URL,
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH,
                 "ape.activityTriggerStagnationStep", Integer.toString(cadence),
                 "ape.componentPercentage", "1.0"}, PipelineFixture.LIVE_HOOK_KEYS));
     }
 
-    /** The step all four mechanisms qualify for: routable, budgeted, with a census and a graph. */
+    /**
+     * The step all mechanisms qualify for: routable, budgeted, with a census, a graph and a
+     * two-action buffer the winner must abandon.
+     */
     private static FakeStepContext contendedStep() throws Exception {
         FakeStepContext ctx = PipelineFixture.routableStep();
         ctx.mopData = PipelineFixture.census();
         ctx.graph = PipelineFixture.emptyGraph();
-        ctx.random = new Random(7L); // the component coin's stream; at rate 1.0 any draw fires
+        ctx.actionBufferSize = 2;
         return ctx;
     }
 
     private static final List<String> WHOLE_ROSTER = Arrays.asList(
-            "Budget", "LlmNewState", "LlmStagnation", "LlmRandom", "MopLauncher",
-            "ComponentTrigger", "SataChain");
+            "Budget", "Restart", "LlmNewState", "LlmStagnation", "LlmCoin", "MopLauncher",
+            "ComponentTrigger", "MopCoin", "SataChain");
 
     @Test
     public void aStepEveryMechanismQualifiesForIsDecidedByTheLlm() throws Exception {
@@ -81,6 +84,8 @@ public class HardPreemptionTest {
                 1, llm.selectCalls);
         assertEquals("no component was triggered", 0, agent.triggerCalls);
         assertEquals("no SATA rung was evaluated", 0, agent.chainCalls);
+        assertEquals("the buffer was abandoned by the LLM, without weakening (INV-DP-15)",
+                Collections.singletonList("llm"), agent.abandoned);
     }
 
     @Test
@@ -121,22 +126,14 @@ public class HardPreemptionTest {
     }
 
     /**
-     * Finding 3.3-1, read within one run at two points (INV-DP-08).
+     * The global cadence, read within one run (INV-DP-08, design D-A16, D-B11).
      *
-     * <p>The cadence counter increments at the launcher stage's entry, so a step an earlier stage
-     * decided never touches it — no compensation, no catch-up. The oracle asserts the same fact as a
-     * contrast between two agents run from the same seeded cadence; what it cannot show is one run
-     * carrying its counter across a preempted step and an ordinary one, which is the form the
-     * invariant is written in.
-     *
-     * <p>The reading is behavioural rather than reflective, the way {@code MopLauncherStageTest}
-     * reads these counters: with a cadence of two, the launcher fires on the second step it is
-     * <i>evaluated</i> on. Firing on the third step of the run and not the second says both halves at
-     * once — the preempted step contributed nothing, and each evaluated step contributed exactly one.
-     * A counter that advanced during preemption, or advanced by two, would fire a step early.
+     * <p>The cadence counter advances at every step open, so a step an earlier stage decided still
+     * counts. With a cadence of two, an LLM-taken first step and a second step that falls through
+     * fire the launcher on the second step of the run.
      */
     @Test
-    public void aPreemptedStepDoesNotAdvanceTheLauncherCadence() throws Exception {
+    public void aPreemptedStepAdvancesTheLauncherCadence() throws Exception {
         ModelAction answer = new ModelAction(null, ActionType.MODEL_CLICK);
         ModelAction fromTheChain = PipelineFixture.chainAction();
         PipelineFixture.StubLlm llm = new PipelineFixture.StubLlm(true, answer);
@@ -151,10 +148,10 @@ public class HardPreemptionTest {
         Action second = pipeline.decide(launcherStep());
 
         assertSame("step 1 was decided by the LLM, above the launcher", answer, preempted);
-        assertSame("step 2 is the launcher's first evaluated step: one short of the cadence,"
-                + " so the chain decides", fromTheChain, first);
-        assertEquals("step 3 is its second, and the firing point is reached there",
-                ActivityTriggerAction.class, second.getClass());
+        assertEquals("step 2 reaches the cadence the preempted step helped count, and fires",
+                ActivityTriggerAction.class, first.getClass());
+        assertSame("step 3 is one step into the next cadence: the chain decides", fromTheChain,
+                second);
     }
 
     /** The contended step without the component trigger, which this plan does not assemble. */
