@@ -19,6 +19,8 @@ import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
 import com.android.commands.monkey.ape.utils.MopRetirement;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
@@ -117,14 +119,14 @@ public class StatefulAgentMopRetirementTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(json);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
 
     /** The run's context, built as {@code StatefulAgent} builds it, installed on the agent. */
     private MopContext install(MopData data) throws Exception {
-        MopContext mop = MopContext.fromSpec(data, RunContext.current().spec().mop());
+        MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY, RunContext.current().spec().mop());
         setField(agent, "_mopContext", mop);
         return mop;
     }

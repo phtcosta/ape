@@ -75,6 +75,7 @@ import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopRetirement;
 import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
 import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.utils.SystemBroadcastCatalog;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
@@ -208,14 +209,16 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // artifact" are the same statement, and requireMopArm below reads the null as such.
         String staticDataPath = spec.has(Feature.STATIC) || spec.has(Feature.MOP)
                 ? spec.staticData().dataPath() : null;
-        MopData mopData = requireMopArm(
-                MopData.load(staticDataPath, mainApp.getPackageName(), mainApp.getClassName(),
-                        RunContext.current().sink()),
+        StaticArtifactLoader.Loaded loaded = requireMopArm(
+                StaticArtifactLoader.load(staticDataPath, mainApp.getPackageName(),
+                        mainApp.getClassName(), RunContext.current().sink()),
                 staticDataPath);
-        this._staticModel = mopData == null ? null : new StaticGuiModel(mopData);
+        MopData mopData = loaded == null ? null : loaded.mopData;
+        this._staticModel = loaded == null ? null : loaded.staticModel;
         this._stepRng = RunContext.current().stepRng();
         // Built once, right after the artifact loads (design D17, Plumbing); null without MOP.
-        this._mopContext = MopContext.fromSpec(spec.has(Feature.MOP) ? mopData : null, spec.mop());
+        this._mopContext = MopContext.fromSpec(spec.has(Feature.MOP) ? mopData : null,
+                _staticModel, spec.mop());
         if (RunContext.current().llmEngine() != null) {
             // The engine was built before the artifact loaded; the prompt's MOP text reads the
             // context from here on (llm-routing "Action Selection Pipeline").
@@ -231,14 +234,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         this._broadcastCatalog = mopData != null ? SystemBroadcastCatalog.load() : new SystemBroadcastCatalog();
         // rv-scoring-pipeline: build the scoring context (a live view onto this agent's collaborators)
         // and assemble the pipeline once, now that _mopContext/_coverageTracker/graph/timestamp are set.
-        // Pass isEnabled() reads only its injected weight and getMopContext() here (run-fixed) — never
-        // menuPickEligible — so no subclass field is touched before the subclass constructor runs.
+        // Pass isEnabled() reads only its injected weight and the run-fixed providers here, so no
+        // subclass field is touched before the subclass constructor runs.
         this.scoringContext = new ScoringContext() {
+            @Override public StaticGuiModel getStaticModel() { return StatefulAgent.this.staticModel(); }
             @Override public MopContext getMopContext() { return StatefulAgent.this.getMopContext(); }
             @Override public UICoverageTracker getCoverageTracker() { return StatefulAgent.this.getCoverageTracker(); }
             @Override public Graph getGraph() { return StatefulAgent.this.getGraph(); }
             @Override public int getTimestamp() { return StatefulAgent.this.getTimestamp(); }
-            @Override public boolean menuPickEligible(String activity) { return StatefulAgent.this.menuPickEligible(activity); }
         };
         this.scoringPipeline = ScoringPipeline.fromParams(
                 ScoringParams.fromSpec(spec), this.scoringContext, RunContext.current().sink());
@@ -280,10 +283,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * invalidated the earlier build-skew round). Returns {@code loaded} unchanged when the path
      * is unset (MOP disabled) or the data loaded; throws when the path is set but load failed.
      */
-    static MopData requireMopArm(MopData loaded, String path) {
+    static StaticArtifactLoader.Loaded requireMopArm(StaticArtifactLoader.Loaded loaded,
+            String path) {
         if (loaded == null && path != null) {
             throw new StopTestingException("MOP arm cannot arm: ape.staticDataPath is set (" + path
-                    + ") but MopData.load returned null; aborting rather than running as pure SATA"
+                    + ") but StaticArtifactLoader.load returned null; aborting rather than running"
+                    + " as pure SATA"
                     + " and mislabeling the arm (INV-MOP-22)");
         }
         return loaded;
@@ -1368,14 +1373,14 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * tuple per (intentFilter × action); a component with no filters but non-empty targetMethods
      * yields one component-name-only tuple (filter=null, action=null).
      */
-    static java.util.List<TriggerTuple> buildTriggerTuples(MopData data) {
+    static java.util.List<TriggerTuple> buildTriggerTuples(StaticGuiModel statics, MopData data) {
         java.util.List<TriggerTuple> tuples = new java.util.ArrayList<>();
         if (data == null) return tuples;
         java.util.List<ComponentInfo> candidates = new java.util.ArrayList<>();
-        candidates.addAll(data.getReceivers());
-        candidates.addAll(data.getServices());
+        candidates.addAll(statics.receivers());
+        candidates.addAll(statics.services());
         for (ComponentInfo c : candidates) {
-            if (!c.reachesTarget) continue;
+            if (!data.reachesMop(c.className)) continue;
             boolean emitted = false;
             for (ComponentInfo.IntentFilter f : c.intentFilters) {
                 for (String action : f.actions) {
@@ -1383,18 +1388,18 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                     emitted = true;
                 }
             }
-            if (!emitted && !c.targetMethods.isEmpty()) {
+            if (!emitted && data.hasTargetMethods(c.className)) {
                 tuples.add(new TriggerTuple(c, null, null)); // component-name-only (D15)
             }
         }
         return tuples;
     }
 
-    static java.util.List<ProviderTuple> buildProviderTuples(MopData data) {
+    static java.util.List<ProviderTuple> buildProviderTuples(StaticGuiModel statics, MopData data) {
         java.util.List<ProviderTuple> tuples = new java.util.ArrayList<>();
         if (data == null) return tuples;
-        for (ComponentInfo.ProviderInfo p : data.getProviders()) {
-            if (!p.reachesTarget || p.authorities == null || p.authorities.isEmpty()) continue;
+        for (ComponentInfo.ProviderInfo p : statics.providers()) {
+            if (!data.reachesMop(p.className) || p.authorities == null || p.authorities.isEmpty()) continue;
             for (String op : PROVIDER_OPERATIONS) {
                 tuples.add(new ProviderTuple(p, op));
             }
@@ -1411,8 +1416,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      */
     public int componentTargetCount() {
         if (!_tuplesBuilt) {
-            _triggerTuples = buildTriggerTuples(getMopData());
-            _providerTuples = buildProviderTuples(getMopData());
+            _triggerTuples = buildTriggerTuples(staticModel(), getMopData());
+            _providerTuples = buildProviderTuples(staticModel(), getMopData());
             _tuplesBuilt = true;
         }
         return _triggerTuples.size() + _providerTuples.size();
@@ -1465,7 +1470,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     private boolean dispatchTrigger(TriggerTuple t) {
         ComponentInfo c = t.component;
         Intent intent = new Intent();
-        intent.setComponent(new ComponentName(getMopData().getPackageName(), c.className));
+        intent.setComponent(new ComponentName(staticModel().packageName(), c.className));
         if (t.action != null) {
             intent.setAction(t.action);
         }

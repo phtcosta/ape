@@ -88,6 +88,7 @@ public class LlmStructuralFallbackTest {
                 DecisionPipeline.fromSpec(PipelineFixture.llmWithLauncherPlan(1), agent);
         FakeStepContext ctx = PipelineFixture.routableStep();
         ctx.mopData = PipelineFixture.census();
+        ctx.staticModel = PipelineFixture.staticCensus();
         ctx.graph = PipelineFixture.emptyGraph();
 
         Action decided = pipeline.decide(ctx);

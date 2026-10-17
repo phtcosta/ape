@@ -131,26 +131,14 @@ public class ModelAction extends Action {
      * {@code flag}; 0 when the action has no MOP weight.
      */
     private int mopWeight;
+    /** The MOP-reach WTG term ({@code WtgPass}, its only writer — INV-ARCH-10). */
     private int wtgBoost;
-    /**
-     * Which pass wrote {@link #wtgBoost} — {@code wtg}, {@code frontier}, or {@code both} when they
-     * stacked. Null while the boost is zero.
-     *
-     * <p>The summed field alone cannot answer it. {@code WtgPass} overwrites the boost and
-     * {@code FrontierPass} adds to it, and the campaign configured both at weight 200: of the steps
-     * that carry a boost, 10,231 sit at 200 — either producer, indistinguishably — and only 91 sit
-     * at 400 and so prove both fired. The stamp costs one string reference at each of the two write
-     * sites and leaves the accumulated value exactly as it was.
-     */
-    private String wtgSource;
-    // The MOP-frontier contribution, kept apart from wtgBoost (INV-ARCH-10). Three passes used to
-    // accumulate into wtgBoost — WtgPass, the generic FrontierPass and MopFrontierPass — so
-    // decision_source=WTG conflated a MOP mechanism with generic WTG navigation and the corpus's
-    // stacked 400/600 values could not be decomposed by mechanism.
+    /** The MOP-frontier term ({@code MopFrontierPass}, INV-ARCH-10). */
     private int mopFrontierBoost;
     /**
-     * The navigation-frontier term ({@code NAV_FRONTIER}, STATIC), in its own field so that the
-     * STATIC frontier and the MOP {@code WtgPass} no longer share {@link #wtgBoost}.
+     * The navigation-frontier term ({@code NavFrontierPass}, STATIC), in its own field so that the
+     * STATIC frontier and the MOP {@code WtgPass} never share {@link #wtgBoost}; with one producer
+     * per field no source stamp is needed.
      */
     private int navFrontierBoost;
     private int coverageBoost;
@@ -369,7 +357,6 @@ public class ModelAction extends Action {
         this.mopBoost = 0;
         this.mopWeight = 0;
         this.wtgBoost = 0;
-        this.wtgSource = null;
         this.mopFrontierBoost = 0;
         this.navFrontierBoost = 0;
         this.coverageBoost = 0;
@@ -388,27 +375,6 @@ public class ModelAction extends Action {
     public int getWtgBoost() { return this.wtgBoost; }
 
     public void setWtgBoost(int wtgBoost) { this.wtgBoost = wtgBoost; }
-
-    /** The WTG-boost source labels, which are also the values the step record's {@code wtgsrc} takes. */
-    public static final String WTG_SOURCE_WTG = "wtg";
-    public static final String WTG_SOURCE_FRONTIER = "frontier";
-    public static final String WTG_SOURCE_BOTH = "both";
-
-    /** Which pass wrote the WTG boost, or null while it is zero. */
-    public String getWtgSource() { return this.wtgSource; }
-
-    /**
-     * Records that {@code source} contributed to the WTG boost, promoting to {@code both} when the
-     * other producer has already contributed on this pass.
-     *
-     * @param source {@link #WTG_SOURCE_WTG} or {@link #WTG_SOURCE_FRONTIER} — a constant named at
-     *        the write site, so the two producers cannot be told apart by anything but the site
-     *        that wrote them
-     */
-    public void markWtgSource(String source) {
-        this.wtgSource = this.wtgSource == null || this.wtgSource.equals(source)
-                ? source : WTG_SOURCE_BOTH;
-    }
 
     public int getMopFrontierBoost() { return this.mopFrontierBoost; }
 

@@ -66,7 +66,7 @@ public final class ComponentTriggerStage implements DecisionStage {
 
     @Override
     public StageResult decide(StepContext ctx) {
-        if (ctx.mopData().hasComponents() && ctx.random().nextDouble() < rate) {
+        if (ctx.staticModel().hasComponents() && ctx.random().nextDouble() < rate) {
             int targets = targetCount.getAsInt();
             if (targets == 0) {
                 // The census declares components but none is triggerable — every candidate was

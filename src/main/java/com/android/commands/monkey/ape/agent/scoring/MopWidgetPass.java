@@ -15,7 +15,8 @@ import java.util.List;
  * (MopScorer — Priority Boost): the pass weighs every target action of the state through
  * {@link MopScorer#weigh}, stores each undivided weight as the action's {@code mopWeight}, then splits
  * the ties of the state's best level ({@link MopScorer#splitTies}) into {@code mopBoost} and the
- * priority (design D18). Enabled whenever MOP data is present ({@code mopContext != null}).
+ * priority (design D18). Mounted by the group root {@code MOP}: enabled iff the context carries a
+ * {@code MopContext}, which it does exactly when MOP is mounted (design D-B14.21).
  *
  * <p>The mode and the widget weights come from the run's {@link MopContext}
  * ({@link ScoringContext#getMopContext()}, design D17 "Plumbing"), which also carries what the

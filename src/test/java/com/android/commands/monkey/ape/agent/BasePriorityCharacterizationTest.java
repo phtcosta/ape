@@ -10,6 +10,7 @@ import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.utils.MopContext;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import org.junit.Test;
@@ -84,11 +85,11 @@ public class BasePriorityCharacterizationTest {
         final UICoverageTracker tracker = new UICoverageTracker();
         setField(agent, "_coverageTracker", tracker);
         ScoringContext ctx = new ScoringContext() {
+            @Override public StaticGuiModel getStaticModel() { return null; }
             @Override public MopContext getMopContext() { return null; }
             @Override public UICoverageTracker getCoverageTracker() { return tracker; }
             @Override public Graph getGraph() { return null; }
             @Override public int getTimestamp() { return 1; }
-            @Override public boolean menuPickEligible(String activity) { return true; }
         };
         setField(agent, "scoringContext", ctx);
         // A sata arm: no MOP feature, so every MOP weight is zero and the pipeline is

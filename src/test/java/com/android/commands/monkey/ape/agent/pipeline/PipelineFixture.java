@@ -23,6 +23,7 @@ import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 /**
  * A whole run's worth of collaborators, stated as values, for the tests that assert a property of an
@@ -244,35 +245,21 @@ final class PipelineFixture {
         return new ModelAction(null, ActionType.MODEL_CLICK);
     }
 
+    /** MopData carrying just the MOP census the MOP stages read: the one MOP activity. */
+    static MopData census() {
+        return MopData.forTest(null, new HashSet<>(Arrays.asList(TRIGGER_TARGET)));
+    }
+
     /**
-     * MopData carrying just the census the MOP stages read: one launchable activity, and the three
-     * empty component lists {@code hasComponents()} walks before it reaches the activities.
-     *
-     * <p>Allocated rather than parsed, because the loader wants a JSON artifact and every field below
-     * is one a stage names directly.
+     * The static model beside {@link #census()}: the package, the main activity, and one
+     * launchable activity, with no receiver, service or provider.
      */
-    static MopData census() throws Exception {
-        Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-        Field theUnsafe = unsafeClass.getDeclaredField("theUnsafe");
-        theUnsafe.setAccessible(true);
-        MopData data = (MopData) unsafeClass.getMethod("allocateInstance", Class.class)
-                .invoke(theUnsafe.get(null), MopData.class);
+    static StaticGuiModel staticCensus() {
         List<ComponentInfo.ActivityInfo> activities = new ArrayList<>();
         activities.add(new ComponentInfo.ActivityInfo(TRIGGER_TARGET, false,
-                Collections.<ComponentInfo.IntentFilter>emptyList(), true,
-                Collections.<String>emptyList(), null));
-        FakeStepContext.setField(data, "activities", activities);
-        FakeStepContext.setField(data, "receivers",
-                Collections.<ComponentInfo.ReceiverInfo>emptyList());
-        FakeStepContext.setField(data, "services",
-                Collections.<ComponentInfo.ServiceInfo>emptyList());
-        FakeStepContext.setField(data, "providers",
-                Collections.<ComponentInfo.ProviderInfo>emptyList());
-        FakeStepContext.setField(data, "packageName", PACKAGE);
-        FakeStepContext.setField(data, "mainActivity", PACKAGE + ".MainActivity");
-        FakeStepContext.setField(data, "mopActivities",
-                new HashSet<>(Arrays.asList(TRIGGER_TARGET)));
-        return data;
+                Collections.<ComponentInfo.IntentFilter>emptyList(), null));
+        return new StaticGuiModel(PACKAGE, PACKAGE + ".MainActivity", null, null, null, null,
+                activities, null);
     }
 
     /** A graph with no visited activity node, so the census candidate is eligible to launch. */

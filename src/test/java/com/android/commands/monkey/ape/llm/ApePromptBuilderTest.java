@@ -4,10 +4,12 @@ import android.graphics.Rect;
 
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -294,11 +296,16 @@ public class ApePromptBuilderTest {
     // gh13 §20 — widget metadata in LLM context (T1.1) via ApePromptBuilder.widgetMetadata
     // =========================================================================
 
+    /** Static widget metadata with only the labels, the input fields and the entries given. */
+    private static StaticGuiModel.WidgetMeta meta(String hint, String inputType,
+            List<String> entries, String contentDescription, String tooltipText) {
+        return new StaticGuiModel.WidgetMeta(null, hint, inputType, entries, null, null,
+                contentDescription, tooltipText);
+    }
+
     @Test // 20.1
     public void testWidgetMetadataAppearsInPrompt() {
-        MopData.Widget w = new MopData.Widget();
-        w.contentDescription = "Encrypt button";
-        w.tooltipText = "Tap to encrypt";
+        StaticGuiModel.WidgetMeta w = meta(null, null, null, "Encrypt button", "Tap to encrypt");
         String m = ApePromptBuilder.widgetMetadata(w);
         assertTrue(m.contains("contentDescription=\"Encrypt button\""));
         assertTrue(m.contains("tooltipText=\"Tap to encrypt\""));
@@ -310,16 +317,15 @@ public class ApePromptBuilderTest {
 
     @Test // 20.2
     public void testNullWidgetMetadataOmittedFromPrompt() {
-        String m = ApePromptBuilder.widgetMetadata(new MopData.Widget());
+        String m = ApePromptBuilder.widgetMetadata(meta(null, null, null, null, null));
         assertEquals("", m);
     }
 
     @Test // 20.3
     public void testWidgetMetadataTruncatedAt80Chars() {
-        MopData.Widget w = new MopData.Widget();
         StringBuilder big = new StringBuilder();
         for (int i = 0; i < 200; i++) big.append('x');
-        w.contentDescription = big.toString();
+        StaticGuiModel.WidgetMeta w = meta(null, null, null, big.toString(), null);
         String m = ApePromptBuilder.widgetMetadata(w);
         assertTrue("ellipsis on overflow", m.contains("…\""));
         // value capped at 80 chars (between the opening quote and the ellipsis)
@@ -330,13 +336,14 @@ public class ApePromptBuilderTest {
 
     @Test // 20.4
     public void testSpinnerEntriesAppearInPromptCappedAt10() {
-        MopData.Widget w = new MopData.Widget();
-        w.entries.addAll(Arrays.asList("MD2", "MD5", "SHA-1", "SHA-256", "SHA-512"));
+        StaticGuiModel.WidgetMeta w = meta(null, null,
+                Arrays.asList("MD2", "MD5", "SHA-1", "SHA-256", "SHA-512"), null, null);
         assertTrue(ApePromptBuilder.widgetMetadata(w)
                 .contains("entries=[MD2, MD5, SHA-1, SHA-256, SHA-512]"));
 
-        MopData.Widget w15 = new MopData.Widget();
-        for (int i = 0; i < 15; i++) w15.entries.add("e" + i);
+        List<String> entries = new ArrayList<>();
+        for (int i = 0; i < 15; i++) entries.add("e" + i);
+        StaticGuiModel.WidgetMeta w15 = meta(null, null, entries, null, null);
         String m = ApePromptBuilder.widgetMetadata(w15);
         assertTrue("capped with trailing ellipsis", m.contains(", …]"));
         assertTrue(m.contains("e9"));
@@ -345,16 +352,13 @@ public class ApePromptBuilderTest {
 
     @Test // 20.5
     public void testMetadataNewlinesFlattened() {
-        MopData.Widget w = new MopData.Widget();
-        w.contentDescription = "line1\nline2";
+        StaticGuiModel.WidgetMeta w = meta(null, null, null, "line1\nline2", null);
         assertTrue(ApePromptBuilder.widgetMetadata(w).contains("line1 line2"));
     }
 
     @Test // 20.6
     public void testInputTypeAndHintAppearInPrompt() {
-        MopData.Widget w = new MopData.Widget();
-        w.inputType = "textPassword";
-        w.hint = "Your password";
+        StaticGuiModel.WidgetMeta w = meta("Your password", "textPassword", null, null, null);
         String m = ApePromptBuilder.widgetMetadata(w);
         assertTrue(m.contains("inputType=\"textPassword\""));
         assertTrue(m.contains("hint=\"Your password\""));
@@ -362,8 +366,7 @@ public class ApePromptBuilderTest {
 
     @Test // 20.7
     public void testSpecialCharsInMetadataDoNotBreakPrompt() {
-        MopData.Widget w = new MopData.Widget();
-        w.contentDescription = "a\"b[c]d\\e";
+        StaticGuiModel.WidgetMeta w = meta(null, null, null, "a\"b[c]d\\e", null);
         String m = ApePromptBuilder.widgetMetadata(w);
         assertTrue("embedded quote escaped", m.contains("\\\""));
         // field stays well-formed: opens and closes with a quote

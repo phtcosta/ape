@@ -29,11 +29,11 @@ import java.util.Set;
 import static org.junit.Assert.*;
 
 /**
- * Unit tests for MopData, in two layers. The WTG data-layer tests build a model directly through
- * the {@code MopData.forTest()} factory and exercise the query API without going near a file; the
- * loader tests read real and synthetic compact artifacts through {@code MopData.load}, which is
- * JVM-runnable because the reader uses {@code org.json} rather than
- * {@code android.util.JsonReader} (design D21).
+ * Unit tests for {@link StaticArtifactLoader} and the {@link MopData} it builds: real and
+ * synthetic compact artifacts read through the loader, which is JVM-runnable because it uses
+ * {@code org.json} rather than {@code android.util.JsonReader} (design D21). The static model's
+ * own queries — WTG, widget metadata, the intent-filter {@code data} — are
+ * {@code StaticGuiModelTest}'s; where a scenario spans both providers, it is asserted here.
  */
 public class MopDataTest {
 
@@ -56,211 +56,6 @@ public class MopDataTest {
         RunContext.resetForTest();
     }
 
-
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    /** Build a minimal MopData with WTG transitions and MOP activities. */
-    private static MopData buildTestData(Map<String, List<StaticGuiModel.WtgTransition>> wtg,
-                                         Set<String> mopActivities) {
-        // Minimal widget data: one widget per MOP activity to make activityHasMop() return true
-        Map<String, Map<String, MopData.Widget>> widgetData = new HashMap<>();
-        for (String act : mopActivities) {
-            Map<String, MopData.Widget> widgets = new HashMap<>();
-            MopData.Widget flags = new MopData.Widget();
-            flags.directMop = true;
-            widgets.put("_mop_dummy", flags);
-            widgetData.put(act, widgets);
-        }
-        return MopData.forTest(widgetData, mopActivities, wtg);
-    }
-
-    // -------------------------------------------------------------------------
-    // Task 4.3: WTG Parsing Tests (data structure / query layer)
-    // -------------------------------------------------------------------------
-
-    /**
-     * INV-WTG-01/04 + Scenario: Parse click transitions.
-     * Simulates the result of parsing click transitions from the cryptoapp fixture:
-     * the MainActivity#OptionsMenu-sourced edges are keyed under the base activity
-     * MainActivity (INV-WTG-04), so the consumer queries by base activity.
-     */
-    @Test
-    public void testClickTransitions_storedCorrectly() {
-        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
-        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new StaticGuiModel.WtgTransition(
-                "menu_item_cipher",
-                "br.unb.cic.cryptoapp.cipher.CipherActivity"));
-        transitions.add(new StaticGuiModel.WtgTransition(
-                "menu_item_message_digest",
-                "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
-        wtg.put("br.unb.cic.cryptoapp.MainActivity", transitions);
-
-        Set<String> mopActivities = new HashSet<>();
-        mopActivities.add("br.unb.cic.cryptoapp.cipher.CipherActivity");
-        mopActivities.add("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity");
-
-        MopData data = buildTestData(wtg, mopActivities);
-
-        assertTrue("WTG data should be present", data.hasWtgData());
-
-        List<StaticGuiModel.WtgTransition> result =
-                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity");
-        assertEquals(2, result.size());
-        assertTrue("suffixed key no longer used (INV-WTG-04)",
-                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity#OptionsMenu").isEmpty());
-
-        StaticGuiModel.WtgTransition t0 = result.get(0);
-        assertEquals("menu_item_cipher", t0.widgetName);
-        assertEquals("br.unb.cic.cryptoapp.cipher.CipherActivity", t0.targetActivity);
-
-        StaticGuiModel.WtgTransition t1 = result.get(1);
-        assertEquals("menu_item_message_digest", t1.widgetName);
-        assertEquals("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity", t1.targetActivity);
-    }
-
-    /**
-     * INV-WTG-01: Scenario — implicit events are ignored.
-     * Verifies that only click events end up in the WTG map.
-     * (Implicit events like implicit_home_event are never added to WtgTransition lists.)
-     */
-    @Test
-    public void testImplicitEvents_notStored() {
-        // Build WTG with only click transitions (as the parser would do)
-        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
-        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
-        // Only the click event from a mixed transition (implicit_home + click)
-        transitions.add(new StaticGuiModel.WtgTransition(
-                "search",
-                "com.example.SearchActivity"));
-        wtg.put("com.example.MainActivity", transitions);
-
-        MopData data = buildTestData(wtg, new HashSet<String>());
-
-        List<StaticGuiModel.WtgTransition> result = data.getWtgTransitions("com.example.MainActivity");
-        assertEquals("Only click events should be stored", 1, result.size());
-        assertEquals("search", result.get(0).widgetName);
-    }
-
-    /**
-     * Scenario: No transitions section (graceful skip).
-     * When WTG transitions are empty/absent, hasWtgData() returns false
-     * and getWtgTransitions() returns empty list for any activity.
-     */
-    @Test
-    public void testNoTransitions_gracefulSkip() {
-        // Empty WTG map simulates missing transitions[] key
-        MopData data = MopData.forTest(null, null, null);
-
-        assertFalse("hasWtgData should be false when no transitions", data.hasWtgData());
-        assertTrue("getWtgTransitions should return empty list",
-                data.getWtgTransitions("com.example.AnyActivity").isEmpty());
-    }
-
-    /**
-     * getWtgTransitions returns empty list for unknown activity.
-     */
-    @Test
-    public void testGetWtgTransitions_unknownActivity() {
-        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
-        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new StaticGuiModel.WtgTransition(
-                "btn",
-                "com.example.Target"));
-        wtg.put("com.example.Source", transitions);
-
-        MopData data = buildTestData(wtg, new HashSet<String>());
-
-        assertTrue(data.getWtgTransitions("com.example.Unknown").isEmpty());
-    }
-
-    /**
-     * Scenario: Parse MenuItem click transitions (from cryptoapp fixture).
-     * Window 1382 = MainActivity#OptionsMenu reduces to base MainActivity (INV-WTG-04),
-     * Window 1397 = MessageDigestActivity. Transition: menu_item_message_digest click ->
-     * MessageDigestActivity, queried by the base source activity.
-     */
-    @Test
-    public void testMenuItemClickTransition() {
-        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
-        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new StaticGuiModel.WtgTransition(
-                "menu_item_message_digest",
-                "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
-        wtg.put("br.unb.cic.cryptoapp.MainActivity", transitions);
-
-        MopData data = buildTestData(wtg, new HashSet<String>());
-
-        List<StaticGuiModel.WtgTransition> result =
-                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity");
-        assertEquals(1, result.size());
-        assertEquals("menu_item_message_digest", result.get(0).widgetName);
-        assertEquals("br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity",
-                result.get(0).targetActivity);
-    }
-
-    /**
-     * Multiple transitions from same source activity with different targets.
-     * Simulates MainActivity (1389) having buttonCipher -> CipherActivity (1394)
-     * and buttonMessageDigest -> MessageDigestActivity (1397).
-     */
-    @Test
-    public void testMultipleTransitions_sameSource() {
-        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
-        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new StaticGuiModel.WtgTransition(
-                "buttonCipher",
-                "br.unb.cic.cryptoapp.cipher.CipherActivity"));
-        transitions.add(new StaticGuiModel.WtgTransition(
-                "buttonMessageDigest",
-                "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
-        transitions.add(new StaticGuiModel.WtgTransition(
-                "buttonGenerated",
-                "br.unb.cic.cryptoapp.generated.CryptographyActivity"));
-        wtg.put("br.unb.cic.cryptoapp.MainActivity", transitions);
-
-        MopData data = buildTestData(wtg, new HashSet<String>());
-
-        List<StaticGuiModel.WtgTransition> result =
-                data.getWtgTransitions("br.unb.cic.cryptoapp.MainActivity");
-        assertEquals(3, result.size());
-    }
-
-    /**
-     * A WTG edge carries the two fields its consumers read, and nothing else.
-     *
-     * <p>The producer's widget class was a third field until the cutover: it was parsed, stored and
-     * exposed, and no scoring, routing or frontier decision ever consulted it. It is asserted here
-     * as an absence — a two-argument constructor — rather than left to be noticed, because the
-     * cheapest way for a dropped field to come back is for nothing to have said it was dropped.
-     */
-    @Test
-    public void testWtgTransitionCarriesOnlyTheConsumedPair() {
-        StaticGuiModel.WtgTransition t = new StaticGuiModel.WtgTransition(
-                "btn_encrypt", "com.example.EncryptActivity");
-        assertEquals("btn_encrypt", t.widgetName);
-        assertEquals("com.example.EncryptActivity", t.targetActivity);
-        assertEquals("the edge carries exactly widgetName and targetActivity",
-                2, StaticGuiModel.WtgTransition.class.getFields().length);
-    }
-
-    // Component-decoding tests live in ComponentInfoTest; the backward-compat
-    // empty-components case is covered by testComponents_backwardCompat below.
-
-    /** No component data → hasComponents() false, empty lists. */
-    @Test
-    public void testComponents_backwardCompat() {
-        MopData data = MopData.forTest(null, null, null);
-
-        assertFalse("hasComponents should be false without component data",
-                data.hasComponents());
-        assertTrue(data.getReceivers().isEmpty());
-        assertTrue(data.getServices().isEmpty());
-        assertTrue(data.getActivities().isEmpty());
-        assertTrue(data.getProviders().isEmpty());
-    }
 
     // =========================================================================
     // Loader tests over the derived artifact via MopData.load
@@ -322,7 +117,7 @@ public class MopDataTest {
     private static JSONObject onlyLoadRecord(String path, String pkg, String main,
             boolean activitySourceComponents) throws Exception {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        MopData.load(path, pkg, main, activitySourceComponents,
+        StaticArtifactLoader.load(path, pkg, main, activitySourceComponents,
                 new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
         List<JSONObject> records = recordsIn(buffer);
         assertEquals("exactly one MOP_DATA record per load", 1, records.size());
@@ -439,7 +234,7 @@ public class MopDataTest {
 
         String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{\"mop\":"
                 + "{\"item_selected\":\"direct\"}}}}"));
-        MopData.Widget w = MopData.load(path, null, null, false, new NoopSink())
+        MopData.Widget w = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData
                 .getWidget("p.A", "b");
         assertTrue("snake_case wire key matches camelCase query", w.isDirectMop("itemSelected"));
         assertTrue("snake_case wire key matches snake_case query", w.isDirectMop("item_selected"));
@@ -499,7 +294,12 @@ public class MopDataTest {
     }
 
     private static MopData loadFixture(String name, boolean activitySourceComponents) {
-        return MopData.load(fixturePath(name), null, null, activitySourceComponents,
+        return loadBoth(name, activitySourceComponents).mopData;
+    }
+
+    private static StaticArtifactLoader.Loaded loadBoth(String name,
+            boolean activitySourceComponents) {
+        return StaticArtifactLoader.load(fixturePath(name), null, null, activitySourceComponents,
                 new NoopSink());
     }
 
@@ -550,8 +350,9 @@ public class MopDataTest {
         throw new AssertionError("no optionsMenus record for " + activity);
     }
 
-    private static ComponentInfo.ActivityInfo activityNamed(MopData data, String className) {
-        for (ComponentInfo.ActivityInfo a : data.getActivities()) {
+    private static ComponentInfo.ActivityInfo activityNamed(StaticGuiModel data,
+            String className) {
+        for (ComponentInfo.ActivityInfo a : data.activities()) {
             if (className.equals(a.className)) {
                 return a;
             }
@@ -571,10 +372,11 @@ public class MopDataTest {
      */
     @Test
     public void testCompactFixtureFlagsExactlyTheThreeMopWidgets() throws Exception {
-        MopData d = loadFixture(COMPACT, false);
-        assertNotNull(d);
-        assertEquals(PKG, d.getPackageName());
-        assertEquals(MAIN, d.getMainActivity());
+        StaticArtifactLoader.Loaded both = loadBoth(COMPACT, false);
+        assertNotNull(both);
+        assertEquals(PKG, both.staticModel.packageName());
+        assertEquals(MAIN, both.staticModel.mainActivity());
+        MopData d = both.mopData;
 
         List<String> flagged = flaggedWidgetsOf(d, fixturePath(COMPACT));
         assertEquals("exactly three flagged widgets in the whole artifact: " + flagged,
@@ -698,7 +500,7 @@ public class MopDataTest {
                 + "\"dist\":{\"click\":[[2,0],[5,1]]}},"
                 + "\"c\":{\"mop\":{\"long_click\":\"transitive\"},"
                 + "\"dist\":{\"long_click\":[[7,2]]}}}}"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
         MopData.Widget b = d.getWidget("p.A", "b");
         assertEquals("[[2,0],[5,1]]", pairs(b.dist("click")));
         assertEquals(0, b.dist("scroll").length);
@@ -725,7 +527,7 @@ public class MopDataTest {
                 + "\"scroll\":[[2,0]],\"item_long_click\":[[5,0]],"
                 + "\"implicit_create_context_menu\":[[6,0]]}},"
                 + "\"n\":{\"mop\":{\"longclick\":\"direct\"}}}}"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
         MopData.Widget t = d.getWidget("p.A", "t");
         assertEquals("[[9,1],[4,3]]", pairs(t.clickAggregate()));
         assertEquals("dist(click) keeps its meaning", 0, t.dist("click").length);
@@ -744,7 +546,7 @@ public class MopDataTest {
     public void testDistKeysCollapsingOntoOneEventMergeByMinimumPerTarget() throws Exception {
         String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{\"dist\":"
                 + "{\"long_click\":[[3,1],[5,2]],\"longClick\":[[3,0],[6,2]]}}}}"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
         assertEquals("[[3,0],[5,2],[6,2]]", pairs(d.getWidget("p.A", "b").dist("longclick")));
     }
 
@@ -759,7 +561,7 @@ public class MopDataTest {
                 + "\"p.Compose$1\":{\"mop\":{\"click\":\"transitive\",\"longclick\":\"transitive\"},"
                 + "\"dist\":{\"click\":[[0,1]],\"long_click\":[[3,2]]}},"
                 + "\"p.Quiet\":{\"mop\":{\"click\":\"none\"}}}"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
 
         MopData.Handler compose = d.getHandler("p.Compose$1");
         assertTrue(compose.isTransitiveMop("click"));
@@ -783,7 +585,7 @@ public class MopDataTest {
         JSONObject record = onlyLoadRecord(path, false);
         assertEquals("loaded", record.getString("status"));
         assertEquals(2, record.getInt("droppedPairs"));
-        assertEquals("[[16,3]]", pairs(MopData.load(path, null, null, false, new NoopSink())
+        assertEquals("[[16,3]]", pairs(StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData
                 .getWidget("p.A", "b").dist("click")));
     }
 
@@ -803,7 +605,7 @@ public class MopDataTest {
         assertEquals("2 on the widget, 3 on the activity, 3 on the handler",
                 8, record.getInt("droppedPairs"));
 
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
         assertEquals("[[1,1]]", pairs(d.getWidget("p.A", "b").dist("click")));
         assertEquals("[[0,0]]", pairs(d.activityDist("p.A")));
         assertEquals("[[4,1]]", pairs(d.getHandler("p.L").dist("click")));
@@ -824,7 +626,7 @@ public class MopDataTest {
         };
         for (String artifact : skewed) {
             String path = writeTempJson(artifact);
-            assertNull(artifact, MopData.load(path, null, null, false, new NoopSink()));
+            assertNull(artifact, StaticArtifactLoader.load(path, null, null, false, new NoopSink()));
             JSONObject record = onlyLoadRecord(path, false);
             assertEquals(artifact, "rejected", record.getString("status"));
             assertEquals(artifact, "parse-error", record.getString("reason"));
@@ -840,7 +642,7 @@ public class MopDataTest {
         String path = writeTempJson(formatTwoEnvelope(",\"targets\":0,\"handlers\":{}"
                 + ",\"widgets\":{\"p.A\":{\"b\":{\"mop\":{\"click\":\"transitive\"}}}}"
                 + ",\"mopActivities\":[\"p.A\"]"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
         assertNotNull(d);
         assertEquals(0, d.targetCount());
         assertTrue("the flags still load", d.getWidget("p.A", "b").isTransitiveMop("click"));
@@ -861,15 +663,19 @@ public class MopDataTest {
                 + ",\"mopActivities\":[],\"mopActivitiesAugmented\":[]"
                 + ",\"components\":{\"activities\":[],\"providers\":[],\"receivers\":[],"
                 + "\"services\":[]}"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
-        assertNotNull(d);
-        assertTrue(d.getReceivers().isEmpty());
-        assertTrue(d.getServices().isEmpty());
-        assertTrue(d.getActivities().isEmpty());
-        assertTrue(d.getProviders().isEmpty());
+        StaticArtifactLoader.Loaded both = StaticArtifactLoader.load(path, null, null, false,
+                new NoopSink());
+        assertNotNull(both);
+        StaticGuiModel statics = both.staticModel;
+        assertFalse(statics.hasComponents());
+        assertTrue(statics.receivers().isEmpty());
+        assertTrue(statics.services().isEmpty());
+        assertTrue(statics.activities().isEmpty());
+        assertTrue(statics.providers().isEmpty());
+        assertTrue(statics.wtgTransitions("p.A").isEmpty());
+        assertFalse(statics.hasWtgData());
+        MopData d = both.mopData;
         assertTrue(d.getMopActivities().isEmpty());
-        assertTrue(d.getWtgTransitions("p.A").isEmpty());
-        assertFalse(d.hasWtgData());
         assertEquals(0, d.activityDist("p.A").length);
         assertNull(d.getHandler("p.L"));
     }
@@ -896,31 +702,37 @@ public class MopDataTest {
                 wireMenuHasFlaggedWidget(fixturePath(COMPACT), MAIN));
         assertTrue("so the gateway can only come from its edges into the MOP sub-activities",
                 d.activityHasMopOptionsMenu(MAIN));
-        assertTrue(d.hasWtgData());
+        assertTrue("the edges are the static model's",
+                loadBoth(COMPACT, false).staticModel.hasWtgData());
     }
 
-    /** The metadata and component surface the prompt builder and the launcher read. */
+    /**
+     * The metadata and component surface the prompt builder and the launcher read, on the static
+     * side, and the components' {@code reachesMop} on the MOP side.
+     */
     @Test
     public void testCompactFixtureMetadataAndComponentSurface() {
-        MopData d = loadFixture(COMPACT, false);
+        StaticArtifactLoader.Loaded both = loadBoth(COMPACT, false);
+        StaticGuiModel d = both.staticModel;
 
-        MopData.Widget spinner = d.getWidget(MDA, "spinnerMessageDigest");
+        StaticGuiModel.WidgetMeta spinner = d.widget(MDA, "spinnerMessageDigest");
         assertEquals(13, spinner.entries.size());
         assertEquals("Select", spinner.entries.get(0));
-        MopData.Widget editText = d.getWidget(MDA, "editTextMessageDigest");
+        StaticGuiModel.WidgetMeta editText = d.widget(MDA, "editTextMessageDigest");
         assertEquals("Input text ...", editText.hint);
         assertEquals("textPersonName", editText.inputType);
 
-        assertEquals(4, d.getActivities().size());
-        assertEquals(1, d.getProviders().size());
-        assertEquals("br.unb.cic.cryptoapp.androidx-startup", d.getProviders().get(0).authorities);
-        assertTrue(d.getReceivers().isEmpty());
-        assertTrue(d.getServices().isEmpty());
+        assertEquals(4, d.activities().size());
+        assertEquals(1, d.providers().size());
+        assertEquals("br.unb.cic.cryptoapp.androidx-startup", d.providers().get(0).authorities);
+        assertTrue(d.receivers().isEmpty());
+        assertTrue(d.services().isEmpty());
         assertTrue(d.hasComponents());
-        for (ComponentInfo c : d.getActivities()) {
-            assertFalse(c.className + " reaches no monitored operation", c.reachesTarget);
+        for (ComponentInfo c : d.activities()) {
+            assertFalse(c.className + " reaches no monitored operation",
+                    both.mopData.reachesMop(c.className));
         }
-        assertFalse(d.getProviders().get(0).reachesTarget);
+        assertFalse(both.mopData.reachesMop(d.providers().get(0).className));
     }
 
     // --- Scenario: Absent metadata stays null and costs zero tokens ----------
@@ -933,7 +745,8 @@ public class MopDataTest {
      */
     @Test
     public void testAbsentWidgetMetadataDecodesToNullAndEmpty() {
-        MopData.Widget w = loadFixture(COMPACT, false).getWidget(CIPHER, "btn_cipher_encrypt");
+        StaticGuiModel.WidgetMeta w =
+                loadBoth(COMPACT, false).staticModel.widget(CIPHER, "btn_cipher_encrypt");
         assertNull(w.hint);
         assertNull(w.prompt);
         assertNull(w.inputType);
@@ -955,7 +768,7 @@ public class MopDataTest {
      */
     @Test
     public void testLegacyFullJsonIsRejectedAsVersionMismatch() throws Exception {
-        assertNull(MopData.load(fixturePath(FRESH), null, null, false, new NoopSink()));
+        assertNull(StaticArtifactLoader.load(fixturePath(FRESH), null, null, false, new NoopSink()));
         JSONObject record = onlyLoadRecord(fixturePath(FRESH), false);
         assertEquals("rejected", record.getString("status"));
         assertEquals("version-mismatch", record.getString("reason"));
@@ -974,7 +787,7 @@ public class MopDataTest {
                 + ",\"targets\":0,\"handlers\":{}"
                 + ",\"widgets\":{\"p.A\":{\"b\":{\"mop\":{\"click\":\"transitive\"}}}}"
                 + ",\"mopActivities\":[\"p.A\"]}");
-        assertNull(MopData.load(path, null, null, false, new NoopSink()));
+        assertNull(StaticArtifactLoader.load(path, null, null, false, new NoopSink()));
         JSONObject record = onlyLoadRecord(path, false);
         assertEquals("rejected", record.getString("status"));
         assertEquals("version-mismatch", record.getString("reason"));
@@ -994,7 +807,7 @@ public class MopDataTest {
     public void testPerEventDecodingKeepsExplicitNoneAndFallsBackOnAbsentKeys() throws Exception {
         String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{\"mop\":"
                 + "{\"click\":\"both\",\"scroll\":\"none\"}}}}"));
-        MopData.Widget w = MopData.load(path, null, null, false, new NoopSink())
+        MopData.Widget w = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData
                 .getWidget("p.A", "b");
 
         assertTrue(w.isDirectMop("click"));
@@ -1026,7 +839,7 @@ public class MopDataTest {
                 + "\"d\":{\"mop\":{\"click\":\"direct\"}},"
                 + "\"t\":{\"mop\":{\"click\":\"transitive\"}},"
                 + "\"b\":{\"mop\":{\"click\":\"both\"}}}}"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
 
         assertFalse(d.getWidget("p.A", "n").isDirectMop("click"));
         assertFalse(d.getWidget("p.A", "n").isTransitiveMop("click"));
@@ -1110,12 +923,13 @@ public class MopDataTest {
         String path = writeTempJson(compactArtifact(",\"components\":{\"activities\":["
                 + "{\"className\":\"p.X\",\"deepLinkUri\":\"myapp://detail/x\"},"
                 + "{\"className\":\"p.Y\"}]}"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
+        StaticGuiModel d = StaticArtifactLoader.load(path, null, null, false, new NoopSink())
+                .staticModel;
         assertEquals("myapp://detail/x", activityNamed(d, "p.X").deepLinkUri);
         assertNull("absent on the wire means the explicit-component intent",
                 activityNamed(d, "p.Y").deepLinkUri);
 
-        for (ComponentInfo.ActivityInfo a : loadFixture(COMPACT, false).getActivities()) {
+        for (ComponentInfo.ActivityInfo a : loadBoth(COMPACT, false).staticModel.activities()) {
             assertNull("cryptoapp declares no deep link", a.deepLinkUri);
             assertTrue("no intent-filter data block exists on the wire to walk",
                     a.intentFilters.isEmpty());
@@ -1139,9 +953,11 @@ public class MopDataTest {
                 + "\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[2,1]]}}}}"
                 + ",\"handlers\":{\"p.L\":{\"futureHandlerKey\":true,"
                 + "\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[1,0]]}}}"));
-        MopData d = MopData.load(path, null, null, false, new NoopSink());
-        assertNotNull(d);
-        assertEquals("h", d.getWidget("p.A", "b").hint);
+        StaticArtifactLoader.Loaded both = StaticArtifactLoader.load(path, null, null, false,
+                new NoopSink());
+        assertNotNull(both);
+        MopData d = both.mopData;
+        assertEquals("h", both.staticModel.widget("p.A", "b").hint);
         assertTrue(d.getWidget("p.A", "b").isTransitiveMop("click"));
         assertEquals("[[2,1]]", pairs(d.getWidget("p.A", "b").dist("click")));
         assertTrue(d.activityHasMop("A"));
@@ -1154,14 +970,14 @@ public class MopDataTest {
     @Test
     public void testCompactPackageMismatchWarnsByDefault() {
         assertNotNull("default is warn-only, and the artifact is still served",
-                MopData.load(fixturePath(COMPACT), "x.y.z.OTHER", null, false,
+                StaticArtifactLoader.load(fixturePath(COMPACT), "x.y.z.OTHER", null, false,
                         new NoopSink()));
     }
 
     @Test
     public void testCompactPackageMismatchRejectsWhenStrict() throws Exception {
         TestRunSpecs.installMop("ape.mopStrictPackageMatch", "true");
-        assertNull(MopData.load(fixturePath(COMPACT), "x.y.z.OTHER", null, false,
+        assertNull(StaticArtifactLoader.load(fixturePath(COMPACT), "x.y.z.OTHER", null, false,
                 new NoopSink()));
         JSONObject record = onlyLoadRecord(fixturePath(COMPACT), "x.y.z.OTHER", null, false);
         assertEquals("rejected", record.getString("status"));
@@ -1207,7 +1023,7 @@ public class MopDataTest {
      */
     @Test
     public void testCompactArtifactNeedsNoCompletenessSentinel() throws Exception {
-        assertNotNull(MopData.load(writeTempJson(compactArtifact("")), null, null, false,
+        assertNotNull(StaticArtifactLoader.load(writeTempJson(compactArtifact("")), null, null, false,
                 new NoopSink()));
     }
 
@@ -1215,7 +1031,7 @@ public class MopDataTest {
     @Test
     public void testCompactNullPathLoadsAndRecordsNothing() throws Exception {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        assertNull(MopData.load(null, null, null, false,
+        assertNull(StaticArtifactLoader.load(null, null, null, false,
                 new NdjsonSink(new PrintStream(buffer, true, "UTF-8"))));
         assertTrue(recordsIn(buffer).isEmpty());
     }

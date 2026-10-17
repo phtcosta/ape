@@ -63,7 +63,7 @@ class FakeStepContext implements StepContext {
     }
     @Override public StaticGuiModel staticModel() {
         return staticModel != null ? staticModel
-                : mopData != null ? new StaticGuiModel(mopData) : null;
+                : mopData != null ? StaticGuiModel.EMPTY : null;
     }
     @Override public StepRng stepRng() { return stepRng; }
     @Override public Graph graph() { return graph; }

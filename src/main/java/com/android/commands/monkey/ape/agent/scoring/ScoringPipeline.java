@@ -11,16 +11,24 @@ import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.telemetry.EventSink;
 
 /**
- * rv-scoring-pipeline (INV-ARCH-03/04/05). The single assembly point and runner for the RV scoring
- * passes. {@link #fromParams} constructs the seven passes in the fixed order
+ * rv-scoring-pipeline (INV-ARCH-03/04/05). The single assembly point and runner for the scorers.
+ * {@link #fromParams} constructs the seven passes in the fixed order
  *
- * <pre>MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage → FormCompletion</pre>
+ * <pre>MopWidget → MenuGateway → WTG → NavFrontier → MopFrontier → Coverage → FormCompletion</pre>
  *
- * and keeps only the enabled ones; nothing else builds a pipeline. The assembly is recorded once by
- * the caller, which is where the decision stages' roster is also in scope and the {@code PIPELINE}
- * record wants both. Seven are constructed, and a default plan keeps six of them: the
- * MOP-frontier weight is zero unless a plan states otherwise, which is a gate being shut and not a
- * pass being missing — {@link #candidates} is what says so in the trace.
+ * and keeps only the enabled ones; nothing else builds a pipeline. Each pass is a scorer owned by
+ * one group and mounted by one feature (scoring-pipeline "Scorer Ownership by Group"):
+ * {@code MopWidgetPass} by the group root {@code MOP}; {@code MenuGatewayPass},
+ * {@code WtgPass} and {@code MopFrontierPass} by the MOP members {@code MENU_GATEWAY}, {@code WTG}
+ * and {@code MOP_FRONTIER}; {@code NavFrontierPass} by the STATIC member {@code NAV_FRONTIER}; and
+ * {@code CoveragePass} and {@code FormCompletionPass} by the ADDONS members
+ * {@code COVERAGE_BOOST} and {@code FORM_COMPLETION}. The WTG family also needs WTG data.
+ *
+ * <p>Under rule R1 no pass reads the priority or another pass's field, so the order changes no
+ * term and no final priority (INV-ARCH-13); it is kept fixed so the {@code PIPELINE} record and
+ * the assembly tests stay deterministic. The assembly is recorded once by the caller, which is
+ * where the decision stages' roster is also in scope and the {@code PIPELINE} record wants both,
+ * with the census of every candidate ({@link #candidates}).
  *
  * <p>{@link #apply} is the one RV addition to {@code StatefulAgent.adjustActionsByGUITree()} after
  * the (byte-identical upstream) base-priority loop.
@@ -55,16 +63,17 @@ public final class ScoringPipeline {
 
     /**
      * Builds the pipeline from the run's scoring parameters. Constructs the seven passes in the
-     * fixed order {@code MopWidget → MenuGateway → WTG → Frontier → MopFrontier → Coverage →
+     * fixed order {@code MopWidget → MenuGateway → WTG → NavFrontier → MopFrontier → Coverage →
      * FormCompletion} (INV-ARCH-03; the frontier family stays contiguous) and retains only those
-     * whose {@code isEnabled()} is true. The first six are the exact order of the pre-refactor
-     * inline blocks; {@code MopFrontierPass} (Lever B) is additive, disabled unless its weight is
-     * positive — which it is not by default, so a default plan assembles six passes, not seven.
+     * whose {@code isEnabled()} is true, that is, whose mounting feature is in the plan and whose
+     * data gate holds (INV-ARCH-14).
      *
-     * <p>Each pass decides {@code isEnabled()} once, here, from the weights it is handed and the
-     * run-fixed {@link ScoringContext#getMopData()}. This is the only place a scoring parameter is
-     * read: below it, a pass is a function of the numbers it was constructed with, which is what
-     * lets a test state a weight instead of arranging for a global to hold it (INV-ARCH-11).
+     * <p>Each pass decides {@code isEnabled()} once, here, from the value {@link ScoringParams}
+     * carries for its feature and from the run-fixed providers of the context
+     * ({@link ScoringContext#getStaticModel()}, {@link ScoringContext#getMopContext()}). This is
+     * the only place a scoring parameter is read: below it, a pass is a function of the numbers it
+     * was constructed with, which is what lets a test state a weight instead of arranging for a
+     * global to hold it (INV-ARCH-11).
      *
      * @param sink handed to the one pass that records something of its own — the MOP exposure pair,
      *        which is computed here and nowhere else
@@ -75,7 +84,7 @@ public final class ScoringPipeline {
         candidates.add(new MopWidgetPass(ctx, sink));
         candidates.add(new MenuGatewayPass(ctx, params));
         candidates.add(new WtgPass(ctx, params));
-        candidates.add(new FrontierPass(ctx, params));
+        candidates.add(new NavFrontierPass(ctx, params));
         candidates.add(new MopFrontierPass(ctx, params));
         candidates.add(new CoveragePass(ctx, params));
         candidates.add(new FormCompletionPass(ctx, params));
@@ -115,10 +124,10 @@ public final class ScoringPipeline {
      * that in the trace was three names missing from a list every analyst read as configuration.
      *
      * <p>No {@code reason} accompanies an entry, and there is no {@code disabledReason()} on
-     * {@link ScoringPass}. Each gate is a conjunction of {@code mopData != null},
-     * {@code hasWtgData()} and a weight, and all three conjuncts are already recorded elsewhere in
-     * the same trace ({@code MOP_DATA.status}, {@code MOP_DATA.wtgEdges}, {@code RUN_START.params}),
-     * so the reason is a lookup rather than a field. It would also be unreliable: the passes do not
+     * {@link ScoringPass}. Each gate is a conjunction of a feature in the plan and, for the WTG
+     * family, {@code hasWtgData()}, and both conjuncts are already recorded elsewhere in the same
+     * trace ({@code RUN_START.features}, {@code MOP_DATA.wtgEdges}), so the reason is a lookup
+     * rather than a field. It would also be unreliable: the passes do not
      * evaluate their conjuncts in one order, so a "first failing conjunct" would report source
      * order rather than cause, and two passes absent for the same reason could disagree about it.
      */

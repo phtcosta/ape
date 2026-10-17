@@ -24,7 +24,7 @@ import java.util.Random;
 import org.junit.Test;
 
 import com.android.commands.monkey.ape.utils.ComponentInfo;
-import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -72,32 +72,19 @@ public class ComponentTriggerStageTest {
         }
     }
 
-    /**
-     * MopData carrying a component list, or none. Allocated rather than parsed: the loader wants a
-     * JSON artifact, and {@code hasComponents()} reads exactly the four lists set below.
-     */
-    private static MopData censusWith(int receivers) throws Exception {
-        Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-        java.lang.reflect.Field theUnsafe = unsafeClass.getDeclaredField("theUnsafe");
-        theUnsafe.setAccessible(true);
-        MopData data = (MopData) unsafeClass.getMethod("allocateInstance", Class.class)
-                .invoke(theUnsafe.get(null), MopData.class);
+    /** A static model carrying {@code receivers} receivers and no other component. */
+    private static StaticGuiModel censusWith(int receivers) {
         List<ComponentInfo.ReceiverInfo> pool = new ArrayList<>();
         for (int i = 0; i < receivers; i++) {
             pool.add(new ComponentInfo.ReceiverInfo("com.example.app.R" + i, false,
-                    Collections.<ComponentInfo.IntentFilter>emptyList(), true,
-                    Collections.<String>emptyList(), null));
+                    Collections.<ComponentInfo.IntentFilter>emptyList(), null));
         }
-        FakeStepContext.setField(data, "receivers", pool);
-        FakeStepContext.setField(data, "services", new ArrayList<ComponentInfo.ServiceInfo>());
-        FakeStepContext.setField(data, "activities", new ArrayList<ComponentInfo.ActivityInfo>());
-        FakeStepContext.setField(data, "providers", new ArrayList<ComponentInfo.ProviderInfo>());
-        return data;
+        return new StaticGuiModel(null, null, null, null, pool, null, null, null);
     }
 
-    private static FakeStepContext stepOver(MopData data, Random random) {
+    private static FakeStepContext stepOver(StaticGuiModel staticModel, Random random) {
         FakeStepContext ctx = new FakeStepContext();
-        ctx.mopData = data;
+        ctx.staticModel = staticModel;
         ctx.random = random;
         return ctx;
     }

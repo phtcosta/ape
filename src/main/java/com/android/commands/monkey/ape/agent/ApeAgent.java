@@ -53,6 +53,7 @@ import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Config;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopScorer;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.utils.TypedInputGenerator;
 import com.android.commands.monkey.ape.utils.InputValueGenerator;
 import com.android.commands.monkey.ape.utils.Logger;
@@ -242,7 +243,7 @@ public abstract class ApeAgent implements Agent {
                 // not an exact-id-only lookup. Typed input reads the id key on each node, because
                 // the static metadata is keyed by id; the node itself is tried first.
                 for (GUITreeNode candidate : MopScorer.containmentNodes(node)) {
-                    MopData.Widget w = md.getWidget(activity,
+                    StaticGuiModel.WidgetMeta w = staticModel().widget(activity,
                             MopData.extractShortId(candidate.getResourceID()));
                     if (w != null && (notEmpty(w.inputType) || notEmpty(w.hint))) {
                         return TypedInputGenerator.generateForType(w.inputType, w.hint, RandomHelper.getRandom());
@@ -260,6 +261,11 @@ public abstract class ApeAgent implements Agent {
 
     /** Overridden by StatefulAgent to expose loaded MOP data; null disables T1.3. */
     protected MopData getMopData() {
+        return null;
+    }
+
+    /** Overridden by StatefulAgent to expose the loaded static GUI model; null when none. */
+    public StaticGuiModel staticModel() {
         return null;
     }
 
