@@ -108,11 +108,11 @@ No target retirement count is pending on a restart step, because no model action
 ### Requirement: Per-Step Own Random Streams
 
 `StepRng` SHALL derive four `java.util.Random` instances from the run seed, `seed ^ k` with a fixed odd
-constant `k` per stream: `llmCoin`, `mopCoin`, `component` and `fuzz`. When the step record opens, before any stage runs,
+constant `k` per stream: `llmCoin`, `mopCoin`, `componentCoin` and `fuzz`. When the step record opens, before any stage runs,
 `StepRng` SHALL draw:
 - `u_L = llmCoin.nextDouble()` when `LLM` is in the plan;
 - `u_M = mopCoin.nextDouble()` when `MOP` is in the plan;
-- `u_C = component.nextDouble()` when `COMPONENT_TRIGGER` is in the plan; the `ComponentTrigger` stage fires
+- `u_C = componentCoin.nextDouble()` when `COMPONENT_TRIGGER` is in the plan; the `ComponentTrigger` stage fires
   when `u_C < componentPercentage`;
 - the fuzz toss, on every step.
 
@@ -207,10 +207,11 @@ record. It exists so that a stage's per-step bookkeeping does not depend on whet
 ### Requirement: Pipeline Assembly from the RunSpec
 
 `DecisionPipeline.fromSpec(RunSpec, StageCollaborators)` SHALL be the single assembly point. The plan decides
-which stages exist, and the collaborators supply the agent behaviours each stage invokes (design D14). It SHALL
+which stages exist, and the collaborators supply the agent behaviours each stage invokes (design D14 of `rearch-03-decision-pipeline`). It SHALL
 append stages in the fixed order `Budget → Restart → LlmNewState → LlmStagnation → LlmCoin → MopLauncher →
 ComponentTrigger → MopCoin → SataChain`. It SHALL skip every stage whose gating feature is absent from the plan
-(INV-DP-03). Each stage that selects names the step's owner, written as `dec.src` and `dec.own.i`:
+(INV-DP-03). The stage that selects names the step's executed owner, written as `dec.src` ("Hard Preemption
+Order" gives `dec.own.i`, the first claimer):
 
 | Stage | Owner | Present when |
 |---|---|---|
@@ -219,13 +220,23 @@ ComponentTrigger → MopCoin → SataChain`. It SHALL skip every stage whose gat
 | `LlmNewState` | `llm` | `LLM_NEW_STATE` (LLM ∧ `llm.onNewState`) |
 | `LlmStagnation` | `llm` | `LLM_STAGNATION` (LLM ∧ `llm.onStagnation`) |
 | `LlmCoin` | `llm` | `LLM_COIN` (LLM ∧ `p_L = ape.llmPercentage > 0`; renamed from `LLM_RANDOM`) |
-| `MopLauncher` | `launcher` | `ACTIVITY_TRIGGER` (a MOP member) |
+| `MopLauncher` | `launcher` | `MOP_LAUNCHER` (a MOP member, key `ape.activityTriggerEnabled`; renamed from `ACTIVITY_TRIGGER`) |
 | `ComponentTrigger` | none (side effect) | `COMPONENT_TRIGGER` (a STATIC member, `componentPercentage > 0`; D-B13) |
 | `MopCoin` | `mop` | `MOP_COIN` (a MOP member, `p_M = ape.mopCoinPercentage > 0`) |
 | `SataChain` | `sata` | always |
 
 The order puts the guards first (P-2), then the LLM (D-A4), then MOP (D-A10). The launcher is never before the
 LLM (D-A8), and SATA comes last.
+
+`Feature.ACTIVITY_TRIGGER` is renamed `MOP_LAUNCHER`, because the feature mounts the `MopLauncher` stage and nothing
+else; its key `ape.activityTriggerEnabled` is unchanged. The two stages that read static data read each provider
+for what it owns:
+- `MopLauncher` reads the manifest activities, the main activity and the package from `StaticGuiModel`, and the
+  MOP activities and the `activityDist` distances from `MopData`.
+- `ComponentTrigger` reads its component pool (receivers, services and providers) from `StaticGuiModel`, through
+  the `StepContext` accessor `staticModel()`, and SHALL NOT read `ctx.mopData()`. Its rate is injected at
+  assembly from `spec.staticData().componentPercentage()`, never from `spec.mop()`. The stage is therefore
+  assembled, and fires, in the `as` and `as_llm` cells, where no `MopData` exists.
 
 Assembly SHALL happen exactly once per run and SHALL emit one `[APE-ARCH] stages=[...]` line listing the assembled stages' `name()` values in order (INV-DP-01). Every parameter a stage reads SHALL be injected at assembly from the `RunSpec` (INV-DP-12); a stage SHALL NOT read static `Config` in `decide()`.
 
@@ -237,7 +248,7 @@ It matters on the *pass* side, and that is where the evidence is. The scoring pa
 presets" is kept. Its body now covers the six cell presets that replaced those four presets.
 
 #### Scenario: a plan carrying every feature assembles every stage
-- **WHEN** the plan carries the activity-budget, LLM (all three modes, `p_L > 0`), MOP, activity-trigger, component-trigger and MOP-coin features
+- **WHEN** the plan carries the activity-budget, LLM (all three modes, `p_L > 0`), MOP, MOP-launcher, component-trigger and MOP-coin features
 - **THEN** the pipeline SHALL be `[Budget, Restart, LlmNewState, LlmStagnation, LlmCoin, MopLauncher, ComponentTrigger, MopCoin, SataChain]`
 - **AND** one `[APE-ARCH] stages=[Budget, Restart, LlmNewState, LlmStagnation, LlmCoin, MopLauncher, ComponentTrigger, MopCoin, SataChain]` line SHALL be emitted
 - **AND** the `as_mop_llm` cell SHALL state such a plan: its STATIC block sets `ape.componentPercentage=0.03` and its MOP block sets `ape.activityTriggerEnabled=true`
@@ -277,10 +288,23 @@ sequence of design D-B7:
 The SATA buffer is not a precondition of any stage. An owner that preempts a non-empty buffer abandons it
 without weakening (INV-DP-15).
 
-The selecting stage's owner SHALL be written as `dec.src` (its meaning is now the executed owner, no longer the
-largest boost) and as `dec.own.i`. When an LLM stage's trigger or coin held but the LLM did not take the step,
-`dec.own` SHALL also carry the intended owner `llm`, the gate that barred it (`g`) and the fallback reason (`fb`)
-(`llm-routing`).
+The selecting stage SHALL write its owner as `dec.src` (its meaning is now the executed owner, no longer the
+largest boost). `dec.own.i` SHALL be the intended owner, the **first claimer** of the step in pipeline order
+(design D-B14.6, `event-sink`): a due guard (`budget` or `restart`), a fired LLM trigger or a won LLM coin
+(`llm`), a due launcher (`launcher`), a won and eligible MOP coin (`mop`), and otherwise `sata`. A lost coin, an
+ineligible MOP coin and a launcher below its cadence claim nothing. `dec.own.i` equals `dec.src` exactly when the
+first claimer also took the step; when an LLM stage claimed the step and then did not take it, `dec.own.i` is
+`llm`, `dec.src` names the later owner, and `dec.own` SHALL also carry the gate that barred the call (`g`) and the
+fallback reason (`fb`) (`llm-routing`).
+
+The guard steps carry their own pick channel: a step the `Budget` stage takes carries `dec.ch:"budget"`, and a step
+the `Restart` stage takes carries `dec.ch:"restart"` (`action-selection`, `event-sink`).
+
+**At most one LLM call per step** (design D-B8, D-B14.14). The three LLM stages share one gate chain and one call
+budget: once any LLM stage of the step has called the engine — whatever the call returned, including `null`, a
+decline or an error — every later LLM stage of the same step SHALL return `Continue` without evaluating its trigger
+or its gates and without calling, so the stagnation flag is not burned by a step that already called. `u_L` was
+drawn at step open regardless (INV-DP-13), and `dec.own.i` stays `llm`, the first claimer. A step therefore spends at most one LLM round trip, and a failed call falls through to the non-LLM remainder.
 
 #### Scenario: preemption golden — all contenders qualify at once (report Sec. 9.4)
 - **WHEN** a synthetic step at once satisfies the LLM new-state trigger, the launcher's firing condition, the component-trigger coin and the MOP coin's eligibility with `u_M < p_M`, has SATA candidates and a non-empty buffer, and the stubbed LLM returns an accepted action
@@ -296,9 +320,25 @@ largest boost) and as `dec.own.i`. When an LLM stage's trigger or coin held but 
 - **THEN** the launcher SHALL fire on the next step that falls through the LLM stages to `MopLauncher`, with the counter still at or past the cadence
 - **AND** this body replaces the pinned 3.3-1 behaviour: the header is kept because `openspec archive` matches scenarios by name
 
+#### Scenario: at most one LLM call per step
+- **WHEN** in the `as_mop_llm` cell step N reaches a new state with 5 actions, the stagnation trigger also holds (counter `50` with `graphStableRestartThreshold=100`, flag armed), `u_L=0.01 < p_L=0.02`, the gates admit, and the stubbed LLM returns `null` to the `LlmNewState` call
+- **THEN** exactly one LLM call SHALL be made on step N, and the record's `llm[]` SHALL hold exactly one entry
+- **AND** `LlmStagnation` and `LlmCoin` SHALL return `Continue` without calling, and the stagnation flag SHALL stay armed
+- **AND** the step SHALL be taken by a later non-LLM stage, with `dec.own.i="llm"`, `dec.own.trg="new_state"` and `dec.own.fb` naming the null result
+
+#### Scenario: the first claimer is recorded when a later owner takes the step
+- **WHEN** the launcher is due on step N (counter at its cadence, an eligible candidate exists), `u_L=0.01 < p_L=0.02`, and the LLM call times out
+- **THEN** the step SHALL be taken by `MopLauncher`, with `dec.src="launcher"` and `dec.ch="launcher"`
+- **AND** `dec.own.i` SHALL be `llm` and `dec.own.fb` SHALL be `error`, because the LLM coin claimed the step first
+
+#### Scenario: guard steps carry their own channel
+- **WHEN** the `Budget` stage takes step N and the `Restart` stage takes step N+5
+- **THEN** step N's record SHALL carry `dec.src="budget"`, `dec.ch="budget"` and `dec.own.i="budget"`
+- **AND** step N+5's record SHALL carry `dec.src="restart"`, `dec.ch="restart"` and `dec.own.i="restart"`
+
 #### Scenario: side effect never decides the step
 - **WHEN** the `ComponentTrigger` stage fires its coin and dispatches a broadcast
-- **THEN** it SHALL return `SideEffect`, the dispatch SHALL be recorded, and the `MopCoin` stage (when it is assembled and takes the step) or else the `SataChain` stage SHALL still select the step's action
+- **THEN** it SHALL return `SideEffect`, the dispatch SHALL be recorded on the step's record as `dec.trig:{"k":"broadcast","c":"<receiver class>"}` (`k` one of `broadcast`, `service`, `provider`; `dec.comp` stays the launcher's launch outcome), and the `MopCoin` stage (when it is assembled and takes the step) or else the `SataChain` stage SHALL still select the step's action
 
 #### Scenario: launcher preempts the SATA chain when it fires
 - **WHEN** no guard and no LLM stage selects, the launcher's counter is at or past its cadence, and an eligible census candidate exists
@@ -365,8 +405,8 @@ recorded in `dec.own.fb` (`llm-routing` "Declared LLM Fallback").
 
 #### Scenario: LLM failure falls through to the configured remainder (report Sec. 9.5)
 - **WHEN** the plan is the `as_mop_llm` cell, the stubbed LLM times out on a coin step, the launcher's counter is below its cadence, and no on-screen action is eligible for the MOP coin
-- **THEN** the step's action SHALL come from the `SataChain` stage, with `dec.src="sata"`
-- **AND** its `dec.src` SHALL be `sata`, never `llm`, and `dec.own` SHALL carry `i="llm"`, `trg="coin"`, `fb="error"`
+- **THEN** the step's action SHALL come from the `SataChain` stage, with `dec.src="sata"`, never `llm`
+- **AND** `dec.own` SHALL carry `i="llm"`, `trg="coin"`, `fb="error"`
 
 #### Scenario: breaker-open steps decide without the LLM
 - **WHEN** the circuit breaker is OPEN for a window spanning several steps

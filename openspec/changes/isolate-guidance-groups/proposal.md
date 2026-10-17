@@ -78,8 +78,9 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
 - **BREAKING**: `Feature.FRONTIER` is renamed `NAV_FRONTIER` and depends on the static provider, not on MOP (D-A1).
   Typed input reads the static provider.
 - **The step becomes a fixed sequence of owners** (plan §4.2): guards (foreign/tree) → model update → exploration
-  guards (Budget, restart; P-2) → **LLM coin** → **MOP coin** → SATA with the scorer chain → refiners (input text)
-  → Monkey events. Each step records its owner in `dec.own`.
+  guards (Budget, restart; P-2) → LLM triggers and **LLM coin** → MOP launcher → component trigger (side effect)
+  → **MOP coin** → SATA with the scorer chain → refiners (input text) → Monkey events. Each step records its
+  owner in `dec.src` and the intended owner in `dec.own`. At most one LLM call is made per step.
 - **LLM coin with declared gates** (D-A4, D-A6, D-A17, §4.4): `LlmGate { name(); admits(ctx); }` with
   `MinActionsGate(3)` and `BreakerGate`, composed from the plan. The SATA buffer is no longer a gate: the coin wins
   over a non-empty buffer, which is abandoned **without** `weakenStateTransition` (P-4, `dec.buf`). The new-state
@@ -87,8 +88,8 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
 - **MOP coin** (D-A10, D-A15): after the LLM (or first, with the LLM off). Eligible when the screen holds an action
   with an unretired target weight not yet tried in this activity; picks the highest weight; `p_M` configurable,
   default 1.0. **BREAKING**: the MOP shortcut leaves `SataAgent` and becomes this decider.
-- **Own RNG streams** (P-3): the LLM coin, the MOP coin and fuzzing draw from streams derived from the run seed,
-  every step, before any gate.
+- **Own RNG streams** (P-3): the LLM coin, the MOP coin, the component coin and fuzzing draw from streams derived
+  from the run seed, every step, before any gate.
 - **Scorers are additive and independent** (R1, §4.3): each writes its own field and never reads the current
   priority. SATA reads weights only where APE already does (roulettes, least-visited tie). Extension points carry
   the APE default including RNG consumption: X1 least-visited tie (R2: largest scorer sum; with zero scorers this
@@ -106,8 +107,10 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
   (`utils/MopData.java:745`).
 - **No-key changes declared** (P-6): deterministic form fill and submit exclusion (addon F) become governed by
   `formCompletionEnabled`; the keyless bug fixes are listed in BASE.
-- **Telemetry** (§5): new `dec` fields `own`, `cfc`, `draw`, `nav`, `inp`, `restart`, `bmc`, `strat`, `rot`, `buf`;
-  new `RUN_END` counters; the variant name in `RUN_START`. Every new computation is pure (no RNG, no
+- **Telemetry** (§5): new `dec` fields `own`, `cfc` (replaces `cf`), `draw`, `nav`, `inp`, `restart`, `bmc`,
+  `strat`, `rot`, `buf`, `navf` and `trig`; `wtgsrc` removed; `dec.src` becomes the executed owner and `dec.ch`
+  gains `mop_coin`, `budget` and `restart`; new `RUN_END` counters; the variant name in `RUN_START`, whose `v`
+  becomes 2. Every new computation is pure (no RNG, no
   `resolveAction`, no cache effect). Completeness rule: every mechanism that can decide or change a step appears in
   the trace.
 - **Rotation fix** (D-A9): port only the code files of `f993081f` and `3b35073a` from the abandoned branch
@@ -124,8 +127,8 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
   providers, and the six cell presets.
 
 ### Modified Capabilities
-- `run-spec`: group keys, cell presets, `NAV_FRONTIER`, new keys (`p_M`, gate parameters, X1 variant), variant name
-  in `RUN_START`.
+- `run-spec`: group keys, cell presets, `NAV_FRONTIER`, `MOP_LAUNCHER`, new keys (`p_M`, gate and breaker
+  parameters), retired keys, variant name in `RUN_START`.
 - `decision-pipeline`: the step sequence of owners, guards before the LLM coin, the MOP coin, the launcher cadence,
   own RNG streams.
 - `llm-routing`: the coin, declared gates, buffer preemption, triggers' interaction with the coin.
@@ -145,14 +148,23 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
   data, and the intent carries the filter's `data`/`type`; the launcher's global cadence.
 - `exploration`: LLM hooks without the buffer gate, the restart as a guard, the fuzz stream, and the addon read
   sites (MODEL_MENU, the guards) reading the plan.
+- `ui-coverage`: the UICOV `mopReach` token is written only when MOP is mounted.
+- `activity-budget`: the budget and the activity-stable restart become ADDONS members read through the plan.
+- `ui-tree`: the AndroidX/WebView enhancements read `TREE_ENHANCEMENTS` from the plan.
+- `static-analysis-entrypoints`: the derived artifact's intent filters gain the additive `data` member.
+- `aperv-tool`: the six cell variants and their push rules (mirror of the rv-android sister change).
 
 ## Impact
 
 - **Code** (paths under `src/main/java/com/android/commands/monkey/ape/`): `runtime/{Feature,KeyOwnership,Presets,
-  RunSpec}`, `telemetry/{EventSink,StepRecord,NdjsonSink}`, `agent/SataAgent`, `agent/StatefulAgent`,
-  `agent/ApeAgent`, `agent/MopCounterfactual`, `model/State`, `agent/pipeline/*`, `agent/scoring/*`,
-  `llm/ApePromptBuilder`, `llm/ScreenshotCapture`, `AndroidDevice`, `utils/MopData`, new `StaticGuiModel`,
-  `MopCoinStage`, gate and extension-point classes; their tests.
+  RunSpec,RunSpecEcho,RunContext}`, `telemetry/{EventSink,StepRecord,NdjsonSink,NoopSink,RunCounters}`,
+  `agent/{SataAgent,StatefulAgent,ApeAgent,FormCompletion}`, `model/{State,ModelAction,MopCounterfactual}`,
+  `agent/pipeline/*`, `agent/scoring/*`, `llm/{ApePromptBuilder,ScreenshotCapture,LlmClient,LlmCircuitBreaker,
+  LlmEngine}`, `AndroidDevice`, `../MonkeySourceApe`, `tree/{GUITreeNode,GUITreeBuilder}`,
+  `utils/{MopData,MopScorer,MopContext,TypedInputGenerator,ComponentInfo,Config}`; new `utils/StaticGuiModel`,
+  `utils/StaticArtifactLoader`, `agent/StepRng`, `agent/MopInteractionLedger`, `model/ScorerCounterfactual`,
+  `MopCoinStage`, `RestartStage`, gate, extension-point and prompt-contribution classes; their tests, the oracle
+  scaffold and the goldens.
 - **Wire format**: the artifact stays `formatVersion: 2`. `derive_mop_artifact.py` gains one additive member, the
   reduced `data` block of each component intent filter (D-B13, rv-android sister change); everything else in the
   derive is unchanged.

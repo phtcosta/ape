@@ -50,8 +50,9 @@ display (`getRealDisplay(DEFAULT_DISPLAY).getRotation()`), the same display `get
 from, so the size and the rotation describe one orientation. It SHALL NOT call `IWindowManager.getRotation()`,
 which does not exist on API 30.
 
-The same `getRotation()` value SHALL be written on every step as `dec.rot`, with `0` written and `-1` when
-unreadable (`event-sink`). Whether a call saw a landscape screen can then be read from the trace.
+The same `getRotation()` value SHALL be written on every step as `dec.rot`, a value in `-1..3`: the rotation
+`0..3`, `0` included, or `-1` when unreadable (`event-sink`). `dec.rot` records the raw value; the capture uses
+`displayRotation` of it. Whether a call saw a landscape screen can then be read from the trace.
 
 #### Scenario: Successful capture via SurfaceControl
 
@@ -91,7 +92,9 @@ exploration loop from cascading LLM failures. Its two parameters SHALL come from
 - `openDurationMs` = `ape.llmBreakerOpenMs`, default `60000`.
 
 The breaker SHALL have no constructor that supplies defaults of its own. When `ape.llmBreakerFailures` is `0`,
-the `BreakerGate` is not mounted (`llm-routing` "Declared LLM Gates"), and no breaker decision gates a call.
+the `BreakerGate` is not mounted (`llm-routing` "Declared LLM Gates"): the breaker is then never consulted, so
+`shouldAttempt()` is never called, no breaker decision gates a call, and no `llm[]` entry with
+`result:"breaker_open"` is ever emitted; `RUN_END.counters.gateBreaker` stays `0`.
 
 **State transitions:**
 - CLOSED: normal operation. `recordFailure()` increments the failure counter. When the counter reaches `failureThreshold` (default: 3), transition to OPEN.
@@ -162,7 +165,7 @@ Three further keys are owned by the plan's `LLM` feature and read through `spec(
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `ape.llmGateMinActions` | int | `3` | `MinActionsGate(min)`: an LLM stage calls only on a state with at least `min` actions; `0` = gate not mounted |
-| `ape.llmBreakerFailures` | int | `3` | `LlmCircuitBreaker` failure threshold; `0` = `BreakerGate` not mounted |
+| `ape.llmBreakerFailures` | int | `3` | `LlmCircuitBreaker` failure threshold; `0` = `BreakerGate` not mounted, so the breaker is never consulted and emits no `breaker_open` entry |
 | `ape.llmBreakerOpenMs` | long | `60000` | `LlmCircuitBreaker` open duration in milliseconds |
 
 Their defaults reproduce the former behaviour: `size() > 2`, 3 failures and 60 s.

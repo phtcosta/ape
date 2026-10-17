@@ -6,7 +6,7 @@ MOP guidance becomes one of five behaviour groups mounted by declaration (`guida
 
 After this change:
 
-- the artifact path is `ape.staticDataPath` (`STATIC_DATA`), and the loader splits wire format 2, unchanged, into `StaticGuiModel` (WTG, widget metadata) and `MopData` (targets, distances, handlers, MOP activities). STATIC reads only the first; MOP reads both (P-1, D-B2);
+- the artifact path is `ape.staticDataPath` (`STATIC_DATA`), and the loader splits wire format 2, unchanged apart from the additive intent-filter `data` member (D-B13), into `StaticGuiModel` (WTG, widget metadata) and `MopData` (targets, distances, handlers, MOP activities). STATIC reads only the first; MOP reads both (P-1, D-B2);
 - the MOP group is switched by `ape.mop`, and every MOP member depends on it;
 - the MOP shortcut leaves SATA and becomes the **MOP coin**, a decider placed after the LLM coin: eligible when the screen holds an action with an unretired target weight not yet tried in this activity, it takes the action with the largest weight with probability `p_M` (`ape.mopCoinPercentage`, default 1.0), drawn from its own stream (D-A10, D-A15, D-B10);
 - `MopInteractionLedger` records the first interaction per (activity, `xpath|ActionType`); the coin and target retirement share it, and `ape.mopTargetPickCap` is retired;
@@ -19,7 +19,7 @@ The launcher's global cadence is specified in `component-triggering` and `decisi
 
 The following replace or extend main-spec invariants at archive:
 
-- **INV-MOP-04** (amended; replaces the main spec's text): When `MOP` is absent from the resolved plan, no MOP scoring pass, no MOP coin, no ledger, no retirement and no MOP navigation variant SHALL be constructed, and no `MopData` SHALL be handed to any consumer. A cell without `MOP` SHALL behave identically whether or not `ape.staticDataPath` names an artifact, except for the STATIC consumers.
+- **INV-MOP-04** (amended; replaces the main spec's text): When `MOP` is absent from the resolved plan, no MOP scoring pass, no MOP coin, no ledger, no retirement and no MOP navigation variant SHALL be constructed, and no `MopData` SHALL be handed to any consumer: `getMopData()` SHALL return null if and only if `MOP` is not mounted, even when the artifact was loaded for STATIC (design D-B14.21), and the UICOV coverage dump SHALL omit `mopReach`. A cell without `MOP` SHALL behave identically whether or not `ape.staticDataPath` names an artifact, except for the STATIC consumers.
 - **INV-MOP-22** (amended): A run whose plan mounts `STATIC` or `MOP` SHALL either obtain both providers from `StaticArtifactLoader.load` or abort; it SHALL never run with a mounted group and no data.
 - **INV-MOP-06** (amended): `MopScorer.scoreWtg()` SHALL return 0 when `WTG` is absent from the plan, when `StaticGuiModel` holds no WTG data, when the widget has no matching WTG transition, or when the transition's target is not in the selected MOP-activity set. The weight SHALL be injected from the plan (`ape.mopWeightWtg`); no scorer SHALL read it from `Config`.
 - **INV-MOP-23** (amended): Static-widget resolution for typed input and MOP resolution SHALL walk the same containment node set: the node, up to two ancestors, and its descendants two levels down. On each node, MOP resolution applies `MopData.lookup` (stamp, then id key), and typed-input resolution applies `StaticGuiModel.getWidget` (id key). The two paths SHALL NOT diverge in which nodes they visit or in the order they visit them.
@@ -35,7 +35,7 @@ The following replace or extend main-spec invariants at archive:
 
 ### Requirement: MOP Coin Decider
 
-`MopCoinStage` (feature `MOP_COIN`, a MOP member activated by `ape.mopCoinPercentage`, POSITIVE, neutral `0`, jar default `1.0`, clamped to `[0,1]` at resolution — no abort on a value) SHALL be the MOP group's decider. It sits in the decision pipeline after `MOP_LAUNCHER` and `COMPONENT_TRIGGER` and before `SATA_CHAIN` (`decision-pipeline`), so with the LLM mounted it decides only the steps the LLM leaves — the `1 − p_L` steps and the steps a gate, an error or a decline returns — and with the LLM off it is the first decider after the guards (plan D-A10).
+`MopCoinStage` (feature `MOP_COIN`, a MOP member activated by `ape.mopCoinPercentage`, POSITIVE, neutral `0`, jar default `1.0`, clamped to `[0,1]` at resolution — no abort on a value) SHALL be the MOP group's decider. It sits in the decision pipeline after `MOP_LAUNCHER` and `COMPONENT_TRIGGER` and before `SATA_CHAIN` (`decision-pipeline`), so with the LLM mounted it decides only the steps the LLM leaves — the `1 − p_L` steps and the steps a gate, an error or a decline returns — and with the LLM off it is the first decider after the guards and the launcher (the component trigger is a side effect, not a decider; plan D-A10). A step makes at most one LLM call (design decision A3): once an LLM stage has called, the later LLM stages return `Continue` without calling, so the MOP coin is reached after at most one call.
 
 **Eligibility.** The stage is eligible on a step when the new state's `getActions()` holds at least one action that is valid, enabled and target-requiring, and that meets the three conditions of design D-B10:
 
@@ -101,6 +101,8 @@ Priority SHALL NOT be a key, so no ADDONS or STATIC scorer can steer the coin (r
 - **THEN** the LLM coin SHALL lose, the MOP coin SHALL take the step, and the record SHALL carry `dec.src:"mop"`
 - **AND WHEN** `u_L = 0.3` and the LLM call returns a usable action
 - **THEN** the LLM SHALL take the step and the MOP coin SHALL NOT be reached
+- **AND WHEN** `u_L = 0.3`, the new-state stage has already called the model on the step and its answer was declined
+- **THEN** the LLM coin SHALL return `Continue` without a second call, and the MOP coin SHALL take the step with `u_M = 0.1`
 
 ### Requirement: MopInteractionLedger — First Interaction per Activity
 
@@ -152,10 +154,12 @@ Both variants read `MopData` through `MopScorer.stateMopDensity` ("MopScorer —
 
 ### Requirement: MopData — Static Analysis JSON Loader
 
-`StaticArtifactLoader.load(String path, String expectedPackage, String expectedMainActivity)` SHALL parse the **derived compact artifact** (`formatVersion: 2`) produced host-side by `aperv-tool` — wire format 2 **unchanged**, the derive untouched (design P-1) — exactly once, and SHALL yield two read-only providers (design § Architecture):
+`StaticArtifactLoader.load(String path, String expectedPackage, String expectedMainActivity)` SHALL parse the **derived compact artifact** (`formatVersion: 2`) produced host-side by `aperv-tool` — wire format 2, unchanged apart from the additive intent-filter `data` member (D-B13; design P-1) — exactly once, and SHALL yield two read-only providers (design § Architecture):
 
 - **`StaticGuiModel`** — the static GUI model: `package`, `mainActivity`, the WTG view, the widget metadata and the manifest components with their intent filters (design D-B13). The STATIC group reads only this provider (`NavFrontierPass`, typed input, the prompt's widget metadata, component triggering).
-- **`MopData`** — the spec targets: the target count, the MOP flags and distance pairs of widgets and handlers, `activityDist`, the MOP-activity sets, the per-component `reachesMop` facts and the OPTIONSMENU gateways. The MOP group reads both providers.
+- **`MopData`** — the spec targets: the target count, the MOP flags and distance pairs of widgets and handlers, `activityDist`, the MOP-activity sets, the per-component `reachesMop` facts and the OPTIONSMENU gateways. The MOP group reads both providers: the MOP members that need the WTG or the components (`WtgPass`, `MopFrontierPass`, `MopScorer`, `MopLauncherStage`) read them from `StaticGuiModel` (plan P-1). `MopLauncherStage` reads the manifest activities, the main activity and the package from `StaticGuiModel`, and the MOP-activity census and `activityDist` from `MopData`.
+
+The agent's `getMopData()` SHALL return null if and only if `MOP` is not mounted, even when the loader ran because `STATIC` is mounted (design D-B14.21): a `MopData` parsed for a STATIC-only cell is not handed to any consumer. No MOP consumer SHALL then hold a `MopData` reference, and the UICOV coverage dump (`SataAgent.dumpCoverage`) SHALL write `mopReach` only when `MOP` is mounted and omit it otherwise, consistent with `ACT.mop` (`event-sink` INV-SNK-18).
 
 The loader runs if and only if the resolved plan mounts `STATIC` or `MOP` (design D-B14.20); both groups require `STATIC_DATA` (`ape.staticDataPath` set, `guidance-groups`). It hands each provider only to the mounted members that consume it. A path given while neither group is mounted is inert: it is listed in `RUN_START.inert` (`run-spec`), and no load, no `MOP_DATA` census and no rejection follow. Neither provider is constructed in a cell without the artifact (`base`). The items below say which provider serves each part of the wire:
 
@@ -190,6 +194,13 @@ Unknown JSON keys within `formatVersion: 2` are ignored (INV-MOP-11). This toler
 - **AND** `activityHasMopOptionsMenu("br.unb.cic.cryptoapp.MainActivity")==true` (gateway via WTG edges to the MOP sub-activities, INV-MOP-13)
 - **AND** `StaticGuiModel.getWidget` for the `spinnerMessageDigest` widget SHALL carry its 13 `entries` and its metadata fields
 - **AND** `StaticGuiModel`'s `getActivities().size()==4`; `getProviders().size()==1` with `authorities=="br.unb.cic.cryptoapp.androidx-startup"`; `getReceivers().isEmpty()`; `getServices().isEmpty()`; `MopData` SHALL record `reachesMop==false` for every component
+
+#### Scenario: the as cell loads the artifact and exposes no MopData
+- **WHEN** the `as` cell runs with `ape.staticDataPath=/data/local/tmp/mop-artifact.json` on `cryptoapp.apk.mop.json`
+- **THEN** the loader SHALL parse the artifact once, `StaticGuiModel` SHALL be non-null and `getMopData()` SHALL return null
+- **AND** no constructed component SHALL hold a `MopData` reference, and the UICOV coverage dump SHALL carry no `mopReach` member
+- **AND WHEN** the `as_mop` cell runs on the same artifact
+- **THEN** `getMopData()` SHALL be non-null and the UICOV dump SHALL carry `mopReach`
 
 #### Scenario: Legacy full static-analysis JSON is rejected
 - **WHEN** `StaticArtifactLoader.load()` is pointed at a full static-analysis JSON (top-level `windows`/`reachability`, no `formatVersion`)
@@ -538,7 +549,7 @@ Its only callers SHALL be the MOP variants of the SATA extension points X3 and X
 
 ### Requirement: Navigation MOP-Tiebreak Decision Log
 
-When the X4 MOP variant (`MopTrivialPathPick`) chooses among multiple shortest paths and the `stateMopDensity` comparison is decisive (densities not all equal), it SHALL log exactly one line: `[APE-RV] Nav MOP tiebreak: density=<d> paths=<n>`, where `<d>` is the winning path's end-state density and `<n>` the number of candidate paths, and the step's record SHALL carry `dec.nav` with `x:"X4"`, `c:"mop"`, `alt:1`, `drew:0` (`action-selection`). When all densities are equal (the `randomPick` fallback) no line SHALL be logged and `dec.nav` carries `alt:0`, `drew:1`. The APE default, mounted without `MOP`, never logs this line. The X3 variant does not log (it runs inside a candidate loop; logging there would flood the trace); its decision is visible in `dec.nav`.
+When the X4 MOP variant (`MopTrivialPathPick`) chooses among multiple shortest paths and the `stateMopDensity` comparison is decisive (densities not all equal), it SHALL log exactly one line: `[APE-RV] Nav MOP tiebreak: density=<d> paths=<n>`, where `<d>` is the winning path's end-state density and `<n>` the number of candidate paths, and the step's record SHALL carry `dec.nav` with `x:"X4"`, `c:"mop"`, `alt:1`, `drew:0` (`action-selection`). When all densities are equal (the `randomPick` fallback) no line SHALL be logged and `dec.nav` carries `alt:0`, `drew:1`. The APE default, mounted without `MOP`, never logs this line. The X3 variant does not log (it runs inside a candidate loop; logging there would flood the trace); its decision is visible in `dec.nav`. `dec.nav.alt` SHALL be `1` if and only if the MOP variant decided by its own rule — for X3, it replaced the incumbent; for X4, the density chose the path with no draw — and `0` otherwise (design decision A2). X1 has no MOP variant and always records `alt:0`.
 
 #### Scenario: decisive density logs once
 - **WHEN** in a cell with `MOP` 3 candidate paths have end-state densities 0, 0, 2
@@ -821,7 +832,7 @@ For each invocation:
 - **AND** the header is kept because `openspec archive` matches scenarios by name: the reachability filter it names is removed (design D-B13)
 
 #### Scenario: Skips non-exported activities even when activity triggering is enabled
-- **WHEN** the plan carries `ACTIVITY_TRIGGER` and the artifact lists activities
+- **WHEN** the plan carries `MOP_LAUNCHER` (formerly `ACTIVITY_TRIGGER`) and the artifact lists activities
 - **THEN** the tuple list SHALL contain no tuple from any activity, exported or not (`exported` is not on the wire)
 
 #### Scenario: Round-robins all intent filter actions
@@ -860,7 +871,7 @@ For each invocation:
 
 ### Requirement: MopData — Package / MainActivity Sanity Check
 
-`StaticArtifactLoader.load(String path, String expectedPackage, String expectedMainActivity)` SHALL compare the artifact's top-level `package` / `mainActivity` against the optional expected values, before either provider is handed out. When `expectedPackage` non-null and not equal to the parsed value, OR `expectedMainActivity` non-null and not equal to the parsed value, a `WARN` log line naming both pairs SHALL be emitted. The strict mode is the plan key `ape.mopStrictPackageMatch`, which keeps its name and is owned by `STATIC_DATA` (`StaticParams.strictPackageMatch`, design D-B14.3), because the package check is on the static model; it is read through the plan, never from `Config`. When it is `true` and either comparison mismatches, `load` SHALL return no provider (reject reason `package-mismatch`). Default behavior (`false`) is warn-only — both providers are still returned. The generator copies both scalars verbatim from the full JSON, so a mismatch means the wrong artifact was derived or pushed for this APK.
+`StaticArtifactLoader.load(String path, String expectedPackage, String expectedMainActivity)` SHALL compare the artifact's top-level `package` / `mainActivity` against the optional expected values, before either provider is handed out. When `expectedPackage` non-null and not equal to the parsed value, OR `expectedMainActivity` non-null and not equal to the parsed value, a `WARN` log line naming both pairs SHALL be emitted. The strict mode is the plan key `ape.mopStrictPackageMatch`, which keeps its name and is owned by `STATIC_DATA` (`StaticParams.strictPackageMatch`, design D-B14.3), because the package check is on the static model; it is read through the plan as `spec.staticData().strictPackageMatch()`, never from `spec.mop()` and never from `Config`. When it is `true` and either comparison mismatches, `load` SHALL return no provider (reject reason `package-mismatch`). Default behavior (`false`) is warn-only — both providers are still returned. The generator copies both scalars verbatim from the full JSON, so a mismatch means the wrong artifact was derived or pushed for this APK.
 
 The production call site (`StatefulAgent` constructor, reached only when `STATIC` or `MOP` is mounted) SHALL pass the path from `StaticParams` and the runtime package name and main activity of the app under test, making the sanity check reachable in production. The three-argument form is the sole loader entry point.
 

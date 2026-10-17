@@ -74,8 +74,8 @@ this capability.
 
 - `RunSpec.features` — the group features and the members whose group is in the plan
 - `StaticGuiModel` — read-only WTG, widget-metadata and component queries (intent filters with their `data`), plus
-  the artifact's package and main activity (consumers: the STATIC members, and the MOP members that join the WTG
-  with the MOP activities)
+  the artifact's package and main activity (consumers: the STATIC members, and the MOP members that need the WTG or
+  the components — `WtgPass`, `MopFrontierPass`, `MopScorer`, `MopLauncherStage`; plan P-1, "MOP reads both")
 - `MopData` — read-only target queries: targets, `dist`, `handlers`, `activityDist`, MOP activities, menu gateways
   (consumers: the MOP members only)
 - `MOP_DATA` — the load census record, unchanged
@@ -94,8 +94,10 @@ this capability.
 ## Invariants
 
 - **INV-GRP-01**: Every member feature of ADDONS, STATIC, MOP and LLM SHALL declare its group feature as a
-  dependency in `Feature`, and the group features SHALL be the only roots besides `STATIC_DATA`: `ADDONS` and
-  `LLM` are roots, `STATIC` and `MOP` require `STATIC_DATA`. A member SHALL be in `features` only when its group is.
+  dependency in `Feature`, and the group features SHALL be the only roots besides `STATIC_DATA` and the BASE root
+  `FUZZING`: `ADDONS` and `LLM` are roots, `STATIC` and `MOP` require `STATIC_DATA`. `FUZZING` is exempt: BASE has
+  no group feature, so `FUZZING` is a root and not a group member. A member SHALL be in `features` only when its
+  group is.
   Coverage: `FeatureDerivationTest`, `GroupMountingTest`.
 - **INV-GRP-02**: When `ape.staticDataPath` is absent, no STATIC or MOP feature SHALL be in `features`. A plan that
   states `ape.static=true`, `ape.mop=true`, or an explicit activation key of a STATIC or MOP member, without
@@ -116,11 +118,14 @@ this capability.
   (`heuristicInput`), `MonkeySourceApe.java` (the foreign-activity and tree-package guards) and
   `utils/MopData.java` (`mopActivitySourceComponents`) SHALL read `spec.has(<member>)`. Coverage:
   `GroupReadSiteTest`.
-- **INV-GRP-07**: A run whose plan does not contain `MOP` SHALL carry no MOP decision and no MOP field. No
-  `StepRecord` SHALL carry `dec.src` equal to `mop` or `launcher`, a non-zero `mop`, `mopf`, `wtg` or `menu` field,
-  or a `mopd`, `mops`, `ret`, `mopx` or `uM` member. No LLM prompt SHALL carry a MOP marker, the MOP count, the
-  `MOP NAVIGATION` section or a MOP system-prompt sentence. Coverage: `CleanControlTest` on the cells `base`, `as`
-  and `as_llm`.
+- **INV-GRP-07**: A run whose plan does not contain `MOP` SHALL carry no MOP decision and no MOP field. The full
+  list of trace fields is `event-sink` INV-SNK-18 (clean control): among them, no `ACT` dictionary entry SHALL carry
+  a `mop` member; no `StepRecord` SHALL carry `dec.src` or `dec.own.i` equal to `mop` or `launcher`, a `mop`,
+  `mopf`, `wtg`, `menu`, `mopd`, `mops`, `ret` or `mopx` member, `dec.own.uM`, a `dec.cfc` key for a MOP scorer or
+  `dec.nav.c` equal to `"mop"`; `RUN_END.counters.coinMop`, `launches`, `stampHits` and `retired` SHALL be `0`.
+  The UICOV coverage dump SHALL omit `mopReach` (design D-B14.21). No LLM prompt SHALL carry a MOP marker, the MOP
+  count, the `MOP NAVIGATION` section or a MOP system-prompt sentence. Coverage: `CleanControlTest` on the cells
+  `base`, `as` and `as_llm`.
 
 ## ADDED Requirements
 
@@ -144,10 +149,10 @@ Every member SHALL declare its group as a dependency:
 
 | Group | Members |
 |---|---|
-| BASE | `FUZZING` |
+| BASE | `FUZZING` (a root, not a group member: BASE has no group feature; INV-GRP-01) |
 | ADDONS | `MODEL_MENU`, `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART` |
 | STATIC | `NAV_FRONTIER`, `TYPED_FUZZ`, `COMPONENT_TRIGGER` |
-| MOP | `WTG`, `MENU_GATEWAY` (also requires `MODEL_MENU`), `MOP_FRONTIER`, `ACTIVITY_TRIGGER`, `MOP_ACTIVITY_SOURCE`, `MOP_COIN` |
+| MOP | `WTG`, `MENU_GATEWAY` (also requires `MODEL_MENU`), `MOP_FRONTIER`, `MOP_LAUNCHER`, `MOP_ACTIVITY_SOURCE`, `MOP_COIN` |
 | LLM | `LLM_NEW_STATE`, `LLM_STAGNATION`, `LLM_COIN` |
 
 A member whose group is off SHALL be absent from the plan without an abort when its activation key holds the jar
@@ -163,7 +168,8 @@ The addon "least-visited priority tie-break" (G) SHALL NOT exist as a feature. T
 - **WHEN** a properties file sets `ape.staticDataPath=/data/local/tmp/mop-artifact.json` and no group key
 - **THEN** resolution SHALL succeed with `features` equal to `[FUZZING, STATIC_DATA]`
 - **AND** `TYPED_FUZZ` (jar default `ape.fuzzInputTyped=true`), `NAV_FRONTIER` (jar default
-  `ape.frontierBoostWeight=200`) and `ACTIVITY_TRIGGER` (jar default `ape.activityTriggerEnabled=true`) SHALL be
+  `ape.frontierBoostWeight=200`) and `MOP_LAUNCHER` (formerly `ACTIVITY_TRIGGER`; jar default
+  `ape.activityTriggerEnabled=true`) SHALL be
   absent, with no abort
 - **AND** the artifact SHALL NOT be loaded, no `MOP_DATA` record SHALL be written, and `ape.staticDataPath` SHALL be
   listed in `RUN_START.inert` (design D-B14.20)
@@ -200,10 +206,13 @@ When `STATIC_DATA` is in the plan and neither group is mounted, the path is iner
 - `MopData`: `targets`, per-widget `dist`, `handlers`, `activityDist`, the MOP activity set and the menu gateways.
 
 The loader SHALL hand `StaticGuiModel` to the mounted STATIC members and both providers to the mounted MOP members,
-and nothing to a member that is not mounted. `NAV_FRONTIER` (`agent/scoring/NavFrontierPass`) and the typed-input
+and nothing to a member that is not mounted. The MOP members that need the WTG or the components (`WtgPass`,
+`MopFrontierPass`, `MopScorer`, `MopLauncherStage`) read `StaticGuiModel` for them and `MopData` for the targets
+(plan P-1, "MOP reads both"). `NAV_FRONTIER` (`agent/scoring/NavFrontierPass`) and the typed-input
 generator and the component-trigger pool SHALL read `StaticGuiModel` only. The wire format SHALL remain format 2.
-`formatVersion`, the generator string and the `source.digest` chain are unchanged; the derive adds one optional
-member, the reduced `data` of each component intent filter, which the loader reads as "no data" when absent.
+`formatVersion`, the generator string and the `source.digest` chain are unchanged, and so is the format apart from
+the additive intent-filter `data` member (D-B13): the derive adds one optional member, the reduced `data` of each
+component intent filter, which the loader reads as "no data" when absent.
 `MOP_DATA` remains the load census.
 
 #### Scenario: STATIC reads no MOP data
@@ -255,7 +264,7 @@ The resolved `features` per cell SHALL be:
 | Cell | `features` |
 |---|---|
 | `base` | `FUZZING` |
-| `mop` | `FUZZING`, `STATIC_DATA`, `MOP`, `WTG`, `MOP_FRONTIER`, `ACTIVITY_TRIGGER`, `MOP_ACTIVITY_SOURCE`, `MOP_COIN` |
+| `mop` | `FUZZING`, `STATIC_DATA`, `MOP`, `WTG`, `MOP_FRONTIER`, `MOP_LAUNCHER`, `MOP_ACTIVITY_SOURCE`, `MOP_COIN` |
 | `as` | `FUZZING`, `ADDONS`, the nine former addon features, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART`, `STATIC_DATA`, `STATIC`, `NAV_FRONTIER`, `TYPED_FUZZ`, `COMPONENT_TRIGGER` |
 | `as_mop` | the `as` features, the `mop` MOP features, and `MENU_GATEWAY` |
 | `as_llm` | the `as` features, and `LLM`, `LLM_NEW_STATE`, `LLM_STAGNATION`, `LLM_COIN` |
@@ -351,10 +360,15 @@ plan:
 | `HEURISTIC_INPUT` | `agent/ApeAgent.java:252` | `spec.has(Feature.HEURISTIC_INPUT)` |
 | `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD` | `MonkeySourceApe.java:818,837` | `spec.has(...)` of each |
 | `MOP_ACTIVITY_SOURCE` | `utils/MopData.java:207` | `spec.has(Feature.MOP_ACTIVITY_SOURCE)` |
+| `FORM_COMPLETION` | `agent/ApeAgent.java:199`, `agent/StatefulAgent.java:305`, `agent/SataAgent.java:558,1477` (formerly `Config.formCompletionEnabled`) | `spec.has(Feature.FORM_COMPLETION)` |
+| `FUZZING` (BASE) | `MonkeySourceApe.java:876` (formerly `Config.doFuzzing`, `Config.fuzzingRate`) | `spec.has(Feature.FUZZING)` and its `ape.fuzzingRate` parameter |
+| restart wrapping (BASE) | `agent/ApeAgent.java:280` (formerly `Config.checkRestart`) | the `ExplorationParams` value of `ape.checkRestart` |
 | `BACK_MENU_CAP` | the BACK/MENU cap in `SataAgent` | `spec.has(Feature.BACK_MENU_CAP)` and its parameter |
 | `ACTIVITY_STABLE_RESTART` | the activity-stability restart check | its parameter; absent ⇒ threshold `Integer.MAX_VALUE` |
 
-When a member is absent, its site SHALL behave as upstream APE does for that mechanism. The absent
+The two BASE rows carry no group switch; they read the plan so that `Config` is not a second authority over a
+planned key (design D-B6, decision A10), and they change no behaviour. When a member is absent, its site SHALL
+behave as upstream APE does for that mechanism. The absent
 `ACTIVITY_STABLE_RESTART` threshold is the upstream `Integer.MAX_VALUE` (`8f51b99c` `utils/Config.java:48`).
 
 #### Scenario: base runs without the model menu
@@ -371,16 +385,18 @@ When a member is absent, its site SHALL behave as upstream APE does for that mec
 
 - **WHEN** `GroupReadSiteTest` scans the read sites of the table
 - **THEN** none of them SHALL read `Config.modelMenuEnabled`, `Config.treeEnhancementsEnabled`,
-  `Config.heuristicInput`, `Config.foreignActivityGuard`, `Config.treePackageGuard` or
-  `Config.mopActivitySourceComponents`
+  `Config.heuristicInput`, `Config.foreignActivityGuard`, `Config.treePackageGuard`,
+  `Config.mopActivitySourceComponents`, `Config.formCompletionEnabled`, `Config.doFuzzing`, `Config.fuzzingRate` or
+  `Config.checkRestart`
 
 ### Requirement: Component Triggering as a STATIC Member
 
 `COMPONENT_TRIGGER` SHALL require `STATIC`, not `MOP`, and SHALL be activated by `ape.componentPercentage > 0`
 (jar default `0.0`; the STATIC block sets `0.03`). Its trigger pool SHALL be built from the receivers, services and
 providers of the artifact's manifest that the existing admission rules accept (permission, same package), read from
-`StaticGuiModel`: one tuple per (intent filter × action) of a receiver or a service, a name-only tuple for every
-service with no filter action and none for a receiver with no filter action, and the provider operations for every
+`StaticGuiModel`, which also supplies the package the intents are addressed to: one tuple per (intent filter ×
+action) of a receiver or a service, a name-only tuple for every service with no filter action, whether or not it
+lists `targetMethods`, and none for a receiver with no filter action, and the provider operations for every
 provider with `authorities` (design D-B14.15; `component-triggering` INV-CT-03). `triggerMopComponent()` is renamed
 `triggerComponent()`. The pool SHALL NOT be filtered by `reachesTarget` or by any other MOP datum. The component coin
 SHALL draw from its own stream derived from the run seed, every step while the feature is mounted
@@ -400,7 +416,7 @@ the static analysis.
 - **WHEN** the `as` cell runs on an artifact whose manifest declares a same-package receiver with
   `reachesMop` false
 - **THEN** that receiver SHALL be in the trigger pool
-- **AND** no `MopData` SHALL be constructed
+- **AND** `getMopData()` SHALL be null and no MOP consumer SHALL hold a `MopData` reference (design D-B14.21)
 
 #### Scenario: a filter with a scheme and a MIME type
 
@@ -424,7 +440,8 @@ the prompt is built from the contributions of the mounted groups only (`llm-prom
 
 - **WHEN** the `as` cell runs and the trace is parsed
 - **THEN** no `StepRecord` SHALL carry `dec.src` equal to `mop` or `launcher`, or a `mop`, `mopf`, `wtg`, `menu`,
-  `mopd`, `mops`, `ret`, `mopx` or `uM` member
+  `mopd`, `mops`, `ret`, `mopx` or `uM` member, no `ACT` entry SHALL carry `mop`, and the UICOV dump SHALL carry no
+  `mopReach`
 - **AND** `navf` MAY be present, since `NAV_FRONTIER` is STATIC
 
 #### Scenario: the LLM without MOP sees no MOP instruction

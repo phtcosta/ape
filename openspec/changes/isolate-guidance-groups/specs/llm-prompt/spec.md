@@ -4,7 +4,7 @@
 
 `isolate-guidance-groups` mounts APE-RV's behaviour groups by plan declaration (design D-B1). The prompt was not built that way: `ApePromptBuilder` wrote MOP instructions into every system message whether or not MOP data was loaded (`ApePromptBuilder.java:223`, `:245`, `:262`, `:281`, `:292`), and it decided markers, the `N/M MOP.` count, the `MOP NAVIGATION` block and the static widget metadata by testing `mop != null` (plan §2.3). An LLM cell without MOP therefore told the model to prioritise `[DM]/[M]` elements it would never see, and the dependency of the LLM on MOP (D-A3) was implicit.
 
-This delta builds the prompt from the contributions of the mounted groups (plan §4.6, D-A3, D-A18 Q-8): MOP contributes the markers, the count, the `MOP NAVIGATION` section and the MOP sentences of the system message; STATIC contributes the widget metadata. Without a group its contribution does not exist. In a cell with MOP and LLM the LLM reads the MOP signal, as in E6 (D-A18 Q-8); in a cell with LLM and no MOP, no MOP instruction reaches the model. The MOP-free wording of each sentence is the existing sentence with its MOP clause deleted.
+This delta builds the prompt from the contributions of the mounted groups (plan §4.6, D-A3, D-A18 Q-8): MOP contributes the markers, the count, the `MOP NAVIGATION:` heading of `v17` and the MOP sentences of the system message; STATIC contributes the widget metadata. The visit context (`NEW state.` / `Visited <N>x.`) is not MOP and stays in every cell (in `v17` under the neutral heading `NAVIGATION:` when MOP is absent). Without a group its contribution does not exist. In a cell with MOP and LLM the LLM reads the MOP signal, as in E6 (D-A18 Q-8); in a cell with LLM and no MOP, no MOP instruction reaches the model. The MOP-free wording of each sentence is the existing sentence with its MOP clause deleted.
 
 ## Invariants
 
@@ -283,9 +283,15 @@ The text content SHALL include a compact one-line exploration context after the 
 - New state without MOP: `NEW state.`
 - Revisited state without MOP: `Visited <N>x.`
 
-The visit part (`NEW state.` / `Visited <N>x.`) is the builder's own. The count ` <N>/<M> MOP.` is the MOP contribution's context line (`MopPromptContribution.contextLine`), appended exactly when `Feature.MOP` is in the plan.
+The visit part (`NEW state.` / `Visited <N>x.`) is the builder's own: it is not a MOP signal and SHALL be rendered in every cell, with or without `Feature.MOP`. The count ` <N>/<M> MOP.` is the MOP contribution's context line (`MopPromptContribution.contextLine`), appended exactly when `Feature.MOP` is in the plan.
 
-`<M>` is the number of target-requiring actions. `<N>` is the number of those actions that have a resolved node and are MOP under the marker's per-action test ("MOP Marker Annotation", design D22): with a positive MOP weight under the run's `ape.mopScoring` mode. The test uses the D17 lookup with containment and, under `distance`, ignores retired targets. Both counts are per action, not per line, in every variant that shows the context: the default branch, `visual_only`, and `v17`'s `MOP NAVIGATION` block. The "with MOP" forms appear exactly when `Feature.MOP` is in the plan; the builder does not test for MOP data. In `v17`, the `MOP NAVIGATION:` block is the MOP contribution's section: with `Feature.MOP` it carries the visit part and the count, and without it the block, its heading included, is not rendered ("Prompt Built From Group Contributions").
+`<M>` is the number of target-requiring actions. `<N>` is the number of those actions that have a resolved node and are MOP under the marker's per-action test ("MOP Marker Annotation", design D22): with a positive MOP weight under the run's `ape.mopScoring` mode. The test uses the D17 lookup with containment and, under `distance`, ignores retired targets. Both counts are per action, not per line, in every variant that shows the context: the default branch, `visual_only`, and `v17`'s `MOP NAVIGATION` block. The "with MOP" forms appear exactly when `Feature.MOP` is in the plan; the builder does not test for MOP data.
+
+In `v17`, the context is a block after the SCREEN line, and the block is rendered in every cell:
+- with `Feature.MOP` it is the `MOP NAVIGATION:` block, byte-identical to the text before this change: the heading `MOP NAVIGATION:`, then the visit part followed by the count (e.g. `Visited 2x. 3/8 MOP.`). The heading is the MOP contribution's section ("Prompt Built From Group Contributions");
+- without `Feature.MOP` the block keeps the visit part under the neutral heading `NAVIGATION:` (e.g. `NAVIGATION:` then `NEW state.`), with no count. No `MOP` token appears in it.
+
+The SCREEN line (`SCREEN: <Activity> | <tested>/<widgets> elements tested | visits: <N>`) is not MOP and is unchanged in every cell; `UICoverageTracker` is untouched by this change.
 
 Until this change, `<N>` counted actions whose node's own id key had any aggregate flag (`buildExplorationContext`, `ApePromptBuilder.java:567-612`). That test differed from both the score and the marker, in the same three ways listed in "MOP Marker Annotation". With the shared test, a line has a marker if and only if at least one of its actions is counted in `<N>`.
 
@@ -315,11 +321,18 @@ Until this change, `<N>` counted actions whose node's own id key had any aggrega
 - **AND** target 4 has retired
 - **THEN** the context SHALL count that action out of `<N>`
 
-#### Scenario: v17 without MOP has no MOP NAVIGATION block
+#### Scenario: v17 without MOP keeps the visit context under NAVIGATION
 
-- **WHEN** variant `v17` builds a prompt in cell `as_llm` for a new state
-- **THEN** the user text SHALL NOT contain `MOP NAVIGATION:` nor `MOP.`
+- **WHEN** variant `v17` builds a prompt in cell `as_llm` for a new state whose screen lists 4 widgets, none visited
+- **THEN** the user text SHALL contain the line `NAVIGATION:` followed by the line `NEW state.`
+- **AND** it SHALL NOT contain `MOP NAVIGATION:`, `MOP.` or any other `MOP` token
+- **AND** its SCREEN line SHALL end `0/4 elements tested | visits: 0`, as in a cell with `Feature.MOP`
 - **AND** its last line SHALL be `Select action. Prioritize navigation to new screens.`
+
+#### Scenario: v17 with MOP keeps today's MOP NAVIGATION block
+
+- **WHEN** variant `v17` builds a prompt in cell `as_mop_llm` for a state visited 2 times where 3 of 8 target-requiring actions are MOP under the marker's per-action test
+- **THEN** the user text SHALL contain the line `MOP NAVIGATION:` followed by the line `Visited 2x. 3/8 MOP.`, byte-identical to the block the builder wrote before this change for the same state and actions
 
 ### Requirement: System Message of the v13 Variant
 
@@ -360,6 +373,60 @@ The `v13` system message SHALL NOT rank elements by how often they were visited,
 - **THEN** the system message SHALL NOT contain `type_text`
 - **AND** every other line SHALL be as written above
 
+### Requirement: Element List of the v13 and v17 Variants
+
+The `v13` (`UI elements:`) and `v17` (`ELEMENTS:`) element lists SHALL render **one line per widget**, not one line per action. A widget is the pair (target `Name`, resolved-node bounds) of a target-requiring action: two target-requiring actions whose `getTarget()` values are equal and whose resolved nodes' `getBoundsInScreen()` have the same four edges are one widget and share one line. The line is rendered from the resolved node of the widget's first action. Lines SHALL appear in the order of each widget's first target-requiring action in `actions`. An action whose node is not resolved, or whose bounds cannot be read, SHALL keep a line of its own, with no `@(x,y)` ("Single Coordinate Base").
+
+No line SHALL carry an ordinal prefix (`1. `, `2. `, …). Each line starts, after its indentation, with the widget's class. The rest of the line keeps its fields: identifier, `@(x,y)` per INV-PRM-06, MOP marker (only when `Feature.MOP` is in the plan), static metadata (only when `Feature.STATIC` is in the plan), and in `v17` the status tag. The MOP marker is computed from all of the widget's target-requiring actions, not from the first one's node ("MOP Marker Annotation", design D22). In `v17`, the status tag SHALL be computed from the sum of `getVisitedCount()` over the widget's target-requiring actions.
+
+The `v17` screen-info line SHALL count widgets on both sides of its ratio: the numerator is the number of listed widgets whose summed visit count is above 0, the denominator is the number of listed widgets, and the label reads `elements tested` instead of `actions tested` (`SCREEN: <Activity> | <tested>/<widgets> elements tested | visits: <N>`). The navigation block that follows (`MOP NAVIGATION:` with `Feature.MOP`, `NAVIGATION:` without it; "Exploration Context in Prompt") carries the visit part in every cell. Its count, present only with `Feature.MOP`, still counts target-requiring actions, not widgets, and its MOP test is the marker's (design D22).
+
+Every field of a line describes the widget, so one line per action wrote identical copies of it. In E6, 25.3 % of lines (279,463) shared their resolved node's bounds with an earlier line; 274,830 of them (24.9 % of all lines) also share the target `Name` and collapse (`evidence/dup_identity_e6.out`). The other 4,633 (in 4,434 prompts) are distinct `Name`s with identical bounds, such as a container and its single child; they keep a line each, because their class or identifier differs. Conversely, 17,865 lines share a `Name` with an earlier line but resolved, by alias sampling, to a node with other bounds; they keep a line each, because they show another point of the screen.
+
+The key is the pair, not the node's identity. A pair repeat may come from two alias nodes: `State.resolveAction` samples one alias per action, and the listing prints `[RN>1]` for 14,241 of the 274,830 E6 lines that collapse. Two such nodes carry one `Name`, one bounds rectangle and therefore one `@(x,y)`, and the mapper, which matches a coordinate against bounds, cannot tell them apart; grouping by identity would keep both lines, a duplicate the model sees. The pair is also what the trace records for every listed action (`State.printActions` prints the target and the resolved bounds), so an offline analysis can rebuild each line's actions, up to a `Name.toString` collision between two namers, which it cannot do for node identity.
+
+No tool, parser or mapper reads the ordinal: the answer is a coordinate, matched against the state's actions, never against list lines. The `ModelAction` list, the mapping, SATA and the exploration model are unaffected, because none of them reads the prompt text.
+
+#### Scenario: widget with a click and a long-click is listed once
+- **WHEN** `actions` holds a `MODEL_CLICK` and a `MODEL_LONG_CLICK` with the same target `Name`, both resolved to an EditText `"Email"` at bounds `[0,480][1080,596]`
+- **AND** variant `v13` builds the prompt with `deviceWidth=1080`, `deviceHeight=1794` and `Feature.MOP` absent from the plan
+- **THEN** the element list SHALL contain exactly one line for that EditText: `  EditText "Email" @(500,299)`
+
+#### Scenario: two scroll directions on one widget are listed once
+- **WHEN** `actions` holds `MODEL_SCROLL_BOTTOM_UP` and `MODEL_SCROLL_TOP_DOWN` with the same target `Name`, resolved to nodes with the same bounds
+- **THEN** the element list SHALL contain one line for that ScrollView
+
+#### Scenario: two alias nodes with the same bounds are listed once
+- **WHEN** a `MODEL_CLICK` and a `MODEL_LONG_CLICK` share a target `Name` and resolved to two distinct `GUITreeNode`s whose bounds are both `[0,480][1080,596]`
+- **THEN** the element list SHALL contain one line for them, rendered from the `MODEL_CLICK`'s node if it comes first in `actions`
+
+#### Scenario: same bounds, different target Names keep a line each
+- **WHEN** a `FrameLayout` and its only child `Button "OK"` have the same bounds and different target `Name`s, each with a `MODEL_CLICK`
+- **THEN** the element list SHALL contain one line for each of them
+
+#### Scenario: same target Name, different bounds keep a line each
+- **WHEN** a `MODEL_CLICK` and a `MODEL_LONG_CLICK` share a target `Name` and resolved to nodes at `[0,480][1080,596]` and `[0,700][1080,816]`
+- **THEN** the element list SHALL contain one line for each, at its own `@(x,y)`
+
+#### Scenario: no ordinal prefix
+- **WHEN** variant `v13` or `v17` renders a list of three widgets
+- **THEN** no line of the list SHALL begin, after its indentation, with a digit
+- **AND** the lines SHALL follow the order of each widget's first action in `actions`
+
+#### Scenario: v17 status tag counts the widget's visits
+- **WHEN** a widget's `MODEL_CLICK` has been visited 2 times and its `MODEL_LONG_CLICK` 1 time
+- **THEN** its `v17` line SHALL carry `[TESTED-3x]`
+
+#### Scenario: v17 screen line counts widgets on both sides
+- **WHEN** `actions` holds a `MODEL_CLICK` (visited 1 time) and a `MODEL_LONG_CLICK` (visited 0 times) on one Button, and a `MODEL_CLICK` (visited 0 times) on one TextView
+- **AND** variant `v17` builds the prompt
+- **THEN** the screen-info line SHALL read `1/2 elements tested`
+
+#### Scenario: model actions unchanged
+- **WHEN** the list collapses a widget's two actions into one line
+- **THEN** `CoordinateMapper.map` SHALL still receive both actions in `actions`
+- **AND** a `long_click` answer at that widget's coordinate SHALL still match its `MODEL_LONG_CLICK`
+
 ## ADDED Requirements
 
 ### Requirement: Prompt Built From Group Contributions
@@ -379,7 +446,7 @@ interface PromptContribution {
 The composition root mounts at most two contributions, from the plan, in this order:
 
 - `StaticPromptContribution`, when `Feature.STATIC` is in the plan. It contributes `lineDetail`: the widget metadata suffix (`prompt`, `spinnerMode`, `contentDescription`, `tooltipText`, `entries`, `inputType`, `hint`, each only when non-empty, with the existing caps) of the `v13` and `v17` lines, read from `StaticGuiModel` (INV-PRM-09).
-- `MopPromptContribution`, when `Feature.MOP` is in the plan. It contributes `systemSentence` (the MOP clauses of the system messages, table below), `lineMarker` (`[DM]`/`[M]`, "MOP Marker Annotation"), `contextLine` (` <N>/<M> MOP.`, "Exploration Context in Prompt") and `section` (the `v17` `MOP NAVIGATION:` block and the MOP clause of its closing instruction).
+- `MopPromptContribution`, when `Feature.MOP` is in the plan. It contributes `systemSentence` (the MOP clauses of the system messages, table below), `lineMarker` (`[DM]`/`[M]`, "MOP Marker Annotation"), `contextLine` (` <N>/<M> MOP.`, "Exploration Context in Prompt") and `section` (the `v17` heading `MOP NAVIGATION:`, which takes the place of the builder's neutral heading `NAVIGATION:`, and the MOP clause of its closing instruction). The visit part under either heading is the builder's own.
 
 A group that is not in the plan has no contribution, and a contribution's absence removes its text entirely: no empty heading, no placeholder, no MOP sentence. `ApePromptBuilder` holds the list of mounted contributions and never tests for MOP or static data (INV-PRM-08). The LLM reads the MOP signal in a cell with `Feature.MOP` and `Feature.LLM` (D-A18 Q-8).
 
@@ -393,8 +460,10 @@ The MOP text of each variant, and the wording without `Feature.MOP`, is the exis
 | `v17` (system, reasoning steps) | `3. MOP CHECK: If [DM] or [M] elements are shown, prioritize them.` | line absent; the steps that follow keep their text and are renumbered `3.`–`5.` |
 | `v17` (system, reasoning steps) | `5. ELEMENTS: Select unvisited element if no navigation or MOP target available.` | `4. ELEMENTS: Select unvisited element if no navigation target available.` |
 | `v17` (system, PRIORITY) | `- Elements reaching monitored operations ([DM] direct / [M] transitive) > other actions` | line absent |
-| `v17` (user text) | `MOP NAVIGATION:` block with the exploration context | block absent |
+| `v17` (user text, navigation block) | `MOP NAVIGATION:` heading, then the visit part and the count (`NEW state. <N>/<M> MOP.` / `Visited <N>x. <N>/<M> MOP.`), byte-identical to today | `NAVIGATION:` heading, then the visit part alone (`NEW state.` / `Visited <N>x.`); the visit context is kept |
+| `v17` (user text, SCREEN line) | `SCREEN: <Activity> \| <tested>/<widgets> elements tested \| visits: <N>` | unchanged (not MOP) |
 | `v17` (user text, last line) | `Select action. Prioritize elements reaching monitored operations, then navigation to new screens.` | `Select action. Prioritize navigation to new screens.` |
+| `v13` (user text, last line) | `Choose ONE action to explore new UI states or trigger monitored operations.` | `Choose ONE action to explore new UI states.` |
 | `visual_only` | no MOP text | no MOP text |
 
 #### Scenario: as_llm prompt carries no MOP text

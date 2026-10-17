@@ -9,7 +9,7 @@ The main spec's `## Purpose` still reads "TBD - created by archiving change rv-s
 What this change does (plan §4.3, design D-B1, D-B4, D-B12, D-A1, D-A4):
 
 - **Rule R1**: a scorer never reads the current priority or another scorer's field, so the chain is commutative and mounting one scorer never changes what another computes.
-- **Scorer ownership by group**: ADDONS owns coverage and form; STATIC owns the navigation frontier; MOP owns the MOP widget, MOP frontier, WTG-MOP and menu-gateway scorers. Each pass is mounted by its member feature.
+- **Scorer ownership by group**: ADDONS owns coverage and form; STATIC owns the navigation frontier; MOP owns the MOP widget, MOP frontier, WTG-MOP and menu-gateway scorers. Each pass is mounted by its member feature, except `MopWidgetPass`, which the group root `MOP` mounts.
 - `FrontierPass` is renamed `NavFrontierPass`, reads `StaticGuiModel` instead of `MopData`, depends on `STATIC` instead of `MOP`, and writes its own field `navFrontierBoost` (`dec.navf`). `wtgBoost` has one producer again, and `dec.wtgsrc` is removed.
 - The parity flags are ADDONS member keys; `ape.leastVisitedPriorityTiebreak` is retired (X1/R2, `action-selection`).
 
@@ -17,7 +17,7 @@ What this change does (plan §4.3, design D-B1, D-B4, D-B12, D-A1, D-A4):
 
 - **INV-ARCH-10** (amended; replaces the main spec's text): The seven scorer fields SHALL be disjoint accumulators, one per pass: `mopBoost` (MopWidgetPass), `menuBoost` (MenuGatewayPass), `wtgBoost` (WtgPass), `navFrontierBoost` (NavFrontierPass), `mopFrontierBoost` (MopFrontierPass), `coverageBoost` (CoveragePass), `formBoost` (FormCompletionPass). The total priority gain of an action from the pipeline SHALL equal the sum of its seven fields. No pass SHALL write another pass's field.
 - **INV-ARCH-13**: No scoring pass SHALL read `ModelAction.getPriority()` or another pass's field to compute its term. Applying the mounted passes in any order SHALL leave every action with the same priority and the same seven fields.
-- **INV-ARCH-14**: A pass SHALL be constructed if and only if its member feature is in the resolved plan (and its data gate, where it has one, holds). A pass owned by a group SHALL read only that group's provider: a STATIC pass reads `StaticGuiModel` and never `MopData`; an ADDONS pass reads neither.
+- **INV-ARCH-14**: A pass SHALL be constructed if and only if its mounting feature — its member feature, or the group root `MOP` for `MopWidgetPass` — is in the resolved plan (and its data gate, where it has one, holds). A pass owned by a group SHALL read only that group's provider: a STATIC pass reads `StaticGuiModel` and never `MopData`; an ADDONS pass reads neither.
 - **INV-MFP-04**: `MopFrontierPass` SHALL be mounted only with `MOP_FRONTIER`, a MOP member; in a cell without `MOP`, `mopFrontierBoost` SHALL be 0 on every action and `dec.mopf` SHALL never be written.
 
 ## ADDED Requirements
@@ -48,11 +48,11 @@ A term may depend on the other actions of the same screen through the scorer's o
 
 ### Requirement: Scorer Ownership by Group
 
-Each pass SHALL belong to exactly one group, SHALL be mounted by exactly one member feature of that group (`guidance-groups`), and SHALL write exactly one scorer field, rendered in the step record under its own name (`event-sink`):
+Each pass SHALL belong to exactly one group, SHALL be mounted by exactly one feature of that group — a member feature, or, for `MopWidgetPass` alone, the group root `MOP` (`guidance-groups`) — and SHALL write exactly one scorer field, rendered in the step record under its own name (`event-sink`):
 
-| Pass | Group | Member feature (key) | Field | Record name |
+| Pass | Group | Mounting feature (key) | Field | Record name |
 |---|---|---|---|---|
-| `MopWidgetPass` | MOP | `MOP` (`ape.mop`) | `mopBoost` (and the undivided `mopWeight`) | `mop` |
+| `MopWidgetPass` | MOP | the group root `MOP` (`ape.mop`) | `mopBoost` (and the undivided `mopWeight`) | `mop` |
 | `MenuGatewayPass` | MOP | `MENU_GATEWAY` (`ape.mopWeightOpenMenu`; also requires `MODEL_MENU`) | `menuBoost` | `menu` |
 | `WtgPass` | MOP | `WTG` (`ape.mopWeightWtg`) | `wtgBoost` | `wtg` |
 | `NavFrontierPass` | STATIC | `NAV_FRONTIER` (`ape.frontierBoostWeight`) | `navFrontierBoost` | `navf` |
@@ -90,11 +90,11 @@ public interface ScoringPass {
 }
 ```
 
-`isEnabled()` SHALL be decided once when the pass is constructed — from the presence of its member feature in the resolved plan, carried by the `ScoringParams` value object injected at construction, and from its data gate where it has one — never from static `Config`, and SHALL NOT be re-evaluated per `apply` call. A pass that is disabled SHALL NOT be added to the assembled pipeline; therefore a disabled pass SHALL make no priority change, set no scorer field, and emit no log line. Each pass SHALL read its weights from its injected `ScoringParams` and its collaborators (its group's provider — `StaticGuiModel` or `MopData` — the coverage tracker, the form context, the graph) exclusively through the `ScoringContext` passed to `apply`, and only those its group owns ("Scorer Ownership by Group"); a pass SHALL NOT hold run-mutable state of its own, so that the pass stays unit-testable with a stub context and explicit params. `MopScorer`'s weights (`mopWeightDirect`, `mopWeightTransitive`, `mopWeightOpenMenu`) SHALL likewise be supplied as parameters by the calling pass; `MopScorer` SHALL NOT read static `Config`.
+`isEnabled()` SHALL be decided once when the pass is constructed — from the presence of its mounting feature (its member feature, or the root `MOP` for `MopWidgetPass`) in the resolved plan, carried by the `ScoringParams` value object injected at construction, and from its data gate where it has one — never from static `Config`, and SHALL NOT be re-evaluated per `apply` call. A pass that is disabled SHALL NOT be added to the assembled pipeline; therefore a disabled pass SHALL make no priority change, set no scorer field, and emit no log line. Each pass SHALL read its weights from its injected `ScoringParams` and its collaborators (its group's provider — `StaticGuiModel` or `MopData` — the coverage tracker, the form context, the graph) exclusively through the `ScoringContext` passed to `apply`, and only those its group owns ("Scorer Ownership by Group"); a pass SHALL NOT hold run-mutable state of its own, so that the pass stays unit-testable with a stub context and explicit params. `MopScorer`'s weights (`mopWeightDirect`, `mopWeightTransitive`, `mopWeightOpenMenu`) SHALL likewise be supplied as parameters by the calling pass; `MopScorer` SHALL NOT read static `Config`.
 
 - **INV-ARCH-02**: A `ScoringPass` whose `isEnabled()` returned `false` at construction SHALL NOT appear in the assembled pipeline and SHALL therefore be a strict no-op for the run — zero priority mutations, zero scorer-field writes, zero log lines. A `ScoringPass` SHALL hold no run-mutable field.
 - **INV-ARCH-11**: No scoring pass, and no helper it calls (`MopScorer` included), SHALL read static `Config` at any time after construction; every weight and gate SHALL arrive via `ScoringParams` injection. Tests SHALL construct `ScoringParams` directly, never mutate `Config`.
-- **INV-ARCH-12**: Because INV-ARCH-11 makes every pass test blind to the values a real plan resolves to, the plan → `ScoringParams` mapping SHALL itself be guarded: a `ScoringParams` derived from each cell preset SHALL equal that cell's weights and feature gates, asserted as literals in one test per cell. Nothing else in the change set observes a scoring default — the parity goldens never reach the scoring pipeline (it runs above their entry point) and the `RUN_START` echo is write-only by owner decision D1.
+- **INV-ARCH-12**: Because INV-ARCH-11 makes every pass test blind to the values a real plan resolves to, the plan → `ScoringParams` mapping SHALL itself be guarded: a `ScoringParams` derived from each cell preset SHALL equal that cell's weights and feature gates, asserted as literals in one test per cell. Nothing else in the change set observes a scoring default — the parity goldens never reach the scoring pipeline (it runs above their entry point) and the `RUN_START` echo is write-only by owner decision D1 of `rearch-02-runspec`.
 
 #### Scenario: disabled pass is absent and inert
 - **WHEN** a `ScoringPass` is constructed with `ScoringParams` whose member feature is absent (for example `NavFrontierPass` in the `base` cell)
@@ -152,7 +152,7 @@ No `reason` field SHALL be added to the entries, and no `disabledReason()` metho
 
 ### Requirement: Scoring Pass Roster and Gates
 
-The roster SHALL be exactly these seven passes, each gated by its member feature and, where listed, by data. Subsequent changes MAY introduce additional passes through the same `ScoringPass` interface and `ScoringPipeline.fromParams` assembly point, subject to INV-ARCH-02/04/13/14 and to declaring the new pass's member feature and group in the run-spec `Feature` model (the key-ownership totality test enforces this).
+The roster SHALL be exactly these seven passes, each gated by its mounting feature (the root `MOP` for `MopWidgetPass`, a member feature for the others) and, where listed, by data. Subsequent changes MAY introduce additional passes through the same `ScoringPass` interface and `ScoringPipeline.fromParams` assembly point, subject to INV-ARCH-02/04/13/14 and to declaring the new pass's member feature and group in the run-spec `Feature` model (the key-ownership totality test enforces this).
 
 | Pass | Group | `isEnabled()` gate |
 |---|---|---|

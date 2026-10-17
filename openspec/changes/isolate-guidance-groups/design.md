@@ -2,11 +2,14 @@
 
 **Label: MEASUREMENT** (`proposal.md`). Source of every decision: `docs/plans/20261017_isolamento_grupos_aperv.md`
 (the plan, in Portuguese). Decisions D-A1…D-A19 are the author's (2026-10-17) and are not re-opened here.
-D-B1…D-B12 below are the design decisions of this change: D-B1…D-B4 and D-B13 were decided by the author on 2026-10-17 in
+D-B1…D-B14 below are the design decisions of this change: D-B1…D-B4 and D-B13 were decided by the author on 2026-10-17 in
 the session that created the change. The author then approved D-B5…D-B14 the same day: the MOP coin's distance-based
 ordering without priority and the retirement of `mopTargetPickCap`; the restart guard reading the previous step's
 `disableRestart`; the telemetry changes (`dec.src`, `cfc`, `navf`, `v=2`); the two ADDONS×MOP decouplings; Budget
 abandoning the buffer without weakening; the breaker keys; the MOP-free prompt wording; and the full component pool.
+The verification session of the same evening (`verification-artifacts.md`, author decisions A1–A10) amended
+D-B6, D-B8, D-B12, D-B14.5, D-B14.6, D-B14.8, D-B14.14, D-B14.17 and D-B14.18, renamed `ACTIVITY_TRIGGER` to
+`MOP_LAUNCHER`, and added `dec.trig`; the key and telemetry contract is v3.2.
 
 Paths are relative to `src/main/java/com/android/commands/monkey/ape/` unless they say otherwise. Facts marked
 `[verified]` were read with `file:line` while this change was written; `[reported]` facts come from the
@@ -48,14 +51,16 @@ exploration session's subagents (plan §2).
   `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `TYPED_FUZZ`, `FOREIGN_ACTIVITY_GUARD`,
   `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `FUZZING`), and a MOP family (`WTG`, `MENU_GATEWAY`, `FRONTIER`,
   `MOP_FRONTIER`, `ACTIVITY_TRIGGER`, `COMPONENT_TRIGGER`, `MOP_ACTIVITY_SOURCE`) that all require `MOP`
-  (`:194-197`). `RunSpec.deriveFeatures` (`:279`) leaves out silently an active-by-default feature whose
+  (`:194-197`). `ACTIVITY_TRIGGER` mounts only `MopLauncherStage` (`agent/pipeline/DecisionPipeline.java:72`);
+  `MopParams.activityTriggerEnabled()` has no caller (`runtime/RunSpec.java:974-975`). `RunSpec.deriveFeatures` (`:279`) leaves out silently an active-by-default feature whose
   dependency is missing, and raises `MISSING_DEPENDENCY` (`:302`) only when its activation key is explicit.
 - **Presets** (`runtime/Presets.java`): `aperv` (`:112-133`), `mop` (`:137-143`), `llm` (`:147-150`),
   `llm_mop` (`:98-101`).
 - **Pipeline** (`agent/pipeline/DecisionPipeline.java:61-76`): Budget → LlmNewState → LlmStagnation → LlmRandom
   → MopLauncher → ComponentTrigger → SataChain, mounted by feature. `LlmGate.allows` (`LlmGate.java:52-53`) is
   `actionBufferSize() == 0 && getActions().size() > 2`, its javadoc says "three actions or fewer" (`:40-50`).
-  `LlmRandomStage.java:81-82` draws the coin from the agent RNG only after the gate passes.
+  `LlmRandomStage.java:81-82` draws the coin from the agent RNG only after the gate passes. A stage whose call
+  returns null continues the chain (`LlmNewStateStage.java:72-77`), so one step can call the LLM up to three times.
   `MopLauncherStage.java:126-130` advances its cadence only on the steps that reach it.
 - **Restart** is applied after selection, in `ApeAgent.java:363`
   (`checkInput(checkFuzzing(checkRestart(updateStateInternal(...))))`). By then `recordModelDecision` has
@@ -77,7 +82,17 @@ exploration session's subagents (plan §2).
   - the two guards (`MonkeySourceApe.java:818,837`);
   - `mopActivitySourceComponents` (`utils/MopData.java:207`).
   
-  A group switch that only removes the feature from the plan would leave these sites on.
+  A group switch that only removes the feature from the plan would leave these sites on. BASE keys are read the
+  same way: `Config.doFuzzing`/`fuzzingRate` (`MonkeySourceApe.java:876`) and `Config.checkRestart`
+  (`agent/ApeAgent.java:280`). The component path reads MOP data at `StatefulAgent.java:1445`
+  (`getMopData().getPackageName()`), `agent/pipeline/ComponentTriggerStage.java:69` (`ctx.mopData()`) and
+  `agent/pipeline/DecisionPipeline.java:178` (`spec.mop().componentPercentage()`); the launcher reads the
+  components from `MopData` (`MopLauncherStage.java:138-157`).
+- **Ownership seams.** `StageCollaborators` is implemented by `SataAgent` (`:67`), `StepContext` by
+  `StatefulAgent` (`:88`). `RunContext` builds `LlmClient` (whose breaker uses the default constructor,
+  `llm/LlmClient.java:57`), `LlmEngine` and `ApePromptBuilder` (`runtime/RunContext.java:155-166`).
+  `DecisionSource` and `PickChannel` live in `model/ModelAction.java` (`:50-55`).
+- **Keyless bug fixes.** The BASE list (plan §2.2) is in the `guidance-groups` delta ("Declared Consequences of the Cell Composition").
 - **RNG.** There are two seeded streams `[verified]`:
   - the agent stream (`ApeAgent.getRandom()`, Monkey's `Random(seed)`): ε-greedy, the epsilon roulette, the
     LLM coin, the component coin;
@@ -96,15 +111,17 @@ exploration session's subagents (plan §2).
 step N
  1. capture + safety guards (foreign activity, tree/package)                    [ADDONS M,N; unchanged]
  2. GUITree → Naming → State; graph update; refinement; trackers; restart flags [BASE]
- 3. open StepRecord; draw u_L, u_M (own streams) and the fuzz toss (own stream) [P-3]
+ 3. open StepRecord; draw u_L, u_M, the component coin and the fuzz toss       [P-3]
+    (own streams)
  4. DecisionPipeline (fixed order, each stage mounted by feature):
       BUDGET          guard  (ADDONS I)                    owner=budget
       RESTART         guard  (BASE; J is ADDONS)           owner=restart
       LLM_NEW_STATE   trigger, no coin                     owner=llm   ┐ LlmGate chain
       LLM_STAGNATION  trigger, once per episode, no coin   owner=llm   │ (MinActions, Breaker)
       LLM_COIN        u_L < p_L                            owner=llm   ┘ error/decline → next
+                      (at most one LLM call per step: after a call, later LLM stages skip)
       MOP_LAUNCHER    global cadence, fires here when due  owner=launcher
-      COMPONENT       side effect only (STATIC, D-B13)
+      COMPONENT       side effect only (STATIC, D-B13)     dec.trig
       MOP_COIN        eligible && u_M < p_M                owner=mop
       SATA_CHAIN      scorer chain → SATA rules + X1/X3/X4 owner=sata
  5. refiners: input text (typed / heuristic / random / form / llm)               dec.inp
@@ -115,8 +132,8 @@ A preempting owner (LLM, launcher, MOP coin) that takes a step while the SATA bu
 buffer **without** weakening (P-4, `dec.buf`). A real path failure inside SATA keeps weakening, as in APE.
 
 ```
-              artifact (wire format 2, unchanged)
-                          │  StaticArtifactLoader
+      artifact (wire format 2; + the additive intent-filter `data` member, D-B13)
+                          │  StaticArtifactLoader (iff STATIC or MOP is mounted)
              ┌────────────┴────────────┐
       StaticGuiModel                  MopData
   (WTG, widget metadata,         (targets, dist, handlers,
@@ -124,9 +141,13 @@ buffer **without** weakening (P-4, `dec.buf`). A real path failure inside SATA k
    components + intent filters)   reachesMop per component, menu gateways)
    STATIC: NavFrontierPass,             │
    TypedInputGenerator,          MOP: MopWidgetPass, WtgPass, MopFrontierPass,
-   StaticPromptContribution           MenuGatewayPass, MopCoinStage, MopLauncherStage,
-                                      MopNavTieBreak (X3/X4), MopPromptContribution
+   ComponentTriggerStage,             MenuGatewayPass, MopCoinStage, MopLauncherStage,
+   StaticPromptContribution           MopAbaTargetTie (X3), MopTrivialPathPick (X4),
+                                      MopPromptContribution
 ```
+
+MOP reads both providers (plan P-1): `WtgPass`, `MopFrontierPass`, `MopScorer` and `MopLauncherStage` read the WTG
+and the component list from `StaticGuiModel`, so the `mop` cell loads the artifact with STATIC off.
 
 ### Key Components
 
@@ -145,12 +166,12 @@ buffer **without** weakening (P-4, `dec.buf`). A real path failure inside SATA k
 | `agent/pipeline/MopCoinStage` (new) | MOP coin decider (D-A15) | `u_M`, ledger | Select/Continue |
 | `agent/pipeline/MopLauncherStage` | global cadence (D-A16) | every step | Select/Continue |
 | `agent/MopInteractionLedger` (new) | first interaction per (activity, `xpath|type`) | moves | queries |
-| `agent/sata/LeastVisitedTie` (X1) | R2: larger scorer sum, else first | candidates | action |
-| `agent/sata/AbaTargetTie` (X3) | APE: keep; MOP: MOP activity | two targets | boolean |
-| `agent/sata/TrivialPathPick` (X4) | APE: `randomPick`; MOP: density | paths | path |
+| `agent/sata/LeastVisitedTie` (X1) | `ScorerSumLeastVisitedTie` (R2): larger scorer sum, else first | candidates | action |
+| `agent/sata/AbaTargetTie` (X3) | `ApeAbaTargetTie`: keep; `MopAbaTargetTie`: MOP activity | two targets | boolean |
+| `agent/sata/TrivialPathPick` (X4) | `ApeTrivialPathPick`: `randomPick`; `MopTrivialPathPick`: density | paths | path |
 | `llm/PromptContribution` (interface) | system sentences, line marker, line detail, context | state, actions | strings |
 | `telemetry/StepRecord` | new `dec` members | sink calls | NDJSON |
-| `agent/StepRng` (new) | three streams derived from the seed | seed | `u_L`, `u_M`, fuzz |
+| `agent/StepRng` (new) | four streams derived from the seed | seed | `u_L`, `u_M`, component coin, fuzz |
 
 ## Mapping: Spec -> Implementation -> Test
 
@@ -172,7 +193,9 @@ buffer **without** weakening (P-4, `dec.buf`). A real path failure inside SATA k
 | llm-prompt: contributions | `ApePromptBuilder`, contributions | `ApePromptBuilderTest`, `PromptContributionTest` (new) |
 | llm-infrastructure: rotation | `ScreenshotCapture`, `AndroidDevice` | `ScreenshotCaptureStageTest` |
 | event-sink: new fields, completeness, purity | `StepRecord`, `NdjsonSink`, `EventSink` | `StepRecordTest`, `SinkNeutralityTest`, `CleanControlTest` (new) |
-| heuristic-input / form-completion | `ApeAgent`, `StatefulAgent`, `SataAgent` | `ApeAgentInputTest`, `FormCompletionTest` |
+| heuristic-input / form-completion | `ApeAgent`, `StatefulAgent`, `SataAgent` | `ApeAgentLlmInputTest`, `FormCompletionTest` |
+| ui-coverage, activity-budget, ui-tree | `SataAgent.dumpCoverage`, `StatefulAgent`, `tree/*` | `UICoverageTrackerTest`, `GroupReadSiteTest` |
+| static-analysis-entrypoints, aperv-tool | rv-android sister change | its module tests |
 | parity-oracle: base goldens | `OracleScaffold` (cells) | `ParityOracle*Test`, goldens per cell |
 
 ## Goals / Non-Goals
@@ -196,7 +219,7 @@ buffer **without** weakening (P-4, `dec.buf`). A real path failure inside SATA k
 
 ## Decisions
 
-Decisions D-A1…D-A19 are taken from the plan as they stand. D-B1…D-B12 are this change's.
+Decisions D-A1…D-A19 are taken from the plan as they stand. D-B1…D-B14 are this change's.
 
 **D-B1 — Group keys.** Four plan keys, `ape.addons`, `ape.static`, `ape.mop` and `ape.llm`, all boolean and all
 defaulting to `false`, plus one data root, `STATIC_DATA`, activated by `ape.staticDataPath` (PRESENT).
@@ -236,7 +259,12 @@ scorers". X1 has no key.
 Both are ADDONS members.
 
 **D-B6 — Every addon read site reads the plan** (INV-GRP-06). The `Config` sites listed in § Current state
-switch to `spec.has(Feature.X)`. Otherwise `base` would run with `modelMenuEnabled` true.
+switch to `spec.has(Feature.X)`. Otherwise `base` would run with `modelMenuEnabled` true. The BASE keys the plan
+owns are read through it too (author, verification A10): `ape.doFuzzing`/`ape.fuzzingRate` (`FUZZING`) and
+`ape.checkRestart`; their `Config` twins are deleted, with those of the retired and renamed keys. `ape.minEpsilon`
+and `ape.maxEpsilon` stay `DYNAMIC_EPSILON` keys, already read through the plan (`SataAgent.java:1214`); their
+`Config` twins (`Config.java:218-219`) are dead and deleted. A member's params accessor returns the
+neutral value when the member is absent (`backMenuPickCap()` is 0 without `BACK_MENU_CAP`).
 
 **D-B7 — Owners and the pipeline order** (D-A4, D-A8, D-A16, P-2):
 
@@ -253,6 +281,10 @@ breaker allows an attempt.
 - The composition root mounts them from the plan in this order: MinActions, then Breaker. A gate whose
   parameter is `0` is not mounted.
 - G1 (the buffer) is no longer a gate; G4 (Budget) is the BUDGET guard. All three LLM stages share the chain.
+- **At most one LLM call per step** (author, verification A3). Once an LLM stage has called, whatever the result,
+  the later LLM stages return `Continue` without calling. A stage whose trigger did not hold or whose gate barred
+  has not called. Today a failed new-state call lets stagnation and the coin call again in the same step
+  (§ Current state), which can spend several timeouts on one step and still yield no LLM action.
 - The acceptance helper that is in `LlmGate.accept` today moves to `LlmAcceptance`.
 - New keys: `ape.llmGateMinActions` (3), `ape.llmBreakerFailures` (3) and `ape.llmBreakerOpenMs` (60000), the
   last two replacing the `LlmCircuitBreaker` constants (`llm/LlmCircuitBreaker.java:36-38`).
@@ -263,8 +295,10 @@ odd constant per stream: `llmCoin`, `mopCoin`, `fuzz`).
   stage runs.
 - The agent and helper streams keep every other draw. Mounting or unmounting a gate or a coin therefore never
   shifts SATA's draws (INV-DP-13).
-- The component coin also gets its own stream, `component`, drawn every step when `COMPONENT_TRIGGER` is mounted
-  (D-B13).
+- The component coin also gets its own stream, `componentCoin`, drawn every step when `COMPONENT_TRIGGER` is
+  mounted (D-B13). `StepRng` therefore holds four streams: `llmCoin`, `mopCoin`, `componentCoin` and `fuzz`.
+- `RunContext` builds `StepRng` from the run seed and the agent reaches it through `StepContext`, so no pipeline
+  or `llm/` class calls `RunContext.current()` (the static-read guard test).
 
 **D-B10 — The MOP coin (D-A10, D-A15).** `MopCoinStage` is eligible when the screen holds a targeted action
 that meets three conditions:
@@ -288,6 +322,21 @@ Priority is **not** a tie-break, so ADDONS scorers cannot steer the coin (R1 spi
 `onStepOpen` hook runs for every mounted stage at step open. The launcher fires on the first step at which
 `stepsSinceFiring >= cadence` and the pipeline reaches `MOP_LAUNCHER`, which means that no guard and no LLM
 took the step. The cadence key stays `ape.activityTriggerStagnationStep` (50). The launcher has no mode key.
+- The feature that mounts it is renamed `ACTIVITY_TRIGGER` → `MOP_LAUNCHER` (author, verification A6), so a
+  stage and its feature share a name, as `LLM_COIN` and `MOP_COIN` do. The key `ape.activityTriggerEnabled` is
+  unchanged. The dead accessor `MopParams.activityTriggerEnabled()` is deleted (P3).
+- The launcher reads the activity list, the main activity and the package from `StaticGuiModel`, and the
+  distances and MOP activities from `MopData`.
+
+**D-B12 — Extension points X1, X3, X4 (D-A7, D-A18 Q-5).** Each is a Strategy with the APE default, including
+its RNG consumption. The composition root (`SataAgent` constructor) mounts the MOP variant when `MOP` is in the
+plan. There is no key. Implementations are named `<Variant><Interface>` (author, verification A5).
+- **X1** `ScorerSumLeastVisitedTie`: R2, the larger sum of the candidate's scorer fields, otherwise the incumbent.
+  With zero scorers it is upstream's first of the array (`model/State.java:185-190`).
+- **X3** `ApeAbaTargetTie` never replaces on a tie and draws nothing. `MopAbaTargetTie` replaces when the
+  candidate's activity is in the MOP set and the incumbent's is not (`MopScorer.stateMopDensity` order).
+- **X4** `ApeTrivialPathPick` always takes `RandomHelper.randomPick`. `MopTrivialPathPick` takes the first path
+  with the strictly largest end-state density, and falls back to `randomPick` when every density is equal.
 
 **D-B13 — Component triggering is a STATIC member, on at 0.03, with the intent filter's `data`** (author,
 2026-10-17).
@@ -309,12 +358,12 @@ With the groups, the confound is gone by construction, and the author places the
   intent filter to `actions`/`categories` (`$RVA/.../derive_mop_artifact.py:1497-1503`), and the loader has no
   reader for `data` (`utils/MopData.java:745`), so a receiver or service that filters on a scheme or MIME type
   never matches. After this change:
-  - the derive keeps a reduced `data` member per filter (`schemes`, `hosts`, `paths`, `mimeTypes`; empty lists
-    omitted);
+  - the derive keeps a reduced `data` member per filter (`schemes`, `hosts`, `paths`, `pathPrefixes`,
+    `mimeTypes`; empty lists omitted; D-B14.11);
   - `StaticGuiModel` parses it;
   - `dispatchTrigger` sets `setDataAndType(Uri(scheme://host/path), mimeType)` from the first scheme and the
     first MIME type of the filter that supplied the action. With only a MIME type it calls `setType`; with only
-    a scheme it calls `setData`.
+    a scheme it calls `setData`. It takes the package from `StaticGuiModel`, not from `MopData`.
   
   The artifact stays `formatVersion: 2`: the member is additive, and the loader reads its absence as "no data".
 - **Extras.** The static analysis emits no intent extras (`[verified]`: no `extras` member in
@@ -322,16 +371,6 @@ With the groups, the confound is gone by construction, and the author places the
   `system-broadcast.json` catalog extras. Inferring extras stays deferred (author, 2026-10-07).
 - **The broadcast catalog.** It is loaded iff `COMPONENT_TRIGGER` is mounted, and the tool pushes
   `system-broadcast.json` for the four `as*` cells. It is not pushed for `base` or `mop`.
-
-**D-B12 — Extension points X1, X3, X4 (D-A7, D-A18 Q-5).** Each is a Strategy with the APE default, including
-its RNG consumption. The composition root (`SataAgent` constructor) mounts the MOP variant when `MOP` is in the
-plan. There is no key.
-- **X1** `LeastVisitedTie`: R2, the larger sum of the candidate's scorer fields, otherwise the incumbent. With
-  zero scorers it is upstream's first of the array (`model/State.java:185-190`).
-- **X3** `AbaTargetTie`: APE never replaces on a tie and draws nothing. The MOP variant replaces when the
-  candidate's activity is in the MOP set and the incumbent's is not (`MopScorer.stateMopDensity` order).
-- **X4** `TrivialPathPick`: APE always takes `RandomHelper.randomPick`. The MOP variant takes the first path
-  with the strictly largest end-state density, and falls back to `randomPick` when every density is equal.
 
 **D-B14 — Resolutions of points the spec writers flagged.** These are the binding readings.
 1. **The MOP block does not state `mopWeightOpenMenu`.** A preset key counts as explicit, so stating it without
@@ -344,17 +383,21 @@ plan. There is no key.
    package check is on the static model.
 4. **`ape.llmUrl` with LLM off** has no neutral value, so it aborts with `MISSING_DEPENDENCY` (the existing rule).
    The tool passes the URL only for the `*_llm` cells.
-5. **The oracle and component dispatch.** The oracle's `OracleSataAgent` overrides `triggerMopComponent` as a
-   recorded no-op. The coin still draws from `StepRng.componentCoin`, and the side effect is recorded as
-   `dec.comp`. A component trigger is never a step owner (`src` has no component value); it is a side effect
-   that does not decide the step.
+5. **The oracle and component dispatch.** The oracle's `OracleSataAgent` SHALL override `triggerComponent()`
+   as a recorded no-op (today it overrides only `getRandom()`, `OracleSataAgent.java:57-58`; dispatch needs a
+   device). The coin still draws from `StepRng.componentCoin`, and the side effect is recorded as `dec.trig`
+   (author, verification A7; `dec.comp` stays the launcher's launch outcome, `MonkeySourceApe.java:980`). A
+   component trigger is never a step owner (`src` has no component value); it is a side effect that does not
+   decide the step.
 6. **`dec.own`:**
-   - `i` is the first decider that claimed the step: a fired trigger, a won LLM coin, a won MOP coin, a due
-     launcher, otherwise `sata`.
+   - `i` is the first decider that claimed the step: a guard (`budget`, `restart`), a fired LLM trigger, a won
+     LLM coin, a due launcher, a won MOP coin, otherwise `sata`.
    - `fb` is written when `src ≠ i` and gives the reason.
    - `decline` means the model answered without an action the router can take.
 7. **`dec.draw`** is `[drawn integer, bound]`, the values needed to replay the roulette offline.
-8. **`dec.nav.alt`** is 0 in cells without MOP. **`dec.inp`** precedence is `llm` > `form` > the generator
+8. **`dec.nav.alt`** is 1 iff the MOP variant decided by its own rule: X3 replaced the incumbent, or X4's
+   strictly largest density chose the path without a draw. X1 always writes `alt:0`. So `alt` is 0 in cells
+   without MOP (author, verification A2). **`dec.inp`** precedence is `llm` > `form` > the generator
    (`typed`, `heuristic`, `random`).
 9. **Clean control and the dictionary.** `ACT.mop` is written only when `MOP` is mounted. `MOP_DATA` stays the
    census of the loaded artifact in every cell that loads one: it describes the input, not a decision, and the
@@ -369,17 +412,20 @@ plan. There is no key.
     agent that has a pipeline.
 13. **The buffer under the guards.** A Budget step abandons a non-empty buffer without weakening. A restart
     starts a new episode, which clears the buffer, also without weakening.
-14. **`dec.own.trg`** is the stage that made the LLM call. `llm[].mode` keeps its existing labels (`random` for
-    the coin stage) so the reader's join is unchanged.
+14. **`dec.own.trg`** is the stage that made the step's one LLM call (D-B8). `llm[].mode` keeps its existing
+    labels (`random` for the coin stage) so the reader's join is unchanged.
 15. **The component pool.** It emits a name-only tuple for every filterless service, and none for a filterless
     receiver. The data URI is `scheme://host + path`, with `host` and `path` empty when they are absent.
-    `triggerMopComponent()` is renamed `triggerComponent()`.
+    The name-only tuple does not depend on `targetMethods` (today `StatefulAgent.java:1363` requires it, a MOP
+    signal). `triggerMopComponent()` is renamed `triggerComponent()`, and `mopComponentTargetCount()`
+    `componentTargetCount()`.
 16. **The `disableRestart` latch** is read and cleared by `RESTART`. A step taken by Budget leaves it for the
     next step.
 17. **`dec.ch` survives as the pick channel.** The two `SHORT_CIRCUIT_*` values are gone. A MOP-coin step
-    carries `mop_coin`; launcher and LLM keep `launcher` and `llm`.
+    carries `mop_coin`; launcher and LLM keep `launcher` and `llm`; the guard steps carry `budget` and `restart`
+    (author, verification A4), so `sata_other` names SATA's other paths only.
 18. **X3's MOP variant** follows the `stateMopDensity` order, which also breaks a same-activity tie. In `dec.nav`,
-    `alt` = 1 when the variant's rule decided differently from the APE default. X1 always has `c:"ape"`.
+    `alt` follows item 8. X1 always has `c:"ape"`.
     `dec.cfc` is also written at the null-handler pick, which is a priority roulette. The coin's target count is
     the existing "within d+1" count.
 19. **`MenuGatewayPass` stops reading the ADDONS BACK/MENU cap** (R1). In `as_mop`, a capped MENU is already
@@ -395,7 +441,11 @@ plan. There is no key.
 
 ## API Design
 
-### Key contract (wave 0; sent verbatim to the rv-android `aperv-tool` session)
+### Key contract v3.2 (wave 0; sent verbatim to the rv-android `aperv-tool` session)
+
+v3.2 (verification, 2026-10-17) over v3.1: `MOP_LAUNCHER` replaces `ACTIVITY_TRIGGER` in `features`; `dec.trig`
+is new; `dec.ch` gains `budget` and `restart`; `dec.nav.alt` is defined by the MOP variant's own rule; at most
+one LLM call per step; `dec.rot` ranges over −1..3. Keys and group blocks are unchanged.
 
 **Group, data and resolver keys**
 
@@ -427,7 +477,7 @@ Existing addon features gain the `ADDONS` dependency, with their keys unchanged:
 `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`,
 `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD` and `COVERAGE_BOOST`. The MOP family gains the `MOP` dependency,
 with its keys unchanged: `WTG`, `MENU_GATEWAY` (which also requires `MODEL_MENU`), `MOP_FRONTIER`,
-`ACTIVITY_TRIGGER` and `MOP_ACTIVITY_SOURCE`. `COMPONENT_TRIGGER` moves to `STATIC` (D-B13). The LLM family is unchanged; `LLM_RANDOM` is
+`MOP_LAUNCHER` (renamed from `ACTIVITY_TRIGGER`, key `ape.activityTriggerEnabled` unchanged) and `MOP_ACTIVITY_SOURCE`. `COMPONENT_TRIGGER` moves to `STATIC` (D-B13). The LLM family is unchanged; `LLM_RANDOM` is
 renamed `LLM_COIN`, and its key `ape.llmPercentage` (`p_L`) is unchanged. `FUZZING` is BASE.
 
 **Retired keys:** `ape.mopDataPath`, `ape.leastVisitedPriorityTiebreak` and `ape.mopTargetPickCap`. A properties
@@ -458,7 +508,7 @@ declared, not a leak.
 
 Expected `features` per cell:
 - `base`: `FUZZING`.
-- `mop`: `FUZZING`, `STATIC_DATA`, `MOP`, `WTG`, `MOP_FRONTIER`, `ACTIVITY_TRIGGER`, `MOP_ACTIVITY_SOURCE`,
+- `mop`: `FUZZING`, `STATIC_DATA`, `MOP`, `WTG`, `MOP_FRONTIER`, `MOP_LAUNCHER`, `MOP_ACTIVITY_SOURCE`,
   `MOP_COIN`.
 - `as`: `FUZZING`, `ADDONS`, the nine addon members, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART`, `STATIC_DATA`,
   `STATIC`, `NAV_FRONTIER`, `TYPED_FUZZ`, `COMPONENT_TRIGGER`.
@@ -474,16 +524,18 @@ with `run_id`, `t0`, `seed`, `build` and `props_digest` masked. The rv-android g
 | Field | Shape | When written |
 |---|---|---|
 | `dec.src` | owner: `budget` `restart` `llm` `launcher` `mop` `sata` | always; **its meaning changes**: the executed owner, no longer "largest boost" |
+| `dec.ch` | pick channel; `short_circuit_*` removed; new `mop_coin`, `budget`, `restart`; `launcher`, `llm` kept; `sata_other` = SATA's other paths only | always |
 | `dec.own` | `{"i":owner, "trg":"new_state"\|"stagnation"\|"coin", "uL":double, "uM":double, "g":gate, "fb":reason}` | always; `uL`/`uM` only when that group is mounted; `i` intended owner; `g` the gate that barred (`min_actions`, `breaker`); `fb` ∈ `gate` `error` `decline` `no_match` `ineligible` (a due launcher without a candidate); a lost or ineligible coin claims nothing, so it has no `fb` |
 | `dec.cfc` | `{"<scorer>":0\|1}` over the mounted scorers with a non-zero term in the candidate set | at the roulettes and the least-visited pick only; replaces `dec.cf` |
 | `dec.draw` | `[idx,total]` | the roulette picks (EARLY_STAGE, ε, null handler) |
-| `dec.nav` | `{"x":"X1"\|"X3"\|"X4", "c":"ape"\|"mop", "alt":0\|1, "drew":0\|1}` | when an extension point decided a tie |
+| `dec.nav` | `{"x":"X1"\|"X3"\|"X4", "c":"ape"\|"mop", "alt":0\|1, "drew":0\|1}` | when an extension point decided a tie; `alt` per D-B14.8 |
 | `dec.inp` | `typed` `heuristic` `random` `form` `llm` | when the action entered text |
 | `dec.restart` | `graph` `state` `activity` `periodic` | when `src=restart` |
 | `dec.bmc` | int | candidates removed by the BACK/MENU cap in this pick; omitted when 0 |
 | `dec.strat` | `buffer` `back_to_activity` `aba` `early_forward` `early_roulette` `greedy_global` `greedy_path` `trivial` `early_backward` `backtrack` `eps_back` `eps_menu` `least_visited` `eps_roulette` `null` `saturated` | when `src=sata` |
-| `dec.rot` | int 0..3 | every step; `0` is written |
+| `dec.rot` | int −1..3 (−1 = unreadable) | every step; `0` is written |
 | `dec.buf` | owner | the owner that abandoned a non-empty buffer |
+| `dec.trig` | `{"k":"broadcast"\|"service"\|"provider", "c":"<class>"}` | the step on which `ComponentTriggerStage` fired, whatever `src`; `dec.comp` stays the launcher's launch outcome |
 | scorer fields | `mop` `mopf` `wtg` `navf` `cov` `menu` `form` | non-zero; `navf` is new (`NAV_FRONTIER`); `wtgsrc` is removed |
 
 `RUN_END.counters` gains the following, written in full:
@@ -502,7 +554,7 @@ with `run_id`, `t0`, `seed`, `build` and `props_digest` masked. The rv-android g
 interface LlmGate { String name(); boolean admits(StepContext ctx); }
 interface LeastVisitedTie { ModelAction pick(List<ModelAction> leastVisited); }          // X1
 interface AbaTargetTie   { boolean replaces(State incumbent, State candidate); }       // X3
-interface TrivialPathPick { Path pick(List<Path> paths); }                             // X4
+interface TrivialPathPick { Subsequence pick(List<Subsequence> paths); }               // X4
 interface PromptContribution {
     default String systemSentence(String variant) { return ""; }
     default String lineMarker(ModelAction a) { return ""; }
@@ -517,17 +569,24 @@ final class StepRng { double llmCoin(); double mopCoin(); double componentCoin()
 
 - `DecisionStage` gains `default void onStepOpen(StepContext ctx) {}`.
 - `StageCollaborators` gains `restartDue()`, `restartAction()`, `abandonBuffer(String owner)` and
-  `mopLedger()`.
+  `mopLedger()`; `triggerMopComponent`/`mopComponentTargetCount` become `triggerComponent`/`componentTargetCount`.
+  It is implemented by `SataAgent`, which inherits the new methods from `StatefulAgent`.
+- `StepContext` (implemented by `StatefulAgent`) gains `staticModel()` and `stepRng()`; `mopData()` is null iff
+  `MOP` is not mounted.
+- `ModelAction` carries the new `DecisionSource` owner vocabulary, the new `PickChannel` values and the
+  `navFrontierBoost` field, so no wave-1 front edits another front's enum.
 - `EventSink` gains `owner(...)`, `cfc(...)`, `draw(...)`, `nav(...)`, `input(...)`, `restart(...)`,
-  `backMenuCapped(...)`, `strategy(...)`, `rotation(...)`, `bufferAbandoned(...)` and the counters. `NoopSink`
-  implements them as empty.
+  `backMenuCapped(...)`, `strategy(...)`, `rotation(...)`, `bufferAbandoned(...)`, `componentTrigger(...)` and
+  the counters. `NoopSink` implements them as empty.
 
 ## Data Flow
 
-1. `RunSpec.resolve` yields the features. When `STATIC_DATA` is in the plan, `StaticArtifactLoader.load` parses
-   the artifact once. It hands `StaticGuiModel` to STATIC consumers and `MopData` to MOP consumers, and only to
-   the members that are mounted. `MOP_DATA` stays the load census.
-2. At step open `StepRng` draws `u_L`, `u_M` and the fuzz toss. `rotation` is read for `dec.rot`.
+1. `RunSpec.resolve` yields the features. When `STATIC` or `MOP` is mounted (D-B14.20), `StaticArtifactLoader.load`
+   parses the artifact once. It hands `StaticGuiModel` to the STATIC members and to the MOP members that read the
+   WTG or the components, and `MopData` to the MOP members only (`getMopData()` is null without `MOP`,
+   D-B14.21). `MOP_DATA` stays the load census.
+2. At step open `StepRng` draws `u_L`, `u_M`, the component coin and the fuzz toss. `rotation` is read for
+   `dec.rot`.
 3. The pipeline runs. Each stage that takes the step records the owner. A preempting owner abandons the buffer
    through `abandonBuffer(owner)`.
 4. SATA reaches weights only through the roulettes and the X1 tie. The cf of each scorer (`dec.cfc`) is computed
@@ -571,7 +630,7 @@ final class StepRng { double llmCoin(); double mopCoin(); double componentCoin()
 | Unit | gates, coins, ledger, launcher cadence, X1/X3/X4, prompt contributions, new sink fields | fakes + `StepContext` stubs | ~60 |
 | Unit | rotation clamp | `ScreenshotCaptureStageTest` (ported) | 2 |
 | Integration | `SinkNeutralityTest` × 6 cells | oracle scaffold per cell | 6 |
-| Integration | clean control: cells `base`, `as`, `as_llm` carry no MOP field (`mop`, `mopf`, `wtg`, `menu`, `mopd`, `mops`, `ret`, `mopx`, `uM`, `src=mop`/`launcher`) | replay + parse | 3 |
+| Integration | clean control: cells `base`, `as`, `as_llm` carry no MOP field (`mop`, `mopf`, `wtg`, `menu`, `mopd`, `mops`, `ret`, `mopx`, `own.uM`, the MOP keys of `cfc`, `nav.c=mop`, `src=mop`/`launcher`, `ch=mop_coin`, `ACT.mop`, UICOV `mopReach`; `coinMop`, `launches`, `retired` = 0) | replay + parse | 3 |
 | Integration | RNG neutrality: mounting/unmounting a gate or the MOP coin with `p=0` leaves SATA's choices identical | replay pairs | 3 |
 | Integration | base parity: `base` cell golden; X1/X3/X4 defaults equal upstream on fixtures | oracle | 4 |
 | Device | 6 cells on cryptoapp; landscape APK with LLM | wave 3 | 7 runs |

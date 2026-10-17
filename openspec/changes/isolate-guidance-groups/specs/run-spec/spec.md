@@ -48,6 +48,14 @@ MOP and LLM. The run-spec capability changes in five places.
   `ape.componentPercentage` SHALL be clamped to
   `[0, 1]` at resolution and SHALL NOT abort for an out-of-range value of their declared type. The clamped value is
   the effective value echoed in `params` and hashed in the digest. Coverage: `RunSpecResolveTest`.
+- **INV-RUN-04** (amended): the plan `digest` SHALL exclude, besides seed, runId, the corpus basis and the preset
+  name, the harness variant name `ape.variant` (INV-RUN-10). The rest of INV-RUN-04 is unchanged.
+- **INV-RUN-08** (amended): All run-scoped randomness SHALL derive from the run seed owned by `RunContext` (seeded
+  from `-s`). Besides the agent and helper streams, the only further streams SHALL be the four `StepRng` streams,
+  each a `Random` seeded with `seed ^ k` for a fixed constant `k` per stream: `llmCoin`, `mopCoin`, `componentCoin`
+  and the fuzz toss (design D-B9). No component SHALL use `ThreadLocalRandom`, `Math.random`, or an unseeded
+  `Random` for any decision or generated input. Coverage: `RngNeutralityTest`, and the existing static guard on
+  bare `Random` sites, which SHALL admit the `StepRng` construction as its one seeded addition.
 
 ## MODIFIED Requirements
 
@@ -55,7 +63,7 @@ MOP and LLM. The run-spec capability changes in five places.
 
 `RunSpec.resolve` SHALL run in `Monkey.run` (the `--ape` branch) before `MonkeySourceApe` or any agent is constructed. It SHALL consume: the union of the entries of `/data/local/tmp/ape.properties` and `/sdcard/ape.properties` (load order preserved, later file wins; file-loaded entries only — JVM system properties are not a configuration channel), and the CLI values (`--ape`, `-s`, `--ape-replay`). It SHALL produce an immutable `RunSpec` value carrying: `presetName` (the `ape.preset` value, or `"explicit"` when absent), `variant` (the `ape.variant` value, or null), `seed`, `runId`, `agentType`, `ExplorationParams` (always present), `Set<Feature>`, `StaticParams`/`MopParams`/`LlmParams` (each null iff its feature — `STATIC_DATA`, `MOP`, `LLM` — is absent), `TelemetryParams` (always present), `digest`, and `propertiesDigest`.
 
-After resolution, `RunSpec` is the sole behavioral authority: static `Config` remains only as the loading mechanism, and its values are guaranteed valid because `RunSpec.resolve` validated the same entries before any consumer read them. The `RunSpec` SHALL be reachable via `RunContext.current().spec()`. Whether a mechanism of a behaviour group acts SHALL be read from the plan, never from `Config` (`guidance-groups` INV-GRP-06).
+After resolution, `RunSpec` is the sole behavioral authority: static `Config` remains only as the loading mechanism, and its values are guaranteed valid because `RunSpec.resolve` validated the same entries before any consumer read them. The `RunSpec` SHALL be reachable via `RunContext.current().spec()`. Whether a mechanism of a behaviour group acts SHALL be read from the plan, never from `Config` (`guidance-groups` INV-GRP-06). The same holds for three BASE keys that `Config` still mirrored (design D-B6, decision A10): `ape.doFuzzing` and `ape.fuzzingRate` SHALL be read as `spec.has(Feature.FUZZING)` and that feature's parameter at `MonkeySourceApe.java:876`, and `ape.checkRestart` SHALL be read from `ExplorationParams` at `agent/ApeAgent.java:280`. The values and defaults are unchanged (`true`, `0.02`, `true`), so no behaviour changes; `Config` SHALL NOT keep twins of these keys.
 
 #### Scenario: plan resolved once before the loop
 
@@ -63,6 +71,12 @@ After resolution, `RunSpec` is the sole behavioral authority: static `Config` re
 - **THEN** `RunSpec.resolve` SHALL complete before `MonkeySourceApe` is constructed
 - **AND** exactly one `RunSpec` SHALL exist for the process lifetime
 - **AND** no code path SHALL mutate it or re-resolve it
+
+#### Scenario: BASE fuzzing and restart switches come from the plan
+
+- **WHEN** a properties file sets `ape.doFuzzing=false` and `ape.checkRestart=false` and nothing else
+- **THEN** `features` SHALL NOT contain `FUZZING`, `MonkeySourceApe` SHALL generate no fuzzing event, and the `RESTART` guard SHALL NOT be mounted (design D-B14.12)
+- **AND** no site SHALL read `Config.doFuzzing`, `Config.fuzzingRate` or `Config.checkRestart`
 
 #### Scenario: later file wins, both validated
 
@@ -85,9 +99,11 @@ The declared dependencies SHALL be at minimum:
 - `STATIC` and `MOP` require `STATIC_DATA`; `ADDONS`, `LLM` and `STATIC_DATA` are roots;
 - `MODEL_MENU`, `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `BACK_MENU_CAP` and `ACTIVITY_STABLE_RESTART` require `ADDONS`;
 - `NAV_FRONTIER`, `TYPED_FUZZ` and `COMPONENT_TRIGGER` require `STATIC`;
-- `WTG`, `MOP_FRONTIER`, `ACTIVITY_TRIGGER`, `MOP_ACTIVITY_SOURCE` and `MOP_COIN` require `MOP`; `MENU_GATEWAY` requires `MOP` and `MODEL_MENU`;
+- `WTG`, `MOP_FRONTIER`, `MOP_LAUNCHER`, `MOP_ACTIVITY_SOURCE` and `MOP_COIN` require `MOP`; `MENU_GATEWAY` requires `MOP` and `MODEL_MENU`;
 - `LLM_NEW_STATE`, `LLM_STAGNATION` and `LLM_COIN` require `LLM`;
 - `FUZZING` has no dependency (BASE).
+
+`Feature.ACTIVITY_TRIGGER` is renamed `MOP_LAUNCHER`, because it mounts only `MopLauncherStage`; its activation key `ape.activityTriggerEnabled` and its sub-parameters keep their names (decision A6). `MopParams.activityTriggerEnabled()`, which has no caller, SHALL be deleted: the launcher's presence is `spec.has(Feature.MOP_LAUNCHER)`.
 
 `Feature.FRONTIER`, `Feature.LLM_RANDOM` and `Feature.LEAST_VISITED_TIEBREAK` SHALL NOT exist; `NAV_FRONTIER` and `LLM_COIN` replace the first two under their unchanged keys, and the scorer-sum tie X1 (`action-selection`) replaces the third.
 
@@ -110,7 +126,7 @@ Dependency validation SHALL distinguish explicit input from defaults: an **expli
 | `ape.llmGateMinActions` | `LLM` | int | `3` | `3` | `0` = gate not mounted |
 | `ape.llmBreakerFailures` | `LLM` | int | `3` | `3` | `0` = gate not mounted |
 | `ape.llmBreakerOpenMs` | `LLM` | long | `60000` | `60000` | |
-| `ape.backMenuPickCap` | `BACK_MENU_CAP` (POSITIVE) | int | `3` | `0` | formerly a base key |
+| `ape.backMenuPickCap` | `BACK_MENU_CAP` (POSITIVE) | int | `3` | `0` | formerly a base key; absent ⇒ `backMenuPickCap()` returns `0` (no cap) |
 | `ape.activityStableRestartThreshold` | `ACTIVITY_STABLE_RESTART` (POSITIVE) | int | `200` | `0` | formerly a base key; absent ⇒ `Integer.MAX_VALUE` |
 | `ape.frontierBoostWeight` | `NAV_FRONTIER` (POSITIVE) | int | `200` | `0` | formerly owned by `FRONTIER` (MOP) |
 | `ape.fuzzInputTyped` | `TYPED_FUZZ` (TRUE) | bool | `true` | `false` | |
@@ -142,7 +158,7 @@ The other keys of the former addon features keep their names and owners; those f
 #### Scenario: default does not activate an impossible feature
 
 - **WHEN** no properties file sets `ape.activityTriggerEnabled` (jar default `true`) and `ape.mop` is absent
-- **THEN** resolution SHALL succeed with `ACTIVITY_TRIGGER` absent from `features`
+- **THEN** resolution SHALL succeed with `MOP_LAUNCHER` absent from `features`
 - **AND** no launcher mechanism SHALL be constructed
 
 #### Scenario: neutral inert sub-parameter accepted, non-neutral aborts
@@ -191,6 +207,12 @@ The other keys of the former addon features keep their names and owners; those f
 - **THEN** `features` SHALL contain `COMPONENT_TRIGGER`
 - **AND WHEN** the file instead sets `ape.mop=true` and `ape.componentPercentage=0.03` with no `ape.static`
 - **THEN** resolution SHALL abort with `reason=missing_dependency key=ape.componentPercentage` naming `STATIC`
+
+#### Scenario: an absent BACK/MENU cap reads as no cap
+
+- **WHEN** the `base` cell resolves, so `BACK_MENU_CAP` is absent from `features`
+- **THEN** the plan's `backMenuPickCap()` SHALL return `0`, the neutral value, and not the jar default `3`
+- **AND** no BACK or MENU action SHALL be filtered by a pick cap
 
 #### Scenario: an LLM gate parameter at zero unmounts the gate
 
@@ -278,7 +300,13 @@ This case is not a compatibility affordance and does not depend on any particula
 #### Scenario: missing dependency aborts
 
 - **WHEN** `ape.properties` contains `ape.activityTriggerEnabled=true` and no `ape.mop`
-- **THEN** the process SHALL abort with `reason=missing_dependency` naming `ACTIVITY_TRIGGER` and `MOP`
+- **THEN** the process SHALL abort with `reason=missing_dependency` naming `MOP_LAUNCHER` and `MOP`
+
+#### Scenario: an LLM URL without the LLM group aborts
+
+- **WHEN** `ape.properties` contains `ape.llmUrl=http://10.0.2.2:30000/v1` and no `ape.llm`
+- **THEN** the process SHALL abort with `[APE-RUNSPEC-ABORT] reason=missing_dependency key=ape.llmUrl` and a detail naming `LLM` (design D-B14.4), because the URL has no neutral value
+- **AND** the run SHALL NOT resolve to a plan without `LLM` that ignores the URL
 
 #### Scenario: invalid combination aborts
 
@@ -324,7 +352,7 @@ This case is not a compatibility affordance and does not depend on any particula
 
 ### Requirement: Level-0 RUN_START Echo
 
-Immediately after successful resolution and before any exploration output, the jar SHALL emit `RUN_START` as a single JSON object line to stdout: `type`, format version `v`, `run_id`, `t0` (device epoch milliseconds at emission — the base against which the step records' relative `t` offsets resolve), `seed`, `agent`, `preset` (name or `"explicit"`), `variant` (the `ape.variant` value, omitted when the key is absent; INV-RUN-10), `features` (sorted names), `params` (every effective non-default parameter plus every active feature's activation key, as `ape.*` keys with effective values), `inert` (sorted; the stated keys that parameterize nothing in this run: the accepted neutral keys of inactive features, INV-RUN-05, the `MOP` keys the selected `ape.mopScoring` mode does not read, INV-RUN-09, and `ape.staticDataPath` when neither `STATIC` nor `MOP` is mounted, design D-B14.20), optional `corpus_basis`, `digest`, `props_digest`, and `build` (`sha`, `time` from the build stamp).
+Immediately after successful resolution and before any exploration output, the jar SHALL emit `RUN_START` as a single JSON object line to stdout: `type`, format version `v`, `run_id`, `t0` (device epoch milliseconds at emission — the base against which the step records' relative `t` offsets resolve), `seed`, `agent`, `preset` (name or `"explicit"`), `variant` (the `ape.variant` value, omitted when the key is absent; INV-RUN-10), `features` (sorted names), `params` (every effective non-default parameter plus every active feature's activation key, as `ape.*` keys with effective values, except an inert `ape.staticDataPath`, which is listed in `inert` only), `inert` (sorted; the stated keys that parameterize nothing in this run: the accepted neutral keys of inactive features, INV-RUN-05, the `MOP` keys the selected `ape.mopScoring` mode does not read, INV-RUN-09, and `ape.staticDataPath` when neither `STATIC` nor `MOP` is mounted, design D-B14.20), optional `corpus_basis`, `digest`, `props_digest`, and `build` (`sha`, `time` from the build stamp).
 
 The format version `v` SHALL be `2` from `isolate-guidance-groups` on (`RunSpecEcho.FORMAT_VERSION`, design D-B14.22): `dec.src` changes meaning from "largest boost" to "executed owner", and the reader keys its strict mode on `v`. The format version `v` is not decoration and is worth one sentence of justification, because its absence has already cost something. Traces from different campaigns of this study carry materially different `[APE-STEP]` schemas — the earlier calibration corpus has no `mop_frontier`, `pick_channel`, `patched` or counterfactual fields, and its `mop=` realises `{0,300}` where the decisive campaign realises `{0,500}` — and nothing in either trace says which schema it is. `v` is what makes a cross-campaign comparison fail loudly instead of quietly comparing incomparable fields. The same holds within one jar from `llm-coordinate-single-base` on: the `mop` boost of a step means a flag weight under `ape.mopScoring=flag` and a distance weight under `distance`, so the scoring mode is part of what the echo must let an analyst read. It is, because `ape.mopScoring` is a parameter of the `MOP` feature: present in `params` when it is `distance`, and `flag` by its absence. From `isolate-guidance-groups` on, `features` also names the groups (`ADDONS`, `STATIC`, `MOP`, `LLM`) and the data root (`STATIC_DATA`), so the cell is readable from the line; `variant` names the harness variant that produced it, and `build` tells a pre-split jar, whose `dec.src` means "largest boost", from a post-split one, whose `dec.src` is the executed owner.
 
@@ -380,6 +408,7 @@ The line SHALL be produced by a serializer that escapes quotes, backslashes, and
 #### Scenario: a path with no group mounted is inert
 - **WHEN** a properties file sets `ape.staticDataPath=/data/local/tmp/mop-artifact.json` and neither `ape.static` nor `ape.mop`
 - **THEN** resolution SHALL succeed, `StaticParams` SHALL be non-null, and `RUN_START.inert` SHALL list `ape.staticDataPath`
+- **AND** `RUN_START.params` SHALL NOT carry `ape.staticDataPath`
 - **AND** the loader SHALL NOT open the path and no `MOP_DATA` record SHALL be written
 
 #### Scenario: no data, no record

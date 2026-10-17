@@ -63,14 +63,15 @@ Inclusion of the `menuAction` in the state's **selectable** action set is gated 
 
 `SataAgent` (via its superclass `StatefulAgent`) monitors whether the exploration graph has stopped growing. The counter `graphStableCounter` is incremented each step in which no new `State` or `StateTransition` is added to the `Graph`. When `graphStableCounter` exceeds `ape.graphStableRestartThreshold` (default: `100`) in step 2's `checkStable`, `onGraphStable` SHALL raise the restart flag with kind `graph` (`requestRestart()`) and the counter MUST be reset to zero immediately. This prevents the exploration from getting stuck in a saturated region of the state space. The state and activity stability checks raise the same flag with kinds `state` and `activity`. The activity threshold is `ape.activityStableRestartThreshold` when the plan carries the ADDONS member `ACTIVITY_STABLE_RESTART`, and otherwise the upstream `Integer.MAX_VALUE` (design D-B5).
 
-The restart itself is selected by the `Restart` guard stage of the decision pipeline (`decision-pipeline` "Restart Guard Stage"). That stage runs after `Budget` and before any LLM, MOP or SATA stage, and it selects an `EVENT_RESTART` or `EVENT_CLEAN_RESTART` start action. It is mounted if and only if `ape.checkRestart` is `true` (BASE, jar default `true`; design D-B14.12), and it replaces, for an agent with a pipeline, the post-selection `checkRestart` that used to substitute the start action for the action already chosen. `RandomAgent` and `ReplayAgent` have no pipeline and keep that post-selection wrapping unchanged. The step's record carries `dec.src="restart"` and `dec.restart` set to the kind, and `dec.a` names the start action that ran. A restart preempts the step. It never replaces a selected action, so no selected model action is lost to it.
+The restart itself is selected by the `Restart` guard stage of the decision pipeline (`decision-pipeline` "Restart Guard Stage"). That stage runs after `Budget` and before any LLM, MOP or SATA stage, and it selects an `EVENT_RESTART` or `EVENT_CLEAN_RESTART` start action. It is mounted if and only if `ape.checkRestart` is `true` (BASE, jar default `true`; design D-B14.12), read from the plan (`spec`) and never from `Config.checkRestart` (design D-B6, extended by author decision A10, no behaviour change), and it replaces, for an agent with a pipeline, the post-selection `checkRestart` that used to substitute the start action for the action already chosen. `RandomAgent` and `ReplayAgent` have no pipeline and keep that post-selection wrapping unchanged. The step's record carries `dec.src="restart"` and `dec.restart` set to the kind, and `dec.a` names the start action that ran. A restart preempts the step. It never replaces a selected action, so no selected model action is lost to it.
 
 #### Scenario: Graph stable for threshold steps
 
-- **WHEN** `graphStableCounter` reaches `100` (the value of `ape.graphStableRestartThreshold`) consecutive steps without any change to the `Graph`
-- **THEN** `StatefulAgent.onGraphStable(100)` SHALL be called on the active agent
-- **AND** `SataAgent.onGraphStable()` SHALL return `true`, indicating a restart should be performed
-- **AND** the `Restart` stage SHALL select a start action (`EVENT_RESTART`, or `EVENT_CLEAN_RESTART` with probability 0.2) before any LLM or SATA stage is evaluated, with `dec.src="restart"` and `dec.restart="graph"`
+- **WHEN** `graphStableCounter` reaches `101` consecutive steps without any change to the `Graph`, exceeding `ape.graphStableRestartThreshold=100`
+- **THEN** `StatefulAgent.onGraphStable(101)` SHALL be called on the active agent in step 2's `checkStable`
+- **AND** `SataAgent.onGraphStable()` SHALL return `true` and raise the restart flag with kind `graph`, indicating a restart should be performed
+- **AND** at `graphStableCounter=100` it SHALL have returned `false`, because the threshold must be exceeded, not reached
+- **AND** the `Restart` stage of the same step SHALL select a start action (`EVENT_RESTART`, or `EVENT_CLEAN_RESTART` with probability 0.2) before any LLM or SATA stage is evaluated, with `dec.src="restart"`, `dec.ch="restart"` and `dec.restart="graph"`
 - **AND** `graphStableCounter` SHALL be reset to `0`
 
 #### Scenario: Graph grows; counter resets
@@ -90,7 +91,7 @@ The restart itself is selected by the `Restart` guard stage of the decision pipe
 
 ### Requirement: Fuzzing Integration
 
-When `ape.doFuzzing=false`, the fuzzing path is disabled and the agent never injects random `FUZZ` actions outside the structured exploration loop. When `ape.doFuzzing=true` (the BASE feature `FUZZING`), at each step the agent MAY inject a random `FuzzAction` with probability `ape.fuzzingRate` (default: `0.02`, i.e., 2% of steps). The toss SHALL come from `StepRng`'s own `fuzz` stream (`decision-pipeline` INV-DP-13), not from `RandomHelper`. It is drawn at step open on **every** step, whether or not fuzzing is enabled and whatever the step's owner, so that enabling fuzzing or changing its rate never shifts a helper-stream draw. This changes the helper-stream sequence relative to `eea2b1a9`, where `MonkeySourceApe` drew `RandomHelper.toss(fuzzingRate)` only when `doFuzzing` was true. The design declares the change, and the goldens are recaptured. The injection happens when the toss holds, `ape.doFuzzing` is true and `Agent.canFuzzing()` admits; it is checked in `MonkeySourceApe` after the step's action events are generated. Fuzzing MUST only activate after the app's activity has been visited at least `ape.fuzzingActivityVisitThreshold` (default: `10`) times, preventing fuzzing from disrupting early exploration.
+`ape.doFuzzing` and `ape.fuzzingRate` are BASE keys, and `MonkeySourceApe` SHALL read them from the plan (`spec`), never from `Config.doFuzzing`/`Config.fuzzingRate` (design D-B6, extended by author decision A10; no behaviour change). When `ape.doFuzzing=false`, the fuzzing path is disabled and the agent never injects random `FUZZ` actions outside the structured exploration loop. When `ape.doFuzzing=true` (the BASE feature `FUZZING`), at each step the agent MAY inject a random `FuzzAction` with probability `ape.fuzzingRate` (default: `0.02`, i.e., 2% of steps). The toss SHALL come from `StepRng`'s own `fuzz` stream (`decision-pipeline` INV-DP-13), not from `RandomHelper`. It is drawn at step open on **every** step, whether or not fuzzing is enabled and whatever the step's owner, so that enabling fuzzing or changing its rate never shifts a helper-stream draw. This changes the helper-stream sequence relative to `eea2b1a9`, where `MonkeySourceApe` drew `RandomHelper.toss(fuzzingRate)` only when `doFuzzing` was true. The design declares the change, and the goldens are recaptured. The injection happens when the toss holds, `ape.doFuzzing` is true and `Agent.canFuzzing()` admits; it is checked in `MonkeySourceApe` after the step's action events are generated. Fuzzing MUST only activate after the app's activity has been visited at least `ape.fuzzingActivityVisitThreshold` (default: `10`) times, preventing fuzzing from disrupting early exploration.
 
 #### Scenario: Fuzzing disabled
 
@@ -207,7 +208,7 @@ The buffer is passed to `ApePromptBuilder.build()` via `LlmEngine.selectAction()
 
 LLM new-state routing SHALL be the `LlmNewState` decision stage, the first stage after the `Budget` and `Restart` guards. It is assembled only when the plan carries `LLM_NEW_STATE`. `SataAgent.selectNewActionNonnull()` SHALL contain no inline LLM block: it delegates to `DecisionPipeline.decide()`, and the stage occupies the ladder position the inline block occupied (before stagnation, coin, launcher, trigger, MOP coin and SATA; the per-cell goldens gate the behaviour).
 
-The stage checks the new-state trigger (`_isNewState`) first, with no coin (D-A17). It then evaluates the gate chain that all three LLM stages share (`llm-routing` "Declared LLM Gates"): `MinActionsGate(ape.llmGateMinActions)`, default 3, which skips trivial states such as permission dialogs with two actions or fewer; then `BreakerGate`. The action buffer is **not** a gate (D-A6, P-4). A new state reached while a SATA path is buffered goes to the LLM, and when the LLM takes the step the buffer is abandoned without `weakenStateTransition`, with `dec.buf="llm"` (`decision-pipeline` INV-DP-15). On a non-null engine result the stage returns `Select` (stamping `DecisionSource.LLM`/`PickChannel.LLM`, and resolving a synthesized `MODEL_LLM_TAP` against the state — unchanged accept semantics); on null it returns `Continue` and the remaining pipeline decides (structural fallback).
+The stage checks the new-state trigger (`_isNewState`) first, with no coin (D-A17). It then evaluates the gate chain that all three LLM stages share (`llm-routing` "Declared LLM Gates"): `MinActionsGate(ape.llmGateMinActions)`, default 3, which skips trivial states such as permission dialogs with two actions or fewer; then `BreakerGate`. The action buffer is **not** a gate (D-A6, P-4). A new state reached while a SATA path is buffered goes to the LLM, and when the LLM takes the step the buffer is abandoned without `weakenStateTransition`, with `dec.buf="llm"` (`decision-pipeline` INV-DP-15). On a non-null engine result the stage returns `Select` (stamping `DecisionSource.LLM`/`PickChannel.LLM`, and resolving a synthesized `MODEL_LLM_TAP` against the state — unchanged accept semantics); on null it returns `Continue` and the remaining pipeline decides (structural fallback). Once this stage has called, the later LLM stages of the step do not call again: a step makes at most one LLM call.
 
 When the plan has no LLM feature, the stage does not exist and selection cost is zero.
 
@@ -221,6 +222,7 @@ When the plan has no LLM feature, the stage does not exist and selection cost is
 
 - **WHEN** the engine returns `null`
 - **THEN** the stage SHALL return `Continue`, with `dec.own.fb` naming the reason
+- **AND** `LlmStagnation` and `LlmCoin` SHALL return `Continue` without calling the LLM again on that step, because a step makes at most one LLM call (`decision-pipeline` "Hard Preemption Order")
 - **AND** the launcher, trigger, MOP-coin and SATA stages SHALL evaluate normally
 
 #### Scenario: LLM skipped — buffer has pending navigation
@@ -273,7 +275,7 @@ LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled af
 - **WHEN** the trigger fires and the engine returns `null`
 - **THEN** the flag SHALL be burned and the stage SHALL return `Continue`
 - **AND** the counter SHALL continue incrementing and the stage SHALL NOT fire again this episode
-- **AND** if `graphStableCounter` eventually exceeds `graphStableRestartThreshold`, `requestRestart()` SHALL be called and the `Restart` guard SHALL select the restart on the next step (INV-EXPL-09)
+- **AND** if `graphStableCounter` eventually exceeds `graphStableRestartThreshold`, `requestRestart()` SHALL be called in step 2's `checkStable`, and the `Restart` guard SHALL select the restart in that same step, before any LLM stage is evaluated (INV-EXPL-09, `decision-pipeline` "Restart Guard Stage")
 
 #### Scenario: new edge re-arms the episode through the stage hook
 
@@ -291,7 +293,7 @@ LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled af
 
 ### Requirement: Dynamic Epsilon Decay
 
-`SataAgent.egreedy()` SHALL compute a coverage-adaptive epsilon when the plan carries `DYNAMIC_EPSILON` (key `ape.dynamicEpsilon`). That feature is a member of the ADDONS group, so it is absent from the `base` and `mop` cells (design D-B1). The epsilon value SHALL be interpolated between `Config.minEpsilon` and `Config.maxEpsilon` based on the current state's UI coverage gap:
+`SataAgent.egreedy()` SHALL compute a coverage-adaptive epsilon when the plan carries `DYNAMIC_EPSILON` (key `ape.dynamicEpsilon`). That feature is a member of the ADDONS group, so it is absent from the `base` and `mop` cells (design D-B1). `SataAgent` SHALL read the feature through `spec.has(Feature.DYNAMIC_EPSILON)`, never `Config.dynamicEpsilon`. The bounds are the `DYNAMIC_EPSILON` parameter keys `ape.minEpsilon` (`0.02`) and `ape.maxEpsilon` (`0.15`), read through the plan as today (`SataAgent.java:1214`); their dead `Config` twins are deleted. The epsilon value SHALL be interpolated between `Config.minEpsilon` and `Config.maxEpsilon` based on the current state's UI coverage gap:
 
 ```
 epsilon = minEpsilon + (maxEpsilon - minEpsilon) * coverageGap
@@ -301,7 +303,7 @@ Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(currentSt
 
 **Scope note**: `egreedy()` is called from `selectNewActionEpsilonGreedyRandomly()`, which is one of the last steps in the SATA selection chain. Dynamic epsilon has incremental impact — it improves decisions that reach epsilon-greedy, but does not affect decisions resolved earlier (LLM hooks, buffer, early-stage, trivial activity).
 
-When the plan does not carry `DYNAMIC_EPSILON`, upstream APE's behavior SHALL be preserved: epsilon is the fixed value `defaultEpsilon`.
+When the plan does not carry `DYNAMIC_EPSILON`, upstream APE's behavior SHALL be preserved: epsilon is the fixed value `defaultEpsilon`, the BASE plan key `ape.defaultEpsilon` (`spec.exploration().defaultEpsilon()`).
 
 #### Scenario: New state (high gap)
 - **WHEN** `egreedy()` is called in a state with coverageGap=1.0 and maxEpsilon=0.15, minEpsilon=0.02
@@ -376,3 +378,99 @@ The first mismatch of each distinct `top→tree` package pair SHALL log `[APE-RV
 #### Scenario: guard disabled
 - **WHEN** the plan does not carry `TREE_PACKAGE_GUARD` (the `base` cell, or `ape.treePackageGuard=false` with ADDONS on) and a `(topComp, tree)` pair with a foreign tree reaches `generateEvents`
 - **THEN** the pair SHALL be modeled exactly as before this change (unchecked pairing), with no refetch `continue` and no guard log line
+
+---
+
+### Requirement: StatefulAgent — Priority-Based Action Selection
+
+`StatefulAgent` and its subclasses SHALL use a `priority` integer field on each `ModelAction` to break ties and express preferences. Higher numeric priority means higher preference. The method `StatefulAgent.adjustActionsByGUITree()` is called after the base priority has been assigned and before the agent selects an action. This is the designated extension point where the mounted scoring passes (`scoring-pipeline`) MAY call `ModelAction.setPriority(int)` to boost specific actions.
+
+`StatefulAgent` SHALL load the static-analysis artifact at construction time if and only if `STATIC` or `MOP` is in the resolved plan, from the path `ape.staticDataPath` (`spec.staticData().dataPath()`; `STATIC_DATA`), which replaces the retired `ape.mopDataPath` (design D-B2, D-B14.20). `Config.mopDataPath` no longer exists. The loader splits the artifact into `StaticGuiModel` and `MopData` (`mop-guidance`). `getMopData()` SHALL be null if and only if `MOP` is not in the plan: in the `as` and `as_llm` cells the artifact is loaded for `STATIC`, yet no consumer receives a `MopData` (design D-B14.21). With `MOP` mounted, the MOP scoring passes apply in `adjustActionsByGUITree()` after the base priority loop. A MOP pass SHALL only apply to actions where `action.requireTarget() == true` AND `action.isValid() == true`. The boost is additive: `action.setPriority(action.getPriority() + term)`, with the term written to the pass's own field. When `MOP` is not in the plan, no MOP pass is constructed and no `MopScorer` call is made.
+
+The selection method `RandomHelper.randomPickWithPriority(List<ModelAction>)` MUST prefer actions with higher priority; actions with equal priority are selected uniformly at random among that priority tier.
+
+#### Scenario: Higher priority action preferred
+- **WHEN** `StatefulAgent` has two candidate actions `actionA` (priority=10) and `actionB` (priority=1)
+- **THEN** `actionA` SHALL be selected with probability proportional to its priority weight under `randomPickWithPriority`
+
+#### Scenario: MOP boost applied to direct-reachable widget
+- **WHEN** the plan is the `mop` cell with `ape.staticDataPath` naming a valid format-2 artifact under `ape.mopScoring=flag`, AND `actionA` targets widget `btn_encrypt`, which the artifact marks `direct` for `click`
+- **THEN** `actionA.getPriority()` after `adjustActionsByGUITree()` SHALL equal `basePriority + 500`, and its `mopBoost` SHALL be `500`
+
+#### Scenario: MOP scoring skipped when mopDataPath is null
+- **WHEN** `MOP` is not in the plan — the `base` cell with no `ape.staticDataPath`, or the `as` cell, which loads the artifact for `STATIC`
+- **THEN** `getMopData()` SHALL return `null` and `adjustActionsByGUITree()` SHALL complete without any call to `MopScorer`
+- **AND** no action SHALL carry a non-zero `mopBoost`, `mopFrontierBoost`, `wtgBoost` or `menuBoost`; in the `base` cell every priority SHALL equal its base SATA-assigned value
+- **AND** the header names the retired `ape.mopDataPath` because `openspec archive` matches scenarios by name
+
+#### Scenario: Non-target actions not boosted
+- **WHEN** `MOP` is in the plan AND `actionB` is `MODEL_BACK` (`requireTarget() == false`)
+- **THEN** `actionB.getPriority()` SHALL NOT be modified by any MOP scoring pass
+
+---
+
+### Requirement: Configuration Loading
+
+All tuning parameters MUST be loaded from `ape.properties` at process startup — `/data/local/tmp/ape.properties` first, then `/sdcard/ape.properties` (later wins) — and the loaded entries SHALL be **validated in full by `RunSpec.resolve`** (`run-spec` capability) before any component consumes them: unknown keys, foreign keys, retired keys, type-invalid values, missing feature dependencies, and invalid combinations abort the process before step 1. JVM system properties are not a configuration channel for `ape.*` behavior. All surviving `Config` fields are `public static final`, resolved once at class-loading time, and MUST NOT change for the lifetime of the process; the five formerly non-final test knobs no longer exist (tests construct `RunSpec` values instead). `Config` is a loading detail; the resolved `RunSpec` is the behavioral authority. A key that the plan owns SHALL be read from the plan (`RunContext.current().spec()`), never from its `Config` twin: in particular `ape.doFuzzing`, `ape.fuzzingRate` and `ape.checkRestart` are BASE keys read from the plan (design D-B6, extended by author decision A10).
+
+The table below lists the configuration keys relevant to the exploration engine with their types and defaults:
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `ape.graphStableRestartThreshold` | int | 100 | Steps without graph growth before forced restart (BASE) |
+| `ape.stateStableRestartThreshold` | int | 50 | Steps in same state before forced restart (BASE) |
+| `ape.activityStableRestartThreshold` | int | 200 in the ADDONS block | Steps in same activity before forced restart. Activation key of the ADDONS member `ACTIVITY_STABLE_RESTART` (POSITIVE, neutral 0), no longer a BASE key; when the feature is absent (ADDONS off, or the key `0`) the threshold is the upstream `Integer.MAX_VALUE` (design D-B5) |
+| `ape.evolveModel` | boolean | true | Enable CEGAR naming refinement |
+| `ape.doFuzzing` | boolean | true | Enable random fuzzing injection (BASE, read from the plan) |
+| `ape.fuzzingRate` | double | 0.02 | Probability of fuzzing per step (BASE, read from the plan) |
+| `ape.checkRestart` | boolean | true | Mount the `Restart` guard stage (BASE, read from the plan) |
+| `ape.fuzzingActivityVisitThreshold` | int | 10 | Minimum activity visits before fuzzing activates |
+| `ape.defaultEpsilon` | double | 0.05 | Epsilon for SataAgent epsilon-greedy |
+| `ape.takeScreenshot` | boolean | true | Save screenshots |
+| `ape.saveGUITreeToXmlEveryStep` | boolean | false | Save GUITree XML per step (see "Per-Step Debug Artifact Defaults" / INV-EXPL-17) |
+| `ape.defaultGUIThrottle` | long (ms) | 200 | Delay between injected events |
+| `ape.trivialActivityRankThreshold` | int | 3 | Minimum activity count before trivial-activity logic activates |
+
+The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present. The keys `ape.mopDataPath` (renamed `ape.staticDataPath`), `ape.leastVisitedPriorityTiebreak` (replaced by the X1 scorer-sum tie) and `ape.mopTargetPickCap` (subsumed by the MOP coin's first-interaction rule) are retired by this change and abort resolution with `retired_key` (`run-spec`).
+
+#### Scenario: Property file present on device
+
+- **WHEN** `/data/local/tmp/ape.properties` contains `ape.graphStableRestartThreshold=200`
+- **THEN** the plan's `spec().exploration().graphStableRestartThreshold()` SHALL equal `200` for the entire session
+- **AND** the default value of `100` SHALL NOT be used
+
+#### Scenario: No property file present
+
+- **WHEN** neither `/data/local/tmp/ape.properties` nor `/sdcard/ape.properties` exists
+- **THEN** all `Config` fields and all BASE plan keys SHALL take their hardcoded default values, and no group member SHALL be in the plan, so `ACTIVITY_STABLE_RESTART` is absent and the activity threshold is `Integer.MAX_VALUE`
+- **AND** resolution SHALL succeed (an absent file is valid; an invalid entry is not)
+
+#### Scenario: Typo aborts instead of defaulting
+
+- **WHEN** `/data/local/tmp/ape.properties` contains `ape.fuzzingRate=O.02` (letter O)
+- **THEN** the process SHALL abort with an invalid-type diagnostic before step 1
+
+#### Scenario: the activity-stable threshold follows ADDONS
+- **WHEN** the `as` cell resolves, whose ADDONS block sets `ape.activityStableRestartThreshold=200`
+- **THEN** `ACTIVITY_STABLE_RESTART` SHALL be in the plan and the activity-stability check SHALL raise the restart flag once the counter exceeds `200`
+- **AND WHEN** the `base` cell resolves
+- **THEN** `ACTIVITY_STABLE_RESTART` SHALL be absent and the threshold SHALL be `Integer.MAX_VALUE`, so the activity check never raises the flag
+
+---
+
+### Requirement: Config Flags for Dynamic Epsilon
+
+Coverage-adaptive epsilon is the ADDONS member feature `DYNAMIC_EPSILON`, activated by `ape.dynamicEpsilon` (boolean, jar default `true`, depends on `ADDONS`; design D-B1). Every read site SHALL decide through `spec.has(Feature.DYNAMIC_EPSILON)`, never through `Config.dynamicEpsilon` (design D-B6). With `ape.addons=false` (the jar default and the `base`/`mop` cells) the feature is absent whatever its key says, unless the key is set explicitly, which aborts resolution with `MISSING_DEPENDENCY`.
+
+The interpolation bounds are the parameter keys of `DYNAMIC_EPSILON`, read through the plan (`spec.exploration().minEpsilon()`/`maxEpsilon()`, as `SataAgent.java:1214` already does); their dead `Config` twins (`Config.java:218-219`) are deleted:
+
+| Key | Type | Default | Description |
+|------|------|-------|-------------|
+| `ape.maxEpsilon` | double | `0.15` | Epsilon when coverage gap is 1.0 |
+| `ape.minEpsilon` | double | `0.02` | Epsilon when coverage gap is 0.0 |
+
+#### Scenario: Dynamic epsilon flags default correctly
+- **WHEN** `ape.properties` sets `ape.addons=true` and not `ape.dynamicEpsilon`
+- **THEN** `DYNAMIC_EPSILON` SHALL be in the plan's `features`, and `egreedy()` SHALL interpolate between `ape.minEpsilon = 0.02` and `ape.maxEpsilon = 0.15`
+- **AND WHEN** it sets neither `ape.addons` nor `ape.dynamicEpsilon`
+- **THEN** `DYNAMIC_EPSILON` SHALL be absent and `egreedy()` SHALL use the fixed `defaultEpsilon` (`0.05`)

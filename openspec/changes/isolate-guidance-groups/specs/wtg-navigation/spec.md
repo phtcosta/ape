@@ -6,7 +6,7 @@ The WTG frontier does not read MOP data: it boosts a widget whose static transit
 
 After this change (design D-A1, D-B1, P-1):
 
-- the WTG view is served by `StaticGuiModel`, the static provider the loader splits from wire format 2 (unchanged);
+- the WTG view is served by `StaticGuiModel`, the static provider the loader splits from wire format 2 (unchanged apart from the additive intent-filter `data` member, D-B13). `StaticGuiModel` is not STATIC-only: the artifact is loaded, and `StaticGuiModel` built, whenever `STATIC` or `MOP` is in the plan (P-1, D-B14.20). It serves the STATIC member `NAV_FRONTIER` and the MOP members `WTG` (`WtgPass`) and `MOP_FRONTIER` (`MopFrontierPass`), since MOP reads both providers. In the `mop` cell the WTG is therefore loaded although `STATIC` is off;
 - the frontier is the STATIC member `NAV_FRONTIER` (key `ape.frontierBoostWeight`, default 200), depends on `STATIC`, not on `MOP`, and is computed by `NavFrontierPass`;
 - `NavFrontierPass` writes its own field `navFrontierBoost`, rendered `dec.navf`; `WtgPass` (MOP) is the only writer of `wtgBoost`; `dec.wtgsrc` is removed (P3).
 
@@ -83,7 +83,7 @@ The unvisited check SHALL be evaluated live on every scoring pass: once the targ
 **One producer per field.** Before this change both passes accumulated into `wtgBoost`, and a `dec.wtgsrc` stamp (`wtg` | `frontier` | `both`) was needed to tell them apart at equal weights. With `navFrontierBoost` the two producers are separate fields, so `dec.wtgsrc` and `ModelAction`'s stamp SHALL NOT exist (P3).
 
 - **INV-WTG-06**: The frontier term SHALL only ever be applied to actions whose WTG transition target has no `ActivityNode` in the model at scoring time, and SHALL be added to the priority (the steering mechanism) AND written to `navFrontierBoost`. Because `navFrontierBoost` is telemetry-only, writing the field alone would leave priority — and therefore roulette weight and the X1 scorer sum's effect — unchanged; the priority increment is mandatory for the term to steer.
-- **INV-WTG-07**: With `NAV_FRONTIER` absent from the plan (`ape.frontierBoostWeight = 0`, or `STATIC` off), no action SHALL receive the frontier term and `navFrontierBoost` SHALL be 0 everywhere. With both the MOP-reach and the frontier terms applicable, the action's priority gain SHALL be `mopWeightWtg + frontierBoostWeight`, with `wtgBoost == mopWeightWtg` and `navFrontierBoost == frontierBoostWeight`.
+- **INV-WTG-07**: With `NAV_FRONTIER` absent from the plan (`ape.frontierBoostWeight = 0`, or `STATIC` off), no action SHALL receive the frontier term and `navFrontierBoost` SHALL be 0 everywhere. With both the MOP-reach and the frontier terms applicable, the action's priority gain SHALL be `mopWeightWtg + frontierBoostWeight`, plus `mopFrontierWeight` when `MOP_FRONTIER` also applies (`scoring-pipeline` "MopFrontierPass"), with `wtgBoost == mopWeightWtg`, `navFrontierBoost == frontierBoostWeight` and, in that case, `mopFrontierBoost == mopFrontierWeight`.
 
 #### Scenario: widget leading to an unvisited activity is boosted
 - **WHEN** in the `as` cell widget W's WTG transition targets `com.x.DetailActivity`, which has no `ActivityNode` in the graph, and `ape.frontierBoostWeight = 200`
@@ -95,9 +95,9 @@ The unvisited check SHALL be evaluated live on every scoring pass: once the targ
 - **THEN** W's action SHALL NOT receive the frontier term in that pass
 
 #### Scenario: stacking with the MOP-reach WTG boost
-- **WHEN** in the `as_mop` cell the transition target is both MOP-reachable (`activityHasMop == true`) and unvisited, with `mopWeightWtg = 200` (the default) and `frontierBoostWeight = 200`
-- **THEN** the action SHALL receive both terms (+400 priority in total)
-- **AND** the step record SHALL carry `dec.wtg:200` and `dec.navf:200`, and no `dec.wtgsrc`
+- **WHEN** in the `as_mop` cell the transition target is both MOP-bearing (`activityHasMop == true`) and unvisited, with `mopWeightWtg = 200`, `frontierBoostWeight = 200` and `mopFrontierWeight = 200` (the cell's values)
+- **THEN** the action SHALL receive the three terms (+600 priority in total), with `wtgBoost` 200, `navFrontierBoost` 200 and `mopFrontierBoost` 200
+- **AND** the step record SHALL carry `dec.wtg:200`, `dec.navf:200` and `dec.mopf:200`, and no `dec.wtgsrc`
 
 #### Scenario: the two producers are distinguishable at equal weights
 - **WHEN** `mopWeightWtg = 200` and `frontierBoostWeight = 200`, and on one step only the frontier term applies while on another only the MOP-reach term applies

@@ -21,7 +21,7 @@ The following replace or retire main-spec invariants at archive:
 
 - **INV-SEL-01** (amended; replaces the main spec's text): `greedyPickLeastVisited()` SHALL always prefer the action with the lowest `visitedCount`; among the actions sharing it, the X1 strategy decides by rule R2 (the larger scorer sum, otherwise array order). Priority SHALL NOT be read by the pick. With zero scorers mounted, the pick SHALL equal upstream APE's.
 - **INV-SEL-02** (amended): When all actions have distinct `visitedCount` values, the pick SHALL be the minimum and the X1 strategy SHALL NOT be consulted.
-- **INV-SEL-05** (amended): Every record SHALL carry exactly one `dec.src` from the owner enum `budget`, `restart`, `llm`, `launcher`, `mop`, `sata`, and every record with `dec.src:"sata"` SHALL carry exactly one `dec.strat` from the fixed enum of `event-sink`. Every record SHALL carry one `dec.ch`; a step the MOP coin takes carries `dec.ch:"mop_coin"`, and the channel values `short_circuit_unvisited` and `short_circuit_0step` SHALL NOT be produced (design D-B14.17).
+- **INV-SEL-05** (amended): Every record SHALL carry exactly one `dec.src` from the owner enum `budget`, `restart`, `llm`, `launcher`, `mop`, `sata`, and every record with `dec.src:"sata"` SHALL carry exactly one `dec.strat` from the fixed enum of `event-sink`. Every record SHALL carry one `dec.ch`; a step the MOP coin takes carries `dec.ch:"mop_coin"`, a step the `Budget` guard takes `dec.ch:"budget"` and a step the `Restart` guard takes `dec.ch:"restart"`, and the channel values `short_circuit_unvisited` and `short_circuit_0step` SHALL NOT be produced (design D-B14.17).
 - **INV-SEL-08** (amended): `dec.cfc` SHALL appear only on records whose pick was a priority roulette that writes `dec.draw` or the X1 least-visited pick, and only over mounted scorers with a non-zero term in that pick's candidate set. In a cell without MOP, `dec.cfc` SHALL carry none of the keys `mop`, `mopf`, `wtg`, `menu`.
 - **INV-SEL-09** (amended): The counterfactual recomputation of every scorer SHALL consume zero draws from any seeded stream, call no `resolveAction` and touch no cache.
 - **INV-SEL-MOP-06** is retired with the shortcut ranking it constrained ("MOP-target greedy short-circuit in epsilon-greedy selection", REMOVED).
@@ -43,15 +43,18 @@ interface AbaTargetTie    { boolean replaces(State incumbent, State candidate); 
 interface TrivialPathPick { Subsequence pick(List<Subsequence> paths); }             // X4
 ```
 
+The implementations are named `<Variant><Interface>` (design D-B12): X1 `ScorerSumLeastVisitedTie`; X3
+`ApeAbaTargetTie` and `MopAbaTargetTie`; X4 `ApeTrivialPathPick` and `MopTrivialPathPick`.
+
 | Point | Site | APE default (mounted without `MOP`) | MOP variant (mounted with `MOP`) |
 |---|---|---|---|
-| X1 | the visit-count tie of `State.greedyPickLeastVisited` | rule R2 ("State.greedyPickLeastVisited() — Priority Tiebreaker"); draws nothing | none: X1 has one strategy in every cell |
-| X3 | the equal-visit-count tie between two greedy targets of the ABA path, in both the same-activity branch (state visit counts) and the cross-activity branch (activity visit counts) | never replace the incumbent on a tie; draws nothing | replace when `stateMopDensity(candidate) > stateMopDensity(incumbent)` (`mop-guidance` "Navigation Tie-Breaks as MOP Variants"); draws nothing |
-| X4 | the choice among the shortest paths to a trivial activity | always `RandomHelper.randomPick(paths)`, one draw, also for a single path (upstream `SataAgent` `8f51b99c` `:755-757`) | the first path whose end state holds the strictly largest density; `randomPick` when every density is equal |
+| X1 | the visit-count tie of `State.greedyPickLeastVisited` | `ScorerSumLeastVisitedTie`: rule R2 ("State.greedyPickLeastVisited() — Priority Tiebreaker"); draws nothing | none: X1 has one strategy in every cell |
+| X3 | the equal-visit-count tie between two greedy targets of the ABA path, in both the same-activity branch (state visit counts) and the cross-activity branch (activity visit counts) | `ApeAbaTargetTie`: never replace the incumbent on a tie; draws nothing | `MopAbaTargetTie`: replace when `stateMopDensity(candidate) > stateMopDensity(incumbent)` (`mop-guidance` "Navigation Tie-Breaks as MOP Variants"); draws nothing |
+| X4 | the choice among the shortest paths to a trivial activity | `ApeTrivialPathPick`: always `RandomHelper.randomPick(paths)`, one draw, also for a single path (upstream `SataAgent` `8f51b99c` `:755-757`) | `MopTrivialPathPick`: the first path whose end state holds the strictly largest density; `randomPick` when every density is equal |
 
 The defaults reproduce upstream APE including RNG consumption, so a cell without `MOP` shifts no draw at these sites (INV-SEL-11). The selection of a variant SHALL happen only at mount time; no use site SHALL branch on MOP availability (INV-SEL-12).
 
-Whenever an extension point resolves a tie, the step's record SHALL carry `dec.nav` (`event-sink`) as `{"x":"X1"|"X3"|"X4", "c":"ape"|"mop", "alt":0|1, "drew":0|1}`: `x` the point; `c` the mounted strategy (`ape` for X1 in every cell); `alt` is `1` when the strategy's own rule decided instead of the APE fallback (X1: the scorer sum moved the pick off the first of the least-visited array; X3: the candidate replaced the incumbent; X4: a strictly largest density chose the path) and `0` otherwise; `drew` is `1` when the point consumed a draw. A tie resolved inside a step whose action comes from a later strategy (an ABA probe that is not taken) MAY be overwritten by the last tie of the same step; at most one `dec.nav` member exists per record. The computation of `dec.nav` SHALL be pure.
+Whenever an extension point is consulted with two or more candidates, the step's record SHALL carry `dec.nav` (`event-sink`) as `{"x":"X1"|"X3"|"X4", "c":"ape"|"mop", "alt":0|1, "drew":0|1}`: `x` the point; `c` the mounted strategy (`ape` for X1 in every cell); `drew` is `1` when the point consumed a draw. `alt` is `1` if and only if the MOP variant decided by its own rule: for X3, `MopAbaTargetTie` replaced the incumbent; for X4, `MopTrivialPathPick` chose the path by the strictly largest density, without a draw. Otherwise `alt` is `0`: X1 always writes `alt:0` with `c:"ape"`, whatever the scorer sum did (its effect is in `dec.cfc`), and in a cell without `MOP` every `dec.nav` carries `alt:0`. A point consulted with a single candidate writes no `dec.nav`; in particular a single path at X4 still calls `randomPick` once (INV-SEL-11) but records no `dec.nav`. A tie resolved inside a step whose action comes from a later strategy (an ABA probe that is not taken) MAY be overwritten by the last tie of the same step; at most one `dec.nav` member exists per record. The computation of `dec.nav` SHALL be pure.
 
 #### Scenario: X3 default never replaces on a tie
 - **WHEN** a cell without `MOP` runs the ABA scan and two greedy targets of the same activity both have visit count 4, the incumbent found first
@@ -68,7 +71,7 @@ Whenever an extension point resolves a tie, the step's record SHALL carry `dec.n
 - **THEN** the path SHALL be chosen by `RandomHelper.randomPick`, consuming one helper-stream draw
 - **AND** the record SHALL carry `dec.nav:{"x":"X4","c":"ape","alt":0,"drew":1}`
 - **AND WHEN** a single path is found
-- **THEN** `randomPick` SHALL still be called once, as upstream does
+- **THEN** `randomPick` SHALL still be called once, as upstream does, and the record SHALL carry no `dec.nav`, because the point was consulted with one candidate
 
 #### Scenario: X4 MOP variant takes the densest path without drawing
 - **WHEN** a cell with `MOP` finds three shortest paths whose end-state densities are 0, 2, 2
@@ -117,7 +120,7 @@ The preempting stages reach the operation through `StageCollaborators.abandonBuf
 
 ### Requirement: State.greedyPickLeastVisited() — Priority Tiebreaker
 
-`State.greedyPickLeastVisited(ActionFilter filter, LeastVisitedTie tie)` SHALL select the action with the lowest `visitedCount`. When two or more actions share that lowest count, it SHALL hand them, in array order, to the X1 strategy (`LeastVisitedTie`, "SATA Navigation Extension Points (X1, X3, X4)"), which applies **rule R2** (plan P-5, design D-B4): the action whose **scorer sum** is strictly the largest wins; on equal sums the first in array order wins. The scorer sum of an action is the sum of its scorer fields as written by the mounted scoring passes (`mopBoost`, `mopFrontierBoost`, `wtgBoost`, `navFrontierBoost`, `menuBoost`, `coverageBoost`, `formBoost`; `scoring-pipeline` "Scorer Ownership by Group"). The pick SHALL NOT read `priority`: priority includes APE's base priority per action type, which differs between actions with no scorer at all, and comparing it changed upstream's choice in every cell.
+`State.greedyPickLeastVisited(ActionFilter filter, LeastVisitedTie tie)` SHALL select the action with the lowest `visitedCount`. When two or more actions share that lowest count, it SHALL hand them, in array order, to the X1 strategy (`LeastVisitedTie`, "SATA Navigation Extension Points (X1, X3, X4)"), which applies **rule R2** (plan P-5, design D-B4): the action whose **scorer sum** is strictly the largest wins; on equal sums the first in array order wins. The scorer sum of an action is the sum of its scorer fields as written by the mounted scoring passes (`mopBoost`, `mopFrontierBoost`, `wtgBoost`, `navFrontierBoost`, `menuBoost`, `coverageBoost`, `formBoost`; `scoring-pipeline` "Scorer Ownership by Group"). The X1 strategy is `ScorerSumLeastVisitedTie`. The pick SHALL NOT read `priority`: priority includes APE's base priority per action type, which differs between actions with no scorer at all, and comparing it changed upstream's choice in every cell.
 
 With zero scorers mounted every sum is 0, so the first of the array wins and the pick equals upstream APE (`model/State.java:185-190` at `8f51b99c`). With scorers mounted, a scorer term decides only a visit-count tie; it never overrides a lower visit count (INV-SEL-01). `ape.leastVisitedPriorityTiebreak` and `Feature.LEAST_VISITED_TIEBREAK` are retired ("replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers"); a properties file that sets the key aborts resolution with `retired_key` (`run-spec`). `State` reads no configuration for this pick.
 
@@ -133,7 +136,7 @@ The pick writes `dec.nav` with `x:"X1"` when it resolved a tie, and the step's r
 - **WHEN** actions have visitedCounts [2, 2, 5], scorer sums [0, 500, 0] (the second carries `mopBoost=500`) and priorities [32, 532, 52]
 - **THEN** the action with visitedCount=2 and scorer sum 500 SHALL be selected
 - **AND** the decision SHALL come from the scorer sum, not from the priority: the flag this header names is retired and R2 holds in every cell
-- **AND** the record SHALL carry `dec.nav:{"x":"X1","c":"ape","alt":1,"drew":0}`
+- **AND** the record SHALL carry `dec.nav:{"x":"X1","c":"ape","alt":0,"drew":0}`: X1 has no MOP variant, so `alt` is `0`, and the scorer's effect is read from `dec.cfc`
 
 #### Scenario: All actions have same visitedCount (flag on)
 - **WHEN** all 10 actions have visitedCount=0 and scorer sums [0, 0, 200, 0, 500, 0, 0, 0, 0, 0]
@@ -165,7 +168,7 @@ For every action returned by `selectNewActionNonnull()`, `StatefulAgent.resolveN
 
 When `dec.src` is `sata`, the record SHALL carry `dec.strat`, the SATA path that chose the action, from the `event-sink` enum (`buffer`, `back_to_activity`, `aba`, `early_forward`, `early_roulette`, `greedy_global`, `greedy_path`, `trivial`, `early_backward`, `backtrack`, `eps_back`, `eps_menu`, `least_visited`, `eps_roulette`, `null`, `saturated`). It refines what the channel `sata_other` lumped together. A roulette pick additionally carries `dec.draw` (`[idx,total]`) for offline replay.
 
-`dec.ch` survives as the pick channel (design D-B14.17). It keeps its values for the paths that survive (`roulette_greedy`, `roulette_early`, `launcher`, `llm`, `buffer`, `sata_other`), and a step the MOP coin takes carries the new value `mop_coin`. The values `short_circuit_unvisited` and `short_circuit_0step` are not produced, because the shortcut left SATA.
+`dec.ch` survives as the pick channel (design D-B14.17). It keeps its values for the paths that survive (`roulette_greedy`, `roulette_early`, `launcher`, `llm`, `buffer`, `sata_other`), and three new values name the owners that are not SATA paths: a step the MOP coin takes carries `mop_coin`, a step the `Budget` guard takes carries `budget`, and a step the `Restart` guard takes carries `restart`. `sata_other` is produced only by SATA paths again. The values `short_circuit_unvisited` and `short_circuit_0step` are not produced, because the shortcut left SATA.
 
 The record's envelope SHALL carry the step number `s` — the agent exploration timestamp (`getTimestamp()`) at selection time, incremented exactly once per agent step, hence unique within a run — and the time `t` in milliseconds since `RUN_START` (whose record carries the epoch base; the device wall clock remains recoverable as `t0 + t`, preserving offline temporal joins with externally collected artifacts without any APE↔logcat coupling — the heartbeat aside, APE SHALL NOT read from logcat). There is no join key: the outcome attaches to the same record (scoring-pipeline capability).
 
@@ -249,11 +252,13 @@ The record's envelope SHALL carry the step number `s` — the agent exploration 
 
 - **WHEN** the `BUDGET` guard selects the trivial-activity action on an exhausted budget
 - **THEN** that action's `decisionSource` SHALL be `budget`
-- **AND** exactly one record SHALL be recorded for it, carrying `dec.src:"budget"`, `dec.ch:"sata_other"` and no `dec.strat`
+- **AND** exactly one record SHALL be recorded for it, carrying `dec.src:"budget"`, `dec.ch:"budget"` and no `dec.strat`
+- **AND WHEN** the `Restart` guard selects a start action on a later step
+- **THEN** its record SHALL carry `dec.src:"restart"`, `dec.ch:"restart"`, `dec.restart` and no `dec.strat`
 
 #### Scenario: Launcher step attributed Component
 
-- **WHEN** the `MOP_LAUNCHER` stage selects an `EVENT_TRIGGER_ACTIVITY` action
+- **WHEN** the `MopLauncher` stage (feature `MOP_LAUNCHER`) selects an `EVENT_TRIGGER_ACTIVITY` action
 - **THEN** the record SHALL carry `dec.src:"launcher"` and `dec.ch:"launcher"`
 - **AND** it SHALL additionally carry `dec.comp` — evidence of what the launch did, written when the record closes at step N+1 (`component-triggering` INV-CT-07)
 

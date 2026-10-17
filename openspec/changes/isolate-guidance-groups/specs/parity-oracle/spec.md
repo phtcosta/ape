@@ -9,8 +9,8 @@ decisions on purpose, and the oracle changes with it in four ways.
    with them. The six cell presets (`base`, `mop`, `as`, `as_mop`, `as_llm`, `as_mop_llm`, `guidance-groups`)
    each get a golden set, captured on purpose once the change is integrated (wave 2). The recapture is the
    decided behaviour change the oracle's regeneration procedure exists for. Three causes shift the random sequence
-   relative to `eea2b1a9`: the LLM coin, the MOP coin and the fuzz toss draw from their own seeded streams
-   (design D-B9); the restart is a guard ahead of selection (D-B7); and the X3/X4 defaults draw as upstream APE
+   relative to `eea2b1a9`: the LLM coin, the MOP coin, the component coin and the fuzz toss draw from the four
+   seeded `StepRng` streams (design D-B9); the restart is a guard ahead of selection (D-B7); and the X3/X4 defaults draw as upstream APE
    draws (D-B12). The old goldens cannot be kept green, and a red golden would not be a regression.
 2. **Base-cell parity.** The `base` cell is the oracle's reference for upstream APE. The extension points X1, X3
    and X4 SHALL take the APE default there, including RNG consumption, and the oracle pins that equality on
@@ -32,8 +32,8 @@ decisions on purpose, and the oracle changes with it in four ways.
   variants) (source: `OracleScaffold`)
 - `MopData fixture` — `src/test/resources/cryptoapp.apk.mop.json` (wire format 2), loaded through the production
   `StaticArtifactLoader` for the cells that contain STATIC or MOP
-- `seed: long` — seeds every RNG stream of the run: the agent stream, the helper stream, and the three
-  `StepRng` streams derived from it
+- `seed: long` — seeds every RNG stream of the run: the agent stream, the helper stream, and the four
+  `StepRng` streams derived from it (`llmCoin`, `mopCoin`, `componentCoin`, the fuzz toss)
 
 ### Output
 
@@ -95,7 +95,7 @@ The scope of that guard is exactly "the values the ladder reads", and the bounda
 
 #### Scenario: Determinism — double capture is identical
 
-- **WHEN** the same cell scenario is captured twice in one JVM with the same seed (every RNG stream, the three `StepRng` streams included, re-seeded before each run)
+- **WHEN** the same cell scenario is captured twice in one JVM with the same seed (every RNG stream, the four `StepRng` streams included, re-seeded before each run)
 - **THEN** the two decision-record sequences SHALL be identical
 
 #### Scenario: the six cells each have a golden set
@@ -106,14 +106,14 @@ The scope of that guard is exactly "the values the ladder reads", and the bounda
 ### Requirement: Preemption-Order Golden
 
 The oracle SHALL include a preemption golden, captured in the `as_mop_llm` cell, built on synthetic states that simultaneously qualify the LLM stages, the MOP launcher (cadence reached, census candidate available), the MOP coin (an eligible weighted action on screen), and the SATA chain. It SHALL assert the precedence order of the `DecisionPipeline`: BUDGET, RESTART, LLM_NEW_STATE, LLM_STAGNATION, LLM_COIN, MOP_LAUNCHER, COMPONENT_TRIGGER, MOP_COIN, SATA_CHAIN. An accepted LLM result preempts the launcher; the launcher, when it fires, preempts the MOP coin; a won MOP coin preempts the SATA chain; the SATA chain is the fallback. The budget block precedes them all and SHALL be pinned **at its gate**: a scenario declaring the current activity's budget exhausted SHALL show the block entered and falling through, and a scenario declaring no exhaustion SHALL show it not entered at all. Its trivial-action return is outside the capture boundary — see Purpose of the main spec for why reaching it would widen the boundary rather than close a gap in it — and SHALL NOT be claimed by any golden. A due restart is selected by the RESTART guard ahead of every LLM stage.
-The component-trigger stage, which sits between the launcher and the MOP coin, is excluded from the decision records: it is a side effect that never returns an action, its coin draws from its own stream (so it shifts no agent, helper or other coin draw), and its dispatch is device-bound (`android.content.Intent`). No ordering it participates in is observable in a decision record, although the STATIC block now mounts it at `ape.componentPercentage=0.03` in the four `as*` cells.
+The component-trigger stage sits between the launcher and the MOP coin and is a side effect that never returns an action (design D-B14.5). Its dispatch is device-bound (`android.content.Intent`), so `OracleSataAgent` SHALL override `triggerComponent()` as a recorded no-op: it dispatches nothing and records the tuple the round-robin cursor selected. The coin SHALL still draw from `StepRng.componentCoin` on every step, exactly as in production, so the oracle shifts no agent, helper or other coin draw. The step on which the trigger fires SHALL carry `dec.trig:{"k":"broadcast"|"service"|"provider","c":"<class>"}` (design decision A7), and the golden sets of the four `as*` cells, where the STATIC block mounts the trigger at `ape.componentPercentage=0.03`, SHALL contain those `dec.trig` members.
 
 The preemption golden SHALL additionally pin:
 
 1. **Global cadence** (INV-ORA-05, replacing finding 3.3-1): on a step taken by an LLM stage, the launcher's cadence counter SHALL advance; on the first later step that reaches `MOP_LAUNCHER` with the counter at or above the cadence, the launcher SHALL fire.
 2. **Stagnation single-shot burn**: when the stagnation stage is consulted, `stagnationHookFired` SHALL become `true` regardless of the verdict — an LLM decline still burns the episode's shot.
 3. **Counter reset on accept only**: `graphStableCounter` SHALL be reset to 0 by a stagnation accept and SHALL be left unchanged by a stagnation decline.
-4. **Stage order**: on a step where several LLM stages would route, the new-state stage SHALL be consulted before stagnation, and stagnation before the coin.
+4. **Stage order**: on a step where several LLM stages would route, the new-state stage SHALL be consulted before stagnation, and stagnation before the coin; at most one of them calls the model on a step (design decision A3).
 
 #### Scenario: LLM accept preempts a launcher that was due to fire
 
@@ -146,6 +146,12 @@ The preemption golden SHALL additionally pin:
 - **THEN** the selected action SHALL be the MOP coin's pick, the action with the largest `mopWeight`
 - **AND WHEN** the same step runs with the cadence reached
 - **THEN** the selected action SHALL be the launcher's `EVENT_TRIGGER_ACTIVITY`
+
+#### Scenario: the component trigger is a recorded no-op that decides nothing
+
+- **WHEN** an `as` cell step reaches `COMPONENT_TRIGGER` with `u_C = 0.01 < 0.03` and the cursor selects the service tuple of `br.unb.cic.cryptoapp.SyncService`
+- **THEN** `OracleSataAgent.triggerComponent()` SHALL dispatch no intent and the step's record SHALL carry `"trig":{"k":"service","c":"br.unb.cic.cryptoapp.SyncService"}`
+- **AND** the step's action SHALL be selected by the `MOP_COIN` or `SATA_CHAIN` stage, and the next step's `u_C` SHALL be the next value of `StepRng.componentCoin`
 
 ### Requirement: Deterministic LLM Stubbing
 

@@ -19,7 +19,7 @@ After this change the heuristic generator is the ADDONS member `Feature.HEURISTI
 
 `ApeAgent.checkInput()` SHALL generate text for an `EditText` node whose `getInputText()` is `null` using `generateInputText(node)`, which selects the generator from the plan, in this order:
 
-1. **typed** — when `Feature.TYPED_FUZZ` (STATIC, key `ape.fuzzInputTyped`) is in the plan and `StaticGuiModel` holds a non-empty `inputType` or `hint` for the node or one of its containment nodes (`MopScorer.containmentNodes`, node first): `TypedInputGenerator.generateForType(inputType, hint, …)`;
+1. **typed** — when `Feature.TYPED_FUZZ` (STATIC, key `ape.fuzzInputTyped`) is in the plan and `StaticGuiModel` holds a non-empty `inputType` or `hint` for the node or one of its containment nodes (`MopScorer.containmentNodes`, node first; a tree-only helper: it reads only the tree and SHALL NOT read `MopData`, so calling it does not couple STATIC to MOP): `TypedInputGenerator.generateForType(inputType, hint, …)`;
 2. **heuristic** — otherwise, when `Feature.HEURISTIC_INPUT` (ADDONS, key `ape.heuristicInput`) is in the plan: `InputValueGenerator.generateForNode(node)`;
 3. **random** — otherwise: `StringCache.nextString()`.
 
