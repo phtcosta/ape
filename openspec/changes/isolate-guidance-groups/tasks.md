@@ -260,7 +260,7 @@ its behaviour; its trace changes only by `RUN_END.counters.nullRelaunches:0`.
 
 - [x] 13.9 Merge F8, F9, F11, F12, F10 into `isolate-guidance-groups`, resolving only import or signature seams; `CleanControlTest` adds `hnd`; recapture on purpose only the goldens the fronts move (expected: none from D-B19 or D-B18, since the oracle enters below `adjustActionsByGUITree` (INV-ARCH-12) and `ScriptedLlm` takes no screenshot; at most a MOP golden whose fixture launches an activity that does not open (D-B15); review every diff); `mvn clean test` green
 - [x] 13.10 Update `CLAUDE.md` (P4: the launcher's once-per-run rule, the launcher-owned recovery, the boost only for untried keys, the coin key `ape.mopCoinLedgerMaxInteractions`, `dec.hnd`, `fb:"screenshot"`, `nullRelaunches`)
-- [ ] 13.11 `mvn package` + `mvn install` to the aperv worktree; record sha256 and `GIT_SHA` in `evidence.md`; send them to `mini-experimento` and `aperv-tool`; ask the author before the commit
+- [x] 13.11 `mvn package` + `mvn install` to the aperv worktree; record sha256 and `GIT_SHA` in `evidence.md`; send them to `mini-experimento` and `aperv-tool`; ask the author before the commit
 
 ## 14. Verification
 

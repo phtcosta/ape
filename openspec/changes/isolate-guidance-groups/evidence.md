@@ -133,3 +133,14 @@ activity of a run: Compose-only 22, View-only 15 (66 % of steps), mixed 17.
 
 **Breaker (D-B18).** [reported, `rep-pack-e03`] `e03iggsmk` bitbanana: 17/17 captures failed, 15 trips; mensinator
 had the LLM blocked ≈ 600 of 900 s. In E6 v2 the trips were nearly all screenshot failures, plus two parse trips.
+
+## 13.11 Package and install (2026-10-18)
+
+[verified] `mvn install -Drvsec_home=…/worktrees-aperv/isolate-guidance-groups` on `a4afd31b` (the amendment: 13.2
+contracts `345006e3`, fronts F8 `362e7ef0`, F9 `6667f9ad`, F11 `a5a7519a`, F12 `799ad722`, F10 `7b0c1e52`,
+integration `a4afd31b`): 1462 tests / 0 failures / 0 errors / 24 skipped; no golden moved; the only fixtures that
+moved are the digests of `cells/{mop,as_mop,as_mop_llm}.run_start.json` (13.2).
+- `target/ape-rv.jar` sha256 `ff0a306990794a98ad7e191c7663c968afdaf3ae7a0b6920c9bea052688e141f`, `GIT_SHA a4afd31`,
+  `JAR_BUILT 2026-10-18T17:51:39Z`; byte-identical copy at
+  `worktrees-aperv/isolate-guidance-groups/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar`.
+- The shared `rvsec/rv-android` module jar is not touched.
