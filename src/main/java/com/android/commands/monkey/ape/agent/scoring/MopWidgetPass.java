@@ -1,11 +1,13 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopScorer;
+import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -26,6 +28,12 @@ import java.util.List;
  * undivided weight as the action's {@code mopWeight}, then splits the ties at the state's best
  * level ({@link MopScorer#splitTies}, {@code distance} only, design D18); the split weight is what
  * is added to the priority and stored as {@code mopBoost}. Under {@code flag} the two are equal.
+ *
+ * <p>Only untried keys are boosted (design D-B19): an action whose (activity, {@code xpath|ActionType})
+ * key the run's {@link MopInteractionLedger} holds ({@link ScoringContext#getMopLedger()}) keeps its
+ * {@code mopWeight} but enters the split with weight 0, so it gets no boost and the untried actions
+ * of the best level share the split. The pass reads the ledger and never writes it; without a
+ * ledger nothing is tried.
  */
 public final class MopWidgetPass implements ScoringPass {
 
@@ -59,7 +67,9 @@ public final class MopWidgetPass implements ScoringPass {
         MopContext mop = ctx.getMopContext();
         int timestamp = ctx.getTimestamp();
         String activity = state.getActivity();
+        MopInteractionLedger ledger = ctx.getMopLedger();
         int boostedCount = 0;
+        int weightedCount = 0;
         int totalTarget = 0;
         int maxBoost = 0;
         int containmentBoostedCount = 0;
@@ -78,16 +88,22 @@ public final class MopWidgetPass implements ScoringPass {
             scores.add(MopScorer.weigh(mop, state, action));
         }
         int[] weights = new int[scores.size()];
+        // The split's input: a tried key enters it with weight 0 (design D-B19).
+        int[] untriedWeights = new int[weights.length];
         for (int k = 0; k < weights.length; k++) {
             weights[k] = scores.get(k).weight;
+            boolean tried = ledger != null && weights[k] > 0
+                    && ledger.tried(activity, UICoverageTracker.widgetId(scoredActions.get(k)));
+            untriedWeights[k] = tried ? 0 : weights[k];
         }
         // Then the split: the undivided weight is kept as mopWeight, the split one is the boost
         // (equal under flag).
-        int[] boosts = MopScorer.splitTies(mop, weights);
+        int[] boosts = MopScorer.splitTies(mop, untriedWeights);
         for (int k = 0; k < weights.length; k++) {
             ModelAction action = scoredActions.get(k);
             if (weights[k] > 0) {
                 action.setMopWeight(weights[k]);
+                weightedCount++;
             }
             int boost = boosts[k];
             if (boost > 0) {
@@ -106,6 +122,8 @@ public final class MopWidgetPass implements ScoringPass {
         // than being threaded back out to the decision site: it is the denominator that turns "the
         // MOP scorer fired on 0.4 % of decisions" into a statement about opportunity rather than
         // about luck, and it is per-step — a state can realise more than one pair within a run.
-        sink.mopExposure(boostedCount, totalTarget);
+        // Its first member counts the weighted actions, tried or not: the opportunity, not the
+        // boost (design D-B19).
+        sink.mopExposure(weightedCount, totalTarget);
     }
 }
