@@ -66,6 +66,11 @@ import com.android.commands.monkey.ape.utils.StaticGuiModel;
  * injected at assembly; the MOP artifact and the run's retirement, which the stage reads and never
  * writes, arrive through {@link StepContext#mopContext()} (INV-DP-12). Eligibility is the same in
  * both modes, and neither reads the launch result (INV-CT-14).
+ *
+ * <p><b>Each activity is launched at most once per run</b> (design D-B15). The walks see every
+ * activity the stage has selected as visited, so one whose launch did not open it (a cold launch
+ * that crashes without its extras) leaves the eligible set as one that opened does. The set is
+ * filled from the stage's own selection, never from the launch result.
  */
 public final class MopLauncherStage implements DecisionStage {
 
@@ -109,6 +114,9 @@ public final class MopLauncherStage implements DecisionStage {
 
     /** Launches actually performed this run; the budget the cap bounds (INV-CT-12). */
     private int launchCount;
+
+    /** The activities this stage has selected this run, never eligible again (design D-B15). */
+    private final Set<String> launched = new HashSet<>();
 
     /**
      * @param cadence selection passes between firings
@@ -157,6 +165,7 @@ public final class MopLauncherStage implements DecisionStage {
         for (ActivityNode an : ctx.graph().getActivityNodes()) {
             visited.add(an.activity);
         }
+        visited.addAll(launched); // launched once, never again (design D-B15)
         StaticGuiModel model = ctx.staticModel();
         MopData data = ctx.mopData();
         List<ComponentInfo.ActivityInfo> activities = model.activities();
@@ -180,6 +189,7 @@ public final class MopLauncherStage implements DecisionStage {
             routing.fallback(OWNER, StepRouting.FALLBACK_INELIGIBLE);
             return StageResult.continueChain();
         }
+        launched.add(candidate.className);
         launchCount++; // budget consumed only on an actual launch (INV-CT-12)
         ctx.sink().count(RunCounter.LAUNCHES);
         Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);

@@ -11,6 +11,7 @@ import java.util.Set;
 
 import org.junit.Test;
 
+import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.runtime.MopScoring;
@@ -436,10 +437,10 @@ public class MopLauncherStageTest {
     /**
      * Scenario "a refused launch is not retired under distance": the launch of Q is refused (Q stays
      * unvisited, so the graph never gains its node), the next firing selects the activity after Q
-     * in the order, and Q comes back only after the rotation wraps.
+     * in the order, and Q is not selected again in the run (design D-B15).
      */
     @Test
-    public void testARefusedLaunchIsPassedByTheRotationAndWraps() throws Exception {
+    public void testARefusedLaunchIsPassedByTheRotationAndNotRepeated() throws Exception {
         Census data = withDistances(dist(P, pairs(4, 5), Q, pairs(0, 2, 7, 3), R, pairs(2, 2)),
                 P, Q, R);
         MopRetirement retirement = retirement();
@@ -450,7 +451,8 @@ public class MopLauncherStageTest {
         assertEquals(Q, launchedClass(stage.decide(ctx)));
         assertEquals("the rotation moves past the refused Q", R, launchedClass(stage.decide(ctx)));
         assertEquals(P, launchedClass(stage.decide(ctx)));
-        assertEquals("wrapped to the head of the order", Q, launchedClass(stage.decide(ctx)));
+        assertEquals("every activity launched once: nothing left to launch",
+                StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
 
         int[] counts = counters(retirement);
         for (int i = 0; i < counts.length; i++) {
@@ -481,15 +483,123 @@ public class MopLauncherStageTest {
         Launcher stage = launcher(1, 0, MopScoring.FLAG, 6);
         FakeStepContext ctx = stepOver(data);
 
-        Set<String> none = Collections.emptySet();
-        for (int rr = 0; rr < 4; rr++) {
+        Set<String> launched = new HashSet<>();
+        for (int rr = 0; rr < 3; rr++) {
             ComponentInfo expected = MopLauncherStage.selectTriggerCandidate(data.getActivities(),
-                    none, MAIN, rr, data.getMopActivities());
-            assertEquals("the pre-change round-robin from the same cursor", expected.className,
-                    launchedClass(stage.decide(ctx)));
+                    launched, MAIN, rr, data.getMopActivities());
+            assertEquals("the pre-change round-robin from the same cursor, over the activities "
+                    + "not launched yet", expected.className, launchedClass(stage.decide(ctx)));
+            launched.add(expected.className);
         }
+        Set<String> none = Collections.emptySet();
         assertEquals("the round-robin starts at manifest index 0", P,
                 MopLauncherStage.selectTriggerCandidate(data.getActivities(), none, MAIN, 0,
                         data.getMopActivities()).className);
+    }
+
+    // -------------------------------------------------------------------------
+    // isolate-guidance-groups, design D-B15 (task 13.4): each activity is launched at most once per
+    // run. A launch whose activity never opens (the graph never gains its node) leaves it eligible
+    // by the visited test alone; the stage's launched set removes it, in both modes, without
+    // reading the launch result (INV-CT-14).
+    // -------------------------------------------------------------------------
+
+    private static final String RECORD = "com.example.app.RecordAudioActivity";
+    private static final String SEARCH = "com.example.app.SearchActivity";
+
+    /**
+     * Scenario "an activity whose launch did not open it is not launched again": RecordAudio is
+     * launched first and never becomes visited; every later firing selects Search while it is
+     * eligible, and then finds nothing.
+     */
+    private static void assertLaunchedOnce(MopScoring scoring) throws Exception {
+        Census data = withDistances(dist(RECORD, pairs(0, 1), SEARCH, pairs(1, 2)), RECORD, SEARCH);
+        Launcher stage = launcher(1, 0, scoring, 6);
+        FakeStepContext ctx = stepOver(data);
+        ctx.mopContext = distanceContext(data, retirement(), 6);
+
+        assertEquals(RECORD, launchedClass(stage.decide(ctx)));
+        // The app crashed: the graph still has no node for RecordAudio.
+        assertEquals("the launched activity is not selected again", SEARCH,
+                launchedClass(stage.decide(ctx)));
+        assertEquals(2, ctx.recorder.count(RunCounter.LAUNCHES));
+    }
+
+    @Test
+    public void testALaunchedUnvisitedActivityIsNotSelectedAgainUnderFlag() throws Exception {
+        assertLaunchedOnce(MopScoring.FLAG);
+    }
+
+    @Test
+    public void testALaunchedUnvisitedActivityIsNotSelectedAgainUnderDistance() throws Exception {
+        assertLaunchedOnce(MopScoring.DISTANCE);
+    }
+
+    /**
+     * With nothing else eligible, the firing after the launch finds no candidate: it falls back as
+     * {@code ineligible} and spends no budget (INV-CT-12), under both modes.
+     */
+    @Test
+    public void testWithNoOtherEligibleActivityTheFiringIsIneligibleAndSpendsNoBudget()
+            throws Exception {
+        for (MopScoring scoring : MopScoring.values()) {
+            Census data = withDistances(dist(RECORD, pairs(0, 1)), RECORD);
+            Launcher stage = launcher(1, 2, scoring, 6);
+            FakeStepContext ctx = stepOver(data);
+            ctx.mopContext = distanceContext(data, retirement(), 6);
+
+            assertEquals(RECORD, launchedClass(stage.decide(ctx)));
+            stage.routing.record("launcher", ctx.sink());
+            assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
+            stage.routing.record("sata", ctx.sink());
+
+            RecordingSink.Own own = ctx.recorder.lastOwner();
+            assertEquals(scoring.name(), "launcher", own.i);
+            assertEquals(scoring.name(), "ineligible", own.fb);
+            assertEquals(scoring.name(), 1, ctx.recorder.count(RunCounter.LAUNCHES));
+
+            // The budget of 2 still has one launch: an activity that appears is launched.
+            Census more = withDistances(dist(RECORD, pairs(0, 1)), RECORD, SEARCH);
+            ctx.mopData = more.mop;
+            ctx.staticModel = more.statics;
+            ctx.mopContext = distanceContext(more, retirement(), 6);
+            assertEquals(scoring.name(), SEARCH, launchedClass(stage.decide(ctx)));
+        }
+    }
+
+    /** A graph whose only visited activity is {@code activity}. */
+    private static Graph graphWithActivity(String activity) {
+        return new Graph() {
+            @Override
+            public ActivityNode[] getActivityNodes() {
+                return new ActivityNode[] {new ActivityNode(activity)};
+            }
+        };
+    }
+
+    /**
+     * The launched set comes from the stage's selection, never from the launch result: whether the
+     * launched activity then opens (the graph gains its node) or not, the next firing selects the
+     * same activity (INV-CT-14).
+     */
+    @Test
+    public void testTheLaunchResultIsNeverRead() throws Exception {
+        for (MopScoring scoring : MopScoring.values()) {
+            String[] next = new String[2];
+            for (int opened = 0; opened < 2; opened++) {
+                Census data = withDistances(dist(RECORD, pairs(0, 1), SEARCH, pairs(1, 2)),
+                        RECORD, SEARCH, R);
+                Launcher stage = launcher(1, 0, scoring, 6);
+                FakeStepContext ctx = stepOver(data);
+                ctx.mopContext = distanceContext(data, retirement(), 6);
+
+                assertEquals(RECORD, launchedClass(stage.decide(ctx)));
+                if (opened == 1) {
+                    ctx.graph = graphWithActivity(RECORD);
+                }
+                next[opened] = launchedClass(stage.decide(ctx));
+            }
+            assertEquals(scoring.name(), next[0], next[1]);
+        }
     }
 }
