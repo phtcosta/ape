@@ -17,7 +17,7 @@ import java.util.List;
  * <p>The ten steps of the pipeline are here and almost nothing else: each one asks a unit and reads
  * its answer, so this class holds the <em>sequence</em> and the units hold the work. That division
  * is what the sequence is worth stating for — the order the steps run in is behaviour, not style.
- * The attempt is counted before anything can fail, the breaker is told about a failure at the three
+ * The attempt is counted before anything can fail, the breaker is told about a failure at the two
  * sites that are failures and about success at the one site that is not, the error seam is read at
  * exactly one of them, and the decision line is emitted last, after the answer has been judged.
  *
@@ -139,14 +139,12 @@ public class LlmEngine {
         List<SglangClient.Message> messages = null;
 
         try {
-            // Step 2: read the screen. A null capture (secure window) is a failure, not a free
-            // retry: recording it is what eventually opens the breaker on an app that never yields
-            // a screen, and stops the run paying per-step for a call that cannot work.
+            // Step 2: read the screen. A null capture (secure window) is not a breaker failure —
+            // the server was never asked, so nothing about the model's health was learned, and a
+            // HALF_OPEN breaker stays HALF_OPEN (D-B18). The attempt still spends the step's call.
             pngBytes = screenshot.capture(deviceWidth, deviceHeight);
             if (pngBytes == null) {
-                client.recordFailure();
-                telemetry.screenshotFailed(activityOf(state), screenshot.getLastFailureStage());
-                return null;
+                return captureFailed(state, screenshot.getLastFailureStage());
             }
 
             // Step 3: resize and encode. Not a breaker failure — the screen was readable and the
@@ -236,6 +234,21 @@ public class LlmEngine {
         }
     }
 
+    /**
+     * The null-capture exit of {@link #selectAction}: counts {@code screenshot_failed}, sets
+     * {@link #FALLBACK_SCREENSHOT} and returns null. The breaker is not told — no failure is
+     * recorded, so its count, its state and a {@code HALF_OPEN} probe are left as they were (D-B18).
+     *
+     * @param state the current abstract state, for the activity the failure is reported on
+     * @param stage which capture path failed last, or {@code null}
+     * @return null, always
+     */
+    ModelAction captureFailed(State state, String stage) {
+        lastFallback = FALLBACK_SCREENSHOT;
+        telemetry.screenshotFailed(activityOf(state), stage);
+        return null;
+    }
+
     /** {@link #lastFallback()}: the attempt was abandoned before mapping. */
     public static final String FALLBACK_ERROR = "error";
     /** {@link #lastFallback()}: the LLM screenshot could not be captured (design D-B18). */
@@ -246,8 +259,9 @@ public class LlmEngine {
     public static final String FALLBACK_DECLINE = "decline";
 
     /**
-     * Why the last {@link #selectAction} returned null, for {@code dec.own.fb}: {@code error} when
-     * the attempt was abandoned before mapping (screenshot, image, HTTP, timeout or parse),
+     * Why the last {@link #selectAction} returned null, for {@code dec.own.fb}: {@code screenshot}
+     * when the screen could not be captured, {@code error} when the attempt was abandoned before
+     * mapping for another reason (image, HTTP, timeout, parse or internal),
      * {@code no_match} when the answer was refused at mapping, {@code decline} otherwise; null
      * after a call that selected, or before any call.
      */
