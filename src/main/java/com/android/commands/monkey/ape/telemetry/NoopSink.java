@@ -53,7 +53,7 @@ public final class NoopSink implements EventSink {
     }
 
     @Override
-    public void mopExposure(int boosted, int total) {
+    public void mopExposure(int weighted, int total) {
     }
 
     @Override

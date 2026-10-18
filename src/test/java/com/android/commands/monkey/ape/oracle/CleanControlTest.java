@@ -44,7 +44,7 @@ public class CleanControlTest {
 
     /** The step-record {@code dec} members only the MOP group writes. */
     private static final List<String> MOP_DEC_MEMBERS =
-            Arrays.asList("mop", "mopf", "wtg", "menu", "mopd", "mops", "ret", "mopx");
+            Arrays.asList("mop", "mopf", "wtg", "menu", "mopd", "mops", "hnd", "ret", "mopx");
 
     /** The {@code dec.cfc} keys of the MOP scorers. */
     private static final List<String> MOP_CFC_KEYS = Arrays.asList("mop", "mopf", "wtg", "menu");

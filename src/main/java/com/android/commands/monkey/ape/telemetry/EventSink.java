@@ -123,8 +123,8 @@ public interface EventSink {
     void decisionNonModel(String action, String decisionSource, String pickChannel);
 
     /**
-     * Records how many of the screen's actions were eligible for MOP steering and how many were
-     * boosted — the denominator without which "the MOP scorer fired on 0.4 % of decisions" cannot
+     * Records how many of the screen's actions carry a positive MOP weight, tried or not (design
+     * D-B19), and how many were eligible for MOP steering — the denominator without which "the MOP scorer fired on 0.4 % of decisions" cannot
      * be split into "the mechanism had no opportunity" and "it had one and lost the roulette".
      *
      * <p>It arrives from the scoring pass rather than riding {@link #decision} because that is
@@ -132,7 +132,7 @@ public interface EventSink {
      * is not constant per abstract state — measured across 25 campaign traces, 14 show a state
      * with more than one realised pair.
      */
-    void mopExposure(int boosted, int total);
+    void mopExposure(int weighted, int total);
 
     /**
      * Records the targets the step's action retired, for the step's {@code dec.ret} (design D23,

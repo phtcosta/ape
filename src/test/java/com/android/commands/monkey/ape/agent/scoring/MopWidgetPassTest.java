@@ -144,7 +144,7 @@ public class MopWidgetPassTest {
 
     /** The run's ledger, empty; the one place a test constructs one. */
     private static MopInteractionLedger ledger() {
-        return new MopInteractionLedger();
+        return new MopInteractionLedger(1);
     }
 
     /** An {@link EventSink} that keeps the last {@code mopExposure} pair in {@code into}. */

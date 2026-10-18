@@ -175,10 +175,15 @@ them): the foreign/tree guards and the model update, then `Budget`, `Restart`, `
 At most one LLM call is made per step. The LLM coin draws `u_L` and admits the call through the declared gates
 `MinActionsGate` (`ape.llmGateMinActions`, 3; 0 unmounts it) and `BreakerGate` (`ape.llmBreakerFailures`,
 `ape.llmBreakerOpenMs`); it wins over a non-empty SATA buffer, which is abandoned without `weakenStateTransition`
-(`dec.buf`). The MOP coin takes the first interaction (per activity, `xpath|ActionType`) with an action of positive
+(`dec.buf`). The MOP coin takes an interaction (per activity, `xpath|ActionType`) executed fewer than
+`ape.mopCoinLedgerMaxInteractions` times (k, default 1; `< 1` clamped to 1) by any owner, with an action of positive
 unretired `mopWeight`, at `u_M < p_M`, ranked by weight, then (distance) unretired target count, then action order —
-priority is not a key. The MOP launcher's cadence counter advances every step and launches on the first step that
-reaches the MOP/SATA branch. The LLM coin, MOP coin, component coin and fuzz toss each draw from their own stream
+priority is not a key. `MopInteractionLedger` counts those executions and is built with k. The MOP launcher's cadence
+counter advances every step and launches on the first step that reaches the MOP/SATA branch; it launches each
+activity at most once per run (D-B15: a launched activity reads as visited, whether or not it opened). With
+`MOP_LAUNCHER` in the plan, the null-tree recovery (more than 10 null roots) relaunches the app under test —
+`onActivityStopped`, `restartPackage(getMainApp(), …)`, and `NOP` instead of `ACTIVATE` on that step (D-B16);
+without it, upstream's `stopTopActivity()` path. The LLM coin, MOP coin, component coin and fuzz toss each draw from their own stream
 (`agent/StepRng`, `new Random(seed ^ K)`), so mounting or re-dosing one never shifts SATA's draws.
 
 **Scorers are additive and independent** (rule R1): each `agent/scoring/*Pass` writes its own field and never reads
@@ -226,15 +231,17 @@ omitting defaults — an absent boost field means `0` — with two deliberate ex
 `launcher`) and `dec.ch` the code path (`PickChannel`: `roulette_greedy`, `roulette_early`, `launcher`,
 `llm`, `buffer`, `sata_other`, `mop_coin`, `budget`, `restart`). The conditional members, each absent
 when its condition fails: `own` (`i` intended owner, `trg` LLM trigger, `uL`/`uM` coin draws, `g`
-refusing gate, `fb` LLM fallback `error`/`no_match`/`decline`), `cfc` (per scorer: did it change the
+refusing gate, `fb` LLM fallback `error`/`screenshot`/`no_match`/`decline`; `screenshot` = the LLM
+screenshot could not be captured, which still spends the step's call but is not a breaker failure, D-B18), `cfc` (per scorer: did it change the
 least-visited pick, written only with ≥ 2 tied), `draw` (`[index, total]` of a roulette), `nav` (`x`
 extension point, `c` variant, `alt`, `drew`), `inp` (input origin), `restart` (kind), `bmc` (BACK/MENU
 picks removed by the cap), `strat` (the SATA path), `rot` (display rotation, every step), `buf` (owner
 that abandoned the buffer), `trig` (`k` kind, `c` class of a component trigger; `comp` stays the
 launcher's result), plus the boosts `mop`, `mopf`, `wtg`, `navf`, `cov`, `menu`, `form` and the MOP
-members `mopx`, `mopd`, `mops`, `ret`. `RUN_END.counters` carries the routing counters `launches`,
-`gateMinActions`, `gateBreaker`, `guardBacks`, `bufAbandoned`, `restarts`, `coinLlm`, `coinMop`, and the
-LLM block's `screenshot_failed`. `PIPELINE` lists the mounted stages by the names above. Every new
+members `mopx` (weighted actions, tried or not, and the total), `mopd`, `mops`, `hnd` (the stamped handler
+class behind the weight, written iff `mops` is `s`), `ret`. `RUN_END.counters` carries the routing counters
+`launches`, `gateMinActions`, `gateBreaker`, `guardBacks`, `bufAbandoned`, `restarts`, `coinLlm`, `coinMop`,
+`nullRelaunches` (written in every cell, `0` without the launcher), and the LLM block's `screenshot_failed`. `PIPELINE` lists the mounted stages by the names above. Every new
 computation is pure: no RNG draw, no `resolveAction`, no cache effect. Two neutrality gates guard it:
 `SinkNeutralityTest` (one case per cell) and `RngNeutralityTest`; `CleanControlTest` asserts that a cell
 without MOP has every MOP field absent or `0`.
@@ -279,10 +286,10 @@ externally supplied replay log through it.
 - `ape.staticDataPath` (plan-owned, `STATIC_DATA`) — path to the compact artifact on device, `/data/local/tmp/mop-artifact.json` as aperv-tool pushes it (absent = STATIC and MOP off). The jar reads only **format 2** (`formatVersion: 2`, generator `aperv-derive/2`, rv-android gh122): format 1 and the full static-analysis JSON are rejected (`version-mismatch`). Format 2 adds `targets` (the producer's target count), per-widget `dist` pairs `[i, d]`, per-activity `activityDist` and a `handlers` table keyed by binary class name. The derive's cut (D15 as amended 2026-10-09, owned by gh122's `DIST_K`): a widget's and a handler's lists keep every target at `d ≤ 3`, `activityDist` the K = 3 nearest; the loader reads any length; `MOP_DATA` reports `targets`, `handlers` and `droppedPairs`. An artifact with `targets: 0` loads and runs without distance data
 - `mopWeightDirect` / `mopWeightTransitive` — `flag`-mode MOP weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost). They reach scoring through the run's `MopContext` (`utils/MopContext`, built from the loaded `MopData`, the `StaticGuiModel` and `spec().mop()`), not through `ScoringParams`
 - **Handler stamp and lookup** (llm-coordinate-single-base Part B, D16–D17): `GUITreeBuilder.fillNode` copies the gh121 extras `rvsec.click`/`rvsec.longClick` (an APK instrumented with `--instrumentation-variant dexlib2 --stamp-handlers`) into `GUITreeNode.getHandlerClick()/getHandlerLongClick()`. Every MOP reader goes through `MopData.lookup(activity, node, event)`: a stamp naming a class listed in `handlers` wins (source `STAMP`, even when it reaches nothing), else the id key (source `ID`), else `NONE`. Through the id key a **click** on a widget whose `mop` map has no `click` key reads the widget's *click aggregate* (`MopData.Widget.clickAggregate()`, built at load by `mergeByMinimum` over every event but `longclick`, `itemlongclick`, `implicitcreatecontextmenu`, `scroll`); an explicit `click` key, `none` included, blocks it, every other event reads its own pairs, and a stamp never reads it (D17 as amended 2026-10-09). Flags keep the INV-MOP-14 aggregate fallback; containment walks the node, two ancestors and two levels of descendants (`MopScorer.containmentNodes`). Widget metadata for the prompt and typed input comes from `StaticGuiModel.widget(activity, shortId)`, not from `MopData`
-- **Scoring modes** (`ape.mopScoring`, D18): `flag` (default) is the E6 mark; `distance` weighs an action by its nearest unretired target (`mopWeightD1..3` = 500/400/300 for d ≤ 1 / 2 / 3, 0 beyond), splits ties at the state's best level as `max(W/n, W_next)` into `mopBoost`, and keeps the undivided `ModelAction.mopWeight` for the MOP coin, the prompt marker and retirement
-- **Retirement** (D19, `distance` only): the first interaction (per activity, per `xpath|ActionType`) of an action with a positive weight counts the targets of its weight's lookup that lie at `d*`, its smallest unretired distance (D19 as amended 2026-10-09), taken at selection (`StatefulAgent.moveForward`) and applied once the action survives `checkRestart`; a target retires at `ape.mopRetireAfter` (3) and stops weighting, marking and ordering the launcher. `ape.mopRetireAfter <= 0` is accepted: every target reads as retired and the run explores unguided
-- **Launcher** (D20): under `distance` `MopLauncherStage` orders eligible activities by their nearest unretired `activityDist` (≤ `ape.mopLauncherDmax`, 6), then manifest order, rotating past a refused launch. SATA has no MOP shortcut: the MOP group decides through the `MopCoin` stage (see *Behavior groups and cells*); `ape.mopTargetPickCap` and `ape.leastVisitedPriorityTiebreak` are retired keys
-- **Telemetry** (D23): `dec.mopd` (distance behind a `distance` weight; `0` is written), `dec.mops` (`s` stamp / `i` id key), `dec.ret` (targets retired by the step); `RUN_END.counters` gains `stampNodes`, `stampHits`, `retired`
+- **Scoring modes** (`ape.mopScoring`, D18): `flag` (default) is the E6 mark; `distance` weighs an action by its nearest unretired target (`mopWeightD1..3` = 500/400/300 for d ≤ 1 / 2 / 3, 0 beyond), splits ties at the state's best level as `max(W/n, W_next)` into `mopBoost`, and keeps the undivided `ModelAction.mopWeight` for the MOP coin, the prompt marker and retirement. In both modes only untried keys are boosted (D-B19): an action whose key the ledger holds keeps its `mopWeight` but gets `mopBoost` 0 and leaves the split
+- **Retirement** (D19, `distance` only): the first execution (per activity, per `xpath|ActionType`) of an action with a positive weight counts the targets of its weight's lookup that lie at `d*`, its smallest unretired distance (D19 as amended 2026-10-09), taken at selection (`StatefulAgent.moveForward`) and applied once the action survives `checkRestart`; a target retires at `ape.mopRetireAfter` (3) and stops weighting, marking and ordering the launcher. `ape.mopRetireAfter <= 0` is accepted: every target reads as retired and the run explores unguided
+- **Launcher** (D20, D-B15): under `distance` `MopLauncherStage` orders eligible activities by their nearest unretired `activityDist` (≤ `ape.mopLauncherDmax`, 6), then manifest order; in both modes an activity it launched is never eligible again in the run. SATA has no MOP shortcut: the MOP group decides through the `MopCoin` stage (see *Behavior groups and cells*); `ape.mopTargetPickCap` and `ape.leastVisitedPriorityTiebreak` are retired keys
+- **Telemetry** (D23, D-B17): `dec.mopd` (distance behind a `distance` weight; `0` is written), `dec.mops` (`s` stamp / `i` id key), `dec.hnd` (the stamped handler, `MopData.Lookup.handler`), `dec.ret` (targets retired by the step); `RUN_END.counters` gains `stampNodes`, `stampHits`, `retired`
 
 The group keys and every member's keys are owned by the plan rather than by `Config`, and are read through `RunContext.current().spec()` (`spec().mop()`, `spec().llm()`, `spec().exploration()`, `spec().has(Feature)`). Besides the activation keys in the groups table:
 - `ape.mopWeightOpenMenu` — boost on the MODEL_MENU action when the activity's OPTIONSMENU is a MOP gateway (default 250)
@@ -292,7 +299,7 @@ The group keys and every member's keys are owned by the plan rather than by `Con
 - `ape.mopFrontierWeight` — boost for unvisited actions on MOP-reachable widgets (default 0 = pass disabled)
 - `ape.mopScoring` — `flag` (default) or `distance` (enum `runtime/MopScoring`; any other value aborts resolution with `invalid_type`)
 - `ape.mopWeightD1` / `D2` / `D3` — `distance` weights (500/400/300); `ape.mopRetireAfter` (3); `ape.mopLauncherDmax` (6)
-- `ape.mopCoinPercentage` — `p_M` (default 1.0)
+- `ape.mopCoinPercentage` — `p_M` (default 1.0); `ape.mopCoinLedgerMaxInteractions` — k, the coin's executions per (activity, key) (default 1, `< 1` clamped to 1; `ape.mopTargetPickCap` is retired in its favour)
 - `ape.llmGateMinActions` (3), `ape.llmBreakerFailures` (3), `ape.llmBreakerOpenMs` (60000) — the LLM coin's gates
 
 The keys the selected mode does not read (`mopWeightDirect`/`Transitive` under `distance`; the five distance keys under `flag`) are accepted at any well-typed value, keep their value in the plan digest, and are listed in `RUN_START.inert` (INV-RUN-09).
@@ -311,7 +318,7 @@ The keys the selected mode does not read (`mopWeightDirect`/`Transitive` under `
 
 ## Notes
 
-- Unit + integration test suite: `mvn test` (1439 tests, 24 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
+- Unit + integration test suite: `mvn test` (1462 tests, 24 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
 - Known issue: `OutOfMemoryError` is possible on long runs, because every `State` keeps its `GUITree`s in `treeHistory` and the `Graph` keeps every `State` — the heap grows with the number of distinct states a run reaches. That is the only retention by design. The `GUITreeBuilder` naming caches and a `ModelAction`'s resolved references are cleared when their tree is released, and the diagnostic action history holds primitive snapshots plus a single depth-1 recovery point, whose tree a live state owns anyway. Nothing bounds or evicts `Graph`, `treeHistory` or the naming structures: such a bound changes exploration behavior, so it waits on a heap profile by retention root. `OutOfMemoryError` is not caught — the process dies and the supervisor marks the task FAILED and retries it
 - Pre-compiled `ape.jar` is included in repo for convenience

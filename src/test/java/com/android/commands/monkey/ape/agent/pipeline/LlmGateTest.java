@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.llm.LlmEngine;
+
 import java.util.Arrays;
 import java.util.Collections;
 
@@ -116,6 +118,24 @@ public class LlmGateTest {
 
         assertEquals("three stages barred by one gate are one lost step", 1,
                 ctx.recorder.count(RunCounter.GATE_MIN_ACTIONS));
+    }
+
+    /** D-B18: a screenshot that could not be captured spends the call and reads fb "screenshot". */
+    @Test
+    public void aScreenshotFailureSpendsTheCallAndRecordsItsOwnFallback() throws Exception {
+        LlmCoinStageTest.StubEngine engine = new LlmCoinStageTest.StubEngine(null);
+        LlmKit kit = new LlmKit(engine, () -> true).step(0.01);
+        kit.fallbackReason = LlmEngine.FALLBACK_SCREENSHOT;
+        FakeStepContext ctx = stateOf(5);
+
+        assertEquals(StageResult.Kind.CONTINUE, new LlmNewStateStage(kit.call).decide(ctx).kind());
+        assertEquals(StageResult.Kind.CONTINUE, new LlmCoinStage(kit.call, 0.02).decide(ctx).kind());
+        kit.routing.record("sata", ctx.sink());
+
+        assertEquals("the failed capture spent the step's one call", 1, engine.selectCalls);
+        RecordingSink.Own own = ctx.recorder.lastOwner();
+        assertEquals("llm", own.i);
+        assertEquals("screenshot", own.fb);
     }
 
     @Test

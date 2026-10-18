@@ -72,7 +72,7 @@ final class StepRecord {
     private int menu;
     private int form;
     private int patched = EventSink.ABSENT;
-    private int mopExposureBoosted = EventSink.ABSENT;
+    private int mopExposureWeighted = EventSink.ABSENT;
     private int mopExposureTotal = EventSink.ABSENT;
     private boolean hasComponentLaunch;
     private int componentResult;
@@ -176,8 +176,8 @@ final class StepRecord {
         this.pickChannel = pickChannel;
     }
 
-    void mopExposure(int boosted, int total) {
-        this.mopExposureBoosted = boosted;
+    void mopExposure(int weighted, int total) {
+        this.mopExposureWeighted = weighted;
         this.mopExposureTotal = total;
     }
 
@@ -381,7 +381,7 @@ final class StepRecord {
                 boost(buf, "form", form);
                 if (mopExposureTotal != EventSink.ABSENT) {
                     buf.name("mopx").beginArray()
-                            .value(mopExposureBoosted).value(mopExposureTotal).endArray();
+                            .value(mopExposureWeighted).value(mopExposureTotal).endArray();
                 }
                 if (mopDistance != EventSink.ABSENT) {
                     // Exempt from the defaults-omitted rule (INV-SNK-05 as amended): `0` says the
@@ -527,7 +527,7 @@ final class StepRecord {
         menu = 0;
         form = 0;
         patched = EventSink.ABSENT;
-        mopExposureBoosted = EventSink.ABSENT;
+        mopExposureWeighted = EventSink.ABSENT;
         mopExposureTotal = EventSink.ABSENT;
         hasComponentLaunch = false;
         componentResult = 0;

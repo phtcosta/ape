@@ -269,12 +269,12 @@ public final class NdjsonSink implements EventSink {
     }
 
     @Override
-    public void mopExposure(int boosted, int total) {
+    public void mopExposure(int weighted, int total) {
         if (disabled || !pending.isOpen()) {
             return;
         }
         try {
-            pending.mopExposure(boosted, total);
+            pending.mopExposure(weighted, total);
         } catch (Throwable failure) {
             latch("mopExposure", failure);
         }
