@@ -19,8 +19,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 
 /**
- * The MOP coin (task 7.9.3; mop-guidance "MOP Coin Decider", design D-B10): eligibility, the
- * ranking, the dose {@code p_M} and the submit exclusion.
+ * The MOP coin (task 7.9.3; mop-guidance "MOP Coin Decider", design D-B10, D-B17): eligibility
+ * and its budget k, the ranking, the dose {@code p_M} and the submit exclusion.
  */
 public class MopCoinStageTest {
 
@@ -44,7 +44,7 @@ public class MopCoinStageTest {
 
     private static final class Coin {
         final StepRouting routing = new StepRouting(false, true, false);
-        final MopInteractionLedger ledger = new MopInteractionLedger();
+        final MopInteractionLedger ledger = new MopInteractionLedger(1);
         final List<String> abandoned = new ArrayList<>();
         final MopCoinStage stage;
 
@@ -95,7 +95,7 @@ public class MopCoinStageTest {
         ModelAction high = target("/high", 500);
         high.setPriority(532);
 
-        assertSame(high, MopCoinStage.pick(stateOf(low, high), null, new MopInteractionLedger(),
+        assertSame(high, MopCoinStage.pick(stateOf(low, high), null, new MopInteractionLedger(1),
                 null));
     }
 
@@ -104,16 +104,35 @@ public class MopCoinStageTest {
         ModelAction x = target("/x", 500);
         ModelAction y = target("/y", 500);
 
-        assertSame(x, MopCoinStage.pick(stateOf(x, y), null, new MopInteractionLedger(), null));
+        assertSame(x, MopCoinStage.pick(stateOf(x, y), null, new MopInteractionLedger(1), null));
     }
 
     @Test
     public void anActionTriedInTheActivityIsNotEligible() throws Exception {
         ModelAction w = target("/w", 500);
-        MopInteractionLedger ledger = new MopInteractionLedger();
+        MopInteractionLedger ledger = new MopInteractionLedger(1);
         ledger.record(ACTIVITY, UICoverageTracker.widgetId(w));
 
         assertNull(MopCoinStage.pick(stateOf(w), null, ledger, null));
+    }
+
+    /**
+     * Design D-B17: with k = 3 the coin stays eligible for a key until the ledger counts three
+     * executions of it, whatever their owners (the stage reads only the count).
+     */
+    @Test
+    public void withBudgetThreeTheCoinTakesAKeyThreeTimes() throws Exception {
+        ModelAction w = target("/w", 500);
+        String key = UICoverageTracker.widgetId(w);
+        MopInteractionLedger ledger = new MopInteractionLedger(3);
+
+        for (int executions = 0; executions < 3; executions++) {
+            assertSame("eligible after " + executions + " executions", w,
+                    MopCoinStage.pick(stateOf(w), null, ledger, null));
+            ledger.record(ACTIVITY, key);
+        }
+        assertNull("the third execution exhausts k",
+                MopCoinStage.pick(stateOf(w), null, ledger, null));
     }
 
     @Test
@@ -122,7 +141,7 @@ public class MopCoinStageTest {
         ModelAction visited = target("/y", 300);
         visited.visitedAt(1);
         visited.visitedAt(2);
-        MopInteractionLedger ledger = new MopInteractionLedger();
+        MopInteractionLedger ledger = new MopInteractionLedger(1);
         ledger.record(ACTIVITY, UICoverageTracker.widgetId(tried));
 
         assertSame(visited, MopCoinStage.pick(stateOf(tried, visited), null, ledger, null));
@@ -139,7 +158,7 @@ public class MopCoinStageTest {
         back.setMopWeight(500);
 
         assertNull(MopCoinStage.pick(stateOf(invalid, disabled, back), null,
-                new MopInteractionLedger(), null));
+                new MopInteractionLedger(1), null));
     }
 
     @Test
@@ -147,9 +166,9 @@ public class MopCoinStageTest {
         ModelAction submit = target("/submit", 500);
 
         assertNull("the form-completion exclusion leaves no eligible action",
-                MopCoinStage.pick(stateOf(submit), submit, new MopInteractionLedger(), null));
+                MopCoinStage.pick(stateOf(submit), submit, new MopInteractionLedger(1), null));
         assertSame("without the exclusion the submit is eligible", submit,
-                MopCoinStage.pick(stateOf(submit), null, new MopInteractionLedger(), null));
+                MopCoinStage.pick(stateOf(submit), null, new MopInteractionLedger(1), null));
     }
 
     @Test

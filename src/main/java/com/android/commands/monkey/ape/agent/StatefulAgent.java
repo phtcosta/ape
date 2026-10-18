@@ -147,9 +147,9 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     private final StepRng _stepRng;
 
     /**
-     * The run's first MOP interactions per (activity, {@code xpath|ActionType}), which the MOP coin
-     * and target retirement share (mop-guidance "MopInteractionLedger"); null iff {@code MOP} is not
-     * mounted.
+     * The run's executions per (activity, {@code xpath|ActionType}), which the MOP coin and target
+     * retirement share (mop-guidance "MopInteractionLedger"), built with the coin's budget k; null
+     * iff {@code MOP} is not mounted.
      */
     private final MopInteractionLedger _mopLedger;
 
@@ -221,7 +221,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // Built once, right after the artifact loads (design D17, Plumbing); null without MOP.
         this._mopContext = MopContext.fromSpec(spec.has(Feature.MOP) ? mopData : null,
                 _staticModel, spec.mop());
-        this._mopLedger = spec.has(Feature.MOP) ? new MopInteractionLedger() : null;
+        this._mopLedger = spec.has(Feature.MOP)
+                ? new MopInteractionLedger(spec.mop().coinLedgerMaxInteractions()) : null;
         if (RunContext.current().llmEngine() != null) {
             // The engine was built before the artifact loaded; the prompt's MOP text reads the
             // context, and its widget metadata the static model, from here on (llm-routing
@@ -1699,9 +1700,10 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     /**
      * Records the executed model action in the MOP ledger and, on a first interaction, counts
      * target retirement (mop-guidance "MopInteractionLedger", "Target Retirement", INV-MOP-37,
-     * INV-MOP-40). Every executed action with a resolved target is recorded, whatever owner
-     * selected it; an off-tree LLM tap has no node and records nothing. Novelty is per activity and
-     * per {@code xpath|ActionType}, read before the key is recorded.
+     * INV-MOP-40). Every execution of an action with a resolved target adds one to its key's count,
+     * whatever owner selected it (design D-B17); an off-tree LLM tap has no node and records
+     * nothing. Novelty is per activity and per {@code xpath|ActionType}, read before the execution
+     * is recorded, so the coin's budget k does not change what retires.
      *
      * <p>Under {@code ape.mopScoring=distance}, a first interaction counts the targets of the
      * action's weight's lookup — the one {@link MopScorer#weigh} gave the action its weight from,
@@ -1718,10 +1720,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         }
         String activity = state.getActivity();
         String key = UICoverageTracker.widgetId(action);
-        if (_mopLedger.tried(activity, key)) {
+        boolean first = !_mopLedger.tried(activity, key);
+        _mopLedger.record(activity, key);
+        if (!first) {
             return;
         }
-        _mopLedger.record(activity, key);
         MopRetirement retirement = _mopContext == null ? null : _mopContext.retirement();
         if (retirement == null) {
             return;
@@ -1834,11 +1837,12 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * what to omit; the two tri-states arrive as themselves, because for them an absent field is a
      * different statement from a zero.
      *
-     * <p>{@code dec.mopd} and {@code dec.mops} (design D23) come from one {@link MopScorer#weigh} of
-     * the chosen action: the lookup it returns is the one that gave the action its MOP weight, the
-     * same one the scoring pass weighed and {@code moveForward} retires against, because nothing
-     * between the pass and this call changes the retirement it reads. Telemetry only: the result is
-     * handed to the sink and read by nothing else (INV-SNK-07).
+     * <p>{@code dec.mopd}, {@code dec.mops} (design D23) and {@code dec.hnd} (design D-B17) come
+     * from one {@link MopScorer#weigh} of the chosen action: the lookup it returns is the one that
+     * gave the action its MOP weight, the same one the scoring pass weighed and {@code moveForward}
+     * retires against, because nothing between the pass and this call changes the retirement it
+     * reads. {@code dec.hnd} is that lookup's stamped handler, null unless its source is a stamp.
+     * Telemetry only: the result is handed to the sink and read by nothing else (INV-SNK-07).
      */
     protected void recordModelDecision(State state, ModelAction action) {
         MopScorer.Scored scored = MopScorer.weigh(_mopContext, state, action);
@@ -1850,7 +1854,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
                 action.getWtgBoost(), action.getNavFrontierBoost(), action.getCoverageBoost(),
                 action.getMenuBoost(), action.getFormBoost(),
                 patchedValue(action),
-                mopDistanceValue(_mopContext, scored), mopSourceValue(scored), null);
+                mopDistanceValue(_mopContext, scored), mopSourceValue(scored),
+                scored.lookup.handler);
     }
 
     /**

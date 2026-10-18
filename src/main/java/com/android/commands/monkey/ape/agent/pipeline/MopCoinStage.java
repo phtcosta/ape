@@ -30,8 +30,9 @@ import com.android.commands.monkey.ape.utils.MopScorer;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 /**
- * The MOP group's decider: take the first interaction with a MOP-targeted action, at the plan's
- * dose {@code p_M} (mop-guidance "MOP Coin Decider", design D-A10, D-A15, D-B10).
+ * The MOP group's decider: take an interaction with a MOP-targeted action whose key is still within
+ * the coin's budget k, at the plan's dose {@code p_M} (mop-guidance "MOP Coin Decider", design
+ * D-A10, D-A15, D-B10, D-B17).
  *
  * <p>Placed after the LLM stages, the launcher and the component trigger and before the SATA chain,
  * so with the LLM mounted it decides only the steps the LLM leaves. The step is <b>eligible</b> when
@@ -39,8 +40,9 @@ import com.android.commands.monkey.ape.utils.UICoverageTracker;
  * <ol>
  *   <li>has a positive undivided {@link ModelAction#getMopWeight()} (under {@code distance}, an
  *       unretired target);
- *   <li>has no first interaction in {@link MopInteractionLedger} for its (activity,
- *       {@code xpath|ActionType}) key — visit count is not a condition;
+ *   <li>has fewer than k executions in {@link MopInteractionLedger} for its (activity,
+ *       {@code xpath|ActionType}) key, whatever their owners ({@code belowBudget}; k = 1 by
+ *       default, so an untried key) — visit count is not a condition;
  *   <li>is not the submit candidate form completion excludes, when {@code FORM_COMPLETION} is
  *       mounted (INV-FORM-06).
  * </ol>
@@ -54,7 +56,8 @@ import com.android.commands.monkey.ape.utils.UICoverageTracker;
  *
  * <p>A step the coin takes is owned by {@code mop} on the {@code mop_coin} channel, counts
  * {@code coinMop}, and abandons a non-empty buffer without weakening ({@code dec.buf:"mop"}). Its
- * {@code dec.mopd}/{@code dec.mops} ride the decision record from the action's lookup fields.
+ * {@code dec.mopd}/{@code dec.mops}/{@code dec.hnd} ride the decision record from the action's
+ * lookup fields.
  */
 public final class MopCoinStage implements DecisionStage {
 
@@ -73,7 +76,7 @@ public final class MopCoinStage implements DecisionStage {
      * @param formCompletion whether {@code FORM_COMPLETION} is mounted, which excludes the submit
      *        candidate of an unfilled form
      * @param routing the pipeline's per-step routing record, which holds {@code u_M}
-     * @param ledger the run's first-interaction ledger, {@code StageCollaborators.mopLedger}
+     * @param ledger the run's execution ledger, built with k, {@code StageCollaborators.mopLedger}
      * @param abandonBuffer the agent's buffer abandonment without weakening
      */
     public MopCoinStage(double percentage, boolean formCompletion, StepRouting routing,
@@ -120,7 +123,7 @@ public final class MopCoinStage implements DecisionStage {
      *
      * @param state the step's state; its {@code getActions()} order is the last key
      * @param excluded the submit candidate form completion excludes, or {@code null}
-     * @param ledger the run's first-interaction ledger
+     * @param ledger the run's execution ledger, built with k
      * @param mop the run's MOP context: the scoring mode and the retirement
      * @return the eligible action that ranks first, or {@code null}
      */
@@ -156,13 +159,16 @@ public final class MopCoinStage implements DecisionStage {
         return best;
     }
 
-    /** The three conditions of design D-B10, over a valid, enabled, target-requiring action. */
+    /**
+     * The three conditions of design D-B10, over a valid, enabled, target-requiring action, the
+     * ledger's read being the budget of D-B17.
+     */
     private static boolean eligible(ModelAction action, ModelAction excluded,
             MopInteractionLedger ledger, String activity) {
         return action != excluded
                 && action.isValid() && action.isEnabled() && action.requireTarget()
                 && action.getMopWeight() > 0
-                && !ledger.tried(activity, UICoverageTracker.widgetId(action));
+                && ledger.belowBudget(activity, UICoverageTracker.widgetId(action));
     }
 
     /**

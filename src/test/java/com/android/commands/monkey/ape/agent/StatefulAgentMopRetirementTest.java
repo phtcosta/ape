@@ -132,7 +132,7 @@ public class StatefulAgentMopRetirementTest {
     private MopContext install(MopData data) throws Exception {
         MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY, RunContext.current().spec().mop());
         setField(agent, "_mopContext", mop);
-        ledger = new MopInteractionLedger();
+        ledger = new MopInteractionLedger(1);
         setField(agent, "_mopLedger", ledger);
         return mop;
     }
@@ -338,6 +338,33 @@ public class StatefulAgentMopRetirementTest {
         select(state(ACT), click);
         assertTrue("a weight-0 action is recorded too", ledger.tried(ACT, key));
         assertFalse("per activity", ledger.tried(OTHER, key));
+    }
+
+    /**
+     * Scenario "with k = 3 the coin may take a key three times; retirement counts once" (design
+     * D-B17): every execution adds one to the key's count, whatever its owner, while target 22's
+     * counter moves only on the key's first execution.
+     */
+    @Test
+    public void withBudgetThreeEveryExecutionCountsButRetirementCountsOnce() throws Exception {
+        MopRetirement r = install(artifact(
+                "\"w\":{\"dist\":{\"click\":[[22,1]]}}")).retirement();
+        ledger = new MopInteractionLedger(3);
+        setField(agent, "_mopLedger", ledger);
+        ModelAction click = action("//w", ActionType.MODEL_CLICK, node(null, "Button", "w"));
+        String key = UICoverageTracker.widgetId(click);
+        ModelAction.DecisionSource[] owners = {ModelAction.DecisionSource.SATA,
+                ModelAction.DecisionSource.MOP, ModelAction.DecisionSource.LLM};
+
+        for (int i = 0; i < owners.length; i++) {
+            assertTrue("eligible for the coin before execution " + (i + 1),
+                    ledger.belowBudget(ACT, key));
+            click.setDecisionSource(owners[i]);
+            select(state(ACT), click);
+            assertEquals(i + 1, ledger.count(ACT, key));
+            assertEquals("retirement counts only the key's first execution", 1, count(r, 22));
+        }
+        assertFalse("the third execution exhausts k", ledger.belowBudget(ACT, key));
     }
 
     /** Scenario "an off-tree LLM tap never counts". */
