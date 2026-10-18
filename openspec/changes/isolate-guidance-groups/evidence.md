@@ -74,6 +74,30 @@ on 298/298 LLM steps; the LLM screenshot is landscape and upright (the answer (6
 screencaps `rvsec/rv-android/data/e03igg_analysis/out/e03iggsmk/retrowars_screencap*.png`. Verdict on (c): the
 author's. Trace: `rvsec/rv-android/data/results/e03iggsmk_08/…/com.serwylo.retrowars_70.apk/`. [reported]
 
+**12.2 (c), verdict: the rotation is correct (author, 2026-10-18).** Evidence gathered offline from the retrowars
+run (trace `…/com.serwylo.retrowars_70.apk__1__900__aperv:as_mop_llm.trace.ndjson.gz` and its `.logcat`):
+- [verified] All 202 LLM taps carry `dec.rot = 1` and map the answer as `px = qwen × (1793, 1080) / 1000`, i.e. on a
+  1794 × 1080 landscape display (a portrait frame would scale by ≈ 1080 in x and ≈ 1794 in y).
+- [verified] Joining `RVSEC-COV` (first execution of each app method per process) to the steps by the `ApeRvHb`
+  heartbeat, every screen transition after launch follows an LLM tap and fires the handler of a button on the
+  current screen: step 3 (897,516) → `MainMenuScreen.showGameSelectMenu`; step 4 (954,648) →
+  `GameSelectScreen.onGameSelected`; step 19 (949,648) → `showMultiplayerLobby`; step 72 (925,648) →
+  `MissileCommandGameScreen.<init>`; step 144 (929,628) → `MultiplayerLobbyScreen.findAndShowPublicServers` ("Play
+  online"); after the restart, steps 258/279 repeat the lobby and "Play online"; steps 306–307 → `showGameSelectMenu`,
+  `onGameSelected`. Taps in a transposed frame would not hit the right handler on five different screens.
+- The earlier reading of the cluster at y ≈ 648 as "the gap between button and label" (above) came from one
+  screencap of the MULTIPLAYER screen; those taps were on the main menu and the game-select screen, where they
+  opened the lobby and selected a game. Limit: `RVSEC-COV` logs a method's first execution only, so no hit rate over
+  all 182 taps is derived.
+- Display width 1794 vs the 1920-px screencap [verified in code; crop semantics of `SurfaceControl.screenshot` per
+  the platform API, not observed on device]: `AndroidDevice.getDisplayBounds` (`:137-147`) reads `Display.getSize()`,
+  the app area without the navigation bar (1794 × 1080 in landscape); `ScreenshotCapture.captureViaSurfaceControl`
+  (`:83-99`) captures `Rect(0, 0, 1794, 1080)` at 1794 × 1080, a 1:1 crop of the screen, and the mapper scales by the
+  same 1794 × 1080. An image pixel is therefore the screen pixel the tap goes to: there is no offset. What the model
+  does not see is the 126-px strip of the navigation bar's side, which an immersive full-screen app such as retrowars
+  draws on; no tap can be aimed there. Known design (CLAUDE.md, `ape.llmBoundaryTopPct`: "the answer is mapped on the
+  display, which excludes the navigation bar"); no change proposed.
+
 **Defects raised by the round (for the author's decision; none is changed here).**
 - D1, MOP launcher × null tree (spell4wiki, the three MOP cells): the launcher opens `RecordAudioActivity` without
   extras, the app NPEs, and the launcher picks it again (3/4 launches in `mop`, 7/10 in `as_mop`); 526 "Null info root
