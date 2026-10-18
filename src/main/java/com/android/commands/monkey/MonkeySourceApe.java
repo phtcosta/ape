@@ -867,13 +867,25 @@ public class MonkeySourceApe implements MonkeyEventSource {
         if (info == null) {
             Logger.wprintln("Null info root node returned by UiTestAutomationBridge, generate activate action...");
             nullInfoCounter++;
+            boolean relaunched = false;
             if (nullInfoCounter > 10) {
-                stopTopActivity();
+                // With the launcher mounted, the recovery restarts the app under test: after a
+                // launch that crashed it, the first running process stopTopActivity kills is the
+                // IME or the system launcher (D-B16, INV-CT-18). Without it, upstream's path.
+                if (NullTreeRecovery.relaunches(RunContext.current().spec())) {
+                    mAgent.onActivityStopped();
+                    restartPackage(getMainApp(), false, "null tree");
+                    RunContext.current().sink().count(RunCounter.NULL_RELAUNCHES);
+                    relaunched = true;
+                } else {
+                    stopTopActivity();
+                }
                 nullInfoCounter = 0;
             }
             mAgent.onVoidGUITree(nullInfoCounter);
             AndroidDevice.checkInteractive();
-            action = Action.ACTIVATE;
+            // ACTIVATE (app switch, then HOME or BACK) would background the app just relaunched.
+            action = relaunched ? Action.NOP : Action.ACTIVATE;
         }
         if (action == null) {
             action = Action.NOP;
@@ -890,6 +902,25 @@ public class MonkeySourceApe implements MonkeyEventSource {
             }
         }
         mAgent.notifyActionConsumed();
+    }
+
+    /**
+     * The null-tree recovery's choice. It is a nested class so that JVM tests load it without
+     * {@code MonkeySourceApe}, which cannot be class-loaded off-device.
+     */
+    static final class NullTreeRecovery {
+
+        private NullTreeRecovery() {
+        }
+
+        /**
+         * Whether the recovery relaunches the app under test rather than taking upstream's
+         * {@link MonkeySourceApe#stopTopActivity()}: exactly when the plan mounts
+         * {@code MOP_LAUNCHER} (D-B16, INV-CT-18).
+         */
+        static boolean relaunches(RunSpec spec) {
+            return spec.has(Feature.MOP_LAUNCHER);
+        }
     }
 
     protected void startRandomMainApp() {
