@@ -129,8 +129,8 @@ final class PipelineFixture {
         int restartDueCalls;
         /** The owners that abandoned the buffer, in order. */
         final List<String> abandoned = new ArrayList<>();
-        /** The run's first-interaction ledger, as a plan with MOP holds one. */
-        final MopInteractionLedger ledger = new MopInteractionLedger();
+        /** The run's execution ledger, as a plan with MOP holds one at the default k = 1. */
+        final MopInteractionLedger ledger = new MopInteractionLedger(1);
 
         FakeAgent(StubLlm llm, ModelAction fromTheChain) {
             this(llm, fromTheChain, 1);

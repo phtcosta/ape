@@ -36,9 +36,9 @@ import static org.junit.Assert.*;
 /**
  * event-sink "StepRecord Schema" and "RUN_END As the Natural Last Record" at the agent
  * (llm-coordinate-single-base, design D23, task 16.1): the decision source writes {@code dec.mopd}
- * and {@code dec.mops} from the one {@code MopScorer.weigh} of the chosen action, {@code dec.ret}
- * reaches the same record from {@code moveForward}, and teardown hands {@code RUN_END} the stamp and
- * retirement counts.
+ * and {@code dec.mops} (with {@code dec.hnd}, design D-B17) from the one {@code MopScorer.weigh} of
+ * the chosen action, {@code dec.ret} reaches the same record from {@code moveForward}, and teardown
+ * hands {@code RUN_END} the stamp and retirement counts.
  *
  * <p>The agent is {@code Unsafe}-allocated as in {@code StatefulAgentMopRetirementTest}, with the
  * fields the reached methods read set by hand, and the plan installed with a real
@@ -122,7 +122,7 @@ public class StatefulAgentMopTelemetryTest {
     private MopContext context(MopData data) throws Exception {
         MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY, RunContext.current().spec().mop());
         setField(agent, "_mopContext", mop);
-        setField(agent, "_mopLedger", new MopInteractionLedger());
+        setField(agent, "_mopLedger", new MopInteractionLedger(1));
         return mop;
     }
 
@@ -199,6 +199,8 @@ public class StatefulAgentMopTelemetryTest {
         assertEquals(400, dec.getInt("mop"));
         assertEquals(2, dec.getInt("mopd"));
         assertEquals("s", dec.getString("mops"));
+        assertEquals("dec.hnd names the stamp behind the weight (D-B17)", STAMP,
+                dec.getString("hnd"));
     }
 
     /** Scenario "distance zero is written, not omitted". */
@@ -211,6 +213,7 @@ public class StatefulAgentMopTelemetryTest {
         assertTrue(dec.has("mopd"));
         assertEquals(0, dec.getInt("mopd"));
         assertEquals("i", dec.getString("mops"));
+        assertFalse("an id-key lookup names no handler", dec.has("hnd"));
     }
 
     /**
@@ -235,6 +238,7 @@ public class StatefulAgentMopTelemetryTest {
                 "\"" + STAMP + "\":{\"mop\":{\"click\":\"none\"}}"));
         JSONObject dec = decisionOf(click("//btn", node("btn", STAMP), 0));
         assertEquals("s", dec.getString("mops"));
+        assertEquals(STAMP, dec.getString("hnd"));
         assertFalse(dec.has("mop"));
         assertFalse(dec.has("mopd"));
     }
@@ -259,6 +263,7 @@ public class StatefulAgentMopTelemetryTest {
         context(artifact("\"w\":{\"dist\":{\"click\":[[3,0]]}}", ""));
         JSONObject dec = decisionOf(click("//other", node("other", "com.x.Unlisted$9"), 0));
         assertFalse(dec.has("mops"));
+        assertFalse("an unlisted stamp names no handler", dec.has("hnd"));
         assertFalse(dec.has("mopd"));
     }
 
@@ -269,6 +274,7 @@ public class StatefulAgentMopTelemetryTest {
         setField(agent, "_mopContext", null);
         JSONObject dec = decisionOf(click("//w", node("w", STAMP), 0));
         assertFalse(dec.has("mops"));
+        assertFalse(dec.has("hnd"));
         assertFalse(dec.has("mopd"));
     }
 

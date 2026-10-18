@@ -16,44 +16,74 @@
 package com.android.commands.monkey.ape.agent;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 
 /**
- * The first interactions of the run, per activity and per {@code xpath|ActionType} key
- * (mop-guidance, design D-B10).
+ * The executions of the run, counted per activity and per {@code xpath|ActionType} key
+ * (mop-guidance "MopInteractionLedger — Executions per Activity and Key", design D-B10, D-B17).
  *
- * <p>Two MOP mechanisms read it: the MOP coin, which is eligible only for an action whose key has
- * no first interaction in its activity yet, and target retirement under {@code distance}, which
- * counts a target once per first interaction. Keeping one record for both means the coin and
- * retirement cannot disagree about what "first" means. The ledger exists iff {@code MOP} is
- * mounted, and it is mode-independent.
+ * <p>Three MOP mechanisms read it: the MOP coin, which is eligible for an action while its key's
+ * count in its activity is below the budget k ({@link #belowBudget}); target retirement under
+ * {@code distance}, which counts targets only on a key's first execution ({@link #tried} read
+ * before {@link #record}); and the MOP widget pass, which boosts only keys not yet tried. Keeping one
+ * record for all three means they cannot disagree about what was executed. The ledger exists iff
+ * {@code MOP} is mounted, and it is mode-independent.
  *
- * <p>Pure bookkeeping: no RNG, no model reference, no resolution. An entry is never removed.
+ * <p>Pure bookkeeping: no RNG, no model reference, no resolution. A count is never decreased.
  */
 public final class MopInteractionLedger {
 
-    private final Map<String, Set<String>> tried = new HashMap<>();
+    private final int budget;
+    private final Map<String, Map<String, Integer>> counts = new HashMap<>();
 
     /**
-     * Whether the action named by {@code key} has had its first interaction in {@code activity}.
+     * @param budget the MOP coin's budget k, {@code ape.mopCoinLedgerMaxInteractions} (at least 1
+     *        after resolution; 1 is the first-interaction rule of D-B10)
+     */
+    public MopInteractionLedger(int budget) {
+        this.budget = budget;
+    }
+
+    /**
+     * The number of executions of the action named by {@code key} in {@code activity}.
+     *
+     * @param activity the activity the action belongs to
+     * @param key the action's {@code xpath|ActionType} key
+     */
+    public int count(String activity, String key) {
+        Map<String, Integer> keys = counts.get(activity);
+        Integer n = keys == null ? null : keys.get(key);
+        return n == null ? 0 : n;
+    }
+
+    /**
+     * Whether the action named by {@code key} has been executed in {@code activity} at least once.
      *
      * @param activity the activity the action belongs to
      * @param key the action's {@code xpath|ActionType} key
      */
     public boolean tried(String activity, String key) {
-        Set<String> keys = tried.get(activity);
-        return keys != null && keys.contains(key);
+        return count(activity, key) > 0;
     }
 
     /**
-     * Records a first interaction. Recording a key twice is harmless: the first is what counts.
+     * Whether the key's count in {@code activity} is below the budget k, which keeps the action
+     * eligible for the MOP coin.
+     *
+     * @param activity the activity the action belongs to
+     * @param key the action's {@code xpath|ActionType} key
+     */
+    public boolean belowBudget(String activity, String key) {
+        return count(activity, key) < budget;
+    }
+
+    /**
+     * Records one execution: the key's count in {@code activity} grows by one.
      *
      * @param activity the activity the action belongs to
      * @param key the action's {@code xpath|ActionType} key
      */
     public void record(String activity, String key) {
-        tried.computeIfAbsent(activity, a -> new HashSet<>()).add(key);
+        counts.computeIfAbsent(activity, a -> new HashMap<>()).merge(key, 1, Integer::sum);
     }
 }

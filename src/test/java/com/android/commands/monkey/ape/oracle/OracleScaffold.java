@@ -594,7 +594,8 @@ public final class OracleScaffold {
         setField(agent, "_staticModel", staticModel);
         setField(agent, "_stepRng", RunContext.current().stepRng());
         // The MOP interaction ledger, as the constructor builds it: present iff MOP is mounted.
-        setField(agent, "_mopLedger", spec.has(Feature.MOP) ? new MopInteractionLedger() : null);
+        setField(agent, "_mopLedger", spec.has(Feature.MOP)
+                ? new MopInteractionLedger(spec.mop().coinLedgerMaxInteractions()) : null);
         setField(agent, "_coverageTracker", coverageTracker);
         // As the constructor: a tracker iff ACTIVITY_BUDGET, the BUDGET stage's only reader.
         setField(agent, "_budgetTracker",
