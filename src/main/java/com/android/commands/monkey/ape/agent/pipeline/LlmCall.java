@@ -60,8 +60,8 @@ public final class LlmCall {
      * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
      * @param abandonBuffer the agent's buffer abandonment without weakening
      * @param lastFallback why the engine's last call returned no action ({@code error},
-     *        {@code no_match} or {@code decline}), read right after a null answer; {@code null}
-     *        when the engine does not say
+     *        {@code screenshot}, {@code no_match} or {@code decline}), read right after a null
+     *        answer; {@code null} when the engine does not say
      */
     public LlmCall(LlmEngine engine, List<LlmGate> gates, StepRouting routing,
             Consumer<ModelAction> resolveSynthesizedTap, Consumer<String> abandonBuffer,
