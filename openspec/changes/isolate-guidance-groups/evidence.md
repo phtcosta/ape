@@ -168,3 +168,16 @@ moved are the digests of `cells/{mop,as_mop,as_mop_llm}.run_start.json` (13.2).
   `JAR_BUILT 2026-10-18T17:51:39Z`; byte-identical copy at
   `worktrees-aperv/isolate-guidance-groups/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar`.
 - The shared `rvsec/rv-android` module jar is not touched.
+
+## 12.3 Jar recipients (2026-10-18)
+
+Author decision: the amendment jar (`ff0a3069…141f`, `GIT_SHA a4afd31`) goes only to `mini-experimento` (sent at
+13.11, also checked by `aperv-tool`); no Study 03 session receives it.
+
+## 10.x rv-android sister change (2026-10-18)
+
+[verified, read-only] The rv-android change `isolate-guidance-groups` (worktree
+`worktrees-aperv/isolate-guidance-groups/rv-android`, HEAD `8b69458d`) has every group behind 10.1–10.6 ticked
+(wave 0, T, D, R, A, M, S); only its Verification group C (C.1–C.6) is open, owned by `aperv-tool`. It maps the v3.3
+contract (`edbd173d`), closed K.5 on the amendment jar (`6332cd54`), and adds the variants `mop_k2` and
+`mop_nolaunch` (`9655cb64`, `8b69458d`).

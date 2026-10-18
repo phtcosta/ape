@@ -196,12 +196,12 @@ Change `isolate-guidance-groups` in rv-android (worktree
 `/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/worktrees-aperv/isolate-guidance-groups/rv-android`).
 Cross-reference: its `tasks.md` (wave 0 group 0; wave 1 fronts T, D, R, A, M, W; wave 2 group I; wave 3 group S; wave 4 group C).
 
-- [ ] 10.1 The six variants = cells, with the ten old variants deleted and no alias (D-A13, P-7) — rv-android T
-- [ ] 10.2 `APERV_PROPERTY_MAPPING` (P-8): the new keys; the four missing keys; the retired keys removed; `ape.staticDataPath` is a fixed line, not a mapping entry — rv-android T
-- [ ] 10.3 (rv-android T) Push rule: the artifact goes iff STATIC or MOP; `system-broadcast.json` iff `COMPONENT_TRIGGER`; `ape.variant` is always passed
-- [ ] 10.4 (rv-android D.1–D.4; D.4 sends the SHA that unblocks 5.6 and 11.7) The derive keeps the reduced intent-filter `data` member (`schemes`, `hosts`, `paths`, `pathPrefixes`, `mimeTypes`; D-B13, D-B14.11), and the artifact carries every component regardless of `reachesTarget`
-- [ ] 10.5 (rv-android R, A) `analysis/trace_ndjson.py` (P-9): the new `dec` members, `mopd`/`mops`/`ret`, `RUN_END`, and the documentation of `decision_source` and `Counterfactual`
-- [ ] 10.6 (rv-android M.4 offline, waits on 11.6; S.2–S.4 on device, with 12.1) Gate: each variant's `RUN_START` matches the fixture of 11.6. rv-android I.2 re-checks against the 3.10 SHA; S.1 receives the jar from 11.9
+- [x] 10.1 The six variants = cells, with the ten old variants deleted and no alias (D-A13, P-7) — rv-android T
+- [x] 10.2 `APERV_PROPERTY_MAPPING` (P-8): the new keys; the four missing keys; the retired keys removed; `ape.staticDataPath` is a fixed line, not a mapping entry — rv-android T
+- [x] 10.3 (rv-android T) Push rule: the artifact goes iff STATIC or MOP; `system-broadcast.json` iff `COMPONENT_TRIGGER`; `ape.variant` is always passed
+- [x] 10.4 (rv-android D.1–D.4; D.4 sends the SHA that unblocks 5.6 and 11.7) The derive keeps the reduced intent-filter `data` member (`schemes`, `hosts`, `paths`, `pathPrefixes`, `mimeTypes`; D-B13, D-B14.11), and the artifact carries every component regardless of `reachesTarget`
+- [x] 10.5 (rv-android R, A) `analysis/trace_ndjson.py` (P-9): the new `dec` members, `mopd`/`mops`/`ret`, `RUN_END`, and the documentation of `decision_source` and `Counterfactual`
+- [x] 10.6 (rv-android M.4 offline, waits on 11.6; S.2–S.4 on device, with 12.1) Gate: each variant's `RUN_START` matches the fixture of 11.6. rv-android I.2 re-checks against the 3.10 SHA; S.1 receives the jar from 11.9
 
 ## 11. Wave 2 — integration (serial)
 
@@ -225,7 +225,7 @@ the Study 03 v2 corpus (instrumented APKs + compact `.apk.json`, image `phtcosta
 
 - [x] 12.1 Hand `mini-experimento` (and `aperv-tool`) the jar of 11.9 (path, sha256, `GIT_SHA`) and the fixtures of 11.6. From its short round, record in `openspec/changes/isolate-guidance-groups/evidence.md` that each cell's `RUN_START` (`preset`, `variant`, `features`, `params`, `inert`, `digest`) matches the cell fixture and that the new `dec` members appear
 - [x] 12.2 Rotation on a real landscape APK (author decision 2026-10-17): in the short round, one run of `retrowars` on `as_mop_llm` with `ape.llmGateMinActions=0` (a gate at 0 is not mounted, 7.2), because its opaque screen offers only BACK/MENU and the default gate never admits a call. `dec.rot` is 1 or 3 on the LLM steps, and the LLM sub-event's screenshot is in the displayed orientation (width > height, upright). The experiment itself keeps the default gate. Record it in `evidence.md`. Letting the LLM act on opaque screens (`DynamicRegionGate`) stays out of this change
-- [ ] 12.3 Hand the jar sha256 and `GIT_SHA` to the Study 03 session as well. Q-9 and Q-10 are the author's
+- [x] 12.3 Hand the jar sha256 and `GIT_SHA` to the Study 03 session as well. Closed by the author (2026-10-18): only `mini-experimento` receives the jar (`ff0a3069…141f`, `a4afd31`, sent at 13.11); no Study 03 session does. Q-9 and Q-10 are the author's
 
 ## 13. Amendment after `e03igg` (author decisions 2026-10-18; design D-B15…D-B19)
 
