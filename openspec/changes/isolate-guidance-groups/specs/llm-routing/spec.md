@@ -42,6 +42,12 @@ This delta declares every one of these rules:
   - the trigger `trg`;
   - the barring gate `g`, when one barred;
   - the fallback reason `fb`, when the LLM did not take the step.
+- **INV-RTR-27** (replaces the main spec's *Error* bullet "Network errors, unparseable responses, AND a null
+  screenshot SHALL trigger `LlmCircuitBreaker.recordFailure()`" at archive): Network errors and unparseable
+  responses SHALL trigger `LlmCircuitBreaker.recordFailure()`. A null screenshot SHALL NOT: it counts
+  `screenshot_failed`, records `dec.own.fb="screenshot"`, and the step falls through as any other fallback
+  (design D-B18). The attempt still spends the step's one LLM call (INV-RTR-26), so no later LLM stage of the step
+  captures again.
 - **INV-RTR-26**: A step SHALL make at most one LLM call. Once an LLM stage of the step has called the LLM, whatever
   the result, every later LLM stage of that step SHALL return `Continue` without evaluating its gates and without
   calling. A stage whose trigger did not hold, or whose gate barred, has made no call.
@@ -234,7 +240,7 @@ When the stage fires and the engine returns a non-null action, the telemetry mod
 **The argument list drops the MOP context (`isolate-guidance-groups`, design D-B1, plan §4.6).** The engine no longer receives a `MopContext`, and no LLM stage reads `ctx.mopData()` to build a prompt. The MOP and static signals reach the prompt as the mounted prompt contributions (`llm-prompt` "Prompt Built From Group Contributions"): the composition root builds `StaticPromptContribution` iff `Feature.STATIC` and `MopPromptContribution` iff `Feature.MOP` is in the plan, and hands that list to the engine's `ApePromptBuilder` when the run's LLM units are constructed (see `LLM Unit Lifecycle and Ownership`); the MOP contribution holds the run's MOP context itself. `recentActions` remains a per-step, agent-owned value that step 4 below hands to `ApePromptBuilder.build(...)`. The engine is constructed once per run and owned by `RunContext`, while the per-step view belongs to the stages — so for the engine to source it itself it would have to hold a `StepContext` or the agent, and design D2 exists to prevent exactly that. The calling stage passes it from `ctx.actionHistory()`, unchanged.
 
 1. `LlmTelemetry` counts the attempt (`totalCalls++`, per INV-RTR-07).
-2. `ScreenshotStep` determines the device dimensions (`deviceDimensions(tree)`: the display bounds, the tree's root node only if the display throws, the 1080 × 1920 constants last) and captures the screenshot at those dimensions. This pair is the decision's coordinate base: steps 4 and 8 use it and determine none of their own (INV-RTR-21). Null capture → breaker failure recorded via `LlmClient`, `screenshot_failed` counter + the free-text screenshot-failure diagnostic carrying the activity and the failing stage via `LlmTelemetry`, return null. This is the one abandoned attempt that produces **no** `llm[]` sub-event (INV-RTR-20).
+2. `ScreenshotStep` determines the device dimensions (`deviceDimensions(tree)`: the display bounds, the tree's root node only if the display throws, the 1080 × 1920 constants last) and captures the screenshot at those dimensions. This pair is the decision's coordinate base: steps 4 and 8 use it and determine none of their own (INV-RTR-21). Null capture → `screenshot_failed` counter + the free-text screenshot-failure diagnostic carrying the activity and the failing stage via `LlmTelemetry`, fallback reason `screenshot`, return null. The attempt spends the step's one call (INV-RTR-26). A null capture SHALL NOT record a breaker failure: it neither increments the failure count nor reopens a `HALF_OPEN` breaker, because the server was never asked and nothing about the model's health was learned (design D-B18). The breaker records failures only for transport (step 5) and parse (step 7). This is the one abandoned attempt that produces **no** `llm[]` sub-event (INV-RTR-20).
 3. `ScreenshotStep` resizes and base64-encodes. Null → `image` cause as an `llm[]` sub-event with `result:"error"`, return null.
 4. `ApePromptBuilder.build(deviceWidth, deviceHeight, state, actions, base64, recentActions)` builds the messages from the base prompt and the mounted contributions, with the step-2 dimensions, so every [0,1000) coordinate in the prompt is in the space of the image and of the step-8 mapping (`llm-prompt` INV-PRM-06). The tree is not passed to the builder; `LlmTelemetry` stages the prompt via `llmDump`, which rides the next sub-event as `sys`/`user` when the prompt-dump flag is on (default on).
 5. `LlmClient.chat(messages, tools)` — the tools schema chosen by the same `hasInputField` predicate the prompt used (INV-LLM-11). Null → breaker failure, cause read once from the client's error seam (INV-LLM-08), cause counters + an `llm[]` sub-event with `result:"error"` and that `cause` via `LlmTelemetry`, return null.
@@ -272,9 +278,12 @@ The dead-pair outcome feedback SHALL continue to flow from the join-buffer site 
 - **AND** the state's back action SHALL be returned as before
 
 #### Scenario: Screenshot capture fails trips the breaker
-- **WHEN** `ScreenshotStep` returns null (secure window)
-- **THEN** the engine SHALL return null with no HTTP request made
-- **AND** the breaker SHALL record a failure and `screenshot_failed` SHALL be counted, with its free-text diagnostic and no `llm[]` sub-event
+- **WHEN** `ScreenshotStep` returns null (secure window), three times in a row, with `ape.llmBreakerFailures=3`
+- **THEN** the engine SHALL return null each time with no HTTP request made, and `screenshot_failed` SHALL be counted, with its free-text diagnostic and no `llm[]` sub-event
+- **AND** the breaker SHALL record no failure and stay `CLOSED`, and each step's `dec.own.fb` SHALL be `screenshot`
+- **AND WHEN** the breaker is `HALF_OPEN` and the probe's capture returns null
+- **THEN** the breaker SHALL stay `HALF_OPEN`, and the next attempt whose capture succeeds SHALL be the probe
+- **AND** the header is kept because `openspec archive` matches scenarios by name; the body replaces the pre-change behaviour (design D-B18)
 
 #### Scenario: Repaired native tool call keeps the repair telemetry
 - **WHEN** the model returns a malformed native `tool_calls` arguments string that `ToolCallParser` recovers via the raw-arguments repair pipeline and the coordinate resolves to a widget
@@ -350,6 +359,120 @@ This capability still has NO consumer of `ape.llmPercentageNoSubstrate`. The `Ll
 
 ---
 
+### Requirement: LLM Telemetry Logging
+
+`LlmRouter` SHALL record structured per-attempt telemetry as `llm[]` sub-events on the current step's `StepRecord` (event-sink capability) and aggregate counters reported in `RUN_END`.
+
+**Per-attempt sub-event** (one array entry per routing attempt, in occurrence order within the step):
+
+| Field | Values |
+|-------|--------|
+| `call` | running call counter for the run |
+| `mode` | `new_state`, `stagnation`, `random` |
+| `tool` | the parsed tool name (`click`, `long_click`, `type_text`, `back`) |
+| `qwen` / `px` | `[x,y]` model-space and mapped pixel coordinates |
+| `result` | `matched`, `llm_tap`, `no_match` for completed mappings; `error` for attempts abandoned before the mapping step; `breaker_open` for the once-per-open-episode breaker decline |
+| `reason` | only on `no_match`: `dead_pair`, `degenerate`, or `boundary` |
+| `repair` | only when the decision's `ParsedAction` carries a repair-form label other than `none` (per `llm-infrastructure` INV-LLM-09): `missing_y`, `array_xy`, `quoted_xy`, or `int_scan`. Absent on a clean parse |
+| `mcls` / `ncls` / `ndist` / `widgets` | matched class, nearest class, nearest distance, candidate widget count |
+| `tok` | `[prompt_tokens, completion_tokens]` (0 if unavailable) |
+| `ms` | wall-clock milliseconds for the full pipeline (screenshot → response) |
+| `text` | only for text-entry decisions: the typed text (JSON-escaped by the serializer) |
+| `cause` / `detail` | only on `result:"error"`: exactly one named cause per abandoned attempt — `timeout`, `http_<status>`, `connection`, `parse`, `image`, `internal` — attributed at the failure point (client seam `getLastErrorCause()` consulted only when `chat()` returned null; router-attributed otherwise). The screenshot-capture failure keeps its counter (`screenshot_failed`) and its existing free-text line, with no `error` sub-event |
+| `trips` | only on `result:"breaker_open"`: the breaker trip count; emitted at the first routing-predicate decline of each open episode only, using a side-effect-free breaker state query (`isOpen()`), never a second `shouldAttempt()` |
+| `sys` / `user` / `resp` / `tool_calls` | prompt and response dumps, present when the prompt-dump flag is on (default on — recordability parity with the retired unconditional `[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]` lines) |
+
+No sub-event carries a step, activity, or variant field: the step and activity are the parent record's envelope, and the prompt variant is run-constant in the `RUN_START` plan echo. The `repair` field remains orthogonal to `result` (a repaired call yields a normal outcome plus `repair=<form>`).
+
+**Counters**: the per-cause failure counters (partitioning the retired `null`), `matched`/`llm_tap`/`no_match`/`dead_pair`/`repaired`, token and latency totals, and `breaker_trips` SHALL be maintained exactly as before and exposed via an accessor consumed by the `RUN_END` emitter. The decisions denominator (`matched + llm_tap + no_match + Σ failure causes`) is derived by consumers; no ratio is stored.
+
+**Where the retired renderings' assertions went.** Four scenarios below keep the header the pre-change
+requirement gave them and carry a body this change contradicts, because the thing they asserted is
+the thing this change removes. They are recorded here rather than dropped, since the reader's
+question is not whether the old line is gone but where its claim lives now:
+
+| Scenario header | What it asserted | Where the claim is now |
+|---|---|---|
+| `LLM call telemetry joins step and outcome on one key` | `[APE-LLM-TEL] step=N` ↔ `[APE-STEP] step=N` ↔ `[APE-OUTCOME] step=N` | **nowhere, deliberately** — the call, the decision and the outcome are members of one `StepRecord`, so there is no key to join on. The property the join existed to guarantee (a call is attributable to the step whose selection it interrupted) is now structural |
+| `Screenshot failure emits an attributable error line` | `[APE-LLM-ERROR] cause=screenshot activity=… detail=<stage>` | the surviving free-text line, which keeps the activity and the capture stage verbatim (`LlmTelemetry.screenshotFailed`, INV-RTR-20), plus `screenshot_failed` in `RUN_END`. It is the one abandoned attempt with no `llm[]` sub-event |
+| `Stagnation mode triggered` | `[APE-RV] LLM mode=stagnation, state=…` | the sub-event's `mode` field. The line the scenario names was never emitted by any shipped router — `mode` has always been a *field* of the per-attempt telemetry — and the trigger condition it describes is asserted by `Stagnation LLM Mode`, which this change does not modify |
+| `widget text with a newline does not break the prompt log` | the prompt builder flattens `\n`/`\r` before the dump is emitted | two places, and it is stronger in both: the builder still flattens (`llm-prompt :: multi-line widget text flattened`, unmodified by this change), and the serializer now escapes by construction (`event-sink` INV-SNK-02), so no widget text can put a raw newline in a record |
+
+#### Scenario: Matched widget logged
+
+- **WHEN** the new-state hook routes to the LLM at step 42 and the call maps to a widget `ModelAction` of type `MODEL_CLICK`
+- **THEN** the `s:42` record's `llm` array SHALL contain the entry with `result:"matched"`, its coordinates, `tok`, and `ms`
+- **AND** no `[APE-LLM-TEL]` line SHALL be emitted
+
+#### Scenario: LLM call telemetry joins step and outcome on one key
+
+- **WHEN** the new-state hook routes to the LLM at step 42, the call succeeds and the mapped action executes producing a recorded transition
+- **THEN** the call's sub-event, the decision (`dec`) and the outcome (`out`) SHALL all be members of the single `s:42` record
+- **AND** no join key SHALL exist or be needed — the pre-change `step=` field is absent from the sub-event because the step is the parent record's envelope (`event-sink` INV-SNK-04)
+
+#### Scenario: dead-pair ban visible in TEL and summary
+
+- **WHEN** two decisions in a run are banned by the dead-pair ban and one is discarded for a boundary coordinate
+- **THEN** the two banned decisions' sub-events SHALL carry `result:"no_match"` with `reason:"dead_pair"`
+- **AND** `RUN_END` SHALL report `no_match:3` and `dead_pair:2` — the overlay counter that makes bucket D, the falsification gate of the ban, countable from the run's last record alone
+
+#### Scenario: Repaired tool call logged and counted
+
+- **WHEN** at step 61 the model returns `{"name": "click", "arguments": {"x": "500, 527}}`, `ToolCallParser` recovers it via the quoted-collapsed-XY fix, and the coordinate resolves to a widget
+- **THEN** the step-61 sub-event SHALL carry `result:"matched"` and `repair:"quoted_xy"`
+- **AND** the run counters SHALL count the decision under both `matched` and `repaired`
+- **AND** no `error` sub-event with `cause:"parse"` SHALL exist for step 61
+
+#### Scenario: no_match reason separated
+
+- **WHEN** one decision is discarded for a `(0,0)` coordinate, another for a status-bar coordinate, and a third by the dead-pair ban
+- **THEN** their sub-events SHALL carry `reason:"degenerate"`, `reason:"boundary"`, and `reason:"dead_pair"` respectively, each with `result:"no_match"`
+
+#### Scenario: Timeout and HTTP failure discriminated
+
+- **WHEN** one attempt times out and a later attempt gets HTTP 500
+- **THEN** the first step's record SHALL carry `{"result":"error","cause":"timeout",...}` and increment `timeoutCount`
+- **AND** the second's SHALL carry `{"result":"error","cause":"http_500",...}` and increment `httpErrorCount`
+- **AND** `RUN_END` counters SHALL report `timeout:1` and `http_error:1`
+
+#### Scenario: Router-side parse failure attributed without the client seam
+
+- **WHEN** `chat()` returns a non-null response but `ToolCallParser.parse()` extracts no tool call even after the quoted-collapsed-XY fix and last-resort integer extraction
+- **THEN** a sub-event with `result:"error"` and `cause:"parse"` SHALL be appended and `parseErrorCount` incremented
+- **AND** `getLastErrorCause()` SHALL NOT be consulted (the HTTP call succeeded; its value is stale)
+
+#### Scenario: Circuit breaker event logged once per open episode
+
+- **WHEN** the breaker trips to OPEN with 2 trips and predicates decline 5 calls during the same open window
+- **THEN** exactly one sub-event `{"result":"breaker_open","trips":2}` SHALL be recorded, on the step of the first decline
+- **AND** no LLM HTTP call SHALL be made while the breaker is OPEN
+
+#### Scenario: Screenshot failure emits an attributable error line
+
+- **WHEN** `ScreenshotCapture.capture()` returns null on a FLAG_SECURE window while activity `org.fedorahosted.freeotp.MainActivity` is foreground, in a run that ends after 5 attempts of which 3 were abandoned at capture and 1 failed at parse
+- **THEN** the failure SHALL be attributable from the surviving free-text line, which carries `activity=org.fedorahosted.freeotp.MainActivity` and `detail=<stage>` read from the `ScreenshotCapture` seam
+- **AND** `screenshotFailedCount` SHALL be incremented, `breaker.recordFailure()` SHALL NOT be called, and each of the three steps SHALL carry `dec.own.fb:"screenshot"` (design D-B18: the breaker counts transport and parse failures only)
+- **AND** `RUN_END` counters SHALL report `parse_error:1 screenshot_failed:3`
+- **AND** the screenshot failures SHALL have produced no `error` sub-event — the one abandoned attempt that does not, deliberately (INV-RTR-20)
+
+#### Scenario: Stagnation mode triggered
+
+- **WHEN** `shouldRouteStagnation(150)` is called with `graphStableRestartThreshold = 200` and the episode flag armed, and the resulting attempt completes
+- **THEN** the attempt's sub-event SHALL carry `mode:"stagnation"`
+- **AND** no free-text mode line SHALL be emitted — the pre-change scenario named `[APE-RV] LLM mode=stagnation, state=…`, which no shipped router ever wrote; the trigger condition itself is asserted by `Stagnation LLM Mode`, unmodified by this change
+
+#### Scenario: widget text with a newline does not break the prompt log
+
+- **WHEN** an element's widget text contains `"line1\nline2"` and the prompt-dump flag is on
+- **THEN** the sub-event's `user` field SHALL contain `"line1 line2"` for that element (flattened by the prompt builder, `llm-prompt` capability, unchanged)
+- **AND** the record SHALL occupy exactly one physical line regardless of what the text contains, because the serializer escapes `\n`, `\r` and every control character by construction (`event-sink` INV-SNK-02) — the flattening is no longer what makes the dump parseable, only what keeps one element on one line within it
+
+#### Scenario: Prompt dump follows the flag
+
+- **WHEN** the prompt-dump flag is at its default (on)
+- **THEN** each completed call's sub-event SHALL carry `sys`/`user`/`resp` with the prompt and response text JSON-escaped
+- **AND** with the flag off, the same sub-event SHALL omit those fields and nothing else changes
+
 ### Requirement: Declared LLM Fallback
 
 The plan declares the LLM fallback through the groups it mounts. The decision pipeline realizes it structurally:
@@ -375,7 +498,8 @@ no call and does not count; the next LLM stage is evaluated as usual. A step the
 trip, and its `llm[]` holds at most one call entry. `dec.own.trg` names the stage that made the step's one call; when
 no stage called, it names the first LLM stage whose trigger held. The record also carries the fallback reason `fb`:
 - `gate`: a gate refused, named in `g` (`min_actions` or `breaker`);
-- `error`: the attempt was abandoned before mapping (screenshot, image, HTTP, timeout or parse);
+- `screenshot`: the screenshot could not be captured, so no request reached the server (design D-B18); the attempt is the step's one call, and `trg` names the stage that made it;
+- `error`: the attempt was abandoned before mapping (image, HTTP, timeout or parse);
 - `no_match`: the answer was refused at mapping (including `dead_pair`, `boundary` and `degenerate`);
 - `decline`: the engine returned no action for any other reason.
 

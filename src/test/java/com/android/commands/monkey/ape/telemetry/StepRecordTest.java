@@ -37,7 +37,7 @@ public class StepRecordTest {
         record.owner("llm", "coin", 0.31d, Double.NaN, null, null);
         record.owner(null, null, Double.NaN, 0.75d, "breaker", "gate");
         record.decision("model=CLICK@x", "sata", "roulette_greedy", 9,
-                500, 0, 0, 0, 0, 250, 0, 1, EventSink.ABSENT, EventSink.MOP_SOURCE_ID);
+                500, 0, 0, 0, 0, 250, 0, 1, EventSink.ABSENT, EventSink.MOP_SOURCE_ID, null);
         record.cfc("mop", true);
         record.cfc("menu", false);
         record.cfc("mop", false);
@@ -84,7 +84,7 @@ public class StepRecordTest {
         record.rotation(0);
         record.backMenuCapped(0);
         record.decision("model=BACK", "sata", "sata_other", 1,
-                0, 0, 0, 0, 0, 0, 0, EventSink.ABSENT, EventSink.ABSENT, null);
+                0, 0, 0, 0, 0, 0, 0, EventSink.ABSENT, EventSink.ABSENT, null, null);
 
         JSONObject dec = written(record).getJSONObject("dec");
         assertEquals("rot 0 is a value", 0, dec.getInt("rot"));
@@ -130,7 +130,7 @@ public class StepRecordTest {
         record.reset();
         record.open(43, 2L, 0, 0);
         record.decision("model=BACK", "sata", "sata_other", 1,
-                0, 0, 0, 0, 0, 0, 0, EventSink.ABSENT, EventSink.ABSENT, null);
+                0, 0, 0, 0, 0, 0, 0, EventSink.ABSENT, EventSink.ABSENT, null, null);
 
         JSONObject dec = written(record).getJSONObject("dec");
         assertEquals(0, dec.getJSONObject("own").length());

@@ -165,7 +165,7 @@ and the component list from `StaticGuiModel`, so the `mop` cell loads the artifa
 | `agent/pipeline/RestartStage` (new) | the restart guard | restart due | Select restart |
 | `agent/pipeline/MopCoinStage` (new) | MOP coin decider (D-A15) | `u_M`, ledger | Select/Continue |
 | `agent/pipeline/MopLauncherStage` | global cadence (D-A16) | every step | Select/Continue |
-| `agent/MopInteractionLedger` (new) | first interaction per (activity, `xpath|type`) | moves | queries |
+| `agent/MopInteractionLedger` (new) | executions per (activity, `xpath|type`), and the coin's budget k (D-B17) | moves | queries |
 | `agent/sata/LeastVisitedTie` (X1) | `ScorerSumLeastVisitedTie` (R2): larger scorer sum, else first | candidates | action |
 | `agent/sata/AbaTargetTie` (X3) | `ApeAbaTargetTie`: keep; `MopAbaTargetTie`: MOP activity | two targets | boolean |
 | `agent/sata/TrivialPathPick` (X4) | `ApeTrivialPathPick`: `randomPick`; `MopTrivialPathPick`: density | paths | path |
@@ -313,9 +313,10 @@ When eligible and `u_M < p_M`, the stage picks the action with:
 
 Priority is **not** a tie-break, so ADDONS scorers cannot steer the coin (R1 spirit).
 - `MopInteractionLedger` is MOP-owned and mode-independent. Target retirement (distance) composes on it instead
-  of keeping its own first-interaction record.
-- `ape.mopTargetPickCap` is retired: "subsumed by the MOP coin's first-interaction rule (at most one coin pick
-  per activity and widget)".
+  of keeping its own first-interaction record. Since D-B17 it counts executions; the coin reads the count against
+  k and retirement reads only whether an execution is a key's first.
+- `ape.mopTargetPickCap` is retired: "replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of
+  picks per activity and widget (default 1)" (reason amended by D-B17).
 - The two shortcut sites and the "MOP preference in the EARLY_STAGE roulette" leave `SataAgent`.
 
 **D-B11 — The launcher's global cadence (D-A16).** `stepsSinceFiring` advances on every step: the stage's
@@ -439,9 +440,117 @@ With the groups, the confound is gone by construction, and the author places the
 22. **`RUN_START.v` becomes 2** (`RunSpecEcho.FORMAT_VERSION`): `dec.src` changes meaning, and the reader keys
     its strict mode on `v`.
 
+### Amendment after `e03igg` (author, 2026-10-18)
+
+The full `e03igg` run (163 APKs × `ape`/`aperv:base`/`aperv:mop` × 3 × 300 s, jar `a2fde6c`) and its short round
+`e03iggsmk` exposed the defects D1–D2 recorded in `evidence.md`, and the breaker trips of `e03iggsmk` and E6 v2
+showed the screenshot failures behind D-B18. The author decided D-B15…D-B19. Rule for all five:
+**BASE stays upstream APE** — no decision below changes the behaviour of a cell without the group that owns it, so the P0
+parity with the original `ape.jar` is untouched. The only trace change in such a cell is the counter of D-B16. D-B15 and D-B16 have no key (author): they are
+defect fixes owned by `MOP_LAUNCHER`, active in every cell that mounts it (`mop`, `as_mop`, `as_mop_llm`), and the
+"before" is `e03igg` itself. Two related points were examined and left as they are:
+- the launcher cadence keys (`ape.activityTriggerStagnationStep`, `ape.activityTriggerMaxPerRun`) already belong to
+  `MOP_LAUNCHER` and read alike in every cell with MOP. The cadence is not the binding limit: in the 489 `aperv:mop`
+  runs, 1133 firings found no eligible candidate against 906 launches, and 212 runs launched nothing;
+- retirement is not early in the typical case. A median of 0 of 171 targets retire per run (mean 0.9 %). In
+  `mini-experimento`'s cross with coverage, a target that retires alone in its step had been reached already in
+  80 % of cases, a median 21 s before it retired. Targets retired but never reached come from **batch
+  retirement**: one first interaction counts every target at `d*` of a broad lookup, so three touches of
+  generic-handler widgets retire the whole set at once (owncloud: 84 targets in one step, `d=2`, from the login
+  screen). The author decided to record this as a known limit and not change it (2026-10-18). No change to the
+  coin's ledger follows from it (D-B17).
+
+**D-B15 — The launcher launches each activity at most once per run (D1a).** `MopLauncherStage` keeps the set of
+activities it has launched, and eligibility gains a sixth condition: never launched in this run. A launch that
+opens its activity already made it visited, and so ineligible. The new condition therefore only removes an
+activity whose launch did not open it — the case of `RecordAudioActivity` (spell4wiki), which crashes on a cold
+launch without extras and was chosen in 3 of 4 launches in `mop`. The stage still never reads the launch result
+(INV-CT-14 holds as written). The set is the stage's episode state (INV-DP-07) and is filled at selection, when
+the stage returns its `Select`.
+- Alternative: retire an activity when the next step shows a null tree or a foreground outside the target.
+  Rejected: it reads the launch result and needs a failure signal of its own, for the same effect.
+- Alternative: a key for N launches per activity. Rejected (P1): there is no case for N > 1.
+
+**D-B16 — With the launcher mounted, the null-tree recovery relaunches the app (D1b).** After more than ten
+consecutive null trees, `MonkeySourceApe` calls `stopTopActivity()`, which kills
+`getRunningAppProcesses().get(0)` (upstream APE code). After a launch that crashed the app, that process is the IME
+or the system launcher. In `e03igg` it was so in 7 runs, all `aperv:mop`, and the runs that stopped before 240 s
+are among them. When the plan has `MOP_LAUNCHER`, the recovery instead stops the package under test and starts its
+main activity again, through the existing restart path (`restartPackage(getMainApp(), false, "null tree")`; not
+`randomlyPickMainApp`, which draws from `mRandom`). Like `stopTopActivity`, it first calls the agent's
+`onActivityStopped()`. On that step it does not queue `ACTIVATE` (app switch, then HOME or BACK), which would send
+the relaunched app to the background; the step's action is `NOP` (author, 2026-10-18). Without `MOP_LAUNCHER`, the
+code path is upstream's, unchanged. The owner is the launcher because the launcher is what produces the crash: an activity
+opened out of its normal flow, without extras. `RUN_END.counters.nullRelaunches` counts the relaunches. Like every
+routing counter it is written in every cell (`event-sink`: a zero is a measurement), so a cell without the launcher
+differs from today's trace only by `nullRelaunches:0` in `RUN_END`, not in behaviour.
+- Alternative: fix `stopTopActivity` for every cell. Rejected by the author: BASE must stay equal to `ape`.
+- Alternative: an ADDONS member. Rejected: the `mop` cell, where the defect occurs, has no ADDONS.
+
+**D-B17 — The coin may take a key up to `k` times (default 1), and `dec.hnd` records the stamped handler.**
+In `e03igg` the coin took 2.8 % of the steps, while a weighted widget was on screen in 26 % of them. A replay of
+the ledger from the traces shows that the coin does take first every weighted key that is new: of SATA's 8397
+executions of a weighted action, none was a new key. 7349 repeated a key the coin had taken, and 1048 a key
+that SATA had touched while it was still unweighted. So the coin runs out of distinct weighted keys, and SATA
+keeps re-tapping them through the MOP boost in its priority. The author decided (2026-10-18):
+- `ape.mopCoinLedgerMaxInteractions` (int, default 1, owned by `MOP_COIN`). `MopInteractionLedger` counts
+  executions instead of marking a first one, and the coin stays eligible for a key while its count is below k.
+  The ledger is constructed with k and answers `belowBudget(activity, key)`, so the coin stage takes no new
+  parameter (author, 2026-10-18). Default 1 is D-B10. A value below 1 is clamped to 1 at resolution, like the other
+  plan clamps (`RunSpec.clamp`, no abort on a parameter value). The retired key `ape.mopTargetPickCap` now names it
+  in its reason. Retirement still reads only whether an execution is the key's first (count 0 before the
+  record), so k does not change what retires. Every owner's execution counts toward k, as it counts today.
+  Expected effect, stated before any run: with k > 1 the coin takes some of the repeats that SATA makes today.
+  It does not add distinct keys.
+- A state scope and a handler key for the ledger were designed and dropped: they could not be tested in time,
+  and the state scope multiplies the coin's eligibility on View apps too (median 15 abstract states in the
+  busiest activity of a View-only run).
+- `dec.hnd`: the binary class name of the handler stamp that answered the chosen action's weight lookup, written
+  exactly when `dec.mops` is `s` (MOP mounted). It makes the list hypothesis (list items sharing one handler)
+  measurable. `MopData.Lookup` gains that class (`handler`, null unless `STAMP`), so the field reuses the lookup.
+
+**D-B19 — The MOP widget boost goes only to keys not yet tried.** In `e03igg`, SATA executed a weighted action
+8397 times and none was a new key: it re-tapped widgets the coin (7349) or SATA itself (1048) had already
+touched, drawn by the MOP boost in its priority. That is ≈ 7 % of the steps. `mini-experimento` measured what
+those re-taps yield, against unweighted steps of the same APK and minute [reported]. A first touch yields a new
+MOP-reachable method in 0.671 of steps (3.0 × the paired base); a 2nd touch 0.258 (1.30 ×); a 3rd 1.16 ×,
+4th–5th 1.12 ×. Over all app methods, re-taps fall below the base (0.86–0.98). The author decided (2026-10-18)
+that `MopWidgetPass` gives no boost to an action whose (activity, `xpath|ActionType`) key the
+`MopInteractionLedger` already holds (`tried`), in both scoring modes. Such an action is left out of the tie
+split, as if its weight were 0, so the untried actions of the best level share the split among themselves. Its
+undivided `mopWeight` is still stored, because the coin, the prompt marker and retirement read it. So SATA keeps
+its MOP pull toward untouched weighted widgets and loses it on touched ones, and those steps go back to
+exploration. No key: the rule holds in every cell with `MOP`. The pass reads the ledger, which is neither priority
+nor another scorer's field; `scoring-pipeline` R1 names the ledger among MOP's own data, so rule R1 holds.
+`dec.mopx` keeps its meaning: its first member counts the weighted actions, tried or not, so it stays the measure
+of opportunity (author, 2026-10-18). The parity goldens do not move with D-B19: the oracle enters below
+`adjustActionsByGUITree` (INV-ARCH-12), so unit tests of the pass cover it.
+- Alternative: a key to switch it. Rejected (P1): the measurement already says what the re-taps yield.
+- Alternative: let k (D-B17) decide when the boost stops. Rejected: k is the coin's budget; the boost stops at
+  the first touch whatever k is, so the two stay independent.
+
+**D-B18 — A screenshot failure is not a breaker failure.** `LlmEngine.selectAction` records a breaker failure when
+`ScreenshotCapture.capture` returns null. In `e03iggsmk` this tripped the breaker on bitbanana (17/17 captures
+failed, 15 trips) and kept the LLM out for ≈ 600 of 900 s on mensinator, even after the captures worked again. In
+E6 v2, nearly every trip in arm 4 was a screenshot failure, and the two that were not were three parse failures
+in a row [reported, `rep-pack-e03`]. After this change a null capture counts `screenshot_failed` and returns null
+without `recordFailure`: it neither increments the failure count nor reopens a `HALF_OPEN` breaker. The step falls
+to the next stage exactly as before, and `dec.own.fb` becomes `screenshot` instead of `error`. The attempt still
+spends the step's one LLM call (INV-RTR-26), as the code already does (`LlmCall.call` marks the call before the
+engine runs). The breaker counts transport and parse failures only.
+- Cost, accepted: an app that never yields a screen (`FLAG_SECURE`) pays one capture attempt per LLM-admitted
+  step.
+
 ## API Design
 
 ### Key contract v3.2 (wave 0; sent verbatim to the rv-android `aperv-tool` session)
+
+v3.3 (amendment after `e03igg`, 2026-10-18) over v3.2: one `MOP_COIN` key, `ape.mopCoinLedgerMaxInteractions`
+(D-B17); `dec.own.fb` gains `screenshot` (D-B18);
+`dec.hnd` is new (D-B17); `RUN_END.counters.nullRelaunches` is new (D-B16). `dec.mopx` is unchanged. The retired
+key `ape.mopTargetPickCap` has a new reason text. Group blocks and cells are unchanged. `RUN_START.params` omits
+defaults, so it changes only when k is set; the plan digest covers every value, so the digest of the three MOP
+cells' fixtures changes.
 
 v3.2 (verification, 2026-10-17) over v3.1: `MOP_LAUNCHER` replaces `ACTIVITY_TRIGGER` in `features`; `dec.trig`
 is new; `dec.ch` gains `budget` and `restart`; `dec.nav.alt` is defined by the MOP variant's own rule; at most
@@ -472,6 +581,7 @@ one LLM call per step; `dec.rot` ranges over −1..3. Keys and group blocks are 
 | `ape.frontierBoostWeight` | `NAV_FRONTIER` (STATIC) | int | 200 | was `FRONTIER` (MOP) |
 | `ape.fuzzInputTyped` | `TYPED_FUZZ` (STATIC) | bool | true | |
 | `ape.componentPercentage` | `COMPONENT_TRIGGER` (STATIC) | double | 0.0 | was under MOP; the STATIC block sets 0.03 (D-B13) |
+| `ape.mopCoinLedgerMaxInteractions` | `MOP_COIN` (MOP) | int | 1 | D-B17; `< 1` clamped to 1; no block sets it |
 
 Existing addon features gain the `ADDONS` dependency, with their keys unchanged: `MODEL_MENU`,
 `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`,
@@ -525,7 +635,7 @@ with `run_id`, `t0`, `seed`, `build` and `props_digest` masked. The rv-android g
 |---|---|---|
 | `dec.src` | owner: `budget` `restart` `llm` `launcher` `mop` `sata` | always; **its meaning changes**: the executed owner, no longer "largest boost" |
 | `dec.ch` | pick channel; `short_circuit_*` removed; new `mop_coin`, `budget`, `restart`; `launcher`, `llm` kept; `sata_other` = SATA's other paths only | always |
-| `dec.own` | `{"i":owner, "trg":"new_state"\|"stagnation"\|"coin", "uL":double, "uM":double, "g":gate, "fb":reason}` | always; `uL`/`uM` only when that group is mounted; `i` intended owner; `g` the gate that barred (`min_actions`, `breaker`); `fb` ∈ `gate` `error` `decline` `no_match` `ineligible` (a due launcher without a candidate); a lost or ineligible coin claims nothing, so it has no `fb` |
+| `dec.own` | `{"i":owner, "trg":"new_state"\|"stagnation"\|"coin", "uL":double, "uM":double, "g":gate, "fb":reason}` | always; `uL`/`uM` only when that group is mounted; `i` intended owner; `g` the gate that barred (`min_actions`, `breaker`); `fb` ∈ `gate` `error` `screenshot` (the LLM screenshot could not be captured, D-B18) `decline` `no_match` `ineligible` (a due launcher without a candidate); a lost or ineligible coin claims nothing, so it has no `fb` |
 | `dec.cfc` | `{"<scorer>":0\|1}` over the mounted scorers with a non-zero term in the candidate set | at the roulettes and the least-visited pick only; replaces `dec.cf` |
 | `dec.draw` | `[idx,total]` | the roulette picks (EARLY_STAGE, ε, null handler) |
 | `dec.nav` | `{"x":"X1"\|"X3"\|"X4", "c":"ape"\|"mop", "alt":0\|1, "drew":0\|1}` | when an extension point decided a tie; `alt` per D-B14.8 |
@@ -535,6 +645,7 @@ with `run_id`, `t0`, `seed`, `build` and `props_digest` masked. The rv-android g
 | `dec.strat` | `buffer` `back_to_activity` `aba` `early_roulette` `greedy_global` `greedy_path` `trivial` `early_backward` `backtrack` `eps_back` `eps_menu` `least_visited` `eps_roulette` `null` `saturated` | when `src=sata` |
 | `dec.rot` | int −1..3 (−1 = unreadable) | every step; `0` is written |
 | `dec.buf` | owner | the owner that abandoned a non-empty buffer |
+| `dec.hnd` | stamped handler class | MOP mounted, when the executed action's weight lookup is a stamp (`dec.mops` = `s`); telemetry only, D-B17 |
 | `dec.trig` | `{"k":"broadcast"\|"service"\|"provider", "c":"<class>"}` | the step on which `ComponentTriggerStage` fired, whatever `src`; `dec.comp` stays the launcher's launch outcome |
 | scorer fields | `mop` `mopf` `wtg` `navf` `cov` `menu` `form` | non-zero; `navf` is new (`NAV_FRONTIER`); `wtgsrc` is removed |
 
@@ -544,7 +655,8 @@ with `run_id`, `t0`, `seed`, `build` and `props_digest` masked. The rv-android g
 - `guardBacks` (foreign or tree guard BACKs);
 - `bufAbandoned`;
 - `restarts`;
-- `coinLlm` and `coinMop` (steps on which each coin was won).
+- `coinLlm` and `coinMop` (steps on which each coin was won);
+- `nullRelaunches` (null-tree recoveries that relaunched the app, D-B16; 0 without `MOP_LAUNCHER`).
 
 `RUN_START` gains `variant` (from `ape.variant`, omitted when null). `dec.cf` and `dec.wtgsrc` are removed (P3).
 
@@ -563,7 +675,8 @@ interface PromptContribution {
     default String section(State s, List<ModelAction> actions) { return ""; }
 }
 final class StaticGuiModel { /* WTG + widget metadata queries; read-only */ }
-final class MopInteractionLedger { boolean tried(String activity, String key); void record(String activity, String key); }
+final class MopInteractionLedger { int count(String activity, String key); boolean tried(String activity, String key);
+    boolean belowBudget(String activity, String key); void record(String activity, String key); }  // D-B17
 final class StepRng { double llmCoin(); double mopCoin(); double componentCoin(); boolean fuzzToss(double rate); }
 ```
 
@@ -602,13 +715,14 @@ final class StepRng { double llmCoin(); double mopCoin(); double componentCoin()
 | `ape.llm=true` without `ape.llmUrl` | resolution | `MISSING_DEPENDENCY` | the tool passes the URL |
 | retired key set | resolution | `retired_key` with its reason | update `tool.py` (sister change) |
 | `p_M`, `p_L` out of [0,1] | resolution | clamp (no new abort on values) | — |
+| `ape.mopCoinLedgerMaxInteractions < 1` | resolution | clamp to 1 (D-B17) | — |
 | artifact rejected at load | `StaticArtifactLoader` | as today: `MOP_DATA status=rejected`, fail-fast when a group needs it | — |
 | rotation unreadable | `AndroidDevice.getRotation` | `-1` → capture at 0, `dec.rot` written as `-1` | — |
 | internal sink failure | `NdjsonSink` | latch off, as today | — |
 
 ## Risks / Trade-offs
 
-- [The MOP effect may shrink: the coin decides only first interactions] → that is the treatment, measured per
+- [The MOP effect may shrink: the coin decides only first interactions (up to k per key since D-B17)] → that is the treatment, measured per
   owner; a smaller effect is a result (plan §8).
 - [The restart guard reads the previous step's `disableRestart`, because the selection that sets it now runs
   after the guard] → declared; the restart sequence differs from `eea2b1a9`; new goldens.
@@ -630,7 +744,7 @@ final class StepRng { double llmCoin(); double mopCoin(); double componentCoin()
 | Unit | gates, coins, ledger, launcher cadence, X1/X3/X4, prompt contributions, new sink fields | fakes + `StepContext` stubs | ~60 |
 | Unit | rotation clamp | `ScreenshotCaptureStageTest` (ported) | 2 |
 | Integration | `SinkNeutralityTest` × 6 cells | oracle scaffold per cell | 6 |
-| Integration | clean control: cells `base`, `as`, `as_llm` carry no MOP field (`mop`, `mopf`, `wtg`, `menu`, `mopd`, `mops`, `ret`, `mopx`, `own.uM`, the MOP keys of `cfc`, `nav.c=mop`, `src=mop`/`launcher`, `ch=mop_coin`, `ACT.mop`, UICOV `mopReach`; `coinMop`, `launches`, `retired` = 0) | replay + parse | 3 |
+| Integration | clean control: cells `base`, `as`, `as_llm` carry no MOP field (`mop`, `mopf`, `wtg`, `menu`, `mopd`, `mops`, `hnd`, `ret`, `mopx`, `own.uM`, the MOP keys of `cfc`, `nav.c=mop`, `src=mop`/`launcher`, `ch=mop_coin`, `ACT.mop`, UICOV `mopReach`; `coinMop`, `launches`, `retired` = 0) | replay + parse | 3 |
 | Integration | RNG neutrality: mounting/unmounting a gate or the MOP coin with `p=0` leaves SATA's choices identical | replay pairs | 3 |
 | Integration | base parity: `base` cell golden; X1/X3/X4 defaults equal upstream on fixtures | oracle | 4 |
 | Device | 6 cells on cryptoapp; landscape APK with LLM | wave 3 | 7 runs |

@@ -289,11 +289,12 @@ public class MopData {
             return Lookup.NONE;
         }
         String event = normalizeEventType(eventType);
-        Handler stamped = getHandler(stampFor(node, event));
+        String stamp = stampFor(node, event);
+        Handler stamped = getHandler(stamp);
         if (stamped != null) {
             return new Lookup(stamped.isDirectMopForEvent(event),
                     stamped.isTransitiveMopForEvent(event), stamped.dist(event),
-                    Lookup.Source.STAMP);
+                    Lookup.Source.STAMP, stamp);
         }
         Widget widget = getWidget(activity, extractShortId(node.getResourceID()));
         if (widget != null) {
@@ -508,12 +509,19 @@ public class MopData {
         public final boolean transitive;
         public final int[][] dist;
         public final Source source;
+        /** The stamped handler's binary class name when {@code source} is STAMP; null otherwise. */
+        public final String handler;
 
         Lookup(boolean direct, boolean transitive, int[][] dist, Source source) {
+            this(direct, transitive, dist, source, null);
+        }
+
+        Lookup(boolean direct, boolean transitive, int[][] dist, Source source, String handler) {
             this.direct = direct;
             this.transitive = transitive;
             this.dist = dist != null ? dist : NO_PAIRS;
             this.source = source;
+            this.handler = handler;
         }
 
         @Override

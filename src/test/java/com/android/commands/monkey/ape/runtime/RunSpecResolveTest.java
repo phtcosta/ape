@@ -270,6 +270,13 @@ public class RunSpecResolveTest {
         assertEquals("50", spec.effectiveValues().get("ape.activityTriggerStagnationStep"));
         assertEquals("0", spec.effectiveValues().get("ape.activityTriggerMaxPerRun"));
 
+        RunSpec coin = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.mopCoinLedgerMaxInteractions", "0"));
+        assertEquals("1", coin.effectiveValues().get("ape.mopCoinLedgerMaxInteractions"));
+        assertEquals(1, coin.mop().coinLedgerMaxInteractions());
+        assertEquals(3, resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.mopCoinLedgerMaxInteractions", "3")).mop().coinLedgerMaxInteractions());
+
         RunSpec llm = resolve(entries("ape.llm", "true", "ape.llmUrl", LLM_URL, "ape.llmPercentage", "1.5"));
         assertEquals(1.0d,
                 Double.parseDouble(llm.effectiveValues().get("ape.llmPercentage")), 1e-9);

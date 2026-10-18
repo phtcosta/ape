@@ -222,6 +222,7 @@ public final class KeyOwnership {
 
         feature(Feature.MOP_ACTIVITY_SOURCE, "ape.mopActivitySourceComponents", ValueType.BOOLEAN, "false");
         feature(Feature.MOP_COIN, "ape.mopCoinPercentage", ValueType.DOUBLE, "1.0");
+        feature(Feature.MOP_COIN, "ape.mopCoinLedgerMaxInteractions", ValueType.INT, "1");
 
         feature(Feature.NAV_FRONTIER, "ape.frontierBoostWeight", ValueType.INT, "200");
         feature(Feature.TYPED_FUZZ, "ape.fuzzInputTyped", ValueType.BOOLEAN, "true");
@@ -321,8 +322,8 @@ public final class KeyOwnership {
                 "replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers "
                         + "(isolate-guidance-groups).");
         RETIRED.put("ape.mopTargetPickCap",
-                "subsumed by the MOP coin's first-interaction rule (at most one coin pick per "
-                        + "activity and widget; isolate-guidance-groups).");
+                "replaced by ape.mopCoinLedgerMaxInteractions, the MOP coin's budget of picks per "
+                        + "activity and widget (default 1).");
     }
 
     private KeyOwnership() {

@@ -123,7 +123,8 @@ public class CleanControlTest {
             } else if ("RUN_END".equals(line.optString("type"))) {
                 runEnd = true;
                 JSONObject counters = line.getJSONObject("counters");
-                for (String counter : Arrays.asList("coinMop", "launches", "retired")) {
+                for (String counter : Arrays.asList("coinMop", "launches", "retired",
+                        "nullRelaunches")) {
                     assertEquals(cell + ": RUN_END.counters." + counter, 0, counters.getInt(counter));
                 }
             }

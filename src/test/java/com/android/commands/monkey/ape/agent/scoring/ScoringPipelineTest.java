@@ -71,6 +71,12 @@ public class ScoringPipelineTest {
 
     // ---- assembly: filtering + order (INV-ARCH-04) --------------------------
 
+    /** A context that does not provide the MOP ledger reads as a run without MOP. */
+    @Test
+    public void theMopLedgerIsAbsentUnlessTheContextProvidesIt() {
+        assertNull(new StubScoringContext().getMopLedger());
+    }
+
     @Test
     public void keepsOnlyEnabledPassesPreservingOrder() {
         List<String> log = new ArrayList<>();

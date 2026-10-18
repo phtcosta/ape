@@ -6,7 +6,7 @@ Two perception enhancements of the tree — the AndroidX ViewPager recognition a
 
 ## Invariants
 
-The `## Invariants` section of the main spec is not synced by `openspec archive`; it is hand-synced at archive (task 13.4, author decision A1), and these two entries SHALL then read:
+The `## Invariants` section of the main spec is not synced by `openspec archive`; it is hand-synced at archive (task 14.4, author decision A1), and these two entries SHALL then read:
 
 - **INV-TREE-02** (amended by `isolate-guidance-groups`): `GUITreeNode.getScrollType()` MUST return `"horizontal"` when `className` equals `"android.support.v4.view.ViewPager"` and `isScrollable()` returns `true`. The two AndroidX variants (`"androidx.viewpager.widget.ViewPager"`, `"androidx.viewpager2.widget.ViewPager2"`) are additionally recognized only when `TREE_ENHANCEMENTS` is in the plan (the `as*` cells); without it (`base`, `mop`) only the legacy support-library class is recognized (upstream perception).
 - **INV-TREE-11** (amended by `isolate-guidance-groups`): When `TREE_ENHANCEMENTS` is in the plan, the WebView-removal threshold SHALL be evaluated over actionable descendants only; when it is not (`base`, `mop`), it is evaluated over the total descendant count (upstream over-prune).

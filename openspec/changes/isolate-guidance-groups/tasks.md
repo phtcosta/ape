@@ -6,8 +6,8 @@
      - F7 (group 10) is the rv-android sister change, owned by the `aperv-tool` session, on branch
        `isolate-guidance-groups` in rv-android; it runs in parallel with wave 1.
      - Wave 2 (group 11) integrates: merge the six worktrees into `isolate-guidance-groups`, then the gates.
-     - Wave 3 (group 12) is the device smoke. Group 13 is the final verification.
-     - Critical path: 1 → 2 → 3 → {4..9 ∥ 10} → 11 → 12 → 13.
+     - Wave 3 (group 12) is the device smoke. Group 13 is the amendment after `e03igg` (contracts, then fronts F8–F12 in parallel, then integration). Group 14 is the final verification.
+     - Critical path: 1 → 2 → 3 → {4..9 ∥ 10} → 11 → 12 → 13 → 14.
      - ~45 files in APE-RV — use subagent orchestration (6 parallel dispatches in wave 1).
      - Paths are relative to src/main/java/com/android/commands/monkey/ape/ unless they start with src/ or openspec/.
      - Run `mvn clean` before any test baseline (stale classes in target/ fake errors). Baseline at eea2b1a9:
@@ -223,15 +223,50 @@ The smoke no longer runs on `cryptoapp`: it is the `mini-experimento` session's 
 the Study 03 v2 corpus (instrumented APKs + compact `.apk.json`, image `phtcosta/rvandroid:0.9.5` with this jar and the
 `aperv-tool` sources bind-mounted). That session runs it; the evidence comes from it and is recorded here.
 
-- [ ] 12.1 Hand `mini-experimento` (and `aperv-tool`) the jar of 11.9 (path, sha256, `GIT_SHA`) and the fixtures of 11.6. From its short round, record in `openspec/changes/isolate-guidance-groups/evidence.md` that each cell's `RUN_START` (`preset`, `variant`, `features`, `params`, `inert`, `digest`) matches the cell fixture and that the new `dec` members appear
+- [x] 12.1 Hand `mini-experimento` (and `aperv-tool`) the jar of 11.9 (path, sha256, `GIT_SHA`) and the fixtures of 11.6. From its short round, record in `openspec/changes/isolate-guidance-groups/evidence.md` that each cell's `RUN_START` (`preset`, `variant`, `features`, `params`, `inert`, `digest`) matches the cell fixture and that the new `dec` members appear
 - [ ] 12.2 Rotation on a real landscape APK (author decision 2026-10-17): in the short round, one run of `retrowars` on `as_mop_llm` with `ape.llmGateMinActions=0` (a gate at 0 is not mounted, 7.2), because its opaque screen offers only BACK/MENU and the default gate never admits a call. `dec.rot` is 1 or 3 on the LLM steps, and the LLM sub-event's screenshot is in the displayed orientation (width > height, upright). The experiment itself keeps the default gate. Record it in `evidence.md`. Letting the LLM act on opaque screens (`DynamicRegionGate`) stays out of this change
 - [ ] 12.3 Hand the jar sha256 and `GIT_SHA` to the Study 03 session as well. Q-9 and Q-10 are the author's
 
-## 13. Verification
+## 13. Amendment after `e03igg` (author decisions 2026-10-18; design D-B15…D-B19)
 
-- [ ] 13.1 Run `/sdd-qa-lint-fix` on `src/main/java/com/android/commands/monkey/ape`
-- [ ] 13.2 Run `/sdd-verify`
-- [ ] 13.3 Invoke `/sdd-code-reviewer` via the Skill tool
-- [ ] 13.4 Run `/sdd-docs-sync` (`CLAUDE.md`, `openspec/specs` Purpose sections). At archive, hand-sync the sections `openspec archive` does not apply (verification V57): the Purpose, Data Contracts and Invariants preambles of action-selection (`:10`), component-triggering (`:7`, `:18`), mop-guidance (`:5`, `:896-897`), parity-oracle (`:19`, `:36-43`, `:63`), run-spec (`:6`), wtg-navigation (`:28`), exploration (INV-EXPL-06, INV-EPS-02), ui-tree (INV-TREE-02, INV-TREE-11) and every delta's Invariants block
-- [ ] 13.5 `openspec validate isolate-guidance-groups --strict`; `/opsx:verify`
-- [ ] 13.6 Merge into `master` **only** on the author's explicit word after the mini experiment (D-A19); no push without it
+Any code here changes the jar `e03igg` measured (`a2fde6c`): new jar, goldens moved only where a decision moves
+them, and a new smoke whose scope is the author's. BASE stays upstream APE: a cell without the owning group keeps
+its behaviour; its trace changes only by `RUN_END.counters.nullRelaunches:0`.
+
+<!-- Dispatch (author 2026-10-18: plan for parallelism), same discipline as waves 0–2:
+     - 13.1–13.3 are serial, one agent: the evidence and the contracts every front codes against. They end green
+       (`mvn clean test`) and the contract diff goes to `aperv-tool` at 13.3, so the rv-android side starts in
+       parallel with the fronts.
+     - 13.4–13.8 are fronts F8–F12, one agent and one worktree each (`isolation: "worktree"`), all in parallel.
+       File ownership is disjoint; a front edits only the files its task names (and their tests).
+     - 13.9–13.11 are serial: merge F8, F9, F11, F12, F10 (in this order; F10 and F12 both touch MOP scoring/selection, F10 last), gates, package, install.
+     - Critical path: 13.1 → 13.2 → 13.3 → {13.4 ∥ 13.5 ∥ 13.6 ∥ 13.7 ∥ 13.8} → 13.9 → 13.10 → 13.11 → 14. -->
+
+### 13.A Contracts (serial)
+
+- [x] 13.1 Record in `evidence.md` the `e03igg` measurements behind D-B15…D-B19 (launcher firings and eligibility, the visited-relaunch opportunity, wrong-process kills by arm, retirement distribution and batch retirement, the ledger replay, `mini-experimento`'s retirement × reach and re-tap yield) with `[verified]`/`[reported]`
+- [x] 13.2 Contracts, with their unit tests: `runtime/{Feature,KeyOwnership,RunSpec}` the `MOP_COIN` key `ape.mopCoinLedgerMaxInteractions` (int, default 1, `< 1` clamped to 1 in `RunSpec.clamp`, like the other plan clamps), accessor on `MopParams`, inert without `MOP_COIN`; the retired key `ape.mopTargetPickCap` gets the reason "replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of picks per activity and widget (default 1)" (`KeyOwnership`); `telemetry/{RunCounter,RunCounters,NdjsonSink}` `NULL_RELAUNCHES` → `RUN_END.counters.nullRelaunches`, written in every cell; `telemetry/{EventSink,StepRecord,NdjsonSink,NoopSink}` the `dec.hnd` member (one more argument of the decision call, written iff `mops` is `s`), call site passing `null` until F10; `llm/LlmEngine.FALLBACK_SCREENSHOT = "screenshot"` (constant only); `utils/MopData.Lookup.handler` (the stamped class, set in `lookup` on the `STAMP` branch, null otherwise); `agent/scoring/ScoringContext.getMopLedger()` (the run's ledger, null without `MOP`; a `default` method returning null, so the five test contexts compile unchanged), provided by `StatefulAgent`. Recapture on purpose only the fixtures and assertions these move (the goldens hold no `RUN_END` and no digest: `nullRelaunches:0` moves `NdjsonSinkTest`/`CleanControlTest` assertions; `RUN_START.params` omits defaults, so only the digest of `cells/{mop,as_mop,as_mop_llm}.run_start.json` moves); `mvn clean test` green
+- [ ] 13.3 Send `aperv-tool` the contract v3.3 diff (one key, `fb:"screenshot"`, `dec.hnd`, `nullRelaunches`, the new retired-key reason, `dec.mopx` unchanged) for its mapping and trace reader, and the regenerated `cells/*.run_start.json`
+
+### 13.B Fronts (parallel, one worktree each)
+
+- [ ] 13.4 F8 — `agent/pipeline/MopLauncherStage` (D-B15): the set of launched activities (episode state, INV-DP-07), filled at selection (before the launch counter increments), and the walks see launched activities as visited; eligibility gains "never launched in this run" in both modes; no other file. Tests: a launched activity that stays unvisited is not selected again under `flag` and under `distance`; with no other eligible activity the firing is `ineligible` and consumes no budget; the launch result is never read (INV-CT-14)
+- [ ] 13.5 F9 — `../MonkeySourceApe` (D-B16): with `MOP_LAUNCHER` in the plan, the null-tree recovery calls `mAgent.onActivityStopped()` and `restartPackage(getMainApp(), false, "null tree")` (not `randomlyPickMainApp`) instead of `stopTopActivity()`, counts `NULL_RELAUNCHES`, and queues `NOP` instead of `ACTIVATE` on that step; without it the path is upstream's, byte for byte. Tests: the recovery choice by plan (a pure helper), the counter by cell
+- [ ] 13.6 F10 — `agent/{StatefulAgent,MopInteractionLedger}`, `agent/pipeline/MopCoinStage` (D-B17): `MopInteractionLedger` counts executions (`count`/`tried`/`belowBudget`/`record`) and is constructed with k (`spec.mop()`'s accessor, StatefulAgent); `recordMopInteraction` records every execution and counts retirement only on a key's first; the coin is eligible while `belowBudget` (`count < k`), with no change to `DecisionPipeline`; the decision call passes `Lookup.handler` as `dec.hnd`. Tests: k = 3 lets the coin take a key three times whatever the owners; retirement counts once; k = 1 reproduces D-B10 (this front's goldens unchanged)
+- [ ] 13.7 F11 — `llm/LlmEngine` (D-B18): a null capture counts `screenshot_failed`, sets `FALLBACK_SCREENSHOT` and returns null without `recordFailure`. Tests: the breaker's failure count and state unchanged by capture failures; a `HALF_OPEN` probe not reopened by one; `dec.own.fb:"screenshot"` on the step
+- [ ] 13.8 F12 — `agent/scoring/MopWidgetPass` (D-B19): an action whose key `tried` holds gets no boost and leaves the tie split; its `mopWeight` is still stored; `mopExposure` keeps counting the weighted actions, tried or not (author 2026-10-18), while the log line's `boosted` counts the boosted ones. Tests: the scenario "a tried key gets no boost and leaves the split" in both modes; an untried action is boosted as before
+
+### 13.C Integration (serial)
+
+- [ ] 13.9 Merge F8, F9, F11, F12, F10 into `isolate-guidance-groups`, resolving only import or signature seams; `CleanControlTest` adds `hnd`; recapture on purpose only the goldens the fronts move (expected: none from D-B19 or D-B18, since the oracle enters below `adjustActionsByGUITree` (INV-ARCH-12) and `ScriptedLlm` takes no screenshot; at most a MOP golden whose fixture launches an activity that does not open (D-B15); review every diff); `mvn clean test` green
+- [ ] 13.10 Update `CLAUDE.md` (P4: the launcher's once-per-run rule, the launcher-owned recovery, the boost only for untried keys, the coin key `ape.mopCoinLedgerMaxInteractions`, `dec.hnd`, `fb:"screenshot"`, `nullRelaunches`)
+- [ ] 13.11 `mvn package` + `mvn install` to the aperv worktree; record sha256 and `GIT_SHA` in `evidence.md`; send them to `mini-experimento` and `aperv-tool`; ask the author before the commit
+
+## 14. Verification
+
+- [ ] 14.1 Run `/sdd-qa-lint-fix` on `src/main/java/com/android/commands/monkey/ape`; delete the dead `Config.activityTriggerStagnationStep`/`activityTriggerMaxPerRun` (`Config.java:127-133`, readers only in `ConfigTest`; the plan owns both, P3; author 2026-10-18)
+- [ ] 14.2 Run `/sdd-verify`
+- [ ] 14.3 Invoke `/sdd-code-reviewer` via the Skill tool
+- [ ] 14.4 Run `/sdd-docs-sync` (`CLAUDE.md`, `openspec/specs` Purpose sections). At archive, hand-sync the sections `openspec archive` does not apply (verification V57): the Purpose, Data Contracts and Invariants preambles of action-selection (`:10`), component-triggering (`:7`, `:18`), mop-guidance (`:5`, `:896-897`), parity-oracle (`:19`, `:36-43`, `:63`), run-spec (`:6`), wtg-navigation (`:28`), exploration (INV-EXPL-06, INV-EPS-02), llm-routing (`:35` and the *Error* bullet `:43`, which INV-RTR-27 replaces), ui-tree (INV-TREE-02, INV-TREE-11) and every delta's Invariants block
+- [ ] 14.5 `openspec validate isolate-guidance-groups --strict`; `/opsx:verify`
+- [ ] 14.6 Merge into `master` **only** on the author's explicit word after the mini experiment (D-A19); no push without it

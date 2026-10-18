@@ -108,10 +108,13 @@ public interface EventSink {
      *        source is {@code NONE} or the action has no resolved target. It travels with the
      *        decision rather than through a call of its own because, unlike {@code dec.ret}, it is
      *        known when the decision is made
+     * @param handler {@code dec.hnd} (design D-B17): the binary class name of the handler stamp
+     *        that answered the action's MOP weight lookup; written only when {@code mopSource} is
+     *        {@link #MOP_SOURCE_STAMP}, so {@code null} otherwise
      */
     void decision(String action, String decisionSource, String pickChannel, int priority,
             int mop, int mopFrontier, int wtg, int navFrontier, int coverage, int menu, int form,
-            int patched, int mopDistance, String mopSource);
+            int patched, int mopDistance, String mopSource, String handler);
 
     /**
      * Records a finalized non-model action: the event-level actions that carry no priority and no

@@ -36,7 +36,9 @@ public enum RunCounter {
     /** Steps on which the LLM coin was won. */
     COIN_LLM("coinLlm"),
     /** Steps on which the MOP coin was won. */
-    COIN_MOP("coinMop");
+    COIN_MOP("coinMop"),
+    /** Null-tree recoveries that relaunched the app under test, which only the launcher's plan does. */
+    NULL_RELAUNCHES("nullRelaunches");
 
     private final String wire;
 

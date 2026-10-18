@@ -233,6 +233,7 @@ public class KeyOwnershipTotalityTest {
                 {"ape.staticDataPath", Feature.STATIC_DATA, ValueType.STRING, null},
                 {"ape.mopStrictPackageMatch", Feature.STATIC_DATA, ValueType.BOOLEAN, "false"},
                 {"ape.mopCoinPercentage", Feature.MOP_COIN, ValueType.DOUBLE, "1.0"},
+                {"ape.mopCoinLedgerMaxInteractions", Feature.MOP_COIN, ValueType.INT, "1"},
                 {"ape.llmGateMinActions", Feature.LLM, ValueType.INT, "3"},
                 {"ape.llmBreakerFailures", Feature.LLM, ValueType.INT, "3"},
                 {"ape.llmBreakerOpenMs", Feature.LLM, ValueType.LONG, "60000"},

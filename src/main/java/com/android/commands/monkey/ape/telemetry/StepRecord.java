@@ -79,6 +79,8 @@ final class StepRecord {
     private String componentError;
     private int mopDistance = EventSink.ABSENT;
     private String mopSource;
+    /** {@code dec.hnd}: the stamped handler behind the MOP weight; null unless {@code mops} is s. */
+    private String handler;
     /** {@code dec.ret}: ascending, each index once; null when the step retired nothing. */
     private int[] retired;
 
@@ -146,7 +148,7 @@ final class StepRecord {
 
     void decision(String action, String decisionSource, String pickChannel, int priority,
             int mop, int mopFrontier, int wtg, int navFrontier, int coverage, int menu, int form,
-            int patched, int mopDistance, String mopSource) {
+            int patched, int mopDistance, String mopSource, String handler) {
         this.hasDecision = true;
         this.modelAction = true;
         this.action = action;
@@ -163,6 +165,7 @@ final class StepRecord {
         this.patched = patched;
         this.mopDistance = mopDistance;
         this.mopSource = mopSource;
+        this.handler = handler;
     }
 
     void decisionNonModel(String action, String decisionSource, String pickChannel) {
@@ -389,6 +392,9 @@ final class StepRecord {
                 if (mopSource != null) {
                     buf.name("mops").value(mopSource);
                 }
+                if (handler != null && EventSink.MOP_SOURCE_STAMP.equals(mopSource)) {
+                    buf.name("hnd").value(handler);
+                }
                 if (retired != null) {
                     // Written at close like the rest of `dec`, so it survives a record closed
                     // without an `out` member.
@@ -528,6 +534,7 @@ final class StepRecord {
         componentError = null;
         mopDistance = EventSink.ABSENT;
         mopSource = null;
+        handler = null;
         retired = null;
         ownIntended = null;
         ownTrigger = null;

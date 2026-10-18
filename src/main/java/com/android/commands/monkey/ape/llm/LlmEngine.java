@@ -238,6 +238,8 @@ public class LlmEngine {
 
     /** {@link #lastFallback()}: the attempt was abandoned before mapping. */
     public static final String FALLBACK_ERROR = "error";
+    /** {@link #lastFallback()}: the LLM screenshot could not be captured (design D-B18). */
+    public static final String FALLBACK_SCREENSHOT = "screenshot";
     /** {@link #lastFallback()}: the answer was refused at mapping. */
     public static final String FALLBACK_NO_MATCH = "no_match";
     /** {@link #lastFallback()}: no action for any other reason. */

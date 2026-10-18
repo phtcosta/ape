@@ -351,7 +351,7 @@ drawn at step open regardless (INV-DP-13), and `dec.own.i` stays `llm`, the firs
 
 Episode-scoped decision state SHALL live inside its owning stage (INV-DP-07):
 - the stagnation single-shot flag in `LlmStagnation`;
-- the launcher cadence counter, the per-run launch budget counter and the round-robin cursor in `MopLauncher`;
+- the launcher cadence counter, the per-run launch budget counter, the round-robin cursor and the set of activities launched in this run (design D-B15) in `MopLauncher`;
 - the component round-robin cursor in `ComponentTrigger`.
 
 The `MopLauncher` cadence counter is advanced only by the stage's own `onStepOpen` hook, once per step
@@ -381,7 +381,7 @@ then clear it, so the guard reads the value that the previous step's selection l
 
 #### Scenario: launcher counters are invisible outside the stage
 - **WHEN** any code outside `MopLauncher` executes
-- **THEN** it SHALL have no read or write access to the cadence counter, launch budget counter, or round-robin cursor
+- **THEN** it SHALL have no read or write access to the cadence counter, launch budget counter, round-robin cursor, or launched set
 - **AND** the counter SHALL change only in the stage's `onStepOpen` (advance) and `decide()` (reset at firing)
 
 ---

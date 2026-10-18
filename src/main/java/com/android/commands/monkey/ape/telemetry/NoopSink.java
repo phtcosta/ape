@@ -45,7 +45,7 @@ public final class NoopSink implements EventSink {
     @Override
     public void decision(String action, String decisionSource, String pickChannel, int priority,
             int mop, int mopFrontier, int wtg, int navFrontier, int coverage, int menu, int form,
-            int patched, int mopDistance, String mopSource) {
+            int patched, int mopDistance, String mopSource, String handler) {
     }
 
     @Override

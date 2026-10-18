@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -40,6 +41,14 @@ public interface ScoringContext {
     default MopData getMopData() {
         MopContext mop = getMopContext();
         return mop == null ? null : mop.data();
+    }
+
+    /**
+     * The run's MOP interaction ledger (mop-guidance "MopInteractionLedger"), or {@code null} when
+     * MOP is not mounted. A pass reads it and never records into it.
+     */
+    default MopInteractionLedger getMopLedger() {
+        return null;
     }
 
     /** The activity-scoped UI coverage tracker. */

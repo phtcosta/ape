@@ -244,13 +244,13 @@ public final class NdjsonSink implements EventSink {
     @Override
     public void decision(String action, String decisionSource, String pickChannel, int priority,
             int mop, int mopFrontier, int wtg, int navFrontier, int coverage, int menu, int form,
-            int patched, int mopDistance, String mopSource) {
+            int patched, int mopDistance, String mopSource, String handler) {
         if (disabled || !pending.isOpen()) {
             return;
         }
         try {
             pending.decision(action, decisionSource, pickChannel, priority, mop, mopFrontier, wtg,
-                    navFrontier, coverage, menu, form, patched, mopDistance, mopSource);
+                    navFrontier, coverage, menu, form, patched, mopDistance, mopSource, handler);
         } catch (Throwable failure) {
             latch("decision", failure);
         }

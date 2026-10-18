@@ -400,4 +400,4 @@ The recomputation is `MopCounterfactual`'s mould generalized to `ScorerCounterfa
 
 **Reason**: `ape.mopTargetPickCap` is retired (design D-B10): "subsumed by the MOP coin's first-interaction rule (at most one coin pick per activity and widget)". The per-key pick counter, its `[APE-RV] MOP target capped` log line, INV-SEL-MOP-04 and INV-SEL-MOP-05 are deleted (P3). A properties file that sets the key aborts resolution with `retired_key` (`run-spec`).
 
-**Migration**: The coin is eligible only for an action whose (activity, `xpath|ActionType`) has no entry in `MopInteractionLedger`, and every executed model action records its key there, so a key can be taken by the coin at most once per run (`mop-guidance` "MopInteractionLedger — First Interaction per Activity").
+**Migration**: The coin is eligible only for an action whose (activity, `xpath|ActionType`) has no entry in `MopInteractionLedger`, and every executed model action records its key there, so a key can be taken by the coin at most `ape.mopCoinLedgerMaxInteractions` times per run, once at the default (`mop-guidance` "MopInteractionLedger — Executions per Activity and Key", design D-B17).

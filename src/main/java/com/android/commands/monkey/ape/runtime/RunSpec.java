@@ -275,6 +275,10 @@ public final class RunSpec {
             int value = (Integer) ValueType.INT.parse(key, raw);
             return value < 0 ? "0" : raw;
         }
+        if ("ape.mopCoinLedgerMaxInteractions".equals(key)) {
+            int value = (Integer) ValueType.INT.parse(key, raw);
+            return value < 1 ? "1" : raw;
+        }
         if (PROBABILITY_KEYS.contains(key)) {
             // The three doses are probabilities: an out-of-range value is clamped, never an
             // abort (INV-RUN-11).
@@ -1086,6 +1090,15 @@ public final class RunSpec {
         /** The MOP coin's probability {@code p_M}; zero when {@code MOP_COIN} is absent. */
         public double coinPercentage() {
             return has("ape.mopCoinPercentage") ? dbl("ape.mopCoinPercentage") : 0.0d;
+        }
+
+        /**
+         * The MOP coin's budget k: executions per (activity, key) while the coin stays eligible
+         * (D-B17). One, the first-interaction rule, when {@code MOP_COIN} is absent.
+         */
+        public int coinLedgerMaxInteractions() {
+            return has("ape.mopCoinLedgerMaxInteractions")
+                    ? integer("ape.mopCoinLedgerMaxInteractions") : 1;
         }
 
         /**

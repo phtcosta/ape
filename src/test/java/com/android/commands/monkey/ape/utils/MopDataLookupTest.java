@@ -109,6 +109,7 @@ public class MopDataLookupTest {
         MopData data = cryptoapp();
         MopData.Lookup l = data.lookup(CRYPTO, node(null, CRYPTO_LAMBDA, null), "click");
         assertEquals(MopData.Lookup.Source.STAMP, l.source);
+        assertEquals("the lookup names the stamped class (D-B17)", CRYPTO_LAMBDA, l.handler);
         assertTrue(l.transitive);
         assertFalse(l.direct);
         assertPairs(new int[][] {{16, 3}, {17, 3}, {18, 3}}, l.dist);
@@ -155,6 +156,7 @@ public class MopDataLookupTest {
                 "\"com.x.Foo$1\":{\"mop\":{\"click\":\"direct\"},\"dist\":{\"click\":[[2,0]]}}");
         MopData.Lookup l = data.lookup(ACT, node("btn", null, "com.x.Foo$1"), "longClick");
         assertEquals(MopData.Lookup.Source.STAMP, l.source);
+        assertEquals("the long-click stamp is the one named", "com.x.Foo$1", l.handler);
         assertFalse("no aggregate fallback through a stamp", l.direct);
         assertFalse(l.transitive);
         assertPairs(new int[0][], l.dist);
@@ -171,6 +173,7 @@ public class MopDataLookupTest {
         MopData.Lookup l = data.lookup(MDA, node("buttonGenerateHash", DECLARED_ON_CLICK, null),
                 "click");
         assertEquals(MopData.Lookup.Source.ID, l.source);
+        assertNull("an unlisted stamp is not the handler of an id-key lookup", l.handler);
         assertTrue(l.transitive);
         assertFalse(l.direct);
         assertPairs(new int[][] {{22, 2}}, l.dist);
@@ -185,6 +188,7 @@ public class MopDataLookupTest {
         MopData data = cryptoapp();
         MopData.Lookup l = data.lookup(MDA, node("buttonGenerateHash", null, null), "click");
         assertEquals(MopData.Lookup.Source.ID, l.source);
+        assertNull(l.handler);
         assertTrue(l.transitive);
         assertFalse(l.direct);
         assertPairs(new int[][] {{22, 2}}, l.dist);

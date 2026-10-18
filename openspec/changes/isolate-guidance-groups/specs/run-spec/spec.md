@@ -123,6 +123,7 @@ Dependency validation SHALL distinguish explicit input from defaults: an **expli
 | `ape.mopStrictPackageMatch` | `STATIC_DATA` | bool | `false` | `false` | keeps its name; moves from `MOP` because the package check is on the static model (D-B14.3) |
 | `ape.llmUrl` | `LLM` | url | null | none | a plan with `LLM` and no URL aborts |
 | `ape.mopCoinPercentage` | `MOP_COIN` (POSITIVE) | double | `1.0` | `0` | `p_M`, clamped to `[0,1]` |
+| `ape.mopCoinLedgerMaxInteractions` | `MOP_COIN` | int | `1` | `1` | executions per ledger key the coin may take; `< 1` clamped to `1` at resolution, like the other plan clamps (`mop-guidance`, design D-B17) |
 | `ape.llmGateMinActions` | `LLM` | int | `3` | `3` | `0` = gate not mounted |
 | `ape.llmBreakerFailures` | `LLM` | int | `3` | `3` | `0` = gate not mounted |
 | `ape.llmBreakerOpenMs` | `LLM` | long | `60000` | `60000` | |
@@ -281,8 +282,8 @@ This case is not a compatibility affordance and does not depend on any particula
 3. **Retired key** (dedicated message naming the replacement): `ape.apePureMode` (purity is structural — owner decision D3), `ape.modelFile`, `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.saveStates` (persistence protocol removed), `ape.enableXPathAction` (injection channel removed), `ape.mopWeightActivity` (dead key), `ape.llmBoundaryBottomPct` (on the display base the jar maps answers in, the navigation bar is outside every reachable pixel, so the band only rejected app content — `llm-coordinate-single-base`), `ape.agentType` and `ape.replayLog` when present in a **file** (CLI-only values — closes the `/sdcard` agent-swap hole), and the three keys retired by `isolate-guidance-groups`:
    - `ape.mopDataPath` — "renamed ape.staticDataPath: the artifact feeds STATIC and MOP (isolate-guidance-groups)";
    - `ape.leastVisitedPriorityTiebreak` — "replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers";
-   - `ape.mopTargetPickCap` — "subsumed by the MOP coin's first-interaction rule (at most one coin pick per activity and widget)".
-4. **Invalid type**: a non-numeric value for a numeric key; a boolean key whose value is not literally `true`/`false` (case-insensitive); a value of `ape.mopScoring` other than exactly `flag` or `distance` (the one string key with a closed value set; the diagnostic names the valid set — `llm-coordinate-single-base`, design D18). Documented value-semantics clamps (cadence `<= 0`, launch cap `< 0`, the percentage clamps of `ape.llmPercentage`, `ape.mopCoinPercentage` and `ape.componentPercentage` to `[0,1]`, `-1` sentinel) remain clamps, not aborts (INV-RUN-11).
+   - `ape.mopTargetPickCap` — "replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of picks per activity and widget (default 1)".
+4. **Invalid type**: a non-numeric value for a numeric key; a boolean key whose value is not literally `true`/`false` (case-insensitive); a value of `ape.mopScoring` other than exactly `flag` or `distance` (the one string key with a closed value set; the diagnostic names the valid set — `llm-coordinate-single-base`, design D18). Documented value-semantics clamps (cadence `<= 0`, launch cap `< 0`, `ape.mopCoinLedgerMaxInteractions < 1`, the percentage clamps of `ape.llmPercentage`, `ape.mopCoinPercentage` and `ape.componentPercentage` to `[0,1]`, `-1` sentinel) remain clamps, not aborts (INV-RUN-11).
 5. **Missing dependency / invalid combination**: per the Feature Model requirement — including a group key stated `true` whose data root or URL is missing (`ape.static`/`ape.mop` without `ape.staticDataPath`, `ape.llm` without `ape.llmUrl`); plus `--ape replay` without `--ape-replay`.
 6. **Unknown `--ape` value**: any value outside `{sata, random, replay}` — including `bfs`, `dfs`, and `ape` — aborts with a diagnostic naming the valid set. The silent `SataAgent` fallback SHALL NOT exist.
 
@@ -341,7 +342,7 @@ This case is not a compatibility affordance and does not depend on any particula
 - **WHEN** `ape.properties` contains `ape.leastVisitedPriorityTiebreak=true`
 - **THEN** the process SHALL abort with `reason=retired_key key=ape.leastVisitedPriorityTiebreak` and a detail naming the scorer-sum tie (X1/R2)
 - **AND WHEN** it contains `ape.mopTargetPickCap=3` instead
-- **THEN** the process SHALL abort with `reason=retired_key key=ape.mopTargetPickCap` and a detail naming the MOP coin's first-interaction rule
+- **THEN** the process SHALL abort with `reason=retired_key key=ape.mopTargetPickCap` and a detail naming `ape.mopCoinLedgerMaxInteractions`
 
 #### Scenario: an out-of-range dose is clamped, not rejected
 

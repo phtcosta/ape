@@ -115,6 +115,20 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
   the trace.
 - **Rotation fix** (D-A9): port only the code files of `f993081f` and `3b35073a` from the abandoned branch
   `llm-opaque-screen` (never merged), plus `dec.rot` on every step.
+- **Amendment after `e03igg`** (author, 2026-10-18; design D-B15…D-B19). BASE stays upstream APE: none of these
+  changes the behaviour of a cell without its owning group.
+  - The MOP launcher launches each activity at most once per run, so an activity that crashes on a cold launch
+    is no longer relaunched at most firings (D1a, D-B15).
+  - With the launcher mounted, the null-tree recovery stops and relaunches the app under test, instead of killing
+    the first running process (often the IME), and queues no app switch on that step. The counter is `RUN_END.counters.nullRelaunches` (D1b, D-B16).
+  - The MOP widget boost goes only to actions whose key is not yet tried, so SATA stops re-tapping weighted
+    widgets that the coin or SATA already touched; their weight still serves the coin, the marker and retirement
+    (D-B19).
+  - A screenshot failure no longer counts as a breaker failure, and the step records `dec.own.fb:"screenshot"`
+    (D-B18).
+  - The MOP coin may take a ledger key up to `ape.mopCoinLedgerMaxInteractions` times (default 1, as today), and
+    retirement still counts only the first interaction. `dec.hnd` records the stamped handler of the chosen
+    action (D-B17). Batch retirement through broad lookups is recorded as a known limit.
 - **BREAKING**: the presets are replaced by six cell presets, compositions of groups: `base`, `mop`, `as`, `as_mop`,
   `as_llm`, `as_mop_llm` (plan §6.2). The current presets (`aperv`, `mop`, `llm`, `llm_mop`) are removed (P3).
 - Gates: `SinkNeutralityTest` with one preset per cell including the real control; a clean-control gate (a cell
@@ -131,12 +145,14 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
   parameters), retired keys, variant name in `RUN_START`.
 - `decision-pipeline`: the step sequence of owners, guards before the LLM coin, the MOP coin, the launcher cadence,
   own RNG streams.
-- `llm-routing`: the coin, declared gates, buffer preemption, triggers' interaction with the coin.
+- `llm-routing`: the coin, declared gates, buffer preemption, triggers' interaction with the coin; a screenshot
+  failure is not a breaker failure (`fb:"screenshot"`).
 - `action-selection`: the MOP shortcut removed from SATA, extension points X1/X3/X4 with APE defaults, buffer
   abandonment without weakening.
 - `scoring-pipeline`: rule R1, scorer ownership by group, `NAV_FRONTIER` separated from `WtgPass` in telemetry.
 - `mop-guidance`: MOP coin decider, launcher cadence, navigation tie-breaks as MOP variants, reads via `MopData`
-  only for targets.
+  only for targets; the ledger counts executions (coin budget k), the widget boost only for untried keys,
+  `Lookup.handler`, batch retirement recorded as a limit.
 - `wtg-navigation`: the frontier reads `StaticGuiModel`, depends on STATIC, not MOP.
 - `llm-prompt`: prompt built from group contributions; no MOP sentences without MOP.
 - `llm-infrastructure`: screenshot captured at the display rotation.
@@ -145,7 +161,8 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
 - `form-completion`: addon F governed by `formCompletionEnabled`.
 - `parity-oracle`: new goldens for the `base` cell and the X1–X4 defaults.
 - `component-triggering`: the trigger is a STATIC member at 0.03 with its own coin stream, its pool reads no MOP
-  data, and the intent carries the filter's `data`/`type`; the launcher's global cadence.
+  data, and the intent carries the filter's `data`/`type`; the launcher's global cadence; the launcher launches
+  an activity at most once per run; the launcher-owned null-tree recovery.
 - `exploration`: LLM hooks without the buffer gate, the restart as a guard, the fuzz stream, and the addon read
   sites (MODEL_MENU, the guards) reading the plan.
 - `ui-coverage`: the UICOV `mopReach` token is written only when MOP is mounted.

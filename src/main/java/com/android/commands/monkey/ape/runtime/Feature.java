@@ -192,6 +192,9 @@ public enum Feature {
         MOP.own("ape.mopRetireAfter", "3");
         MOP.own("ape.mopLauncherDmax", "6");
 
+        // The coin's budget of executions per ledger key (D-B17); 1 is the first-interaction rule.
+        MOP_COIN.own("ape.mopCoinLedgerMaxInteractions", "1");
+
         MOP_LAUNCHER.own("ape.activityTriggerStagnationStep", "50");
         MOP_LAUNCHER.own("ape.activityTriggerMaxPerRun", "0");
 

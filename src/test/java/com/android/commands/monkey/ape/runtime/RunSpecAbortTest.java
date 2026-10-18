@@ -319,7 +319,7 @@ public class RunSpecAbortTest {
         String[][] retired = {
                 {"ape.mopDataPath", MOP_PATH, "ape.staticDataPath"},
                 {"ape.leastVisitedPriorityTiebreak", "true", "X1/R2"},
-                {"ape.mopTargetPickCap", "3", "first-interaction"},
+                {"ape.mopTargetPickCap", "3", "ape.mopCoinLedgerMaxInteractions"},
         };
         for (String[] row : retired) {
             RunSpecException failure = abort(entries(row[0], row[1]));

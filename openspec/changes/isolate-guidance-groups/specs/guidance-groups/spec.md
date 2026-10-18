@@ -121,7 +121,7 @@ this capability.
 - **INV-GRP-07**: A run whose plan does not contain `MOP` SHALL carry no MOP decision and no MOP field. The full
   list of trace fields is `event-sink` INV-SNK-18 (clean control): among them, no `ACT` dictionary entry SHALL carry
   a `mop` member; no `StepRecord` SHALL carry `dec.src` or `dec.own.i` equal to `mop` or `launcher`, a `mop`,
-  `mopf`, `wtg`, `menu`, `mopd`, `mops`, `ret` or `mopx` member, `dec.own.uM`, a `dec.cfc` key for a MOP scorer or
+  `mopf`, `wtg`, `menu`, `mopd`, `mops`, `hnd`, `ret` or `mopx` member, `dec.own.uM`, a `dec.cfc` key for a MOP scorer or
   `dec.nav.c` equal to `"mop"`; `RUN_END.counters.coinMop`, `launches`, `stampHits` and `retired` SHALL be `0`.
   The UICOV coverage dump SHALL omit `mopReach` (design D-B14.21). No LLM prompt SHALL carry a MOP marker, the MOP
   count, the `MOP NAVIGATION` section or a MOP system-prompt sentence. Coverage: `CleanControlTest` on the cells
@@ -440,7 +440,7 @@ the prompt is built from the contributions of the mounted groups only (`llm-prom
 
 - **WHEN** the `as` cell runs and the trace is parsed
 - **THEN** no `StepRecord` SHALL carry `dec.src` equal to `mop` or `launcher`, or a `mop`, `mopf`, `wtg`, `menu`,
-  `mopd`, `mops`, `ret`, `mopx` or `uM` member, no `ACT` entry SHALL carry `mop`, and the UICOV dump SHALL carry no
+  `mopd`, `mops`, `hnd`, `ret`, `mopx` or `uM` member, no `ACT` entry SHALL carry `mop`, and the UICOV dump SHALL carry no
   `mopReach`
 - **AND** `navf` MAY be present, since `NAV_FRONTIER` is STATIC
 
