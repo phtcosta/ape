@@ -305,7 +305,7 @@ D-B23), in WTG's activation on a negative weight (D-B22), and in the retired key
   `ape.llmPercentageNoSubstrate` (`KeyOwnership`, `Feature`, `RunSpec.clamp`). Move `ConfigTest`,
   `LadderConfigGuard`, `OracleScaffold`, `DynamicEpsilonTest` and `ScriptedLlmTest` to the plan. Update
   `CLAUDE.md` *Central Configuration* and the test count.
-- [ ] 17.6 `mvn clean test` green with no golden moved, except the digests that D-B24's retired key moves (to be
+- [x] 17.6 `mvn clean test` green with no golden moved, except the digests that D-B24's retired key moves (to be
   recorded). `openspec validate --strict`. Ask the author before the commit, then package, record sha256 and
   `GIT_SHA`, and send them to `mini-experimento`, `aperv-tool` (with the `tool.py` mapping to drop),
   `rep-pack-e03` and `versao`.

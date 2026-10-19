@@ -364,3 +364,9 @@ reads as off is inert and does not abort. This applies to every POSITIVE feature
 - Caveat: a properties file that states `ape.llmPercentageNoSubstrate` now aborts with `retired_key` in any cell.
   [inferred] No current `aperv-tool` cell sends it: `tool.py:255` only maps a name, and the only `-1` occurrences
   are in `docs/gh95-migration-record`.
+
+**17.6 Package.** [verified] `mvn clean package` on `37356827`: 1453 tests / 0 failures / 0 errors / 24 skipped.
+`target/ape-rv.jar` sha256 `d2febfe8a64aec68a24d6c9037f42d30767ab5d7e0921e26ea273d78117d9c5d`, `GIT_SHA 3735682`,
+`JAR_BUILT 2026-10-19T23:36:45Z`. Not installed: the author said the Docker image builds its own jar. Sent to
+`mini-experimento`, `aperv-tool` (with the `tool.py` mapping of the retired key to drop), `rep-pack-e03` and
+`versao`.
