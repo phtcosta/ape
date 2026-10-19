@@ -1,6 +1,5 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
-import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
@@ -23,7 +22,6 @@ final class StubScoringContext implements ScoringContext {
     StaticGuiModel staticModel = null;
     MopData mopData = null;
     MopContext mopContext = null;
-    MopInteractionLedger mopLedger = null;
     UICoverageTracker coverageTracker = new UICoverageTracker();
     Graph graph = null;
     int timestamp = 1;
@@ -37,11 +35,6 @@ final class StubScoringContext implements ScoringContext {
     public MopContext getMopContext() {
         return mopContext != null ? mopContext : TestMopContexts.defaults(mopData,
                 staticModel != null ? staticModel : StaticGuiModel.EMPTY);
-    }
-
-    @Override
-    public MopInteractionLedger getMopLedger() {
-        return mopLedger;
     }
 
     @Override

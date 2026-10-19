@@ -1,6 +1,5 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
-import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.llm.PromptFixtures;
 import com.android.commands.monkey.ape.runtime.MopScoring;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
@@ -18,7 +17,6 @@ import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
 import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.utils.TestMopContexts;
-import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import org.junit.Test;
 
@@ -142,11 +140,6 @@ public class MopWidgetPassTest {
         assertEquals(10, unflagged.getPriority());
     }
 
-    /** The run's ledger, empty; the one place a test constructs one. */
-    private static MopInteractionLedger ledger() {
-        return new MopInteractionLedger(1);
-    }
-
     /** An {@link EventSink} that keeps the last {@code mopExposure} pair in {@code into}. */
     private static EventSink exposureSink(int[] into) {
         return (EventSink) Proxy.newProxyInstance(EventSink.class.getClassLoader(),
@@ -171,11 +164,11 @@ public class MopWidgetPassTest {
     }
 
     /**
-     * mop-guidance "a tried key gets no boost and leaves the split" (design D-B19), under
-     * {@code distance}: X keeps its weight but gets no boost, and Y alone takes the best level.
+     * mop-guidance "a tried key keeps its boost" (design D-B19, reverted): the pass has no ledger to
+     * read, so X and Y, both at {@code d ≤ 1}, share the split whatever was executed before.
      */
     @Test
-    public void triedKeyGetsNoBoostAndLeavesTheSplitUnderDistance() throws Exception {
+    public void aTriedKeyKeepsItsBoost() throws Exception {
         ModelAction x = resolvedClick("x");
         ModelAction y = resolvedClick("y");
         x.setPriority(10);
@@ -183,82 +176,17 @@ public class MopWidgetPassTest {
         ModelAction[] actions = {x, y};
         StubScoringContext ctx = new StubScoringContext();
         ctx.mopContext = distance(twoAtD1());
-        ctx.mopLedger = ledger();
-        ctx.mopLedger.record(ACT, UICoverageTracker.widgetId(x));
         int[] exposure = new int[2];
 
         new MopWidgetPass(ctx, exposureSink(exposure)).apply(state(actions), actions, ctx);
 
         assertEquals(500, x.getMopWeight());
-        assertEquals(0, x.getMopBoost());
-        assertEquals(10, x.getPriority());
+        assertEquals(400, x.getMopBoost()); // max(500/2, 400)
+        assertEquals(10 + 400, x.getPriority());
         assertEquals(500, y.getMopWeight());
-        assertEquals(500, y.getMopBoost()); // not max(500/2, 400)
-        assertEquals(10 + 500, y.getPriority());
+        assertEquals(400, y.getMopBoost());
+        assertEquals(10 + 400, y.getPriority());
         assertArrayEquals(new int[] {2, 2}, exposure);
-    }
-
-    /** The same scenario under {@code flag}: nothing is split, and the tried key is not boosted. */
-    @Test
-    public void triedKeyGetsNoBoostUnderFlag() throws Exception {
-        ModelAction x = resolvedClick("x");
-        ModelAction y = resolvedClick("y");
-        x.setPriority(10);
-        y.setPriority(10);
-        ModelAction[] actions = {x, y};
-        StubScoringContext ctx = new StubScoringContext();
-        ctx.mopContext = TestMopContexts.flag(twoAtD1(), 500, 300);
-        ctx.mopLedger = ledger();
-        ctx.mopLedger.record(ACT, UICoverageTracker.widgetId(x));
-        int[] exposure = new int[2];
-
-        new MopWidgetPass(ctx, exposureSink(exposure)).apply(state(actions), actions, ctx);
-
-        assertEquals(300, x.getMopWeight());
-        assertEquals(0, x.getMopBoost());
-        assertEquals(10, x.getPriority());
-        assertEquals(300, y.getMopBoost());
-        assertEquals(10 + 300, y.getPriority());
-        assertArrayEquals(new int[] {2, 2}, exposure);
-    }
-
-    /**
-     * Untried actions are boosted as before: with an empty ledger, and with none, the two tied
-     * actions share the split under {@code distance}.
-     */
-    @Test
-    public void untriedActionsAreBoostedAsBefore() throws Exception {
-        for (MopInteractionLedger ledger : new MopInteractionLedger[] {ledger(), null}) {
-            ModelAction x = resolvedClick("x");
-            ModelAction y = resolvedClick("y");
-            ModelAction[] actions = {x, y};
-            StubScoringContext ctx = new StubScoringContext();
-            ctx.mopContext = distance(twoAtD1());
-            ctx.mopLedger = ledger;
-            int[] exposure = new int[2];
-
-            new MopWidgetPass(ctx, exposureSink(exposure)).apply(state(actions), actions, ctx);
-
-            assertEquals(400, x.getMopBoost()); // max(500/2, 400)
-            assertEquals(400, y.getMopBoost());
-            assertEquals(500, x.getMopWeight());
-            assertArrayEquals(new int[] {2, 2}, exposure);
-        }
-    }
-
-    /** A key tried in another activity is untried here. */
-    @Test
-    public void aKeyTriedElsewhereIsUntriedHere() throws Exception {
-        ModelAction x = resolvedClick("x");
-        ModelAction[] actions = {x};
-        StubScoringContext ctx = new StubScoringContext();
-        ctx.mopContext = TestMopContexts.flag(twoAtD1(), 500, 300);
-        ctx.mopLedger = ledger();
-        ctx.mopLedger.record("com.x.OtherActivity", UICoverageTracker.widgetId(x));
-
-        new MopWidgetPass(ctx, new NoopSink()).apply(state(actions), actions, ctx);
-
-        assertEquals(300, x.getMopBoost());
     }
 
     @Test

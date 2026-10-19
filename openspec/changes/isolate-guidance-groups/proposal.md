@@ -121,9 +121,9 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
     is no longer relaunched at most firings (D1a, D-B15).
   - With the launcher mounted, the null-tree recovery stops and relaunches the app under test, instead of killing
     the first running process (often the IME), and queues no app switch on that step. The counter is `RUN_END.counters.nullRelaunches` (D1b, D-B16).
-  - The MOP widget boost goes only to actions whose key is not yet tried, so SATA stops re-tapping weighted
-    widgets that the coin or SATA already touched; their weight still serves the coin, the marker and retirement
-    (D-B19).
+  - The MOP widget boost went only to actions whose key was not yet tried (D-B19). `e03igg2` showed it pushed
+    SATA below chance on weighted actions, and the author reverted it (2026-10-19): the boost goes to every
+    weighted action, as in `a2fde6c`.
   - A screenshot failure no longer counts as a breaker failure, and the step records `dec.own.fb:"screenshot"`
     (D-B18).
   - The MOP coin may take a ledger key up to `ape.mopCoinLedgerMaxInteractions` times (default 1, as today), and
@@ -151,8 +151,7 @@ The same list, with what each document says, is in plan §2.0 and in `design.md`
   abandonment without weakening.
 - `scoring-pipeline`: rule R1, scorer ownership by group, `NAV_FRONTIER` separated from `WtgPass` in telemetry.
 - `mop-guidance`: MOP coin decider, launcher cadence, navigation tie-breaks as MOP variants, reads via `MopData`
-  only for targets; the ledger counts executions (coin budget k), the widget boost only for untried keys,
-  `Lookup.handler`, batch retirement recorded as a limit.
+  only for targets; the ledger counts executions (coin budget k), `Lookup.handler`, batch retirement recorded as a limit.
 - `wtg-navigation`: the frontier reads `StaticGuiModel`, depends on STATIC, not MOP.
 - `llm-prompt`: prompt built from group contributions; no MOP sentences without MOP.
 - `llm-infrastructure`: screenshot captured at the display rotation.

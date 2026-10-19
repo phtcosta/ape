@@ -262,6 +262,16 @@ its behaviour; its trace changes only by `RUN_END.counters.nullRelaunches:0`.
 - [x] 13.10 Update `CLAUDE.md` (P4: the launcher's once-per-run rule, the launcher-owned recovery, the boost only for untried keys, the coin key `ape.mopCoinLedgerMaxInteractions`, `dec.hnd`, `fb:"screenshot"`, `nullRelaunches`)
 - [x] 13.11 `mvn package` + `mvn install` to the aperv worktree; record sha256 and `GIT_SHA` in `evidence.md`; send them to `mini-experimento` and `aperv-tool`; ask the author before the commit
 
+## 15. D-B19 revert after `e03igg2` (author decisions 2026-10-19; design D-B19)
+
+Serial, one agent; it runs before group 14. Only D-B19 moves: D-B15, D-B16, D-B17 and D-B18 stay, and the jar's MOP
+block and the default of `ape.mopCoinLedgerMaxInteractions` (1) stay (k = 2 is `aperv-tool`'s `mop` default).
+
+- [x] 15.1 Record `e03igg2` in `evidence.md` with `[reported]`, and the revert in `design.md` D-B19, `proposal.md` and the deltas (`mop-guidance`, `scoring-pipeline`, `event-sink`, `llm-prompt`)
+- [x] 15.2 `agent/scoring/MopWidgetPass`: split the ties on the undivided weights and stop reading the ledger, as in `a2fde6c`; `mopExposure` still counts the weighted actions. Remove `ScoringContext.getMopLedger()`, its `StatefulAgent` override, `StubScoringContext.mopLedger` and `ScoringPipelineTest.theMopLedgerIsAbsentUnlessTheContextProvidesIt` (P1). Tests: the scenario "a tried key keeps its boost" (`MopWidgetPassTest`, replacing the three D-B19 tests); `mvn clean test` green, no golden moved
+- [x] 15.3 Update `CLAUDE.md` (P4: drop the untried-keys sentence of *Scoring modes*)
+- [ ] 15.4 Ask the author before the commit; then `mvn package` + `mvn install` to the aperv worktree, record sha256 and `GIT_SHA` in `evidence.md`, and send the commit and the jar sha256 to `mini-experimento` and `aperv-tool`
+
 ## 14. Verification
 
 - [ ] 14.1 Run `/sdd-qa-lint-fix` on `src/main/java/com/android/commands/monkey/ape`; delete the dead `Config.activityTriggerStagnationStep`/`activityTriggerMaxPerRun` (`Config.java:127-133`, readers only in `ConfigTest`; the plan owns both, P3; author 2026-10-18)

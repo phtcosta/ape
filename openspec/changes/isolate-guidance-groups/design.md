@@ -444,7 +444,8 @@ With the groups, the confound is gone by construction, and the author places the
 
 The full `e03igg` run (163 APKs × `ape`/`aperv:base`/`aperv:mop` × 3 × 300 s, jar `a2fde6c`) and its short round
 `e03iggsmk` exposed the defects D1–D2 recorded in `evidence.md`, and the breaker trips of `e03iggsmk` and E6 v2
-showed the screenshot failures behind D-B18. The author decided D-B15…D-B19. Rule for all five:
+showed the screenshot failures behind D-B18. The author decided D-B15…D-B19, and reverted D-B19 after `e03igg2`
+(2026-10-19). Rule for all five:
 **BASE stays upstream APE** — no decision below changes the behaviour of a cell without the group that owns it, so the P0
 parity with the original `ape.jar` is untouched. The only trace change in such a cell is the counter of D-B16. D-B15 and D-B16 have no key (author): they are
 defect fixes owned by `MOP_LAUNCHER`, active in every cell that mounts it (`mop`, `as_mop`, `as_mop_llm`), and the
@@ -509,25 +510,26 @@ keeps re-tapping them through the MOP boost in its priority. The author decided 
   exactly when `dec.mops` is `s` (MOP mounted). It makes the list hypothesis (list items sharing one handler)
   measurable. `MopData.Lookup` gains that class (`handler`, null unless `STAMP`), so the field reuses the lookup.
 
-**D-B19 — The MOP widget boost goes only to keys not yet tried.** In `e03igg`, SATA executed a weighted action
-8397 times and none was a new key: it re-tapped widgets the coin (7349) or SATA itself (1048) had already
-touched, drawn by the MOP boost in its priority. That is ≈ 7 % of the steps. `mini-experimento` measured what
-those re-taps yield, against unweighted steps of the same APK and minute [reported]. A first touch yields a new
-MOP-reachable method in 0.671 of steps (3.0 × the paired base); a 2nd touch 0.258 (1.30 ×); a 3rd 1.16 ×,
-4th–5th 1.12 ×. Over all app methods, re-taps fall below the base (0.86–0.98). The author decided (2026-10-18)
-that `MopWidgetPass` gives no boost to an action whose (activity, `xpath|ActionType`) key the
-`MopInteractionLedger` already holds (`tried`), in both scoring modes. Such an action is left out of the tie
-split, as if its weight were 0, so the untried actions of the best level share the split among themselves. Its
-undivided `mopWeight` is still stored, because the coin, the prompt marker and retirement read it. So SATA keeps
-its MOP pull toward untouched weighted widgets and loses it on touched ones, and those steps go back to
-exploration. No key: the rule holds in every cell with `MOP`. The pass reads the ledger, which is neither priority
-nor another scorer's field; `scoring-pipeline` R1 names the ledger among MOP's own data, so rule R1 holds.
-`dec.mopx` keeps its meaning: its first member counts the weighted actions, tried or not, so it stays the measure
-of opportunity (author, 2026-10-18). The parity goldens do not move with D-B19: the oracle enters below
-`adjustActionsByGUITree` (INV-ARCH-12), so unit tests of the pass cover it.
-- Alternative: a key to switch it. Rejected (P1): the measurement already says what the re-taps yield.
-- Alternative: let k (D-B17) decide when the boost stops. Rejected: k is the coin's budget; the boost stops at
-  the first touch whatever k is, so the two stay independent.
+**D-B19 — Reverted after `e03igg2` (author, 2026-10-19): the MOP widget boost goes to every weighted action,
+tried or not, as in `a2fde6c`.** The rule decided on 2026-10-18 gave no boost to an action whose (activity,
+`xpath|ActionType`) key the `MopInteractionLedger` already held. It came from `e03igg`: SATA executed a weighted
+action 8397 times and none was a new key, and `mini-experimento` measured that re-taps yield less than first
+touches (a first touch 3.0 × the paired base, a 2nd 1.30 ×, a 3rd 1.16 ×; over all app methods 0.86–0.98 ×)
+[reported]. Shipped in jar `a4afd31` (F12 `799ad722`), it was the only behaviour change `e03igg2` measured
+[reported, `rvsec/rv-android/docs/20261019_e03igg2.md` §6.6, §9]. SATA's lift on weighted actions fell from 1.03
+[0.97; 1.09] to 0.87 [0.82; 0.93] in every guided cell, so SATA picked a weighted action less often than chance.
+Over the same tasks the `mop` cell's misuses fell to the level of `ape`: per-APK `mop − ape` −0.001 [−0.042;
++0.042], against +0.043 in `e03igg`; `mop` drift against `e03igg` 0.903 [0.807; 1.01], p = 0.073. The author
+decided to revert it (2026-10-19). `MopWidgetPass` splits the ties on the undivided weights and does not read the
+ledger. `ScoringContext.getMopLedger()`, which existed only for this rule, is removed (P1). The ledger keeps its
+two readers, the coin (D-B17) and retirement. `dec.mopx` keeps its meaning: its first member counts the weighted
+actions. With the boost back on every weighted action, that count equals the boosted count, so `share_weighted`
+is comparable with `e03igg` again. The parity goldens do not move, as they did not move with the rule
+(INV-ARCH-12).
+- The other four decisions stand. The author also decided k = 2 as the `mop` default for D-B17, owned by
+  `aperv-tool` (its variant mapping); the jar's MOP block and the key's default (1) stay as they are.
+- Validation: one campaign with the reverted jar, compared against `e03igg`, with no old-jar arm (author); the
+  `base` drift is checked again.
 
 **D-B18 — A screenshot failure is not a breaker failure.** `LlmEngine.selectAction` records a breaker failure when
 `ScreenshotCapture.capture` returns null. In `e03iggsmk` this tripped the breaker on bitbanana (17/17 captures

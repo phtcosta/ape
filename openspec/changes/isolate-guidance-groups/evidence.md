@@ -181,3 +181,26 @@ Author decision: the amendment jar (`ff0a3069…141f`, `GIT_SHA a4afd31`) goes o
 (wave 0, T, D, R, A, M, S); only its Verification group C (C.1–C.6) is open, owned by `aperv-tool`. It maps the v3.3
 contract (`edbd173d`), closed K.5 on the amendment jar (`6332cd54`), and adds the variants `mop_k2` and
 `mop_nolaunch` (`9655cb64`, `8b69458d`).
+
+## 15. `e03igg2` and the D-B19 revert (2026-10-19)
+
+[reported, `mini-experimento`, `rvsec/rv-android/docs/20261019_e03igg2.md`] Campaign `e03igg2`: jar `a4afd31`
+(`ff0a3069…141f`), 163 APKs × 5 arms × 2 reps × 300 s; 1630/1630 identities admissible. The `ape` arm is
+`e03igg`'s.
+- Misuses (`misuses_primary`, mean per task): `mop` 0.408 against `ape` 0.409, and `mop` in `e03igg` (`a2fde6c`)
+  0.452. Per-APK `mop − ape` −0.001 [−0.042; +0.042]; in `e03igg` +0.043. M1 `mop`/`base` 0.970 [0.852; 1.104]
+  (97.5 %); in `e03igg` 1.151 [1.009; 1.312]. `mop` drift against `e03igg` 0.903 [0.807; 1.01] (95 %), p = 0.073;
+  `base` drift 1.07 [1.00; 1.14]. Coverage unchanged (`cov_mop` 36.7 → 36.2, `cov_method` 34.3 → 34.0, `cov_act`
+  82.3).
+- Mechanism (§6.6): SATA's lift on weighted actions 1.03 [0.97; 1.09] → 0.87 [0.82; 0.93] in every guided cell
+  (`mop` 0.873, `mop_k2` 0.83, `mop_nolaunch` 0.868, `as_mop` 0.929). Coin lift 2.04 → 2.00, coin wins per task
+  6.58 → 6.33.
+- k = 2 (`mop_k2`): 0.448 misuses per task; `mop_k2`/`mop` 1.098 [0.987; 1.222] (97.5 %), p = 0.049; `mop_k2 − ape`
+  +0.039 [+0.004; +0.081]; 11.1 coin wins per task.
+- The amendment's fixes held in all tasks: D-B15 0 activities launched twice (75 tasks in `e03igg`); 0 foreign
+  "Try to stop process" (6 tasks in `e03igg`); D-B16 0.018 relaunches per task; D-B17 0 coin picks of a key
+  executed ≥ k times, 0 `dec.hnd` mismatches; D-B19 0 SATA steps with `dec.mop > 0` on a tried key.
+
+Author decisions (2026-10-19): revert D-B19 (design D-B19); keep D-B17 with k = 2 as the `mop` default in
+`aperv-tool`, not in the jar; keep D-B15; D-B16 and D-B18 unchanged; validate with one campaign on the reverted
+jar against `e03igg`, no old-jar arm.

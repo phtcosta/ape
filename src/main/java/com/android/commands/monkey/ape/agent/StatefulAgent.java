@@ -247,7 +247,6 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         this.scoringContext = new ScoringContext() {
             @Override public StaticGuiModel getStaticModel() { return StatefulAgent.this.staticModel(); }
             @Override public MopContext getMopContext() { return StatefulAgent.this.getMopContext(); }
-            @Override public MopInteractionLedger getMopLedger() { return StatefulAgent.this.mopLedger(); }
             @Override public UICoverageTracker getCoverageTracker() { return StatefulAgent.this.getCoverageTracker(); }
             @Override public Graph getGraph() { return StatefulAgent.this.getGraph(); }
             @Override public int getTimestamp() { return StatefulAgent.this.getTimestamp(); }
