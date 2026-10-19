@@ -370,3 +370,8 @@ reads as off is inert and does not abort. This applies to every POSITIVE feature
 `JAR_BUILT 2026-10-19T23:36:45Z`. Not installed: the author said the Docker image builds its own jar. Sent to
 `mini-experimento`, `aperv-tool` (with the `tool.py` mapping of the retired key to drop), `rep-pack-e03` and
 `versao`.
+
+**14.6 Merge.** Author's word (2026-10-19): "depois faça o merge aqui na master". Before the merge,
+`rvsec` `3f5289f9` (local `modules`) dropped `aperv-tool`'s `llm_percentage_no_substrate` mapping, on the
+author's word and with no change: 66 entries, the aperv spec follows, and aperv-tool's pytest gives 849 passed,
+55 skipped, 0 failed. `isolate-guidance-groups` is merged into the local `master` with `--no-ff`. Not pushed.

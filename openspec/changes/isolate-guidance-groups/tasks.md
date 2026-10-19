@@ -317,4 +317,4 @@ D-B23), in WTG's activation on a negative weight (D-B22), and in the retired key
 - [x] 14.3 Invoke `/sdd-code-reviewer` via the Skill tool
 - [x] 14.4 Run `/sdd-docs-sync` (`CLAUDE.md`, `openspec/specs` Purpose sections). At archive, hand-sync the sections `openspec archive` does not apply (verification V57): the Purpose, Data Contracts and Invariants preambles of action-selection (`:10`), component-triggering (`:7`, `:18`), mop-guidance (`:5`, `:896-897`), parity-oracle (`:19`, `:36-43`, `:63`), run-spec (`:6`), wtg-navigation (`:28`), exploration (INV-EXPL-06, INV-EPS-02), llm-routing (`:35` and the *Error* bullet `:43`, which INV-RTR-27 replaces), ui-tree (INV-TREE-02, INV-TREE-11) and every delta's Invariants block
 - [x] 14.5 `openspec validate isolate-guidance-groups --strict`; `/opsx:verify`
-- [ ] 14.6 Merge into `master` **only** on the author's explicit word after the mini experiment (D-A19); no push without it
+- [x] 14.6 Merge into `master` **only** on the author's explicit word after the mini experiment (D-A19); no push without it
