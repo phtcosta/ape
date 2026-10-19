@@ -118,21 +118,6 @@ public class Config {
     public static final int mopWeightDirect = Config.getInteger("ape.mopWeightDirect", 500);
     public static final int mopWeightTransitive = Config.getInteger("ape.mopWeightTransitive", 300);
 
-    // mop-census-launcher: launcher firing CADENCE in selection steps — the launcher fires every
-    // this-many passes through its block (MopLauncherStage.shouldFire on a dedicated per-step counter),
-    // decoupled from graphStableCounter. Default 50. A value <= 0 clamps to 50 at load.
-    // The property name (ape.activityTriggerStagnationStep) is deliberately KEPT even though the
-    // mechanism is no longer stagnation-gated: renaming it would require editing the rv-android
-    // tool.py @k=v mapping, which is out of scope for this change (same wire-name-vs-semantics
-    // boundary pattern as reachesTarget/MOP, gh13 D7). Read sites treat it purely as a cadence.
-    public static final int activityTriggerStagnationStep =
-            clampActivityTriggerStagnationStep(Config.getInteger("ape.activityTriggerStagnationStep", 50));
-    // activity-trigger-dose: per-run cap on EVENT_TRIGGER_ACTIVITY launches (INV-CT-12). Default 0 =
-    // unlimited. Guards against launch-storms in apps whose graph never grows. A negative value clamps
-    // to 0 (unlimited) at load.
-    public static final int activityTriggerMaxPerRun =
-            clampActivityTriggerMaxPerRun(Config.getInteger("ape.activityTriggerMaxPerRun", 0));
-
     // mop-fairtest: back-menu-pick-cap — bounds discretionary MODEL_BACK/MODEL_MENU picks per
     // (activity, type) across NamingFactory-minted sibling states. <= 0 = unlimited (restores the
     // pre-cap behavior). Navigation-essential BACK sites (backToActivity/backtrack/handleNullAction)
@@ -228,27 +213,6 @@ public class Config {
             return -1.0;
         }
         return Math.min(1.0, raw);
-    }
-
-    // activity-trigger-dose 1.3: clamp for activityTriggerStagnationStep. A value <= 0 would make the
-    // launcher fire at counter 0 (every step); it clamps to the default 50 (logged). Extracted so
-    // ConfigTest can exercise the clamp despite the frozen static-final field.
-    static int clampActivityTriggerStagnationStep(int raw) {
-        if (raw <= 0) {
-            Logger.println("[APE-RV] activityTriggerStagnationStep=" + raw + " <= 0; clamped to default 50");
-            return 50;
-        }
-        return raw;
-    }
-
-    // activity-trigger-dose 1.3: clamp for activityTriggerMaxPerRun. A negative cap is meaningless as a
-    // launch budget; it clamps to 0 (unlimited, logged). 0 is a valid value (unlimited) and passes through.
-    static int clampActivityTriggerMaxPerRun(int raw) {
-        if (raw < 0) {
-            Logger.println("[APE-RV] activityTriggerMaxPerRun=" + raw + " < 0; clamped to 0 (unlimited)");
-            return 0;
-        }
-        return raw;
     }
 
     public static Object set(String key, String value) {

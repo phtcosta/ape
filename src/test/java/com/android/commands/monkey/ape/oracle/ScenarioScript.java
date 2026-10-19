@@ -201,7 +201,7 @@ public final class ScenarioScript {
 
     /**
      * The value {@code _stepsSinceLauncherFiring} starts the run at (design D2). The launcher fires
-     * on an exact equality against {@code Config.activityTriggerStagnationStep} (50 by default) and
+     * on an exact equality against {@code spec.mop().activityTriggerStagnationStep()} (50 by default) and
      * the counter's increment is the block's first statement, so a run that starts at 0 reaches the
      * fire on its 50th non-preempted pass. Declaring the starting value is how a scenario puts that
      * fire on a step a reviewer can actually read. The driver never touches the counter afterwards —

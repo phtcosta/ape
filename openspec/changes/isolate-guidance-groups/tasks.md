@@ -274,7 +274,7 @@ block and the default of `ape.mopCoinLedgerMaxInteractions` (1) stay (k = 2 is `
 
 ## 14. Verification
 
-- [ ] 14.1 Run `/sdd-qa-lint-fix` on `src/main/java/com/android/commands/monkey/ape`; delete the dead `Config.activityTriggerStagnationStep`/`activityTriggerMaxPerRun` (`Config.java:127-133`, readers only in `ConfigTest`; the plan owns both, P3; author 2026-10-18)
+- [x] 14.1 Run `/sdd-qa-lint-fix` on `src/main/java/com/android/commands/monkey/ape`; delete the dead `Config.activityTriggerStagnationStep`/`activityTriggerMaxPerRun` (`Config.java:127-133`, readers only in `ConfigTest`; the plan owns both, P3; author 2026-10-18)
 - [ ] 14.2 Run `/sdd-verify`
 - [ ] 14.3 Invoke `/sdd-code-reviewer` via the Skill tool
 - [ ] 14.4 Run `/sdd-docs-sync` (`CLAUDE.md`, `openspec/specs` Purpose sections). At archive, hand-sync the sections `openspec archive` does not apply (verification V57): the Purpose, Data Contracts and Invariants preambles of action-selection (`:10`), component-triggering (`:7`, `:18`), mop-guidance (`:5`, `:896-897`), parity-oracle (`:19`, `:36-43`, `:63`), run-spec (`:6`), wtg-navigation (`:28`), exploration (INV-EXPL-06, INV-EPS-02), llm-routing (`:35` and the *Error* bullet `:43`, which INV-RTR-27 replaces), ui-tree (INV-TREE-02, INV-TREE-11) and every delta's Invariants block
