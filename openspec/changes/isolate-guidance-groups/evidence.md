@@ -257,3 +257,14 @@ on what it read.
     `DecisionSource` mixes casing; `MopTrivialPathPick` calls back into `SataAgent.navMopTiebreakLog`;
     `spec().has()` per tree node and `getRotation()` per step; `requireMopArm` still says "MOP arm"; a declining
     X3/X4 rung's `dec.nav` can stay on the record.
+
+**16.2–16.3 Budget buffer fix (D-B20).** [verified] `mvn clean package` on `1ef8e99f`: 1452 tests / 0 failures /
+0 errors / 24 skipped (−1 `BudgetStageTest` case on the stage's abandonment, +3 `BufferAbandonTest` cases on a
+real agent buffer); no golden or fixture moved.
+- `target/ape-rv.jar` sha256 `f48e9c8564408b48e63e5aaaaf522b7b839a6c34a8ac194c56bbea19aae039cf`, `GIT_SHA 1ef8e99`,
+  `JAR_BUILT 2026-10-19T22:50:39Z`. **Not installed**: the aperv worktree
+  `worktrees-aperv/isolate-guidance-groups` no longer exists (rvsec has only `modules` at `fd8cfd93`, after
+  `aperv-tool` merged its side at `51962ef3`), so the `591a94a8…a9c6` copy of 14.1 is gone with it. The shared
+  `rvsec/rv-android` module jar is not touched; where the jar goes now is the author's call.
+- Behaviour moves only in the ADDONS cells, on budget steps. Sent to `mini-experimento`, `aperv-tool`,
+  `rep-pack-e03` and `versao`.

@@ -279,7 +279,7 @@ cells); BASE and the parity goldens do not.
 
 - [x] 16.1 Record review 14.3 in `evidence.md` (CR-01 verified; WR-01…WR-04 and the notes as follow-ups), D-B20 in `design.md`, and the scenarios in the `activity-budget` and `decision-pipeline` deltas
 - [x] 16.2 `StatefulAgent`: detach/restore the buffer without weakening and share `abandonBuffer`'s record; `SataAgent.budgetNavigation()` (a `StageCollaborators` method); `BudgetStage` takes only the navigation supplier and no longer calls `abandonBuffer`; `DecisionPipeline` wires it. Tests on a real `SataAgent` buffer: path found with a non-empty buffer (no weakening, path kept, `dec.buf`), path found with an empty buffer (no `dec.buf`), no path (buffer restored); `BudgetStageTest` updated; `mvn clean test` green, no golden moved
-- [ ] 16.3 Ask the author before the commit; then `mvn package` + install to the aperv worktree, record sha256 and `GIT_SHA` in `evidence.md`, and send them to `mini-experimento`, `aperv-tool`, `rep-pack-e03` and `versao`
+- [x] 16.3 Ask the author before the commit; then `mvn package` + install to the aperv worktree, record sha256 and `GIT_SHA` in `evidence.md`, and send them to `mini-experimento`, `aperv-tool`, `rep-pack-e03` and `versao`
 
 ## 14. Verification
 
