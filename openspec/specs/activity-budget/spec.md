@@ -1,8 +1,8 @@
 ## Purpose
 
-APE-RV's `StatefulAgent` has three stagnation counters (`graphStableCounter`, `stateStableCounter`, `activityStableCounter`) but the activity-level counter threshold is set to `Integer.MAX_VALUE`, effectively disabling it. This means the agent can spend its entire 600-second budget in a single activity (e.g., Preferences screens) without being forced to explore others. The `ActivityBudgetTracker` addresses this by allocating a per-activity iteration budget proportional to the number of interactable widgets in that activity. When the budget is exhausted, the SATA heuristic forces navigation to another activity.
+APE-RV's `StatefulAgent` has three stagnation counters (`graphStableCounter`, `stateStableCounter`, `activityStableCounter`). The activity-level threshold is `ape.activityStableRestartThreshold`, the parameter of the ADDONS member `Feature.ACTIVITY_STABLE_RESTART` (POSITIVE, neutral `0`, jar default `200`; the ADDONS block of every `as*` preset states `200`), read through the plan (`spec().exploration().activityStableRestartThreshold()`). When the feature is absent — the `base` and `mop` cells — the threshold is upstream's `Integer.MAX_VALUE`, so no activity-stable restart occurs, and the agent can spend its entire budget in a single activity (e.g., Preferences screens) without being forced to explore others. The `ActivityBudgetTracker` addresses this by allocating a per-activity iteration budget proportional to the number of interactable widgets in that activity. When the budget is exhausted, the agent is forced to navigate to another activity.
 
-The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`. An activity with 20 widgets gets a larger budget than one with 3 widgets, reflecting the expected exploration effort. The tracker is instantiated once in `StatefulAgent`, activities are registered as they are discovered, and iteration counts are incremented in `moveForward()`. The budget check is performed at the top of `SataAgent.selectNewActionNonnull()` — if the current activity's budget is exhausted, the agent delegates to the trivial activity selection path to navigate elsewhere.
+The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`. An activity with 20 widgets gets a larger budget than one with 3 widgets, reflecting the expected exploration effort. The tracker exists iff the plan mounts the ADDONS member `Feature.ACTIVITY_BUDGET` (`ape.activityBudgetEnabled`; parameters `ape.activityBaseBudget`, default 50, and `ape.activityBudgetPerWidget`, default 5), tested by `RunContext.current().spec().has(Feature.ACTIVITY_BUDGET)`. It is instantiated once in `StatefulAgent`, activities are registered as they are discovered, and iteration counts are incremented in `moveForward()`. The budget check is the `Budget` guard stage of the decision pipeline (`decision-pipeline`, design D-B7), which runs first, before `Restart` and every LLM, MOP and SATA stage: if the current activity's budget is exhausted, it takes the step with the trivial-activity navigation. A step it takes carries `dec.src:"budget"` and `dec.ch:"budget"`, and a non-empty SATA buffer it preempts is abandoned without weakening (`dec.buf:"budget"`, D-B14.13, D-B20). No site of either mechanism reads `Config`.
 
 ## Data Contracts
 
@@ -11,11 +11,11 @@ The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`.
 - `widgetCount: int` — number of target-requiring actions across all states belonging to this activity (source: `ActivityNode.states` → sum of actions where `action.requireTarget() == true`). This excludes non-widget actions like BACK and MENU.
 
 ### Output
-- `isBudgetExhausted: boolean` — whether the activity has consumed its allocated iterations (consumer: `SataAgent.selectNewActionNonnull()`)
+- `isBudgetExhausted: boolean` — whether the activity has consumed its allocated iterations (consumer: the `Budget` stage, `BudgetStage.decide()`)
 - `remainingBudget: int` — iterations remaining before exhaustion (consumer: logging)
 
 ### Side-Effects
-- **[Agent behavior]**: When budget is exhausted, the SATA agent skips its normal priority chain and forces navigation to another activity.
+- **[Agent behavior]**: When budget is exhausted, the `Budget` stage takes the step before any other owner and forces navigation to another activity (`dec.src:"budget"`, `dec.ch:"budget"`).
 
 ### Error
 - None. Unregistered activities return `false` for exhaustion and `Integer.MAX_VALUE` for remaining budget.
@@ -25,7 +25,9 @@ The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`.
 - **INV-BUD-01**: `isBudgetExhausted(activityName)` SHALL return `false` for any activity that has not been registered.
 - **INV-BUD-02**: Budget SHALL be computed exactly once per activity at registration time and SHALL NOT be recalculated.
 - **INV-BUD-03**: `remainingBudget(activityName)` SHALL be non-negative (clamped to 0 minimum).
+
 ## Requirements
+
 ### Requirement: ActivityBudgetTracker — Budget Allocation
 
 `ActivityBudgetTracker(int baseBudget, int budgetPerWidget)` SHALL accept two configuration parameters. `registerActivity(String activityName, int widgetCount)` SHALL allocate `baseBudget + (widgetCount × budgetPerWidget)` iterations to the activity. Registration is idempotent — if the activity is already registered, the call is ignored (budget is not recalculated).
@@ -61,36 +63,45 @@ The budget formula is: `budget = baseBudget + (widgetCount × budgetPerWidget)`.
 
 ### Requirement: Budget Check in SATA Action Selection
 
-The activity-budget mechanism SHALL be gated by `Config.activityBudgetEnabled` (declared by the `scoring-pipeline` capability; default `true`).
+The activity-budget mechanism SHALL be governed by `Feature.ACTIVITY_BUDGET`, the ADDONS member activated by `ape.activityBudgetEnabled` and read through `RunContext.current().spec().has(Feature.ACTIVITY_BUDGET)`. No site SHALL read `Config.activityBudgetEnabled`. The ADDONS block of the `as`, `as_mop`, `as_llm` and `as_mop_llm` presets states `ape.activityBudgetEnabled=true`; the `base` and `mop` cells do not mount `ADDONS`, so the feature is absent there.
 
-When `activityBudgetEnabled` is `true` (default), `StatefulAgent` SHALL instantiate the `ActivityBudgetTracker`, and `SataAgent.selectNewActionNonnull()` SHALL check `ActivityBudgetTracker.isBudgetExhausted()` for the current activity BEFORE the normal SATA priority chain. The budget is a **soft constraint** — it influences navigation but does not block exploration:
+When `Feature.ACTIVITY_BUDGET` is in the plan, `StatefulAgent` SHALL instantiate the `ActivityBudgetTracker` with `ape.activityBaseBudget` and `ape.activityBudgetPerWidget` read from the plan, and the decision pipeline SHALL mount the `Budget` guard stage as its first stage (`decision-pipeline` "Pipeline Assembly from the RunSpec"). On each step the `Budget` stage SHALL check `ActivityBudgetTracker.isBudgetExhausted()` for the current activity before every other stage. The budget is a **soft constraint** — it influences navigation but does not block exploration:
 
-1. Try `selectNewActionForTrivialActivity()` — navigate to a different activity
-2. If null: fall through to normal SATA chain
+1. When the budget is exhausted, try `selectNewActionForTrivialActivity()` — navigate to a different activity. A non-null result SHALL be returned as `Select`: the step is owned by `budget`, its record carries `dec.src:"budget"`, `dec.own.i:"budget"` and `dec.ch:"budget"`, and no `dec.strat`; when the search tied two or more paths at the X4 extension point, the record also carries that choice's `dec.nav` (`action-selection` "SATA Navigation Extension Points (X1, X3, X4)", design D-B21). The search runs through the agent's `budgetNavigation()`, which detaches the SATA buffer without weakening any edge before it searches: when the search finds nothing the buffer is restored, and when it takes the step a non-empty detached buffer is abandoned, the record carries `dec.buf:"budget"` (design D-B14.13), and the newly planned path stays in the buffer (D-B20). A step the `Budget` stage takes never reaches `Restart`, so a pending restart latch is left for the next step (D-B14.16).
+2. If the budget is not exhausted, or `selectNewActionForTrivialActivity()` returns null, the stage SHALL return `Continue`, and the step falls through to the later stages and finally to the normal SATA chain.
 
 **Rationale**: Both hard fallbacks were tested and found harmful:
 - EVENT_RESTART caused destructive restart loops (40+ restarts/run, -3.39pp method coverage)
 - MODEL_BACK caused stuck loops (78 useless BACKs/run burning 67% of time, -1.10pp on 20 APKs)
 - Fallthrough (no special action) was validated as correct: +3.67pp method, +6.01pp MOP on cryptoapp
 
-The budget's value is in the trivial activity navigation — when available, it forces diversification. When not available, the normal SATA chain (with coverage boost, WTG boost, and greedy tiebreaker) handles exploration efficiently without forced navigation.
+The budget's value is in the trivial activity navigation — when available, it forces diversification. When not available, the later stages and the normal SATA chain handle exploration without forced navigation.
 
-When `activityBudgetEnabled` is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05), `StatefulAgent` SHALL NOT instantiate the `ActivityBudgetTracker`, and `SataAgent.selectNewActionNonnull()` SHALL NOT perform any budget check — selection proceeds directly to the normal SATA chain, reproducing upstream APE (which has no activity budget). No `recordIteration`/`isBudgetExhausted` call SHALL occur.
+When `Feature.ACTIVITY_BUDGET` is not in the plan (the `base` and `mop` cells, or an `as*` cell with `ape.activityBudgetEnabled=false`), `StatefulAgent` SHALL NOT instantiate the `ActivityBudgetTracker`, and the pipeline SHALL NOT mount the `Budget` stage — selection proceeds without any budget check, reproducing upstream APE (which has no activity budget). No `recordIteration`/`isBudgetExhausted` call SHALL occur, and no record SHALL carry `dec.src:"budget"`.
 
 #### Scenario: Budget exhausted forces navigation via trivial activity (flag on)
-- **WHEN** `Config.activityBudgetEnabled` is `true`, the current activity's budget is exhausted, and a path to a trivial activity exists
-- **THEN** the agent SHALL navigate to the target activity
+- **WHEN** the run's preset is `as` (so `Feature.ACTIVITY_BUDGET` is in the plan), `com.example.MainActivity` has a budget of 125 and 125 recorded iterations, and `selectNewActionForTrivialActivity()` returns an action toward `com.example.SettingsActivity`
+- **THEN** the `Budget` stage SHALL return `Select` with that action and the agent SHALL navigate to `com.example.SettingsActivity`
+- **AND** the step record SHALL carry `dec.src:"budget"`, `dec.ch:"budget"` and no `dec.strat`
+- **AND** if the search found two shortest paths to `com.example.SettingsActivity`, the record SHALL also carry `dec.nav` with `x:"X4"` (D-B21); with a single path it SHALL carry no `dec.nav`
+- **AND** if the SATA buffer held two planned transitions, none of them SHALL remain in the buffer after the step, the record SHALL carry `dec.buf:"budget"`, and no `weakenStateTransition` call SHALL have been made
+
+#### Scenario: the budget keeps the path it planned (D-B20)
+- **WHEN** the budget is exhausted and `selectNewActionForTrivialActivity()` finds a three-edge path A→B→C→D to a trivial activity, with the SATA buffer empty or not before the step
+- **THEN** the step's action SHALL be the path's first action, and after the step the buffer SHALL hold the path's edges as `refillBuffer` left them, so that `SataChain`'s buffer rung follows the path on the next steps
+- **AND** the record SHALL carry `dec.buf:"budget"` and `RUN_END.counters.bufAbandoned` SHALL be one larger exactly when the buffer was non-empty before the step
 
 #### Scenario: Budget exhausted, no trivial activity — fallthrough (flag on)
-- **WHEN** `Config.activityBudgetEnabled` is `true`, the current activity's budget is exhausted, and `selectNewActionForTrivialActivity()` returns null
-- **THEN** the agent SHALL fall through to the normal SATA priority chain
-- **AND** exploration continues normally with all priority boosts active
+- **WHEN** `Feature.ACTIVITY_BUDGET` is in the plan, the current activity's budget is exhausted, and `selectNewActionForTrivialActivity()` returns null
+- **THEN** the `Budget` stage SHALL return `Continue`
+- **AND** the SATA buffer SHALL be as it was before the step, with no `weakenStateTransition` call and no `dec.buf` (D-B20)
+- **AND** the step SHALL be decided by a later stage or by the normal SATA chain with all priority boosts active, and its record SHALL NOT carry `dec.src:"budget"`
 
 #### Scenario: No budget tracker or check when the flag is off
-- **WHEN** `Config.activityBudgetEnabled` is `false`
+- **WHEN** the run's preset is `base` or `mop` (no `ADDONS`), or is `as` with `ape.activityBudgetEnabled=false`
 - **THEN** `StatefulAgent` SHALL NOT instantiate an `ActivityBudgetTracker`
-- **AND** `SataAgent.selectNewActionNonnull()` SHALL perform no budget check and proceed directly to the normal SATA chain
-- **AND** no `recordIteration` or `isBudgetExhausted` call SHALL occur during the run
+- **AND** the pipeline SHALL NOT contain the `Budget` stage (for `base`: `[Restart, SataChain]`)
+- **AND** no `recordIteration` or `isBudgetExhausted` call SHALL occur during the run, and no step record SHALL carry `dec.src:"budget"`
 
 ### Requirement: Budget is Non-Resettable
 
@@ -107,36 +118,45 @@ The activity budget SHALL NOT reset after EVENT_RESTART or EVENT_CLEAN_RESTART. 
 
 ### Requirement: Activate activityStableRestartThreshold
 
-`Config.activityStableRestartThreshold` SHALL be changed from `Integer.MAX_VALUE` (disabled) to a configurable default of `200`. This activates the existing `activityStableCounter` mechanism in `StatefulAgent`, which triggers a restart when the agent stays in the same activity for N consecutive transitions. This complements the budget tracker: the budget forces navigation to another activity, while the activity-stable counter forces a restart if navigation fails to escape.
+The activity-stable restart SHALL be governed by `Feature.ACTIVITY_STABLE_RESTART`, an ADDONS member of kind POSITIVE (neutral value `0`) whose parameter is `ape.activityStableRestartThreshold` (jar default `200`; the ADDONS block of the `as*` presets states `200`). The threshold SHALL be read through the plan (`RunContext.current().spec().exploration().activityStableRestartThreshold()`), never from `Config`. When the feature is in the plan, the accessor SHALL return the configured value; when the feature is absent — the `base` and `mop` cells, or a properties file setting `ape.activityStableRestartThreshold=0` — it SHALL return upstream APE's `Integer.MAX_VALUE`, so the `activityStableCounter` never exceeds it and no activity-stable restart occurs.
+
+With the feature in the plan, the existing `activityStableCounter` mechanism in `StatefulAgent` raises the restart flag with kind `activity` when the agent stays in the same activity for more than N consecutive transitions; the restart itself is taken by the `Restart` guard stage (`decision-pipeline`). This complements the budget tracker: the budget forces navigation to another activity, while the activity-stable counter forces a restart if navigation fails to escape.
 
 #### Scenario: Activity-stable restart triggers
-- **WHEN** the agent has been in "com.example.MainActivity" for 200 consecutive transitions
-- **THEN** `onActivityStable()` SHALL call `requestRestart()`
+- **WHEN** the run's preset is `as` (so `Feature.ACTIVITY_STABLE_RESTART` is in the plan with threshold 200) and the agent has stayed in `com.example.MainActivity` for 201 consecutive transitions
+- **THEN** `onActivityStable()` SHALL call `requestRestart()` with kind `activity`
 - **AND** `startNewEpisode()` SHALL reset all three stability counters to 0
+- **AND WHEN** the run's preset is `base` or `mop` and the agent stays in `com.example.MainActivity` for 5,000 consecutive transitions
+- **THEN** the threshold SHALL be `Integer.MAX_VALUE` and `onActivityStable()` SHALL NOT be called
 
 #### Scenario: Counter resets on activity change
-- **WHEN** the agent transitions from "com.example.MainActivity" to "com.example.SettingsActivity"
-- **THEN** `activityStableCounter` SHALL reset to 0
+- **WHEN** the agent transitions from `com.example.MainActivity` to `com.example.SettingsActivity`
+- **THEN** `activityStableCounter` SHALL reset to 0, in every cell
 
 ### Requirement: Config Flags for Activity Budget
 
-`Config.java` SHALL declare the following flags:
+The activity-budget and activity-stable-restart keys SHALL be owned by plan features (`KeyOwnership`) and read through `RunContext.current().spec()`; `Config.java` SHALL NOT be read for any of them:
 
-| Flag | Property Key | Type | Default | Description |
-|------|-------------|------|---------|-------------|
-| `activityBaseBudget` | `ape.activityBaseBudget` | int | 50 | Base iteration budget per activity |
-| `activityBudgetPerWidget` | `ape.activityBudgetPerWidget` | int | 5 | Additional budget per interactable widget |
-| `activityStableRestartThreshold` | `ape.activityStableRestartThreshold` | int | 200 | Max consecutive same-activity transitions before restart (was MAX_VALUE) |
+| Property Key | Owner | Type | Jar default | Neutral | Description |
+|-------------|-------|------|---------|---------|-------------|
+| `ape.activityBudgetEnabled` | `ACTIVITY_BUDGET` (ADDONS) | bool | `true` | `false` | Mounts the budget tracker and the `Budget` stage; the ADDONS block states `true`; without `ADDONS` the default never activates the feature |
+| `ape.activityBaseBudget` | `ACTIVITY_BUDGET` | int | 50 | — | Base iteration budget per activity |
+| `ape.activityBudgetPerWidget` | `ACTIVITY_BUDGET` | int | 5 | — | Additional budget per interactable widget |
+| `ape.activityStableRestartThreshold` | `ACTIVITY_STABLE_RESTART` (ADDONS, POSITIVE) | int | 200 | `0` | Max consecutive same-activity transitions before restart; feature absent ⇒ `Integer.MAX_VALUE` |
+
+`ape.activityStableRestartThreshold` was a base key before this change and is now a feature parameter (design D-B5). A properties file that sets it, or `ape.activityBudgetEnabled`, in a plan without `ADDONS` is resolved by the run-spec dependency rules (`run-spec`): an explicitly set activation key or non-neutral parameter whose dependencies are unmet aborts, and a default-valued key never activates the feature.
 
 #### Scenario: Config flags loaded
-- **WHEN** `ape.properties` contains `ape.activityBaseBudget=100` and `ape.activityBudgetPerWidget=10`
-- **THEN** `Config.activityBaseBudget` SHALL be 100 and `Config.activityBudgetPerWidget` SHALL be 10
+- **WHEN** the run's preset is `as` and `ape.properties` contains `ape.activityBaseBudget=100` and `ape.activityBudgetPerWidget=10`
+- **THEN** the `ActivityBudgetTracker` SHALL be constructed with `baseBudget=100` and `budgetPerWidget=10`, read from the plan
+- **AND** `RUN_START.params` SHALL carry both values
 
 #### Scenario: Default values
-- **WHEN** activity budget flags are not set in properties
-- **THEN** `Config.activityBaseBudget` SHALL be 50 and `Config.activityBudgetPerWidget` SHALL be 5
+- **WHEN** the run's preset is `as` and the activity budget keys are not set in properties
+- **THEN** the tracker SHALL be constructed with `baseBudget=50` and `budgetPerWidget=5`
 
 #### Scenario: Activity stable threshold activated
-- **WHEN** `ape.activityStableRestartThreshold` is not set in properties
-- **THEN** `Config.activityStableRestartThreshold` SHALL be 200 (previously was Integer.MAX_VALUE)
-
+- **WHEN** the run's preset is `as` and `ape.activityStableRestartThreshold` is not set in properties
+- **THEN** `spec().exploration().activityStableRestartThreshold()` SHALL return 200, stated by the ADDONS block
+- **AND WHEN** the run's preset is `base` and the key is not set
+- **THEN** `Feature.ACTIVITY_STABLE_RESTART` SHALL be absent from `RUN_START.features` and the accessor SHALL return `Integer.MAX_VALUE`

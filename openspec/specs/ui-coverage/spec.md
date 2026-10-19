@@ -1,6 +1,6 @@
 ## Purpose
 
-APE-RV's exploration engine tracks action visits (per `ModelAction.visitedCount`) but lacks a per-state widget-level coverage metric. When the agent enters a state with 20 interactable widgets and tests only 5 before navigating away, there is no signal that 75% of the state remains unexplored. The `UICoverageTracker` fills this gap by maintaining a registry of all interactable widgets per state and recording which have been interacted with. The resulting coverage gap metric (fraction of untested widgets, 0.0-1.0) feeds into `StatefulAgent.adjustActionsByGUITree()` as a per-action priority boost, directing the agent toward untested widgets within underexplored states.
+APE-RV's exploration engine tracks action visits (per `ModelAction.visitedCount`) but lacks a per-state widget-level coverage metric. When the agent enters a state with 20 interactable widgets and tests only 5 before navigating away, there is no signal that 75% of the state remains unexplored. The `UICoverageTracker` fills this gap by maintaining a registry of all interactable widgets per state and recording which have been interacted with. The resulting coverage gap metric (fraction of untested widgets, 0.0-1.0) feeds two ADDONS members: `CoveragePass` (`COVERAGE_BOOST`), the scoring pass that `StatefulAgent.adjustActionsByGUITree()` runs as a per-action priority boost directing the agent toward untested widgets, and the dynamic epsilon (`DYNAMIC_EPSILON`, `SataAgent.computeDynamicEpsilon()`). The tracker itself, its visit and coverage counts, and the teardown coverage dump (`[APE-RV] UICOV`, one line per tracked state) are not MOP and exist in every cell. The dump's last token, `mopReach`, is computed from the agent's `MopData` and is written only when `MOP` is mounted (`getMopData()` is null otherwise, even when the artifact was loaded for STATIC; design D-B14.20, D-B14.21), consistent with `ACT.mop`; the clean-control gate (`event-sink` INV-SNK-18) counts it as a MOP signal.
 
 ### State Identification
 
@@ -19,7 +19,7 @@ When NamingFactory refines a State (splits it into finer-grained States), the UI
 
 ### Infinite Scroll Handling
 
-For infinite scroll screens (RecyclerView loading items on demand), each scroll may reveal new items with new Names, creating new States. Coverage gap never converges to 0 because new widgets keep appearing. This is handled by the `ActivityBudgetTracker`: after N interactions in the activity, budget exhausts and forces navigation elsewhere. The `activityStableRestartThreshold=200` provides a secondary safety net.
+For infinite scroll screens (RecyclerView loading items on demand), each scroll may reveal new items with new Names, creating new States. Coverage gap never converges to 0 because new widgets keep appearing. When `ACTIVITY_BUDGET` (ADDONS) is in the plan, this is handled by the `ActivityBudgetTracker`: after N interactions in the activity, budget exhausts and forces navigation elsewhere. `ape.activityStableRestartThreshold` (`ACTIVITY_STABLE_RESTART`, default 200) provides a secondary safety net.
 
 ### Widget Identification
 
@@ -43,13 +43,13 @@ The coverage boost is **per-action**, not uniform. Each action receives a boost 
 - `action: ModelAction` — the action whose widget was interacted with (source: resolved `ModelAction` from `moveForward()`)
 
 ### Output
-- `coverageGap: float` — fraction of registered widgets NOT yet interacted with, range [0.0, 1.0] (consumer: `adjustActionsByGUITree()` for dynamic epsilon, `selectNewActionNonnull()` for navigation decisions)
-- `getInteractionCount(state, widgetId): int` — how many times a specific widget was interacted with in a state (consumer: `adjustActionsByGUITree()` for per-action boost)
+- `coverageGap: float` — fraction of registered widgets NOT yet interacted with, range [0.0, 1.0] (consumers: `CoveragePass` for its log line, `SataAgent.computeDynamicEpsilon()` when `DYNAMIC_EPSILON` is in the plan)
+- `getInteractionCount(state, widgetId): int` — how many times a specific widget was interacted with in a state (no production consumer; `CoveragePass` decides its per-action boost from `hasActivityInteraction(activity, widgetId)`)
 - `totalElements: int` — count of unique widgets registered across all states (consumer: logging/telemetry)
 - `totalInteractions: int` — sum of all interaction counts (consumer: logging/telemetry)
 
 ### Side-Effects
-- **[Memory]**: `stateData` is bounded to `Config.coverageMaxStates` live entries; the least-recently-updated entries are evicted after their counts are folded into the per-Activity rollup (INV-COV-05), so memory is bounded without zeroing reported coverage.
+- **[Memory]**: `stateData` is bounded to `Config.coverageMaxStates` (`ape.coverageMaxStates`, default 2000) live entries; the least-recently-updated entries are evicted after their counts are folded into the per-Activity rollup (INV-COV-05), so memory is bounded without zeroing reported coverage.
 
 ### Error
 - None. All methods are null-safe and return default values for unknown states.
@@ -64,7 +64,9 @@ The coverage boost is **per-action**, not uniform. Each action receives a boost 
 - **INV-COV-06**: The coverage key for a target action SHALL incorporate the action type, so two distinct action types on the same target widget are tracked as distinct coverage elements.
 - **INV-COV-07**: The coverage dump SHALL be read-only and SHALL run at most once per tracked state at teardown (with an optional additional emission at LRU eviction for that state). It SHALL NOT alter `stateData`, `activityRollup`, registered-widget sets, or any interaction count; `getTotalElements()` and `getTotalInteractions()` SHALL be invariant across the dump.
 - **INV-COV-10**: The teardown coverage dump SHALL be emitted exactly once per run, strictly before every other teardown step that writes output (re-anchored, not dissolved: the pre-change phrasing bound it to the `saveGraph` model-serialization step, which no longer exists, so the binding is now to chain position among writers — today the action-history save); the emission SHALL be read-only (INV-COV-07 applies). It has exactly one call site, so no cross-path idempotence guard is required. This invariant governs the teardown dump only; it makes no claim about the optional per-state emission at LRU eviction that INV-COV-07 and "UICoverageTracker — Coverage Dump" permit.
+
 ## Requirements
+
 ### Requirement: UICoverageTracker — Widget Registration
 
 `UICoverageTracker.registerScreenElements(State state, List<ModelAction> actions)` SHALL register all actions of the state as trackable widgets. The widget ID for each action SHALL incorporate the action type for ALL actions:
@@ -162,7 +164,7 @@ widgetId = UICoverageTracker.widgetId(action)
 interacted = _coverageTracker.hasActivityInteraction(newState.getActivity(), widgetId)
 stateVisits = newState.getVisitedCount()
 if (!interacted) {
-    boost = Config.coverageBoostWeight / (1 + stateVisits / 5)
+    boost = coverageBoostWeight / (1 + stateVisits / 5)
 } else {
     boost = 0
 }
@@ -172,7 +174,7 @@ action.setPriority(action.getPriority() + boost)
 This ensures widgets untested anywhere in the Activity receive the boost while widgets already tested — in this abstract state or any sibling fragment of the same Activity — receive zero. The differential therefore survives NamingFactory refinement: a fragment split does not re-arm the boost for already-exercised widgets.
 
 #### Scenario: Untested widget in new state receives full boost
-- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=0, `Config.coverageBoostWeight`=100
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=0, `ape.coverageBoostWeight`=100
 - **THEN** boost = 100 / (1 + 0/5) = 100
 
 #### Scenario: Widget tested in a sibling fragment receives no boost
@@ -180,11 +182,11 @@ This ensures widgets untested anywhere in the Activity receive the boost while w
 - **THEN** X's boost in S2 SHALL be 0
 
 #### Scenario: Untested widget in visited state receives decayed boost
-- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=10, `Config.coverageBoostWeight`=100
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=10, `ape.coverageBoostWeight`=100
 - **THEN** boost = 100 / (1 + 10/5) = 100 / 3 = 33
 
 #### Scenario: Untested widget in heavily visited state receives minimal boost
-- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=25, `Config.coverageBoostWeight`=100
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=25, `ape.coverageBoostWeight`=100
 - **THEN** boost = 100 / (1 + 25/5) = 100 / 6 = 16
 
 #### Scenario: Tested widget receives no boost regardless of state visits
@@ -194,64 +196,76 @@ This ensures widgets untested anywhere in the Activity receive the boost while w
 **Rationale**: Without decay, the coverage boost traps the agent in complex states with many widgets (e.g., SettingsActivity with 27 widgets). E2E testing on 20 APKs showed simplenotes regressing -12.56pp because the agent spent all time in SettingsActivity exploring color pickers instead of visiting other activities. The decay formula `weight / (1 + stateVisits / 5)` provides full boost on first visit and diminishes to ~16% after 25 visits, allowing the agent to explore elsewhere. The decay is deliberately kept state-scoped while the novelty test is activity-scoped: decay protects against dwelling, novelty must survive fragmentation.
 
 #### Scenario: Coverage boost disabled
-- **WHEN** `Config.coverageBoostWeight` is 0
+- **WHEN** the plan's `ape.coverageBoostWeight` is 0 (so `COVERAGE_BOOST` is absent and `ScoringParams.coverageBoostWeight()` is 0)
 - **THEN** no coverage boost SHALL be applied to any action
 
 ### Requirement: Config Flag for Coverage Boost
 
-`Config.java` SHALL declare the following flag:
+The coverage boost SHALL be the plan key `ape.coverageBoostWeight`, the activation key of the ADDONS member `COVERAGE_BOOST` (POSITIVE, neutral `0`), read through the plan (`spec().exploration().coverageBoostWeight()`, injected into `CoveragePass` through `ScoringParams`). `Config` has no field for it (design D-B24).
 
-| Flag | Property Key | Type | Default | Description |
-|------|-------------|------|---------|-------------|
-| `coverageBoostWeight` | `ape.coverageBoostWeight` | int | 100 | Priority boost for untested widgets (0 = disabled) |
+| Key | Owner | Type | Jar default | Description |
+|-----|-------|------|-------------|-------------|
+| `ape.coverageBoostWeight` | `COVERAGE_BOOST` (ADDONS) | int | 100 | Priority boost for untested widgets (`<= 0` = feature absent) |
 
 #### Scenario: Config flag loaded
 - **WHEN** `ape.properties` contains `ape.coverageBoostWeight=150`
-- **THEN** `Config.coverageBoostWeight` SHALL be 150
+- **THEN** on a plan with `ADDONS` the resolved `coverageBoostWeight()` SHALL be 150
 
 #### Scenario: Default value
 - **WHEN** `ape.coverageBoostWeight` is not set in properties
-- **THEN** `Config.coverageBoostWeight` SHALL be 100
-
----
+- **THEN** `KeyOwnership.defaultOf("ape.coverageBoostWeight")` SHALL be `100`, and the ADDONS block states `100`
 
 ### Requirement: UICoverageTracker — Coverage Dump
 
-`UICoverageTracker` SHALL expose a read-only dump method that emits, at agent teardown, one `[APE-RV] UICOV` line per tracked state. The line SHALL report the per-state widget-level coverage already held in `stateData`, plus a `mopReach` flag indicating whether the state's Activity gates a MOP target. The dump exists so that per-screen exploration completeness — invisible in the trace today — becomes observable at the end of a run.
+`UICoverageTracker` SHALL expose a read-only dump method that emits, at agent teardown, one `[APE-RV] UICOV` line per tracked state. The line SHALL report the per-state widget-level coverage already held in `stateData` and, when `Feature.MOP` is in the plan, a `mopReach` flag indicating whether the state's Activity gates a MOP target. The dump exists so that per-screen exploration completeness — invisible in the trace otherwise — becomes observable at the end of a run. The tracker and the coverage part of the line are not MOP: they are mounted and written identically in every cell (`base`, `mop`, `as`, `as_mop`, `as_llm`, `as_mop_llm`).
 
-The dump SHALL be invoked from the agent teardown path (`SataAgent.tearDown()`, `SataAgent.java:234`, which holds `_coverageTracker` and `_mopData` via `StatefulAgent`). The `mopReach` value SHALL be computed at the call site as `_mopData != null && _mopData.activityHasMop(state.getActivity())` (`MopData.java:649`), because `UICoverageTracker` does not hold a `MopData` reference; the value SHALL be supplied to the dump (e.g. via a predicate over `State`).
+The dump SHALL be invoked from the agent teardown path (`SataAgent.tearDown()`, which holds `_coverageTracker` and, through `StatefulAgent`, `getMopData()`). `getMopData()` SHALL be null if and only if `Feature.MOP` is not in the plan, even when the static artifact was loaded for `STATIC` (design D-B14.21). The `mopReach` value SHALL be computed at the call site as `getMopData().activityHasMop(state.getActivity())`, and only when `getMopData()` is non-null, because `UICoverageTracker` does not hold a `MopData` reference; the value SHALL be supplied to the dump as a predicate over `State`, and the supplied predicate SHALL be absent (null) when `Feature.MOP` is not in the plan.
 
-For each tracked state the line format SHALL be:
+For each tracked state the line format SHALL be, when `Feature.MOP` is in the plan:
 
 ```
 [APE-RV] UICOV state=<stateKey> discovered=<W> interacted=<D> gap=<1-D/W> byType=MODEL_CLICK:a/b,MODEL_LONG_CLICK:c/d mopReach=<0|1>
 ```
 
-where `discovered` (`W`) is the count of registered widgets for the state, `interacted` (`D`) is the count of distinct registered widgets whose interaction count is greater than 0, `gap` is `1 - D/W` (or `1.0` when `W == 0`), and `mopReach` is `1` when the supplied predicate returns true for the state and `0` otherwise. `byType` is a per-action-type breakdown of `interacted/discovered`, where the type label is the `TYPE` segment of each element key — the `ActionType.name()` value (`MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_*`, …), parsed as the substring after the last `|` or the whole key when no `|` is present (the `widgetId()` convention, `UICoverageTracker.java:215`). The breakdown distinguishes **action types**, not widget classes: there is no `Edit` or `Button` action type — a clicked `EditText` and a clicked `Button` are both `MODEL_CLICK`. Only types actually registered for the state appear; the order follows `ActionType` declaration order.
+and, when `Feature.MOP` is not in the plan, the same line with the ` mopReach=<0|1>` token omitted — not written as `mopReach=0`:
 
-The dump SHALL be read-only: it SHALL NOT register widgets, record interactions, evict entries, or mutate `stateData`, `activityRollup`, or any interaction count. It MAY additionally emit one line for a state at the moment that state is evicted from the bounded `stateData` (LRU eviction), so that states evicted before teardown are still reported once.
+```
+[APE-RV] UICOV state=<stateKey> discovered=<W> interacted=<D> gap=<1-D/W> byType=MODEL_CLICK:a/b,MODEL_LONG_CLICK:c/d
+```
+
+`discovered` (`W`) is the count of registered widgets for the state, `interacted` (`D`) is the count of distinct registered widgets whose interaction count is greater than 0, `gap` is `1 - D/W` (or `1.0` when `W == 0`), and `mopReach`, when written, is `1` when the supplied predicate returns true for the state and `0` otherwise. `byType` is a per-action-type breakdown of `interacted/discovered`, where the type label is the `TYPE` segment of each element key — the `ActionType.name()` value (`MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_*`, …), parsed as the substring after the last `|` or the whole key when no `|` is present (the `widgetId()` convention). The breakdown distinguishes **action types**, not widget classes: there is no `Edit` or `Button` action type — a clicked `EditText` and a clicked `Button` are both `MODEL_CLICK`. Only types actually registered for the state appear; the order follows `ActionType` declaration order.
+
+`mopReach` is a MOP signal for the clean-control gate (`event-sink` INV-SNK-18, `guidance-groups` INV-GRP-07): in a run whose plan does not contain `Feature.MOP` (cells `base`, `as`, `as_llm`), no `[APE-RV] UICOV` line SHALL carry a `mopReach` token.
+
+The dump SHALL be read-only: it SHALL NOT register widgets, record interactions, evict entries, or mutate `stateData`, `activityRollup`, or any interaction count. It MAY additionally emit one line for a state at the moment that state is evicted from the bounded `stateData` (LRU eviction), so that states evicted before teardown are still reported once; such a line follows the same `mopReach` rule.
 
 #### Scenario: State with partial coverage emits one line
-- **WHEN** at teardown a tracked state `MainActivity` has 10 registered widgets and 3 distinct interacted widgets
+- **WHEN** at teardown a tracked state of `MainActivity` has 10 registered widgets and 3 distinct interacted widgets
 - **THEN** exactly one `[APE-RV] UICOV` line SHALL be emitted for that state
-- **AND** it SHALL report `discovered=10 interacted=3 gap=0.7`
+- **AND** it SHALL report `discovered=10 interacted=3 gap=0.7`, in every cell
 
 #### Scenario: Fully unexplored state reports gap 1.0
 - **WHEN** a tracked state has 8 registered widgets and 0 interactions
-- **THEN** its `[APE-RV] UICOV` line SHALL report `discovered=8 interacted=0 gap=1.0`
+- **THEN** its `[APE-RV] UICOV` line SHALL report `discovered=8 interacted=0 gap=1.0`, in every cell
 
 #### Scenario: byType breakdown reflects per-action-type coverage
 - **WHEN** a state registered 3 `MODEL_CLICK` actions (2 interacted) and 1 `MODEL_LONG_CLICK` action (0 interacted)
-- **THEN** the line SHALL include `byType=MODEL_CLICK:2/3,MODEL_LONG_CLICK:0/1`
+- **THEN** the line SHALL include `byType=MODEL_CLICK:2/3,MODEL_LONG_CLICK:0/1`, in every cell
 
 #### Scenario: mopReach reflects activityHasMop
-- **WHEN** the supplied predicate returns true for the state's Activity (i.e. `_mopData != null && _mopData.activityHasMop(activity)`)
-- **THEN** the line SHALL report `mopReach=1`
-- **AND** when `_mopData` is null or the Activity gates no MOP target the line SHALL report `mopReach=0`
+- **WHEN** the run's preset is `as_mop` (`Feature.MOP` in the plan, so `getMopData()` is non-null) and `getMopData().activityHasMop("com.example.CipherActivity")` returns true for a tracked state of that Activity
+- **THEN** that state's line SHALL end with `mopReach=1`
+- **AND** a tracked state of an Activity that gates no MOP target SHALL end with `mopReach=0`
+
+#### Scenario: mopReach omitted in a cell without MOP
+- **WHEN** the run's preset is `as` (`STATIC` mounted, the artifact loaded, `Feature.MOP` not in the plan, so `getMopData()` is null) and `stateData` holds a state of `com.example.CipherActivity` with 10 registered `MODEL_CLICK` widgets, 4 of them interacted
+- **THEN** its line SHALL be `[APE-RV] UICOV state=<stateKey> discovered=10 interacted=4 gap=0.6 byType=MODEL_CLICK:4/10`, with no `mopReach` token
+- **AND** no `[APE-RV] UICOV` line of the run SHALL contain the substring `mopReach`
+- **AND** the same holds in the `base` and `as_llm` cells
 
 #### Scenario: One line per tracked state at teardown
 - **WHEN** `stateData` holds 5 tracked states at teardown
-- **THEN** the dump SHALL emit exactly 5 `[APE-RV] UICOV` lines, one per tracked state
+- **THEN** the dump SHALL emit exactly 5 `[APE-RV] UICOV` lines, one per tracked state, in every cell
 
 #### Scenario: Dump does not alter counts
 - **WHEN** the dump runs at teardown
@@ -353,4 +367,3 @@ The dump remains read-only with respect to tracker state (INV-COV-07). Because t
 - **WHEN** the capture ends mid-way through the `UICOV-ACT` block, leaving an incomplete final line
 - **THEN** the run SHALL be treated as carrying a partial dump
 - **AND** every complete line preceding the truncation SHALL remain usable
-

@@ -1,115 +1,120 @@
 ## Purpose
 
-APE-RV's `State.greedyPickLeastVisited()` selects the action with the lowest `visitedCount`, ignoring `priority` entirely. Since `SataAgent.egreedy()` routes to the greedy path 85-98% of the time (epsilon range 0.02-0.15), all priority boosts computed in `adjustActionsByGUITree()` — MOP (+500/+300 under `ape.mopScoring=flag`, +500/+400/+300 under `distance`), WTG (+200), and coverage boost — are effectively ignored in the vast majority of action selections. Only the random path (2-15% of decisions) uses `randomlyPickAction()`, which performs priority-weighted sampling.
+Action selection is SATA's choice of the step's action once the decision pipeline hands the step to `SataChain`. SATA is not where MOP guidance acts: the MOP coin of `mop-guidance` ("MOP Coin Decider") is a pipeline owner placed before SATA, and SATA has no MOP shortcut, EARLY_STAGE MOP preference or revisit cap (design D-B4, D-B10, D-B12). `State.greedyPickLeastVisited()` selects the action with the lowest `visitedCount`; among the actions sharing it, the least-visited tie is rule R2 — the larger sum of the candidate's scorer fields, otherwise the first of the array — so with zero scorers mounted it is upstream APE's pick. Priority is read only where APE reads it (the priority roulettes).
 
-This delta spec adds priority as a tiebreaker to `greedyPickLeastVisited()`. When multiple actions share the same minimum `visitedCount`, the action with the highest `priority` is selected. This makes all priority boosts (MOP, WTG, coverage) influence the greedy path without changing the fundamental least-visited strategy.
+Three extension points, X1 (least-visited tie), X3 (ABA target tie) and X4 (path to a trivial activity), are Strategies whose default is APE's behaviour, including its RNG consumption; the composition root mounts the MOP variants of X3 and X4 only when `MOP` is in the plan. An owner that takes a step over a non-empty SATA buffer (Budget, the LLM, the launcher, the MOP coin) abandons it without weakening the graph, a restart clears it through a new episode, also without weakening (design D-B14.13), and only a real path failure weakens an edge. The BACK/MENU cap is the ADDONS member feature `BACK_MENU_CAP`.
+
+Each step records `dec.src`, the owner that executed it; `dec.strat`, the SATA path; `dec.cfc`, a per-scorer counterfactual at the roulettes and the least-visited pick; and `dec.draw`, `dec.nav`, `dec.bmc`. The shapes of these `dec` members are owned by `event-sink`, the owner order by `decision-pipeline`, the coin by `mop-guidance`.
 
 ## Data Contracts
 
 ### Input
-- `ape.mopTargetPickCap: int` — maximum deterministic MOP picks per (widget, action type, activity) key per run (default 3; <= 0 = unlimited). Read once at startup like the `mopWeight*` flags.
+- `ape.backMenuPickCap: int` — the `BACK_MENU_CAP` activation key (ADDONS member, POSITIVE, neutral `0`, jar default `3`), read through the plan.
 
 ### Side-Effects
-- **[Trace]**: `[APE-RV] MOP target capped: activity=<activity> widget=<xpath> picks=<n>` — logged once per key, on the deterministic pick that reaches the cap (`picks == cap` after increment).
+- **[Trace]**: `[APE-RV] BACK/MENU capped: activity=<activity> type=<type> picks=<n>` — logged once per key, on the discretionary pick that reaches the cap.
+- **[Telemetry]**: `dec.src`, `dec.ch`, `dec.strat`, `dec.cfc`, `dec.draw`, `dec.nav`, `dec.bmc`, `dec.buf` on the step record (shapes owned by `event-sink`).
 
 ## Requirements
 
 ### Requirement: State.greedyPickLeastVisited() — Priority Tiebreaker
 
-`State.greedyPickLeastVisited(ActionFilter filter, boolean priorityTiebreak)` SHALL select the action with the lowest `visitedCount`. The tiebreak among actions sharing that lowest count is decided by the `priorityTiebreak` **argument**, supplied by the `SataChain` call site from the resolved plan (`leastVisitedPriorityTiebreak`, declared by the `scoring-pipeline` capability, default `true`). `State` SHALL NOT read `Config.leastVisitedPriorityTiebreak`: after this change the value travels as a parameter, and a residual static read would silently override the argument.
+`State.greedyPickLeastVisited(ActionFilter filter, LeastVisitedTie tie)` SHALL select the action with the lowest `visitedCount`. When two or more actions share that lowest count, it SHALL hand them, in array order, to the X1 strategy (`LeastVisitedTie`, "SATA Navigation Extension Points (X1, X3, X4)"), which applies **rule R2** (plan P-5, design D-B4): the action whose **scorer sum** is strictly the largest wins; on equal sums the first in array order wins. The scorer sum of an action is the sum of its scorer fields as written by the mounted scoring passes (`mopBoost`, `mopFrontierBoost`, `wtgBoost`, `navFrontierBoost`, `menuBoost`, `coverageBoost`, `formBoost`; `scoring-pipeline` "Scorer Ownership by Group"). The X1 strategy is `ScorerSumLeastVisitedTie`. The pick SHALL NOT read `priority`: priority includes APE's base priority per action type, which differs between actions with no scorer at all, and comparing it changed upstream's choice in every cell.
 
-- When the argument is `true` (default): among actions sharing the same lowest `visitedCount`, the one with the highest `priority` SHALL be selected. This is the seam through which every priority boost (MOP, WTG, coverage, frontier, menu, form) becomes a *chosen* action rather than a number — the passes raise `priority`, and this call converts it into a pick (INV-SEL-01: priority is only a tiebreaker, never an override).
-- When the argument is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05): ties among the lowest-`visitedCount` actions SHALL be broken by array order (the first such action encountered wins), reproducing upstream APE. No RV priority boost SHALL influence the greedy pick.
+With zero scorers mounted every sum is 0, so the first of the array wins and the pick equals upstream APE (`model/State.java:185-190` at `8f51b99c`). With scorers mounted, a scorer term decides only a visit-count tie; it never overrides a lower visit count (INV-SEL-01). `ape.leastVisitedPriorityTiebreak` and `Feature.LEAST_VISITED_TIEBREAK` are retired ("replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers"); a properties file that sets the key aborts resolution with `retired_key` (`run-spec`). `State` reads no configuration for this pick.
 
-Because this is the conversion point for the whole boost mechanism, the two branches SHALL be pinned by a paired unit test over one fixed action set — same visit counts, differing priorities, called once with each argument value, asserting different picks. Structural checks cannot substitute for it: with a wrong argument every stage still assembles, every pass still runs, every boost is still computed, and only the chosen action changes.
+Because the pick is a conversion point for every scorer, it SHALL be pinned by a paired unit test over one fixed action set — same visit counts, same base priorities, called once with scorer fields set and once with every scorer field 0, asserting different picks.
 
-INV-SEL-01 and INV-SEL-02 describe the `priorityTiebreak=true` behavior.
+The pick writes `dec.nav` with `x:"X1"` when it resolved a tie, and the step's record carries `dec.cfc` over the scorers with a non-zero term among the tied candidates ("Per-step counterfactual attribution").
 
 #### Scenario: Single least-visited action
 - **WHEN** actions have visitedCounts [0, 3, 5]
-- **THEN** the action with visitedCount=0 SHALL be selected (unchanged behavior, independent of the flag)
+- **THEN** the action with visitedCount=0 SHALL be selected, whatever the scorer fields, and X1 SHALL NOT be consulted
 
 #### Scenario: Tie broken by priority (flag on)
-- **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=true` and actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
-- **THEN** the action with visitedCount=2 and priority=532 SHALL be selected
-- **AND** the MOP boost (+500) on that action effectively influenced the greedy selection
+- **WHEN** actions have visitedCounts [2, 2, 5], scorer sums [0, 500, 0] (the second carries `mopBoost=500`) and priorities [32, 532, 52]
+- **THEN** the action with visitedCount=2 and scorer sum 500 SHALL be selected
+- **AND** the decision SHALL come from the scorer sum, not from the priority: the flag this header names is retired and R2 holds in every cell
+- **AND** the record SHALL carry `dec.nav:{"x":"X1","c":"ape","alt":0,"drew":0}`: X1 has no MOP variant, so `alt` is `0`, and the scorer's effect is read from `dec.cfc`
 
 #### Scenario: All actions have same visitedCount (flag on)
-- **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=true` and all 10 actions have visitedCount=0 and priorities [32, 32, 232, 32, 532, 32, 32, 32, 32, 32]
-- **THEN** the action with priority=532 (MOP-boosted) SHALL be selected
+- **WHEN** all 10 actions have visitedCount=0 and scorer sums [0, 0, 200, 0, 500, 0, 0, 0, 0, 0]
+- **THEN** the action with scorer sum 500 SHALL be selected
 
 #### Scenario: the same action set picks differently under the two argument values
-- **WHEN** one fixed action set with visitedCounts [2, 2, 5] and priorities [32, 532, 52] is passed to `greedyPickLeastVisited` twice, with `priorityTiebreak=true` and then `false`
-- **THEN** the two calls SHALL return different actions (priority=532 and priority=32 respectively)
+- **WHEN** one fixed action set with visitedCounts [2, 2, 5] and base priorities [32, 32, 52] is passed to `greedyPickLeastVisited` twice, first with the second action carrying `coverageBoost=100` (scorer sums [0, 100, 0]) and then with every scorer field 0
+- **THEN** the two calls SHALL return different actions (the second action, then the first)
 - **AND** this pairing SHALL exist as a permanent unit test, since no golden, assembly check or pass test observes this decision
 
 #### Scenario: Tie with equal priorities
-- **WHEN** actions have visitedCounts [1, 1, 3] and priorities [52, 52, 32]
-- **THEN** either of the two tied actions MAY be selected (implementation picks the first encountered)
+- **WHEN** actions have visitedCounts [1, 1, 3], scorer sums [200, 200, 0] and priorities [252, 252, 32]
+- **THEN** the first of the two tied actions SHALL be selected, and the record SHALL carry `dec.nav` with `alt:0`
 
 #### Scenario: Tie broken by array order when the flag is off
-- **WHEN** `greedyPickLeastVisited` is called with `priorityTiebreak=false` and actions have visitedCounts [2, 2, 5] and priorities [32, 532, 52]
+- **WHEN** the `base` cell (no scorer mounted) calls `greedyPickLeastVisited` on actions with visitedCounts [2, 2, 5] and base priorities [32, 532, 52]
 - **THEN** the first action with visitedCount=2 in array order SHALL be selected (priority=32), NOT the priority=532 action
-- **AND** no RV priority boost SHALL influence the greedy pick (upstream APE behavior)
+- **AND** the pick SHALL equal upstream APE's; this is the case the retired addon G got wrong, because it compared the whole priority
 
 ### Requirement: Per-action decision-source telemetry
 
-For every action returned by `selectNewActionNonnull()`, `StatefulAgent.resolveNewAction()` SHALL record one `StepRecord` decision section (event-sink capability), after the action is finalized and before it is executed. Recording is unconditional — no configuration key gates it, and every experimental arm records identically. The record SHALL attribute the action to a `decision_source` (`dec.src`) and a pick channel (`dec.ch`), and include the non-zero per-mechanism boosts.
+For every action returned by `selectNewActionNonnull()`, `StatefulAgent.resolveNewAction()` SHALL record one `StepRecord` decision section (event-sink capability), after the action is finalized and before it is executed. Recording is unconditional — no configuration key gates it, and every cell records identically. The record SHALL attribute the action to the **owner that executed the step** (`dec.src`), carry its pick channel (`dec.ch`), the owner record `dec.own` (`decision-pipeline`), and the non-zero scorer fields.
 
-To attribute LLM and other early-return paths that bypass `logActionSelected`, `ModelAction` SHALL carry a `decisionSource` provenance field set at the point of selection (by the selecting `DecisionPipeline` stage, per the decision-pipeline capability). The field SHALL be populated on every return path: SATA strategies, the three LLM hooks (new-state, stagnation, random), the budget-exhausted trivial path, and the null path.
+`ModelAction` SHALL carry a `decisionSource` provenance field set at the point of selection by the selecting `DecisionPipeline` stage (decision-pipeline capability). The field SHALL be populated on every return path: the guards (`budget`, `restart`), the three LLM stages, the launcher, the MOP coin, the SATA chain and the null path. Its value set is the owner enum:
 
-For SATA-chain selections, the `decisionSource` SHALL be set by a boost-attribution rule scoped to the **selection sub-paths that actually consume priority**, not to whole `SataEventType` branches. Attribution applies ONLY when the action is a `ModelAction` chosen by: (a) a priority roulette — `State.randomlyPickAction` in the epsilon-greedy random branch or `RandomHelper.randomPickWithPriority` over the EARLY_STAGE unvisited candidates — or (b) a boost-based deterministic pick — the MOP short-circuit (`selectUnvisitedMopTarget`) or the EARLY_STAGE MOP preference (`pickBestMopTarget`). When attribution applies AND the action carries at least one boost greater than 0 among `getMopBoost()`/`getMopFrontierBoost()`/`getWtgBoost()`/`getMenuBoost()`/`getCoverageBoost()`/`getFormBoost()`, `decisionSource` SHALL be set to the mechanism holding the largest boost. Ties on the largest boost SHALL be resolved by the fixed precedence `MOP > MopFrontier > WTG > Menu > Form > Coverage`. In all other cases `decisionSource` SHALL remain `SATA` — in particular on the sub-paths that select for reasons other than priority (graph-navigation and shortest-path picks, the Back-/Menu-unvisited short-circuits, and `greedyPickLeastVisited`, where priority is only a tie-break).
+`budget`, `restart`, `llm`, `launcher`, `mop`, `sata`.
 
-This attribution reports which mechanism most contributed to the chosen action on a sub-path that actually consumed priority. It SHALL NOT be interpreted as a counterfactual claim that the boost changed the selection outcome — the counterfactual claim is exactly what `dec.cf` carries, on the four MOP-sensitive pick channels only.
+`dec.src` is no longer a largest-boost attribution (design § Telemetry contract). The boost-attribution rule, its precedence `MOP > MopFrontier > WTG > Menu > Form > Coverage` and the values `MOP`, `MopFrontier`, `Coverage`, `Fuzz`, `Menu`, `WTG`, `Component`, `Form` SHALL NOT exist: a scorer's term is visible in its own field (`dec.mop`, `dec.mopf`, `dec.wtg`, `dec.navf`, `dec.menu`, `dec.cov`, `dec.form`) and its causal effect in `dec.cfc` ("Per-step counterfactual attribution"). A step owned by the MOP coin carries `dec.src:"mop"`; a step SATA chose carries `dec.src:"sata"` whatever its boosts.
 
-The `decision_source` enum SHALL be: `SATA`, `MOP`, `MopFrontier`, `Coverage`, `LLM`, `Fuzz`, `Menu`, `WTG`, `Component`, `Budget`, `Form`.
+When `dec.src` is `sata`, the record SHALL carry `dec.strat`, the SATA path that chose the action, from the `event-sink` enum (`buffer`, `back_to_activity`, `aba`, `early_roulette`, `greedy_global`, `greedy_path`, `trivial`, `early_backward`, `backtrack`, `eps_back`, `eps_menu`, `least_visited`, `eps_roulette`, `null`, `saturated`). It refines what the channel `sata_other` lumped together. A roulette pick additionally carries `dec.draw` (`[idx,total]`) for offline replay.
+
+`dec.ch` survives as the pick channel (design D-B14.17). It keeps its values for the paths that survive (`roulette_greedy`, `roulette_early`, `launcher`, `llm`, `buffer`, `sata_other`), and three new values name the owners that are not SATA paths: a step the MOP coin takes carries `mop_coin`, a step the `Budget` guard takes carries `budget`, and a step the `Restart` guard takes carries `restart`. `sata_other` is produced only by SATA paths again. The values `short_circuit_unvisited` and `short_circuit_0step` are not produced, because the shortcut left SATA.
 
 The record's envelope SHALL carry the step number `s` — the agent exploration timestamp (`getTimestamp()`) at selection time, incremented exactly once per agent step, hence unique within a run — and the time `t` in milliseconds since `RUN_START` (whose record carries the epoch base; the device wall clock remains recoverable as `t0 + t`, preserving offline temporal joins with externally collected artifacts without any APE↔logcat coupling — the heartbeat aside, APE SHALL NOT read from logcat). There is no join key: the outcome attaches to the same record (scoring-pipeline capability).
 
-- **INV-SEL-04**: Exactly one `StepRecord` SHALL be recorded per finally-selected action, covering every selection path including the LLM early-returns and budget/trivial early-returns, in every arm. The record SHALL carry a `dec.src` from the fixed enum, never a free-form string. The boost-attribution rule SHALL only change which enum value is carried; it SHALL NOT add, remove, or duplicate records, and SHALL NOT modify any boost field.
+- **INV-SEL-04**: Exactly one `StepRecord` SHALL be recorded per finally-selected action, covering every selection path including the guards, the LLM stages, the launcher and the MOP coin, in every cell. The record SHALL carry a `dec.src` from the owner enum, never a free-form string, and recording SHALL NOT modify any scorer field.
 
-**Where the retired rendering's assertions went.** Five of the scenarios below keep the header the
-pre-change requirement gave them and carry a body this change contradicts, because what they assert
-is what this change removes. Recorded rather than dropped, since the reader's question is where the
-claim lives now:
+**Where the retired rendering's assertions went.** Several scenarios below keep the header an earlier requirement gave them and carry a body this change contradicts, because what they assert is what this change removes. Recorded rather than dropped, since the reader's question is where the claim lives now:
 
 | Scenario header | What it asserted | Where the claim is now |
 |---|---|---|
-| `[APE-STEP] carries the MOP-screen bit` | `activity_has_mop=0\|1` on every step line | the `ACT` dictionary entry's `mop` member, emitted once per activity and **on no step record** (`event-sink :: Dictionary Events and Run-Local IDs`, scenario `activity_has_mop recorded once`). A per-step copy of a per-activity constant is exactly what the volume levers exist to remove; the join `dec`→`act`→`ACT.mop` recovers it per step |
-| `MOP-off arm always reports activity_has_mop consistent with MopData` | every line carries `activity_has_mop=0` when `MopData` is null | the same `ACT.mop` member, which is `0` for every activity of a run with no `MopData`. The arm-level property is unchanged; it is read once per activity instead of once per step |
-| `click on a patch-fabricated widget is marked` | `patched=1` on the line | `dec.patched`, whose tri-state (1 / 0 / absent) is asserted by `event-sink :: StepRecord Schema`, scenario `Tri-state patched preserved`. The field is exempt from the defaults-omitted rule precisely so `0` stays distinguishable from "no target" |
-| `targetless actions omit the patch bit` | no `patched` field for `MODEL_BACK`/`MODEL_MENU`/`MODEL_LLM_TAP` | the third state of that same tri-state — absence of the `dec.patched` member |
-| `widget text with a newline stays on one line` | the emitter flattens `\n`/`\r` before writing the line | the serializer, which escapes them by construction (`event-sink` INV-SNK-02). No pre-flattening is required for well-formedness any more; a record physically cannot carry a raw newline |
-| `No [APE-STEP] lines when telemetry is disabled` | zero lines with the gate off, provenance still populated | **nothing, deliberately** — the gate is deleted with its key. There is no disabled case to assert, and the scenario now asserts that: `ape.stepTelemetryEnabled` aborts plan resolution as an unknown key |
+| `[APE-STEP] carries the MOP-screen bit` | `activity_has_mop=0\|1` on every step line | the `ACT` dictionary entry's `mop` member, emitted once per activity and **on no step record** (`event-sink :: Dictionary Events and Run-Local IDs`) |
+| `MOP-off arm always reports activity_has_mop consistent with MopData` | every line carries `activity_has_mop=0` when `MopData` is null | the same `ACT.mop` member, which is written only when `MOP` is mounted and is absent from every `ACT` entry of a cell without `MOP` (design D-B14.9) |
+| `click on a patch-fabricated widget is marked` | `patched=1` on the line | `dec.patched`, whose tri-state (1 / 0 / absent) is asserted by `event-sink :: StepRecord Schema` |
+| `targetless actions omit the patch bit` | no `patched` field for `MODEL_BACK`/`MODEL_MENU`/`MODEL_LLM_TAP` | the third state of that same tri-state |
+| `widget text with a newline stays on one line` | the emitter flattens `\n`/`\r` | the serializer, which escapes them by construction (`event-sink` INV-SNK-02) |
+| `No [APE-STEP] lines when telemetry is disabled` | zero lines with the gate off | **nothing, deliberately** — the key is deleted and aborts plan resolution as an unknown key |
+| `MOP-boosted action from the EARLY_STAGE roulette attributed to MOP`, `MOP-frontier-driven pick attributed to MopFrontier, not WTG`, `Tie precedence MOP>MopFrontier>WTG>Menu>Form>Coverage` | the largest-boost attribution of `dec.src` | `dec.src` names the owner; the scorer term stays in its field, its effect in `dec.cfc` |
+| `pick_channel discriminates short-circuit from roulette` | the shortcut channels | the MOP coin is an owner: `dec.src:"mop"` |
 
 #### Scenario: SATA-selected action attributed
 
-- **WHEN** `resolveNewAction()` finalizes an action chosen by the SATA epsilon-greedy strategy with all boosts equal to 0
-- **THEN** a single `StepRecord` SHALL be recorded with `dec.src:"SATA"`
-- **AND** its envelope SHALL include `s`, `t`, `act` and `st`, and its `dec` SHALL carry `ch` and omit all boost fields (defaults-omitted, INV-SNK-05)
+- **WHEN** `resolveNewAction()` finalizes an action chosen by the SATA epsilon-greedy roulette with every scorer field 0
+- **THEN** a single `StepRecord` SHALL be recorded with `dec.src:"sata"` and `dec.strat:"eps_roulette"`
+- **AND** its envelope SHALL include `s`, `t`, `act` and `st`, and its `dec` SHALL carry `ch`, `draw` and `own`, and omit all scorer fields (defaults-omitted, INV-SNK-05)
 
 #### Scenario: Stage-stamped provenance equals the StageResult label
 
 - **WHEN** any stage returns `StageResult.select(action, label)` for a `ModelAction`
-- **THEN** `label` SHALL equal `action.getDecisionSource().name()`
+- **THEN** `label` SHALL equal the owner value of `action.getDecisionSource()`
 - **AND** the recorded `dec.src` SHALL equal the same value — one datum, stamped by the selecting stage and carried to the record without a second vocabulary (`decision-pipeline` INV-DP-04)
 
 #### Scenario: MOP-boosted action from the EARLY_STAGE roulette attributed to MOP
 
-- **WHEN** the EARLY_STAGE unvisited roulette (or the MOP preference probing it) picks a `ModelAction` whose boosts are `mop=500`, all others 0
-- **THEN** the action's `decisionSource` SHALL be `MOP` and the record SHALL carry `dec.src:"MOP"` and `dec.mop:500`
+- **WHEN** the EARLY_STAGE unvisited roulette picks a `ModelAction` whose scorer fields are `mop=500`, all others 0
+- **THEN** the record SHALL carry `dec.src:"sata"`, `dec.strat:"early_roulette"` and `dec.mop:500`
+- **AND** whether the MOP term changed the pick SHALL be carried by `dec.cfc.mop`, not by `dec.src`
 
 #### Scenario: MOP-frontier-driven pick attributed to MopFrontier, not WTG
 
-- **WHEN** a roulette pick carries boosts `mop=0, mopf=200, wtg=0, menu=0, cov=100, form=0`
-- **THEN** the action's `decisionSource` SHALL be `MopFrontier` and the record SHALL carry `dec.src:"MopFrontier"`
-- **AND** `dec.mopf:200` SHALL be carried with `dec.wtg` omitted — the two producers stay de-aliased in the record, which is the property `wtg=` reporting the WTG family only was introduced for
+- **WHEN** a roulette pick carries scorer fields `mop=0, mopf=200, wtg=0, navf=0, menu=0, cov=100, form=0`
+- **THEN** the record SHALL carry `dec.src:"sata"`, `dec.mopf:200` and `dec.cov:100`, with `dec.wtg` and `dec.navf` omitted
+- **AND** the producers stay de-aliased in the record, one field per scorer (`scoring-pipeline` "Scorer Independence (Rule R1)")
 
 #### Scenario: Tie precedence MOP>MopFrontier>WTG>Menu>Form>Coverage
 
-- **WHEN** a roulette pick carries boosts `mop=300, mopf=300`
-- **THEN** the record SHALL carry `dec.src:"MOP"`
-- **AND** when the tie is instead `mopf=300, wtg=300`, `dec.src` SHALL be `"MopFrontier"`
+- **WHEN** a roulette pick carries scorer fields `mop=300, mopf=300`
+- **THEN** the record SHALL carry `dec.src:"sata"`, `dec.mop:300` and `dec.mopf:300`
+- **AND** no precedence between scorers SHALL exist, because `dec.src` no longer names a scorer
 
 #### Scenario: click on a patch-fabricated widget is marked
 
@@ -125,34 +130,36 @@ claim lives now:
 
 #### Scenario: [APE-STEP] carries the MOP-screen bit
 
-- **WHEN** `MopData` is present and the current activity is in the pre-computed MOP-activity set
+- **WHEN** the cell mounts `MOP` and the current activity is in the selected MOP-activity set
 - **THEN** the activity's `ACT` dictionary entry SHALL carry `mop:1`, and the step record SHALL carry no `activity_has_mop` member of its own
 - **AND** an activity outside the set SHALL have `mop:0` on its entry — the bit is recorded once per activity and reached from a step via its `act` ID
 
 #### Scenario: MOP-off arm always reports activity_has_mop consistent with MopData
 
-- **WHEN** a run executes with `MopData` null
-- **THEN** every `ACT` entry of that run SHALL carry `mop:0`
-- **AND** no step record SHALL carry a MOP-screen bit of its own, in this arm or any other
+- **WHEN** a cell without `MOP` runs (`base`, `as`, `as_llm`), so no `MopData` is handed to any consumer
+- **THEN** no `ACT` entry of that run SHALL carry a `mop` member (design D-B14.9; `event-sink` clean-control gate)
+- **AND** no step record SHALL carry a MOP-screen bit of its own, in this cell or any other
 
 #### Scenario: pick_channel discriminates short-circuit from roulette
 
-- **WHEN** one step is selected by the unvisited-MOP short-circuit and a later step by the epsilon-greedy roulette
-- **THEN** the first record SHALL carry `dec.ch:"short_circuit_unvisited"`
-- **AND** the second SHALL carry `dec.ch:"roulette_greedy"`
-- **AND** both MAY carry `dec.src:"MOP"` (channel and source are independent axes)
+- **WHEN** one step is taken by the MOP coin and a later step by the epsilon-greedy roulette
+- **THEN** the first record SHALL carry `dec.src:"mop"`, `dec.ch:"mop_coin"` and no `dec.strat`
+- **AND** the second SHALL carry `dec.src:"sata"`, `dec.ch:"roulette_greedy"` and `dec.strat:"eps_roulette"`
+- **AND** no record SHALL carry `dec.ch:"short_circuit_unvisited"` or `dec.ch:"short_circuit_0step"`
 
 #### Scenario: Budget stage early-return attributed
 
-- **WHEN** the `Budget` stage selects the trivial-activity action on an exhausted budget
-- **THEN** that action's `decisionSource` SHALL be `Budget` and its channel `sata_other`
-- **AND** exactly one record SHALL be recorded for it, carrying `dec.src:"Budget"` and `dec.ch:"sata_other"`
+- **WHEN** the `BUDGET` guard selects the trivial-activity action on an exhausted budget
+- **THEN** that action's `decisionSource` SHALL be `budget`
+- **AND** exactly one record SHALL be recorded for it, carrying `dec.src:"budget"`, `dec.ch:"budget"` and no `dec.strat`
+- **AND WHEN** the `Restart` guard selects a start action on a later step
+- **THEN** its record SHALL carry `dec.src:"restart"`, `dec.ch:"restart"`, `dec.restart` and no `dec.strat`
 
 #### Scenario: Launcher step attributed Component
 
-- **WHEN** the `MopLauncher` stage selects an `EVENT_TRIGGER_ACTIVITY` action
-- **THEN** the record SHALL carry `dec.src:"Component"` and `dec.ch:"launcher"` (non-model branch, source derived from the action)
-- **AND** it SHALL additionally carry `dec.comp` — evidence of what the launch did, which the retired line could not hold because it was written before dispatch while the record closes at step N+1 (`component-triggering` INV-CT-07)
+- **WHEN** the `MopLauncher` stage (feature `MOP_LAUNCHER`) selects an `EVENT_TRIGGER_ACTIVITY` action
+- **THEN** the record SHALL carry `dec.src:"launcher"` and `dec.ch:"launcher"`
+- **AND** it SHALL additionally carry `dec.comp` — evidence of what the launch did, written when the record closes at step N+1 (`component-triggering` INV-CT-07)
 
 #### Scenario: widget text with a newline stays on one line
 
@@ -162,168 +169,59 @@ claim lives now:
 
 #### Scenario: Boosted action in a priority-blind branch stays SATA
 
-- **WHEN** a `ModelAction` carrying `mop=500` is selected by a branch that does not consume priority (e.g. `greedyPickLeastVisited`, visit-count minimum)
-- **THEN** the record SHALL carry `dec.src:"SATA"` with `dec.mop:500` still visible as a boost field
+- **WHEN** a `ModelAction` carrying `mop=500` is selected by a branch that does not consume scorer terms (e.g. a shortest-path navigation pick)
+- **THEN** the record SHALL carry `dec.src:"sata"`, the branch's `dec.strat`, and `dec.mop:500` still visible as a scorer field
 
 #### Scenario: LLM early-return attributed with its channel
 
-- **WHEN** the new-state LLM hook returns a non-null action, bypassing `logActionSelected`
-- **THEN** that action's `decisionSource` SHALL be `LLM` and exactly one record SHALL carry `dec.src:"LLM"` and `dec.ch:"llm"` for it, with the call's `llm[]` sub-event in the same record
+- **WHEN** the new-state LLM stage returns a non-null action
+- **THEN** that action's `decisionSource` SHALL be `llm` and exactly one record SHALL carry `dec.src:"llm"`, `dec.ch:"llm"` and `dec.own.trg:"new_state"`, with the call's `llm[]` sub-event in the same record
 
 #### Scenario: Every step is attributable when telemetry is enabled
 
-- **WHEN** any run completes, under any preset
+- **WHEN** any run completes, under any cell preset
 - **THEN** every executed action SHALL have exactly one `StepRecord`
 - **AND** no selection path SHALL produce zero or more than one record for a single action
-- **AND** every record SHALL carry exactly one `dec.ch`, and the MOP-screen bit SHALL be reachable for it through its `act` ID
-- **AND** the scenario's precondition is now vacuous and is kept only so the archive can pair the name: there is no enabled case because there is no gate
+- **AND** every record SHALL carry exactly one `dec.src`, exactly one `dec.ch` and one `dec.own`, and, in a cell with `MOP`, the MOP-screen bit SHALL be reachable for it through its `act` ID
+- **AND** the scenario's precondition is vacuous and is kept only so the archive can pair the name: there is no enabled case because there is no gate
 
 #### Scenario: No [APE-STEP] lines when telemetry is disabled
 
 - **WHEN** `ape.properties` sets `ape.stepTelemetryEnabled=false`
 - **THEN** plan resolution SHALL abort with an unknown-key diagnostic before the first event — the key is deleted, not defaulted, so no run can execute in the state this scenario describes
-- **AND** the pre-change guarantee it protected (provenance still populated with recording off) is subsumed: `decisionSource` is populated on every selection path unconditionally, and recording is unconditional too
-
-### Requirement: MOP-target greedy short-circuit in epsilon-greedy selection
-
-When `SataAgent.selectNewActionEpsilonGreedyRandomly()` runs and a valid, enabled, unvisited action carries a discriminative MOP boost (`ModelAction.getMopBoost() > 0`), the agent SHALL select such an action before the epsilon-greedy / roulette step. The check SHALL run after the existing Back-unvisited and Menu-unvisited short-circuits and before `egreedy()` (call site `SataAgent.java:571`). The selected action SHALL be attributed through `logActionSelected(action, EPSILON_GREEDY)` so the per-step telemetry remains consistent.
-
-Among several eligible actions, the agent SHALL choose by the following keys, in order, each key consulted only to break a tie on the keys before it (design D21):
-
-1. **Novelty in the activity.** An action whose widget has no recorded interaction in the state's activity (`UICoverageTracker.hasActivityInteraction(activity, UICoverageTracker.widgetId(action))` is false) ranks before every action whose widget has one. The test is per activity, not per abstract state, so a widget already exercised through another state of the same activity is not new. It is per (widget, action type): `widgetId` is `xpath|ActionType` (`UICoverageTracker.java:240-250`), so a long-click on a widget already clicked in the activity is new.
-2. **Larger undivided MOP weight, `ModelAction.getMopWeight()`** (`mop-guidance` "MopScorer — Priority Boost"): the weight before the tie split of `distance`, equal to `mopBoost` under `flag`. The split `mopBoost` is not read here: three actions at `d ≤ 1` split to 400 each and would tie with an action at `d = 2` (400), and key 3 could then choose the farther one.
-3. **Under `ape.mopScoring=distance` only: larger number of distinct unretired targets within `d + 1`**, where `d` is the distance behind the action's MOP weight (the smallest unretired distance of its lookup, `mop-guidance` "MopScorer — Priority Boost") and the count is taken over the pairs of the same lookup that produced that weight (`mop-guidance` "Handler Stamp Lookup", with the scoring pass's containment), skipping retired targets (`mop-guidance` "Target Retirement"). The plan admits this key "só como desempate" (plan §6.7). Under `flag` this key does not exist and the ranking goes from the boost to the priority.
-4. **Larger `priority`.**
-
-Actions equal on every key keep today's resolution: the first in candidate order wins.
-
-The same ranking SHALL apply at the second deterministic site, the 0-step probe in `findGreedyActionForward` (`SataAgent.java:1443`; "MOP preference in the EARLY_STAGE unvisited roulette"), because both sites call the one picker. `pickBestMopTarget` SHALL remain a pure function of its inputs: it receives the coverage tracker (read-only), the activity, and, under `distance`, the retirement state, and it updates nothing. Candidate filtering is unchanged: only `mopBoost > 0` actions are candidates, the form-submit exclusion (INV-FORM-06) applies, and the revisit cap of "MOP target revisit cap" filters the candidates before the ranking.
-
-This gives the discriminative boost a deterministic path to the monitored widget, which priority-weighted roulette reaches only probabilistically. The boost is `ape.mopWeightDirect`/`ape.mopWeightTransitive` (500/300) under `ape.mopScoring=flag` and `ape.mopWeightD1..3` (500/400/300, divided among the actions tied at the state's best weight level, with a floor at the next level's weight) under `distance`. The branch is bounded to unvisited targets so it does not override the least-visited strategy for already-visited actions, and the novelty key spends it on widgets the activity has not seen before it returns to ones it has. The discriminative `mopBoost` is produced only after the activity-level fallback is removed (see `mop-guidance` "MopScorer — Priority Boost"); a uniform boost would make this branch select an arbitrary widget, which is why this change and the fallback removal ship together.
-
-- **INV-SEL-MOP-01**: The short-circuit SHALL only select actions that are valid, enabled, unvisited, and have `mopBoost > 0`. A visited MOP target SHALL NOT be force-selected by this branch.
-- **INV-SEL-MOP-02**: When no eligible unvisited MOP-boosted action exists, the branch SHALL be a no-op and selection SHALL proceed identically to the pre-change behavior.
-- **INV-SEL-MOP-06**: Whenever the deterministic MOP sites choose among two or more eligible candidates, an action whose (widget, action type) pair (`UICoverageTracker.widgetId`, `xpath|ActionType`) has no interaction in the activity SHALL be chosen over every action whose pair has one, whatever their boosts. The ranking SHALL read the coverage tracker and the retirement state and SHALL write neither.
-
-#### Scenario: Unvisited MOP target selected ahead of roulette
-- **WHEN** the current state has an unvisited valid action with `mopBoost=500` alongside other unvisited non-MOP actions
-- **THEN** `selectNewActionEpsilonGreedyRandomly()` SHALL return the `mopBoost=500` action
-- **AND** it SHALL be attributed via `logActionSelected(action, EPSILON_GREEDY)`
-
-#### Scenario: Highest mopBoost wins among MOP targets
-- **WHEN** two unvisited valid actions have `mopBoost=500` and `mopBoost=300`, and neither widget has an interaction in the activity
-- **THEN** the `mopBoost=500` action SHALL be selected
-
-#### Scenario: Visited MOP target not force-selected
-- **WHEN** the only action with `mopBoost>0` is already visited
-- **THEN** the short-circuit SHALL NOT select it
-- **AND** selection SHALL proceed to the existing epsilon-greedy / roulette path
-
-#### Scenario: No MOP target is a no-op
-- **WHEN** no action in the state has `mopBoost>0`
-- **THEN** the short-circuit SHALL be a no-op
-- **AND** selection SHALL proceed identically to the pre-change behavior
-
-#### Scenario: widget new to the activity wins over a larger boost
-- **WHEN** the state of activity `A` has two unvisited valid actions, X with `mopBoost=500` whose widget was clicked earlier in another state of `A`, and Y with `mopBoost=300` whose widget has no interaction in `A`
-- **THEN** the short-circuit SHALL select Y, under `ape.mopScoring=flag` and under `distance` alike
-
-#### Scenario: target count breaks a boost tie under distance
-- **WHEN** `ape.mopScoring=distance`, the state has a third action at `d = 1` that is already visited, so it is not a candidate, and alone holds the state's best level (500); two unvisited actions new to the activity both carry `mopBoost=400` from a nearest unretired target at `d = 2`, undivided because the `d = 2` level is not the state's best; X's lookup has unretired targets at distances `[2, 3, 3]` (three distinct targets within `d + 1 = 3`) and Y's at `[2, 5]` (one), and Y has the higher priority
-- **THEN** the short-circuit SHALL select X
-
-#### Scenario: a split tie does not invert the ranking under distance
-- **WHEN** `ape.mopScoring=distance` and the state's unvisited actions new to the activity are X, Y and Z at `d = 1` and W at `d = 2`, so X, Y and Z split the `d ≤ 1` level to a `mopBoost` of 400 each (`max(500 / 3, 400)`) and W keeps 400 undivided; W's lookup has three distinct unretired targets within `d + 1 = 3` and X's one within `2`
-- **THEN** the short-circuit SHALL select one of X, Y, Z (undivided weight 500), never W (400)
-
-#### Scenario: target count does not exist under flag
-- **WHEN** `ape.mopScoring=flag` and two unvisited actions new to the activity both carry `mopBoost=500`, X with the larger number of distance pairs and Y with the higher priority
-- **THEN** the short-circuit SHALL select Y
-
-#### Scenario: the 0-step probe ranks the same way
-- **WHEN** `findGreedyActionForward` collects two unvisited candidates of activity `A`, X with `mopBoost=500` whose widget already has an interaction in `A` and Y with `mopBoost=300` whose widget has none
-- **THEN** the probe SHALL return Y without consulting the roulette, with `dec.ch:"short_circuit_0step"`
-
-#### Scenario: the revisit cap still filters before the ranking
-- **WHEN** `ape.mopTargetPickCap=3`, widget Y's key has reached the cap, and Y is the only candidate new to the activity while X (`mopBoost=300`) is not new
-- **THEN** Y SHALL NOT be a candidate and the short-circuit SHALL select X
-
-### Requirement: MOP preference in the EARLY_STAGE unvisited roulette
-
-The deterministic MOP preference SHALL also apply where unvisited actions are actually consumed: in `SataAgent.findGreedyActionForward` (`SataAgent.java:1066-1102`), before the `RandomHelper.randomPickWithPriority(actions)` roulette over the unvisited greedy candidates, the agent SHALL first probe the candidate list with `pickBestMopTarget` and return its pick when non-null. The form-completion submit exclusion (INV-FORM-06) applies here exactly as in the epsilon-greedy short-circuit.
-
-Verified motivation: the epsilon-greedy short-circuit alone is shadowed — the selection chain (`selectNewActionNonnull`, `SataAgent.java:409-439`) runs EARLY_STAGE forward before epsilon-greedy, and `getGreedyActions` collects precisely the enabled/valid/unvisited actions, so an unvisited MOP target is typically consumed by the EARLY_STAGE roulette (boost-weighted but probabilistic) before the deterministic branch is ever reached. Trace mining measured EARLY_STAGE at 57.6% of decisions with the short-circuit operating in under 1% of them. Adding the preference inside `findGreedyActionForward` (rather than hoisting the short-circuit above EARLY_STAGE) keeps the SATA chain order intact — ABA, back-tracking, and trivial-path bookkeeping are unaffected; only the pick among already-collected unvisited candidates becomes deterministic when a MOP target is present.
-
-- **INV-SEL-MOP-03**: In every selection path that draws from a set of unvisited candidate actions by priority (EARLY_STAGE forward roulette, epsilon-greedy short-circuit), an eligible unvisited `mopBoost > 0` action SHALL win deterministically over non-MOP candidates, subject to the form-completion submit exclusion.
-
-#### Scenario: MOP target wins the EARLY_STAGE roulette deterministically
-- **WHEN** `findGreedyActionForward` collects three unvisited candidates, one with `mopBoost=500` and two without
-- **THEN** the `mopBoost=500` action SHALL be returned without consulting the roulette
-
-#### Scenario: no MOP candidate leaves the roulette unchanged
-- **WHEN** no collected candidate has `mopBoost > 0`
-- **THEN** `randomPickWithPriority` SHALL run exactly as before
-
-#### Scenario: excluded submit falls through to the roulette
-- **WHEN** the only `mopBoost>0` candidate is the form submit and the form-completion context holds
-- **THEN** `pickBestMopTarget` SHALL skip it (INV-FORM-06)
-- **AND** the roulette SHALL run over the remaining candidates (submit excluded)
-
----
-
-### Requirement: MOP target revisit cap
-
-The agent SHALL count deterministic MOP picks per physical widget and action type across the whole run, keyed by `target.toXPath() + "|" + actionType + "|" + activity` — independent of the abstract state the action belongs to. MOP boosts are event-type-specific (a widget's click and long-click carry independent boosts — `MopScorer.eventTypeOf`), so the cap is per (widget, action type, activity); the key matches the existing `UICoverageTracker.widgetId` convention (xpath|type) scoped by activity. Both deterministic MOP selection paths (the epsilon-greedy path through `selectUnvisitedMopTarget` and the EARLY_STAGE path around `pickBestMopTarget`) SHALL exclude a key whose count has reached `ape.mopTargetPickCap` from the deterministic override, exactly as if its `mopBoost` were 0 for short-circuit purposes — the candidate set is filtered at the two instance call sites; the static picker itself remains pure. The count is incremented on every action the deterministic paths select. Ineligibility SHALL NOT alter the action's `mopBoost` value itself: the boost continues to participate in priority-weighted roulette selection.
-
-With `ape.mopTargetPickCap` <= 0 (zero or negative) the cap SHALL be disabled and both sites SHALL behave exactly as specified by `mop-discriminative-boost`.
-
-When a deterministic pick increments a key's count to exactly `ape.mopTargetPickCap` (the pick that reaches the cap), the agent SHALL log `[APE-RV] MOP target capped: activity=<activity> widget=<xpath> picks=<n>` — once per key per run. Because capped keys are filtered before the next pick, this reach-the-cap event is the only occasion to log.
-
-- **INV-SEL-MOP-04**: No (widget XPath + action type + activity) key SHALL be selected by the deterministic MOP sites more than `ape.mopTargetPickCap` times per run when the cap is positive.
-- **INV-SEL-MOP-05**: With `ape.mopTargetPickCap` <= 0, action selection SHALL be identical to the uncapped specification with no cap-related side effects (no counter updates, no cap log lines).
-
-#### Scenario: fourth pick of the same widget falls through to the roulette
-- **WHEN** `ape.mopTargetPickCap=3` and the deterministic MOP sites have already selected actions of the same type targeting widget X (same XPath, same action type, same activity, across three different abstract states) — the third pick having logged `[APE-RV] MOP target capped` once as it reached the cap
-- **THEN** on the next state where such an action targeting X is the only `mopBoost>0` candidate, `pickBestMopTarget` SHALL return null
-- **AND** selection SHALL proceed to the roulette with X's `mopBoost` still in its priority
-
-#### Scenario: distinct widgets are counted independently
-- **WHEN** widget X has reached the cap and widget Y (different XPath) carries `mopBoost=300` unvisited
-- **THEN** the deterministic sites SHALL still select Y
-
-#### Scenario: cap disabled
-- **WHEN** `ape.mopTargetPickCap=0`
-- **THEN** the deterministic sites SHALL ignore pick counts entirely
+- **AND** `decisionSource` is populated on every selection path unconditionally, and recording is unconditional too
 
 ### Requirement: BACK/MENU discretionary pick cap
 
-The agent SHALL count discretionary BACK/MENU picks per run, keyed by `activity + "|" + actionType.name()` — independent of the abstract state the action belongs to, so refinement-minted sibling states cannot re-arm the count. A discretionary pick is any BACK/MENU action returned by the two EARLY_STAGE greedy phases (`findGreedyActionForward`, `findGreedyActionBackward`) or by `selectNewActionEpsilonGreedyRandomly` (the BACK unvisited short-circuit, the MENU unvisited short-circuit, the least-visited scan, or the priority roulette). When a key's count has reached `ape.backMenuPickCap`, that action type SHALL be excluded from all six discretionary channels for that activity: the EARLY_STAGE backward direct unvisited-BACK pick skips it (falling through to backtrack), the EARLY_STAGE forward roulette drops it from its `randomPickWithPriority` candidates, the epsilon-greedy short-circuits skip it, and a stable wrapped `ActionFilter` removes the type from the candidate set shared by `greedyPickLeastVisited` and `randomlyPickAction`.
+The BACK/MENU cap is the ADDONS member feature `BACK_MENU_CAP` (design D-B5), activated by `ape.backMenuPickCap` (POSITIVE, neutral `0`, jar default `3`, depends on `ADDONS`). When the feature is absent from the resolved plan — `ADDONS` off, or `ape.backMenuPickCap <= 0` — no counter exists and selection is upstream's. `SataAgent` SHALL read the cap from the plan, never from `Config`.
+
+With the feature present, the agent SHALL count discretionary BACK/MENU picks per run, keyed by `activity + "|" + actionType.name()` — independent of the abstract state the action belongs to, so refinement-minted sibling states cannot re-arm the count. A discretionary pick is any BACK/MENU action returned by the two EARLY_STAGE greedy phases (`findGreedyActionForward`, `findGreedyActionBackward`) or by `selectNewActionEpsilonGreedyRandomly` (the BACK unvisited short-circuit, the MENU unvisited short-circuit, the least-visited scan, or the priority roulette). When a key's count has reached `ape.backMenuPickCap`, that action type SHALL be excluded from all six discretionary channels for that activity: the EARLY_STAGE backward direct unvisited-BACK pick skips it (falling through to backtrack), the EARLY_STAGE forward roulette drops it from its `randomPickWithPriority` candidates, the epsilon-greedy short-circuits skip it, and a stable wrapped `ActionFilter` removes the type from the candidate set shared by `greedyPickLeastVisited` and `randomlyPickAction`.
 
 Navigation-essential sites SHALL NOT consult the cap: `selectNewActionBackToActivity`, `backToTrivialActivity`, `checkBackTrack`, and `handleNullAction` keep emitting BACK without limit, preserving the agent's ability to navigate back, backtrack to unsaturated states, and escape action-less screens (the gh9 stuck-loop guard).
 
-With `ape.backMenuPickCap <= 0` the cap SHALL be disabled: selection behavior is identical to the uncapped specification, with no counter updates and no cap log lines.
-
 When a discretionary pick increments a key's count to exactly `ape.backMenuPickCap`, the agent SHALL log `[APE-RV] BACK/MENU capped: activity=<activity> type=<type> picks=<n>` — once per key per run (capped keys are filtered from subsequent discretionary picks, so the reach-the-cap event cannot recur).
 
-- **INV-SEL-NAV-01**: No (activity, BACK/MENU action type) key SHALL be selected by the discretionary channels (the two EARLY_STAGE greedy phases and the epsilon-greedy short-circuits/least-visited/roulette) more than `ape.backMenuPickCap` times per run when the cap is positive.
-- **INV-SEL-NAV-02**: With `ape.backMenuPickCap <= 0`, action selection SHALL be identical to the uncapped specification with no cap-related side effects.
+Whenever the cap removes candidates from the pick that chooses the step's action, the step's record SHALL carry `dec.bmc` with the number removed (`event-sink`); the field is omitted when it is 0 (INV-SEL-15). The count is computed from the filter's include decisions, without a draw.
+
+- **INV-SEL-NAV-01**: No (activity, BACK/MENU action type) key SHALL be selected by the discretionary channels (the two EARLY_STAGE greedy phases and the epsilon-greedy short-circuits/least-visited/roulette) more than `ape.backMenuPickCap` times per run when `BACK_MENU_CAP` is in the plan.
+- **INV-SEL-NAV-02**: With `BACK_MENU_CAP` absent from the plan, action selection SHALL be identical to the uncapped specification with no cap-related side effects (no counter, no log line, no `dec.bmc`).
 - **INV-SEL-NAV-03**: The navigation-essential BACK sites SHALL remain unbounded regardless of the cap state.
 - **INV-SEL-NAV-04**: The wrapped filter SHALL be stable within one roulette invocation (identical include decisions across the counting and picking passes).
 - **INV-SEL-NAV-05**: The two EARLY_STAGE greedy phases SHALL consult the same `activity + "|" + actionType` count as the epsilon-greedy channels: the `findGreedyActionBackward` direct unvisited-BACK pick SHALL be skipped when the BACK key is capped, and capped target-less BACK/MENU SHALL be excluded from the `findGreedyActionForward` roulette candidates; a BACK/MENU winning either EARLY_STAGE phase SHALL count toward the cap.
 
 #### Scenario: fourth discretionary MENU pick is filtered
-- **WHEN** `ape.backMenuPickCap=3` and the discretionary channels have already returned the MENU action of activity `com.x.A` three times (across any mix of sibling states, the third pick having logged `[APE-RV] BACK/MENU capped` once)
+- **WHEN** `ape.backMenuPickCap=3` under the `as` cell and the discretionary channels have already returned the MENU action of activity `com.x.A` three times (across any mix of sibling states, the third pick having logged `[APE-RV] BACK/MENU capped` once)
 - **THEN** on the next `selectNewActionEpsilonGreedyRandomly` invocation in `com.x.A`, the MENU short-circuit SHALL NOT fire even if the state's MENU action is unvisited
-- **AND** the least-visited scan and the roulette SHALL NOT include the MENU action among their candidates
+- **AND** the least-visited scan and the roulette SHALL NOT include the MENU action among their candidates, and the step's record SHALL carry `dec.bmc:1`
 
 #### Scenario: EARLY_STAGE backward — capped BACK is not directly picked
 - **WHEN** `ape.backMenuPickCap=3`, the BACK key of activity `com.x.A` has reached the cap, and `findGreedyActionBackward` runs on a state of `com.x.A` whose BACK action is unvisited (`ENABLED_VALID_UNVISITED.include(back)` is true)
-- **THEN** the direct unvisited-BACK pick (`SataAgent.java:1278-1283`) SHALL NOT fire
+- **THEN** the direct unvisited-BACK pick SHALL NOT fire
 - **AND** the method SHALL fall through to the backtrack path instead
 
 #### Scenario: EARLY_STAGE forward — capped BACK/MENU is excluded from the roulette candidates
 - **WHEN** `ape.backMenuPickCap=3`, the MENU key of activity `com.x.A` has reached the cap, and `findGreedyActionForward` runs on a state of `com.x.A` whose greedy candidates include the MENU action
-- **THEN** the MENU action SHALL be excluded from the `randomPickWithPriority` candidate list
+- **THEN** the MENU action SHALL be excluded from the `randomPickWithPriority` candidate list, and a step chosen by that roulette SHALL carry `dec.bmc:1`
 - **AND** a BACK or MENU action still below the cap that wins the roulette SHALL be recorded against its `activity + "|" + actionType` key (and SHALL log `[APE-RV] BACK/MENU capped` if the record reaches the cap)
 
 #### Scenario: refinement does not re-arm the count
@@ -332,62 +230,162 @@ When a discretionary pick increments a key's count to exactly `ape.backMenuPickC
 
 #### Scenario: navigation BACK is never capped
 - **WHEN** the BACK key of activity `com.x.A` is capped and the agent needs to return to the target activity via `selectNewActionBackToActivity` (or reaches `handleNullAction` with BACK as the only valid action)
-- **THEN** BACK SHALL be emitted normally by those sites
+- **THEN** BACK SHALL be emitted normally by those sites, with no `dec.bmc`
 
 #### Scenario: cap disabled
-- **WHEN** `ape.backMenuPickCap=0` (or negative)
-- **THEN** all discretionary channels SHALL behave exactly as before this change, with no counter updates and no cap log lines
+- **WHEN** `ape.backMenuPickCap=0` (or negative), or the cell has no `ADDONS` (`base`, `mop`)
+- **THEN** `BACK_MENU_CAP` SHALL be absent from the plan's `features`, and every discretionary channel SHALL behave as upstream, with no counter updates, no cap log lines and no `dec.bmc`
 
 ### Requirement: Per-step counterfactual attribution
 
-When the step's action was picked by one of the four MOP-sensitive channels (`short_circuit_unvisited`, `short_circuit_0step`, `roulette_greedy`, `roulette_early`), the `StepRecord`'s decision section SHALL additionally carry `dec.cf` with the counterfactual action and whether it differs from the factual pick: the action the same channel would have selected with `mopBoost` and `mopFrontierBoost` zeroed on every candidate (all other boosts and the candidate set unchanged). The counterfactual action SHALL use the same action rendering as `dec.action`. Records from other channels (LLM, launcher, buffer, `sata_other`) SHALL NOT carry `dec.cf` — MOP boosts do not participate in those picks. `dec.cf` is exempt from the defaults-omitted rule: its absence is itself information, so it is emitted whenever defined (`event-sink` INV-SNK-05). The `stepTelemetryEnabled` gate of the pre-change requirement is deleted with the key: the counterfactual is recorded unconditionally, in every arm.
+When the step's action was chosen by a priority roulette that records `dec.draw` (the EARLY_STAGE unvisited roulette, the epsilon-greedy roulette `State.randomlyPickAction`, and the roulette of the null-action handler) or by the X1 least-visited pick, the `StepRecord`'s decision section SHALL additionally carry `dec.cfc`, a per-scorer counterfactual (plan §5, design § Data Flow 4): `{"<scorer>":0|1}`, one key for each **mounted** scorer whose field is non-zero on at least one candidate of that pick, keyed by the scorer's record name (`mop`, `mopf`, `wtg`, `navf`, `cov`, `menu`, `form`). The value is `1` when the same pick, recomputed with that scorer's field zeroed on every candidate (the other fields and the candidate set unchanged), would have chosen a different action, and `0` otherwise. `dec.cfc` replaces `dec.cf`, which covered only `mopBoost` and `mopFrontierBoost` and named the counterfactual action; `dec.cf` is not written (P3).
 
-Channel semantics:
-- The two short-circuits exist only because of MOP boosts: their counterfactual is the pick of the channel they short-circuit (the roulette/least-visited fall-through with MOP weights zeroed), and the changed flag is set whenever the short-circuit fired on a target the fall-through would not have picked.
-- The two roulettes recompute the weighted pick over the same candidates with per-action priority reduced by that action's `mopBoost + mopFrontierBoost`.
+Records from other picks (the guards, the LLM, the launcher, the MOP coin, the buffer, the navigation paths) SHALL NOT carry `dec.cfc`: no scorer term takes part in them. A pick with no mounted scorer term among its candidates carries no `dec.cfc`. Because the absence of a key is information, `dec.cfc` is exempt from the defaults-omitted rule for its `0` values (`event-sink` INV-SNK-05).
 
-**RNG stream isolation (hard constraint).** The counterfactual recomputation SHALL NOT advance or otherwise perturb the seeded RNG stream that drives selection (INV-EXPL-14 — the seeded run's action sequence must be bit-identical with the counterfactual computation on or off). The roulette counterfactual SHALL reuse the factual pick's recorded draw (as a fraction of total weight) rather than drawing again; the short-circuit counterfactuals are deterministic and draw nothing. A dedicated test SHALL assert sequence identity under a fixed seed with the counterfactual enabled and disabled — perturbing the stream would be a silent bias of the exact class the calibration autopsy catalogued. This is a distinct property from sink neutrality (`event-sink` INV-SNK-07) and both tests SHALL exist.
+Recomputation per pick type:
+- A roulette recomputes the weighted pick over the same candidates with each candidate's weight reduced by the zeroed scorer's term, replaying the factual pick's recorded draw as a fraction of total weight.
+- The X1 pick recomputes R2 over the same tied candidates with the zeroed scorer's field removed from every sum; it is deterministic.
 
-**Honest caveat (interpretation rule, part of this contract):** the counterfactual is 1-step myopic. It establishes the *divergence point* — "did the MOP boost change THIS pick?" — not the cumulative trajectory effect, which only an arm-level contrast (MOP-off arm, rv-android side) can measure. Offline analysis SHALL NOT sum the changed flag into a claim about end-of-run coverage.
+The recomputation is `MopCounterfactual`'s mould generalized to `ScorerCounterfactual`.
 
-**Failure containment:** if the recomputation fails for any reason, the record SHALL carry the counterfactual as unchanged and selection SHALL be unaffected (the factual pick was already made before the counterfactual runs).
+**RNG stream isolation (hard constraint).** The counterfactual recomputation SHALL NOT advance or otherwise perturb any seeded stream (the agent stream, the helper stream, or the own streams of `decision-pipeline`), SHALL call no `resolveAction`, and SHALL touch no cache (INV-SEL-09). A dedicated test SHALL assert sequence identity under a fixed seed with the counterfactual enabled and disabled. This is a distinct property from sink neutrality (`event-sink` INV-SNK-07) and both tests SHALL exist.
+
+**Honest caveat (interpretation rule, part of this contract):** the counterfactual is 1-step myopic. It establishes the *divergence point* — "did this scorer change THIS pick?" — not the cumulative trajectory effect, which only a cell-level contrast can measure. Offline analysis SHALL NOT sum the changed flags into a claim about end-of-run coverage.
+
+**Failure containment:** if the recomputation fails for any reason, the scorer's value SHALL be recorded as `0` and selection SHALL be unaffected (the factual pick was already made before the counterfactual runs).
 
 #### Scenario: MOP short-circuit divergence recorded
 
-- **WHEN** the unvisited-MOP short-circuit selects action A (`mopBoost=500`) and the fall-through roulette with MOP weights zeroed would have picked action B
-- **THEN** the record SHALL carry `dec.ch:"short_circuit_unvisited"` and a `dec.cf` naming B as the counterfactual action with the changed flag set
+- **WHEN** the MOP coin selects action A (`mopWeight=500`) in a cell with `MOP`
+- **THEN** the record SHALL carry `dec.src:"mop"` and no `dec.cfc`, because the coin is an owner and not a weighted pick
+- **AND** the divergence the shortcut counterfactual used to report is read from the owner: the step would have gone to SATA without the coin
 
 #### Scenario: roulette pick unchanged by MOP weights
 
-- **WHEN** the epsilon-greedy roulette picks action C and the recomputation with `mopBoost`/`mopFrontierBoost` zeroed — replaying the same recorded draw fraction — also picks C
-- **THEN** `dec.cf` SHALL report the counterfactual action as C with the changed flag clear
+- **WHEN** the epsilon-greedy roulette picks action C among candidates carrying `mop` and `cov` terms, and the recomputations with `mop` zeroed and with `cov` zeroed — each replaying the same recorded draw fraction — both also pick C
+- **THEN** the record SHALL carry `dec.cfc:{"mop":0,"cov":0}`
 
 #### Scenario: MOP-off arm is counterfactually inert
 
-- **WHEN** a run executes with all MOP weights zero (MOP-off arm)
-- **THEN** every emitted `dec.cf` SHALL have the changed flag clear
-- **AND** any set flag in such a run SHALL be treated as a defect in the counterfactual implementation (smoke-gate invariant)
+- **WHEN** a cell without `MOP` runs (`base`, `as`, `as_llm`)
+- **THEN** no `dec.cfc` SHALL carry the key `mop`, `mopf`, `wtg` or `menu`
+- **AND** any such key in such a run SHALL be treated as a defect of the clean-control gate (`event-sink`, `CleanControlTest`)
 
 #### Scenario: seeded sequence identical with counterfactual on and off
 
 - **WHEN** two runs execute with the same seed, APK, and configuration, one with the counterfactual computation enabled and one with it disabled
-- **THEN** the sequence of selected actions SHALL be identical (the live RNG stream consumed exactly the same draws)
+- **THEN** the sequence of selected actions SHALL be identical (every seeded stream consumed exactly the same draws)
 
 #### Scenario: non-MOP channels carry no counterfactual fields
 
-- **WHEN** a step is picked by the LLM stage or the buffer
-- **THEN** its `StepRecord` SHALL NOT contain a `dec.cf` member
+- **WHEN** a step is picked by the LLM stage, the MOP coin, the launcher or the buffer
+- **THEN** its `StepRecord` SHALL contain neither a `dec.cfc` nor a `dec.cf` member
+
+### Requirement: SATA Navigation Extension Points (X1, X3, X4)
+
+`SataAgent` SHALL take three tie-breaks through Strategy interfaces fixed in wave 0, each mounted once by the composition root (the `SataAgent` constructor) from the resolved plan. There is no plan key for any of them.
+
+```java
+interface LeastVisitedTie { ModelAction pick(List<ModelAction> leastVisited); }      // X1
+interface AbaTargetTie    { boolean replaces(State incumbent, State candidate); }    // X3
+interface TrivialPathPick { Subsequence pick(List<Subsequence> paths); }             // X4
+```
+
+The implementations are named `<Variant><Interface>` (design D-B12): X1 `ScorerSumLeastVisitedTie`; X3
+`ApeAbaTargetTie` and `MopAbaTargetTie`; X4 `ApeTrivialPathPick` and `MopTrivialPathPick`.
+
+| Point | Site | APE default (mounted without `MOP`) | MOP variant (mounted with `MOP`) |
+|---|---|---|---|
+| X1 | the visit-count tie of `State.greedyPickLeastVisited` | `ScorerSumLeastVisitedTie`: rule R2 ("State.greedyPickLeastVisited() — Priority Tiebreaker"); draws nothing | none: X1 has one strategy in every cell |
+| X3 | the equal-visit-count tie between two greedy targets of the ABA path, in both the same-activity branch (state visit counts) and the cross-activity branch (activity visit counts) | `ApeAbaTargetTie`: never replace the incumbent on a tie; draws nothing | `MopAbaTargetTie`: replace when `stateMopDensity(candidate) > stateMopDensity(incumbent)` (`mop-guidance` "Navigation Tie-Breaks as MOP Variants"); draws nothing |
+| X4 | the choice among the shortest paths to a trivial activity | `ApeTrivialPathPick`: always `RandomHelper.randomPick(paths)`, one draw, also for a single path (upstream `SataAgent` `8f51b99c` `:755-757`) | `MopTrivialPathPick`: the first path whose end state holds the strictly largest density; `randomPick` when every density is equal |
+
+The defaults reproduce upstream APE including RNG consumption, so a cell without `MOP` shifts no draw at these sites (INV-SEL-11). The selection of a variant SHALL happen only at mount time; no use site SHALL branch on MOP availability (INV-SEL-12).
+
+Whenever an extension point is consulted with two or more candidates, the step's record SHALL carry `dec.nav` (`event-sink`) as `{"x":"X1"|"X3"|"X4", "c":"ape"|"mop", "alt":0|1, "drew":0|1}`: `x` the point; `c` the mounted strategy (`ape` for X1 in every cell); `drew` is `1` when the point consumed a draw. `alt` is `1` if and only if the MOP variant decided by its own rule: for X3, `MopAbaTargetTie` replaced the incumbent; for X4, `MopTrivialPathPick` chose the path by the strictly largest density, without a draw. Otherwise `alt` is `0`: X1 always writes `alt:0` with `c:"ape"`, whatever the scorer sum did (its effect is in `dec.cfc`), and in a cell without `MOP` every `dec.nav` carries `alt:0`. A point consulted with a single candidate writes no `dec.nav`; in particular a single path at X4 still calls `randomPick` once (INV-SEL-11) but records no `dec.nav`. A tie resolved inside a step whose action comes from a later strategy (an ABA probe that is not taken) MAY be overwritten by the last tie of the same step; at most one `dec.nav` member exists per record. The computation of `dec.nav` SHALL be pure.
+
+The rule holds whatever owner takes the step. X4 is also consulted by the `Budget` guard, whose `selectNewActionForTrivialActivity()` search runs through `SataAgent.budgetNavigation()`: when that search ties two or more paths and the guard returns the action, the step's record SHALL carry the X4 `dec.nav` of that choice, handed from the step's trace to the sink with nothing else of the trace (design D-B21). A budget step SHALL still carry no `dec.strat`, although the search stamps one in the trace (`activity-budget`). Handing the `nav` over is pure telemetry: no draw and no decision moves.
+
+#### Scenario: X3 default never replaces on a tie
+- **WHEN** a cell without `MOP` runs the ABA scan and two greedy targets of the same activity both have visit count 4, the incumbent found first
+- **THEN** the incumbent SHALL stay the target and no draw SHALL be consumed
+- **AND** the record SHALL carry `dec.nav:{"x":"X3","c":"ape","alt":0,"drew":0}`
+
+#### Scenario: X3 MOP variant prefers the denser target
+- **WHEN** a cell with `MOP` runs the same scan and the candidate's `stateMopDensity` is 3 while the incumbent's is 1
+- **THEN** the candidate SHALL replace the incumbent
+- **AND** the record SHALL carry `dec.nav:{"x":"X3","c":"mop","alt":1,"drew":0}`
+
+#### Scenario: X4 default always draws
+- **WHEN** a cell without `MOP` finds two shortest paths to a trivial activity, end-state densities 0 and 2 as the MOP data would compute them
+- **THEN** the path SHALL be chosen by `RandomHelper.randomPick`, consuming one helper-stream draw
+- **AND** the record SHALL carry `dec.nav:{"x":"X4","c":"ape","alt":0,"drew":1}`
+- **AND WHEN** a single path is found
+- **THEN** `randomPick` SHALL still be called once, as upstream does, and the record SHALL carry no `dec.nav`, because the point was consulted with one candidate
+
+#### Scenario: X4 MOP variant takes the densest path without drawing
+- **WHEN** a cell with `MOP` finds three shortest paths whose end-state densities are 0, 2, 2
+- **THEN** the second path SHALL be chosen, no draw SHALL be consumed, and the record SHALL carry `dec.nav:{"x":"X4","c":"mop","alt":1,"drew":0}`
+- **AND WHEN** the densities are 1, 1, 1
+- **THEN** `randomPick` SHALL choose and the record SHALL carry `dec.nav:{"x":"X4","c":"mop","alt":0,"drew":1}`
+
+#### Scenario: a budget step records its X4 tie
+- **WHEN** in the `as` cell the `Budget` guard takes a step and its trivial-activity search found two shortest paths, chosen by `randomPick`
+- **THEN** the record SHALL carry `dec.src:"budget"`, `dec.ch:"budget"` and `dec.nav:{"x":"X4","c":"ape","alt":0,"drew":1}`
+- **AND** it SHALL carry no `dec.strat`
+- **AND** the helper-stream draws and the chosen action SHALL be those of the same step without the `dec.nav` hand-off
+
+#### Scenario: the base cell reproduces upstream at the three points
+- **WHEN** the `base` cell and upstream APE `8f51b99c` run the same parity fixture with the same seed through an ABA scan, a least-visited tie and a trivial-activity path choice
+- **THEN** the three choices and the helper-stream position after them SHALL be identical (`parity-oracle`)
+
+### Requirement: Buffer Abandonment Without Weakening
+
+`StatefulAgent` SHALL offer two distinct ways of emptying the SATA action buffer:
+
+- `clearBuffer()` — a **real path failure**: the buffered path no longer matches the observed state or action (`StatefulAgent.java:597-656`, unexpected action or state, then a fresh choice). It SHALL keep upstream behaviour: weaken the next planned edge with `Graph.weakenStateTransition`, then clear the buffer.
+- `abandonBuffer(String owner)` — a **preemption**: an owner placed before SATA in the pipeline (`budget`, `llm`, `launcher`, `mop`) takes a step while the buffer is non-empty. It SHALL clear the buffer **without** weakening any edge (plan P-4, D-A6, design D-B14.13), record `dec.buf` with the owner on the step's record and increment `RUN_END.counters.bufAbandoned`.
+
+A restart step does not go through `abandonBuffer`: the `Restart` guard starts a new episode, which clears the buffer without weakening any edge (design D-B14.13). It records no `dec.buf` and does not count in `bufAbandoned`.
+
+The preempting stages reach the operation through `StageCollaborators.abandonBuffer(owner)` (`decision-pipeline`). An empty buffer is a no-op for both operations, with no `dec.buf` and no counter change.
+
+#### Scenario: LLM coin preempts a buffered path
+- **WHEN** the buffer holds a 3-edge path A→B→C→D, the step is in state A, and the LLM coin takes the step
+- **THEN** the buffer SHALL be empty after the step, the strength of edge A→B SHALL be unchanged, and the record SHALL carry `dec.src:"llm"` and `dec.buf:"llm"`
+- **AND** `RUN_END.counters.bufAbandoned` SHALL be one larger
+
+#### Scenario: MOP coin preempts a buffered path
+- **WHEN** the buffer is non-empty and the MOP coin takes the step
+- **THEN** the record SHALL carry `dec.src:"mop"` and `dec.buf:"mop"`, and no edge SHALL be weakened
+
+#### Scenario: Budget guard preempts a buffered path
+- **WHEN** the buffer is non-empty and the `Budget` guard takes the step
+- **THEN** the record SHALL carry `dec.src:"budget"` and `dec.buf:"budget"`, and no edge SHALL be weakened
+
+#### Scenario: a restart clears the buffer through a new episode
+- **WHEN** the buffer is non-empty and the `Restart` guard takes the step
+- **THEN** the buffer SHALL be empty after the step, no edge SHALL be weakened, and the record SHALL carry `dec.src:"restart"` and no `dec.buf`
+
+#### Scenario: a real path failure still weakens
+- **WHEN** the buffer's next edge is A→B with action `a`, and the agent observes state E instead of A
+- **THEN** `clearBuffer()` SHALL weaken edge A→B before clearing, as upstream APE does
+- **AND** the record SHALL carry no `dec.buf`
 
 ## Invariants
 
-- **INV-SEL-01**: When `Config.leastVisitedPriorityTiebreak` is `true` (default), `greedyPickLeastVisited()` SHALL always prefer the action with the lowest `visitedCount`, regardless of priority; priority is ONLY a tiebreaker, never an override. When the flag is `false` (the `ape_pure` arm), ties among the lowest-`visitedCount` actions are broken by array order and no RV priority boost influences the pick (upstream APE) — scoped by `rv-scoring-pipeline`.
-- **INV-SEL-02**: When all actions have distinct `visitedCount` values, the behavior SHALL be identical to the pre-change implementation. (Flag-independent: with distinct counts there is no tie, so `leastVisitedPriorityTiebreak` does not apply.)
+- **INV-SEL-01**: `greedyPickLeastVisited()` SHALL always prefer the action with the lowest `visitedCount`; among the actions sharing it, the X1 strategy decides by rule R2 (the larger scorer sum, otherwise array order). Priority SHALL NOT be read by the pick. With zero scorers mounted, the pick SHALL equal upstream APE's.
+- **INV-SEL-02**: When all actions have distinct `visitedCount` values, the pick SHALL be the minimum and the X1 strategy SHALL NOT be consulted.
 - **INV-SEL-03**: The method SHALL remain O(n) — single pass over actions, no sorting.
 - **INV-SEL-04**: When `Config.stepTelemetryEnabled` is `true` (default), exactly one `[APE-STEP]` line SHALL be emitted per finally-selected action, covering every selection path including the LLM early-returns and budget/trivial early-returns. The line SHALL carry a `decision_source` from a fixed enum, never a free-form string. The boost-attribution rule SHALL only change which enum value is carried; it SHALL NOT add, remove, or duplicate `[APE-STEP]` lines, and SHALL NOT modify any boost field. When the flag is `false` (the `ape_pure` arm), zero `[APE-STEP]` lines are emitted while `decisionSource` is still populated internally — scoped by `rv-scoring-pipeline`.
-- **INV-SEL-05**: When `stepTelemetryEnabled` is `true`, every `[APE-STEP]` line SHALL carry exactly one `pick_channel` field whose value is a member of the fixed enum (`short_circuit_unvisited`, `short_circuit_0step`, `roulette_greedy`, `roulette_early`, `launcher`, `llm`, `buffer`, `sata_other`) — never a free-form string; the channel is provenance set at the pick site, covering every early-return path.
+- **INV-SEL-05**: Every record SHALL carry exactly one `dec.src` from the owner enum `budget`, `restart`, `llm`, `launcher`, `mop`, `sata`, and every record with `dec.src:"sata"` SHALL carry exactly one `dec.strat` from the fixed enum of `event-sink`. Every record SHALL carry one `dec.ch`; a step the MOP coin takes carries `dec.ch:"mop_coin"`, a step the `Budget` guard takes `dec.ch:"budget"` and a step the `Restart` guard takes `dec.ch:"restart"`, and the channel values `short_circuit_unvisited` and `short_circuit_0step` SHALL NOT be produced (design D-B14.17).
 - **INV-SEL-06**: On every emitted `[APE-STEP]` line, `activity_has_mop` SHALL equal `MopData.activityHasMop(<current activity>)` when `MopData` is non-null, and `0` whenever `MopData` is null. The field is 0/1, never absent when the line is emitted.
 - **INV-SEL-07**: Every `[APE-STEP]` line SHALL occupy exactly one physical line; no widget-derived text SHALL introduce an unescaped `\n`/`\r` into the line.
-- **INV-SEL-08**: Counterfactual fields (`cf_action`, `cf_changed`) SHALL appear on exactly the lines whose `pick_channel` is one of the four MOP-sensitive channels, and on no others. In a run where every MOP weight is zero, every emitted `cf_changed` SHALL be `0`.
-- **INV-SEL-09**: The counterfactual recomputation SHALL consume zero draws from the live seeded RNG stream: for a fixed seed, APK, and configuration, the selected-action sequence SHALL be identical with the counterfactual computation enabled or disabled.
+- **INV-SEL-08**: `dec.cfc` SHALL appear only on records whose pick was a priority roulette that writes `dec.draw` or the X1 least-visited pick, and only over mounted scorers with a non-zero term in that pick's candidate set. In a cell without MOP, `dec.cfc` SHALL carry none of the keys `mop`, `mopf`, `wtg`, `menu`.
+- **INV-SEL-09**: The counterfactual recomputation of every scorer SHALL consume zero draws from any seeded stream, call no `resolveAction` and touch no cache.
 - **INV-SEL-10**: Every emitted `[APE-STEP]` line for an action with a resolved target SHALL carry exactly one `patched=0|1` field reporting whether that target's clickability was written by `patchGUITree`; lines for targetless actions SHALL omit it. The bit SHALL be set at the patch sites and never inferred at emission time from post-patch attributes, which are indistinguishable from native ones by construction. `patched=1` records that the patch *wrote* the node's clickability, in either direction — it is set both where the patch grants clickability to a child and where it removes it from the parent — so a causal reading ("this action exists only because of the patch") holds for `MODEL_CLICK` and SHALL NOT be extended to other action types on a patched node.
-- **INV-SEL-MOP-06**: Whenever the deterministic MOP sites choose among two or more eligible candidates, an action whose (widget, action type) pair (`UICoverageTracker.widgetId`, `xpath|ActionType`) has no interaction in the activity SHALL be chosen over every action whose pair has one, whatever their boosts. The ranking SHALL read the coverage tracker and the retirement state and SHALL write neither. (Also stated inline in "MOP-target greedy short-circuit in epsilon-greedy selection", beside INV-SEL-MOP-01 and INV-SEL-MOP-02.)
+- **INV-SEL-11**: Each extension point's APE default SHALL consume exactly the RNG draws upstream APE consumes at that site: X1 none, X3 none, X4 one `RandomHelper.randomPick` per pick.
+- **INV-SEL-12**: The MOP variants of X3 and X4 SHALL be mounted if and only if `MOP` is in the resolved plan. No SATA code path SHALL test `getMopData() != null` to choose a tie-break.
+- **INV-SEL-13**: A buffer abandoned by a preempting owner SHALL leave every edge strength of the graph unchanged; only a real failure of the buffered path weakens an edge.
+- **INV-SEL-14**: `dec.src` SHALL be the owner that executed the step and SHALL NOT be derived from boost values.
+- **INV-SEL-15**: `dec.bmc` SHALL equal the number of candidates the BACK/MENU cap removed from the pick that chose the step's action, and SHALL be absent when it is 0 or when `BACK_MENU_CAP` is not in the plan.

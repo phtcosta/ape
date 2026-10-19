@@ -2,75 +2,67 @@
 
 ## Purpose
 
-The parity oracle is the acceptance gate for the "Disposable Run Kernel" re-architecture
-(`docs/analise_fable-selecao.md` rev. 3, Sec. 9.9, Sec. 10 stage 1). The precedence semantics
-of APE-RV's action selection live implicitly in the textual order of
-`SataAgent.selectNewActionNonnull()` (`SataAgent.java:449-589`): budget-trivial navigation,
-then three LLM hooks (new-state, stagnation, random), then the cadence-based MOP launcher,
-then the component-trigger side-effect, then the seven-rung SATA chain. `rearch-02-runspec`
-and `rearch-03-decision-pipeline` will restructure the configuration authority and this
-ladder; comparability with the phase-2 experimental grid (21,681 tasks plus calibration)
-requires that the restructured code reproduce today's decisions exactly under the same seeds.
-Before this change, nothing detects a regression of that kind.
+The parity oracle is the acceptance gate for every change that restructures action selection
+(`docs/analise_fable-selecao.md` rev. 3, Sec. 9.9, Sec. 10 stage 1). APE-RV's precedence
+semantics live in the `DecisionPipeline` that `SataAgent.selectNewActionNonnull()` runs: BUDGET,
+RESTART, LLM_NEW_STATE, LLM_STAGNATION, LLM_COIN, MOP_LAUNCHER, COMPONENT_TRIGGER, MOP_COIN,
+SATA_CHAIN (`decision-pipeline`). A restructuring that decides no behaviour change must reproduce
+the same decisions under the same seeds; the oracle is what detects a regression of that kind.
 
 The oracle is a pure-JVM golden-capture harness living entirely in the test tree
 (`src/test/java`, `src/test/resources`), exercised by `mvn test` with no device, no emulator,
-and no network. For each target preset — the property sets corresponding to today's `aperv`,
-`mop`, `llm`, and `llm_mop` experimental arms — it drives the unmodified
-`selectNewActionNonnull()` over scripted synthetic states under fixed seeds and compares the
-resulting decision sequence against a committed golden file. A dedicated preemption golden
-pins the hard precedence order on a synthetic state that qualifies every mechanism
-simultaneously, including the undocumented cadence interaction (report finding 3.3-1): a step
-preempted by the LLM does **not** advance the launcher cadence counter
-(`_stepsSinceLauncherFiring++` at `SataAgent.java:522` executes only after the LLM blocks
-return at `:485`/`:504`/`:513`).
+and no network. It keeps **one golden set per cell preset** — `base`, `mop`, `as`, `as_mop`,
+`as_llm`, `as_mop_llm` (`guidance-groups`) — and for each it drives `selectNewActionNonnull()`
+over scripted synthetic states under fixed seeds and compares the resulting decision sequence
+against the committed golden. The cell's resolved plan decides which mechanisms the scaffold
+mounts, as the composition root does in production. A dedicated preemption golden, in the
+`as_mop_llm` cell, pins the pipeline order on a synthetic state that qualifies every mechanism
+simultaneously, together with the **global launcher cadence** (design D-A16, D-B11): the cadence
+counter advances on every step, LLM steps included, and the launcher fires on the first step at
+which the cadence is due and the pipeline reaches `MOP_LAUNCHER`. That decision replaced the
+captured behaviour of finding 3.3-1, in which a step preempted by the LLM did not advance the counter.
+
+The `base` cell is the oracle's reference for upstream APE: the SATA extension points X1, X3 and
+X4 take the APE default there, including RNG consumption, and the oracle pins that equality on
+fixtures against the upstream behaviour of `ape.jar` `8f51b99c` (INV-ORA-09).
 
 The goldens are **harness-relative**: they pin the decision logic under synthetic states and
 a scripted (deterministic, offline) LLM, not the byte sequence of a real device run.
 Device-level behavior (GUITree construction from `AccessibilityNodeInfo`, naming/refinement,
-model evolution, event injection, restart/teardown, branches reaching `AndroidDevice`)
+model evolution, event injection, teardown, branches reaching `AndroidDevice`)
 is outside the capture boundary and remains validated by the existing rv-platform smoke path.
 
-The **component-trigger block** (`SataAgent.java:547-551`) is outside that boundary too, by
-owner decision of 2026-08-03 on implementation finding 2.1-c, and for a reason worth stating
-rather than burying: it never fires. `ape.componentPercentage` is set by no arm of the phase-2
-grid — the key exists only in `aperv-tool`'s mapping (`tool.py:101`) and is absent from the 18
-`ARM_DEFINING_KEYS` and from both arm-flag dicts — so every arm runs on the jar default `0.0`
-(`Config.java:256`), which makes the block's first conjunct false in production and in this
-harness alike. Two further reasons make capture impossible even if the gate were forced open:
-the committed MOP fixture yields zero trigger tuples (no receivers, no services, and its single
-provider has `reachesTarget=false`, filtered at `StatefulAgent.java:1246`), so
-`triggerMopComponent()` returns at `:1266` with nothing observable; and had a tuple existed,
-the dispatch is device-bound (`android.content.Intent` in `dispatchTrigger`,
-`AndroidDevice.executeCommandAndWaitFor` in `dispatchProvider`). Excluding it costs no parity:
-the block returns nothing, so its position cannot change a recorded decision, and because the
-conjunction short-circuits on the disabled gate it consumes no RNG draw either, so it cannot
-shift the agent stream. Should a future arm enable it, this exclusion must be revisited before
-that arm's comparability is claimed.
+The **component trigger** is inside the boundary as a recorded no-op. The STATIC block mounts it
+at `ape.componentPercentage=0.03`, so it runs in the four `as*` cells. Its coin `u_C` draws from
+`StepRng`'s component stream, so it shifts no agent, helper or other coin draw; its dispatch is
+device-bound (`android.content.Intent`, `AndroidDevice.executeCommandAndWaitFor`), so
+`OracleSataAgent.triggerComponent()` dispatches nothing and records the tuple the cursor selected,
+which the golden carries as `trig` (design D-B14.5).
 
-One more mechanism sits outside the boundary, for a different reason and at a finer grain: the
-**trivial-action return of the budget block** (`SataAgent.java:468-477`). The block's *gate* is
-captured — a scenario declares an activity's budget exhausted, and the golden pins the block
-being entered and falling through, which is what distinguishes "budget disabled" from "budget
-enabled with nothing trivial to navigate to". The return itself is not captured, because it
-cannot be reached from inside the boundary: `selectNewActionForTrivialActivity()` requires more
-than `Config.trivialActivityRankThreshold` = 3 activity nodes and then searches for a path over
-graph **edges**, and the harness records no `StateTransition` at all — the driver moves between
-screens by injecting `newState`. With `ape.doBackToTrivialActivity` false by default the
-fallback never reaches `AndroidDevice.getFocusedStack()` either, so the call returns null and
-the block falls through. Recording edges to open that path would widen the capture boundary
-rather than fill a gap in it: every rung that reads edges would see a different world, and
-`refillBuffer` would start feeding `actionBufferSize()`, which all three LLM preconditions
-read. Excluding the return costs the precedence claim nothing — the budget block's position
-ahead of every other mechanism is still pinned, by the step that enters it and falls through —
-and it costs exactly one decision shape, said out loud here instead of inferred from an absent
-record.
+One mechanism sits outside the boundary at a finer grain: the **trivial-action return of the
+budget stage**. The stage's *gate* is captured — a scenario declares an activity's budget
+exhausted, and the golden pins the stage being entered and falling through, which is what
+distinguishes "budget not mounted" from "budget mounted with nothing trivial to navigate to". The
+return itself is not captured, because it cannot be reached from inside the boundary:
+`selectNewActionForTrivialActivity()` requires more than `ape.trivialActivityRankThreshold`
+(plan key, default 3) activity nodes and then searches for a path over graph **edges**, and the
+harness records no `StateTransition` at all — the driver moves between screens by injecting
+`newState`. With `ape.doBackToTrivialActivity` false by default the fallback never reaches
+`AndroidDevice.getFocusedStack()` either, so the call returns null and the stage falls through.
+Recording edges to open that path would widen the capture boundary rather than fill a gap in it:
+every rung that reads edges would see a different world, and `refillBuffer` would start feeding
+`actionBufferSize()`, which the LLM preconditions read. Excluding the return costs the precedence
+claim nothing — the budget stage's position ahead of every other mechanism is still pinned, by
+the step that enters it and falls through — and it costs exactly one decision shape, said out
+loud here instead of inferred from an absent record.
 
 Within that boundary, the oracle's contract is strict: same preset, same seed, same scenario
-⇒ identical decision sequence, before and after any stage-2/3 production change. A golden
-that no longer matches is either a migration regression (fix the code) or a deliberately
-decided behavior change (regenerate the golden through the documented procedure and record
-why) — never something to silently re-record.
+⇒ identical decision sequence. A golden that no longer matches is either a regression (fix the
+code) or a deliberately decided behavior change (regenerate the golden through the documented
+procedure and record why) — never something to silently re-record. The current goldens were
+recaptured once, deliberately, by `isolate-guidance-groups` (INV-ORA-08): the four seeded
+`StepRng` streams (design D-B9), the restart guard ahead of selection (D-B7) and the upstream
+X3/X4 defaults (D-B12) each shift the random sequence relative to `eea2b1a9`.
 
 ## Data Contracts
 
@@ -78,30 +70,33 @@ why) — never something to silently re-record.
 
 - `ScenarioScript` — hand-written deterministic synthetic app: ordered screens (widget lists
   materialized as `ModelAction`s with `Name` targets), a transition table, per-step LLM script
-  entries, per-step scripted agent-side state (`_isNewState`, `graphStableCounter`)
-  (source: test tree, committed)
-- `preset injection profile` — the field set wired into the Unsafe-allocated agent, mirroring
-  `StatefulAgent`'s constructor (`StatefulAgent.java:179-208`): `_mopData` (null or loaded
-  fixture), `_llmRouter` (null or scripted stub), `_budgetTracker`, `scoringContext`,
-  `scoringPipeline`, epsilon, counters (source: `OracleScaffold`)
-- `seed: long` — seeds **both** RNG streams: `RandomHelper.seed(seed)` (static stream) and the
-  agent's `getRandom()` stream via the harness subclass override (source: capture test)
-- `MopData fixture` — `src/test/resources/cryptoapp.apk.gh60-fresh.json`, loaded through the
-  production `MopData.load` path (JVM-safe, org.json) for the `mop`/`llm_mop` presets
+  entries, per-step scripted agent-side state (`_isNewState`, `graphStableCounter`), and the
+  declared inputs nothing below the entry point assigns (a widget's `mopWeight`, the seeded
+  cadence counter, an exhausted activity) (source: test tree, committed)
+- `preset injection profile` — one profile per cell preset; the cell's resolved plan decides which
+  mechanisms the scaffold mounts (`StaticGuiModel`, `MopData`, the scripted LLM router, the gates,
+  the MOP coin, the X1/X3/X4 variants) (source: `OracleScaffold`)
+- `seed: long` — seeds every RNG stream of the run: the agent stream (`getRandom()`, via the
+  harness subclass override), the helper stream (`RandomHelper.seed`), and the four `StepRng`
+  streams derived from it (`llmCoin`, `mopCoin`, `componentCoin`, the fuzz toss) (source: capture test)
+- `MopData fixture` — `src/test/resources/cryptoapp.apk.mop.json` (wire format 2), loaded through
+  the production `StaticArtifactLoader` for the cells that contain STATIC or MOP
 - `-Dape.oracle.regenerate=true` — the only trigger for capture (write) mode
   (source: developer command line, never CI)
 
 ### Output
 
-- `src/test/resources/goldens/<preset>/<scenario>.ndjson` — one header record
-  (`kind`, `preset`, `scenario`, `seed`, `fixture`, `capturedAt`) followed by one record per
-  step: `step`, `actionType`, `target` (the action `Name.toXPath()`, absent for targetless
-  actions), `decisionSource`, `pickChannel` (absent for non-`ModelAction` returns), `llm`
-  (`accepted | declined | timeout | not_routed`, absent for presets without the router)
-  (consumer: the compare mode of this suite; the stage-2/3 migration gate)
+- `src/test/resources/goldens/<cell>/<scenario>.ndjson` — one directory per cell preset (`base`,
+  `mop`, `as`, `as_mop`, `as_llm`, `as_mop_llm`). One header record (`kind`, `preset`, `scenario`,
+  `seed`, `fixture` when a fixture participates, `capturedAt`) followed by one record per step:
+  `step`, `actionType`, `target` (the action `Name.toXPath()`, or the launcher's candidate class;
+  absent for targetless actions), `decisionSource`, `pickChannel` (absent for non-`ModelAction`
+  returns), `llm` (`accepted | declined | timeout | not_routed`, absent for cells without the
+  router), `trig` (the component-trigger tuple, on the step it fires)
+  (consumer: the compare mode of this suite; the migration gate of a restructuring change)
 - First-divergence report on comparison failure: `preset`, `scenario`, `step`, `field`,
   golden value, actual value, plus the total count of divergent records
-  (consumer: the developer migrating stages 2–3)
+  (consumer: the developer of the restructuring change)
 
 ### Side-Effects
 
@@ -148,99 +143,75 @@ why) — never something to silently re-record.
 - **INV-ORA-04**: The default test run (`mvn test`, CI included) SHALL only compare; golden
   files SHALL be written exclusively when `-Dape.oracle.regenerate=true` is set explicitly.
   No mechanism SHALL regenerate goldens automatically.
-- **INV-ORA-05**: The preemption golden SHALL assert, as captured current behavior, that a
-  step whose selection is preempted by an accepted LLM result does NOT advance
-  `_stepsSinceLauncherFiring` (finding 3.3-1), until stage 3 replaces this assertion with a
-  decided behavior.
+- **INV-ORA-05**: The preemption golden SHALL assert that the launcher's cadence counter
+  advances on every step, including a step taken by an LLM stage, and that the launcher fires on
+  the first step at which the counter has reached the cadence and the pipeline reaches
+  `MOP_LAUNCHER`.
 - **INV-ORA-06**: A comparison failure SHALL identify the preset, scenario, step index, and
   the first divergent field with both golden and actual values.
 - **INV-ORA-07**: While `rearch-02-runspec` and `rearch-03-decision-pipeline` are in flight,
   golden files and scenario scripts SHALL NOT change; only the injection scaffold MAY be
   adapted to renamed or relocated fields. A behavior change in those stages that requires
   regenerating a golden SHALL be treated as a deviation requiring an explicit owner decision.
+- **INV-ORA-08**: There SHALL be one committed golden set per cell preset, and no golden SHALL
+  name a preset outside `base`, `mop`, `as`, `as_mop`, `as_llm`, `as_mop_llm`. The sets SHALL be
+  captured once, in wave 2 of `isolate-guidance-groups`, through the deliberate regeneration
+  procedure, with a commit message that cites that change. Coverage: `ParityOracle*Test`, the
+  goldens README.
+- **INV-ORA-09**: In the `base` cell, X1, X3 and X4 SHALL decide as upstream APE (`8f51b99c`)
+  decides on the same candidates and the same seed. X1 SHALL return the first least-visited
+  action of the array; X3 SHALL never replace the incumbent on a tie and SHALL draw nothing; X4
+  SHALL always take `RandomHelper.randomPick`. Coverage: `ParityOracleBaseTest`,
+  `SataExtensionPointTest`.
 
 ## Requirements
 
 ### Requirement: Per-Preset Golden Decision-Sequence Capture
 
-The oracle SHALL capture and commit, per target preset, the ordered action-selection sequence
-produced by the current `SataAgent.selectNewActionNonnull()` over that preset's scenario
-scripts under a fixed declared seed. The target presets SHALL be the four property sets
-corresponding to today's experimental arms: `aperv` (no MOP data, no LLM), `mop` (MOP data
-loaded from the committed static-analysis fixture, no LLM), `llm` (scripted LLM router, no
-MOP data), and `llm_mop` (both). A preset SHALL be realized by the harness's injection
-profile mirroring the constructor wiring of `StatefulAgent.java:179-208` — `_mopData` and
-`_llmRouter` presence/absence are the preset axes — over jar-default `Config` values.
+The oracle SHALL capture and commit, per target preset, the ordered action-selection sequence produced by the agent's selection entry point (`SataAgent.selectNewActionNonnull()`, which runs the `DecisionPipeline`) over that preset's scenario scripts under a fixed declared seed. The target presets SHALL be the six cell presets: `base` (no group), `mop` (MOP over BASE, data loaded from the committed format-2 fixture), `as` (ADDONS + STATIC), `as_mop` (ADDONS + STATIC + MOP), `as_llm` (ADDONS + STATIC + scripted LLM router), and `as_mop_llm` (all four groups). A preset SHALL be realized by the harness's injection profile mirroring the composition root's wiring for the cell's resolved plan: which providers, router, gates, coins and extension-point variants exist is decided by the plan's features, exactly as in production.
 
-Each preset's capture SHALL include at least one multi-step baseline scenario exercising:
-the SATA chain fall-through (buffer, early-stage, epsilon-greedy rungs), and — where the
-preset enables them — MOP-boosted picks, the cadence launcher firing, and all three LLM hooks
-with accept, decline, and timeout verdicts.
+Each preset's capture SHALL include at least one multi-step baseline scenario exercising: the SATA chain fall-through (buffer, early-stage, epsilon-greedy rungs), and — where the preset enables them — MOP-coin picks, the cadence launcher firing, and the LLM triggers and coin with accept, decline, and timeout verdicts.
 
-Three of those inputs are **declared by the scenario**, for the same reason action validity and
-priority already are: the ladder reads them but nothing below the oracle's entry point assigns
-them. A scenario that wants a MOP-attributed step SHALL declare the widget's `mopBoost` (no
-code below `adjustActionsByGUITree()` writes one, so an undeclared boost is zero and the MOP
-short-circuit is a no-op); a scenario that wants the launcher to fire within a readable number
-of steps SHALL declare the seeded value of the cadence counter (the fire is an exact equality
-against `Config.activityTriggerStagnationStep`); and a scenario that wants the budget block
-entered SHALL declare which activity is exhausted (an unregistered activity reports no
-exhaustion, and registration happens above the entry point). Each declared value SHALL be
-visible in the scenario script, so a golden's reader can tell an input from a decision.
+Three of those inputs are **declared by the scenario**, for the same reason action validity and priority already are: the ladder reads them but nothing below the oracle's entry point assigns them. A scenario that wants a MOP-coin step SHALL declare the widget's `mopWeight` (no code below the entry point writes one, so an undeclared weight is zero and the MOP coin is ineligible); a scenario that wants the launcher to fire within a readable number of steps SHALL declare the seeded value of the cadence counter (the launcher fires on the first step at which the counter is at least `ape.activityTriggerStagnationStep` and the pipeline reaches `MOP_LAUNCHER`); and a scenario that wants the budget block entered SHALL declare which activity is exhausted (an unregistered activity reports no exhaustion, and registration happens above the entry point). Each declared value SHALL be visible in the scenario script, so a golden's reader can tell an input from a decision.
 
-Each preset capture test SHALL guard-assert the jar-default `Config` values the ladder reads
-for that preset (e.g. `activityBudgetEnabled`, `activityTriggerEnabled`,
-`activityTriggerStagnationStep`, `componentPercentage`), so a future default change fails the
-guard explicitly instead of surfacing as an unexplained golden divergence.
+Each preset capture test SHALL guard-assert the values the ladder reads for that preset — the cell plan's values (e.g. `ape.activityBudgetEnabled`, `ape.activityTriggerEnabled`, `ape.activityTriggerStagnationStep`, `ape.componentPercentage`, `ape.llmPercentage`, `ape.mopCoinPercentage`) and the jar-default `Config` values that remain outside the plan — so a future default change fails the guard explicitly instead of surfacing as an unexplained golden divergence.
 
-The scope of that guard is exactly "the values the ladder reads", and the boundary matters
-because it is easy to over-read. The scoring weights (`mopWeightDirect`,
-`mopWeightTransitive`, `mopWeightOpenMenu`, `mopWeightWtg`, `frontierBoostWeight`,
-`mopFrontierWeight`, `coverageBoostWeight`, `formCompletionEnabled`) are **not** among them:
-scoring happens in `adjustActionsByGUITree()`, which `resolveNewAction()` calls above this
-oracle's entry point (`StatefulAgent.java:1475-1478`), so no golden record depends on a
-scoring weight and no capture test can guard one. Their guard belongs where the injection is
-built — `rearch-03-decision-pipeline`, INV-ARCH-12 — and this requirement SHALL NOT be cited
-as covering them.
+The scope of that guard is exactly "the values the ladder reads", and the boundary matters because it is easy to over-read. The scoring weights (`mopWeightDirect`, `mopWeightTransitive`, `mopWeightOpenMenu`, `mopWeightWtg`, `frontierBoostWeight`, `mopFrontierWeight`, `coverageBoostWeight`, `formCompletionEnabled`) are **not** among them: scoring happens above this oracle's entry point, so no golden record depends on a scoring weight and no capture test can guard one. Their guard belongs where the injection is built — `rearch-03-decision-pipeline`, INV-ARCH-12 — and this requirement SHALL NOT be cited as covering them.
 
 #### Scenario: aperv preset golden compares green at HEAD
 
-- **WHEN** `mvn test` runs the `aperv` preset capture test in compare mode against the
-  committed golden at the commit that captured it
-- **THEN** the replayed decision sequence SHALL equal the golden record-by-record, including
-  record count
-- **AND** every record SHALL carry `actionType` and, for targeted actions, the `Name.toXPath()`
-  target
+- **WHEN** `mvn test` runs the `as` cell capture test (the cell whose ADDONS block is the former `aperv` preset) in compare mode against the committed golden at the commit that captured it
+- **THEN** the replayed decision sequence SHALL equal the golden record-by-record, including record count
+- **AND** every record SHALL carry `actionType` and, for targeted actions, the `Name.toXPath()` target
+- **AND** no `src/test/resources/goldens/aperv/` directory SHALL exist
 
 #### Scenario: mop preset exercises MOP mechanisms against the committed fixture
 
-- **WHEN** the `mop` preset baseline scenario runs with `_mopData` loaded from
-  `cryptoapp.apk.gh60-fresh.json` and `_llmRouter` null
-- **THEN** the golden SHALL contain at least one step attributed to a MOP mechanism
-  (`decisionSource=MOP` or a launcher `EVENT_TRIGGER_ACTIVITY` step)
+- **WHEN** the `mop` cell baseline scenario runs with the providers loaded from `cryptoapp.apk.mop.json` and no LLM router
+- **THEN** the golden SHALL contain at least one step owned by a MOP mechanism (a MOP-coin pick or a launcher `EVENT_TRIGGER_ACTIVITY` step)
 - **AND** the LLM field SHALL be absent from every record
 
 #### Scenario: Config default drift is caught by the guard, not the golden
 
-- **WHEN** a future change alters a jar-default `Config` value that the selection ladder reads
-  (e.g. `ape.activityTriggerStagnationStep`)
-- **THEN** the preset's Config guard assertion SHALL fail with the changed key named
+- **WHEN** a future change alters a value that the selection ladder reads in a cell (e.g. the `ape.activityTriggerStagnationStep` default, or the MOP block's `ape.mopCoinPercentage`)
+- **THEN** the cell's guard assertion SHALL fail with the changed key named
 - **AND** the failure SHALL NOT be reported as a golden divergence
 
 #### Scenario: The epsilon-greedy RNG seam stays overridable
 
-- **WHEN** a test subclass of `SataAgent` overrides `getRandom()` and the ladder descends into
-  `selectNewActionEpsilonGreedyRandomly()` on a state whose actions are all saturated
-- **THEN** the epsilon-greedy coin flip in `egreedy()` SHALL draw from the overridden stream,
-  not from `ape.getRandom()`
-- **AND** the run SHALL complete with a null `ape` field, so both legs of the rung — the
-  least-visited pick and the priority roulette — are capturable
+- **WHEN** a test subclass of `SataAgent` overrides `getRandom()` and the ladder descends into `selectNewActionEpsilonGreedyRandomly()` on a state whose actions are all saturated
+- **THEN** the epsilon-greedy coin flip in `egreedy()` SHALL draw from the overridden stream, not from `ape.getRandom()`
+- **AND** the run SHALL complete with a null `ape` field, so both legs of the rung — the least-visited pick and the priority roulette — are capturable
 
 #### Scenario: Determinism — double capture is identical
 
-- **WHEN** the same preset scenario is captured twice in one JVM with the same seed (both RNG
-  streams re-seeded before each run)
+- **WHEN** the same cell scenario is captured twice in one JVM with the same seed (every RNG stream, the four `StepRng` streams included, re-seeded before each run)
 - **THEN** the two decision-record sequences SHALL be identical
+
+#### Scenario: the six cells each have a golden set
+
+- **WHEN** `mvn test` runs the oracle in compare mode after wave 2
+- **THEN** a golden directory SHALL exist for each of `base`, `mop`, `as`, `as_mop`, `as_llm` and `as_mop_llm`, and each SHALL compare green
 
 ### Requirement: Golden File Format and Location
 
@@ -272,126 +243,90 @@ serializer (org.json), round-trip tested, one physical line per record.
 
 ### Requirement: Preemption-Order Golden
 
-The oracle SHALL include a preemption golden built on synthetic states that simultaneously
-qualify the LLM hooks, the MOP launcher (cadence reached, census candidate available), and the
-SATA chain, asserting the hard precedence order currently implemented by textual position in
-`selectNewActionNonnull()` (report V1/V4): an accepted LLM result preempts the launcher; the
-launcher, when it fires, preempts the SATA chain; the SATA chain is the fallback. The budget
-block precedes them all and SHALL be pinned **at its gate**: a scenario declaring the current
-activity's budget exhausted SHALL show the block entered and falling through, and a scenario
-declaring no exhaustion SHALL show it not entered at all. Its trivial-action return is outside
-the capture boundary — see Purpose for why reaching it would widen the boundary rather than
-close a gap in it — and SHALL NOT be claimed by any golden.
-The component-trigger block, which sits between the launcher and the SATA chain,
-is excluded — see the capture boundary in Purpose for why that costs no precedence coverage:
-it returns nothing, so no ordering it participates in is observable in a decision record.
+The oracle SHALL include a preemption golden, captured in the `as_mop_llm` cell, built on synthetic states that simultaneously qualify the LLM stages, the MOP launcher (cadence reached, census candidate available), the MOP coin (an eligible weighted action on screen), and the SATA chain. It SHALL assert the precedence order of the `DecisionPipeline`: BUDGET, RESTART, LLM_NEW_STATE, LLM_STAGNATION, LLM_COIN, MOP_LAUNCHER, COMPONENT_TRIGGER, MOP_COIN, SATA_CHAIN. An accepted LLM result preempts the launcher; the launcher, when it fires, preempts the MOP coin; a won MOP coin preempts the SATA chain; the SATA chain is the fallback. The budget block precedes them all and SHALL be pinned **at its gate**: a scenario declaring the current activity's budget exhausted SHALL show the block entered and falling through, and a scenario declaring no exhaustion SHALL show it not entered at all. Its trivial-action return is outside the capture boundary — see Purpose of the main spec for why reaching it would widen the boundary rather than close a gap in it — and SHALL NOT be claimed by any golden. A due restart is selected by the RESTART guard ahead of every LLM stage.
+The component-trigger stage sits between the launcher and the MOP coin and is a side effect that never returns an action (design D-B14.5). Its dispatch is device-bound (`android.content.Intent`), so `OracleSataAgent` SHALL override `triggerComponent()` as a recorded no-op: it dispatches nothing and records the tuple the round-robin cursor selected. The coin SHALL still draw from `StepRng.componentCoin` on every step, exactly as in production, so the oracle shifts no agent, helper or other coin draw. The step on which the trigger fires SHALL carry `dec.trig:{"k":"broadcast"|"service"|"provider","c":"<class>"}` (design decision A7), and the golden sets of the four `as*` cells, where the STATIC block mounts the trigger at `ape.componentPercentage=0.03`, SHALL contain those `dec.trig` members.
 
-The preemption golden SHALL additionally pin, as current behavior:
+The preemption golden SHALL additionally pin:
 
-1. **Finding 3.3-1**: on a step where an LLM hook accepts, `_stepsSinceLauncherFiring` SHALL
-   NOT be incremented (the increment at `SataAgent.java:522` is unreached); on the next
-   non-preempted step it SHALL resume from its pre-preemption value.
-2. **Stagnation single-shot burn**: when the stagnation hook is consulted,
-   `stagnationHookFired` SHALL become `true` regardless of the verdict — an LLM decline still
-   burns the episode's shot (`SataAgent.java:499`).
-3. **Counter reset on accept only**: `graphStableCounter` SHALL be reset to 0 by a stagnation
-   accept (`:503`) and SHALL be left unchanged by a stagnation decline.
-4. **Hook order**: on a step where multiple LLM hooks would route, the new-state hook SHALL
-   be consulted before stagnation, and stagnation before random.
+1. **Global cadence** (INV-ORA-05, replacing finding 3.3-1): on a step taken by an LLM stage, the launcher's cadence counter SHALL advance; on the first later step that reaches `MOP_LAUNCHER` with the counter at or above the cadence, the launcher SHALL fire.
+2. **Stagnation single-shot burn**: when the stagnation stage is consulted, `stagnationHookFired` SHALL become `true` regardless of the verdict — an LLM decline still burns the episode's shot.
+3. **Counter reset on accept only**: `graphStableCounter` SHALL be reset to 0 by a stagnation accept and SHALL be left unchanged by a stagnation decline.
+4. **Stage order**: on a step where several LLM stages would route, the new-state stage SHALL be consulted before stagnation, and stagnation before the coin; at most one of them calls the model on a step (design decision A3).
 
 #### Scenario: LLM accept preempts a launcher that was due to fire
 
-- **WHEN** a step's state qualifies the new-state LLM hook (scripted accept) AND
-  `_stepsSinceLauncherFiring` is one below `Config.activityTriggerStagnationStep` with an
-  unvisited census candidate available
+- **WHEN** a step's state qualifies the new-state LLM stage (scripted accept) AND the cadence counter is one below `ape.activityTriggerStagnationStep` with an unvisited census candidate available
 - **THEN** the selected action SHALL be the LLM-accepted `ModelAction`
-- **AND** `_stepsSinceLauncherFiring` SHALL be unchanged after the step (finding 3.3-1)
-- **AND** the next step without LLM routing SHALL fire the launcher exactly when the cadence
-  is reached counting from the pre-preemption value
+- **AND** the cadence counter SHALL have advanced by one during that step, reaching the cadence
+- **AND** the next step that reaches `MOP_LAUNCHER` SHALL fire the launcher
 
 #### Scenario: LLM decline falls through to the launcher
 
-- **WHEN** the same simultaneous-qualification state runs with every scripted LLM verdict set
-  to decline and the cadence reached
+- **WHEN** the same simultaneous-qualification state runs with every scripted LLM verdict set to decline and the cadence reached
 - **THEN** the selected action SHALL be the launcher's `EVENT_TRIGGER_ACTIVITY`
 - **AND** the step's record SHALL carry `llm:"declined"`
 
 #### Scenario: Stagnation decline burns the single shot
 
-- **WHEN** the stagnation hook routes and the scripted verdict is decline, and a later step in
-  the same episode would qualify the stagnation hook again
-- **THEN** the first step SHALL set `stagnationHookFired` to `true` with `graphStableCounter`
-  unchanged
-- **AND** the later step SHALL NOT consult the stagnation hook (the stub honors the
-  `firedThisEpisode` argument)
+- **WHEN** the stagnation stage routes and the scripted verdict is decline, and a later step in the same episode would qualify the stagnation stage again
+- **THEN** the first step SHALL set `stagnationHookFired` to `true` with `graphStableCounter` unchanged
+- **AND** the later step SHALL NOT consult the stagnation stage (the stub honors the `firedThisEpisode` argument)
 
 #### Scenario: Budget exhaustion is pinned at the gate, not at the trivial return
 
-- **WHEN** a scenario declares the current activity's budget exhausted and the same step
-  qualifies the LLM hooks, with no trivial navigation action available — and none can be, since
-  the trivial-activity path search walks graph edges the harness never records
-- **THEN** the step SHALL fall through the budget block to the LLM hooks, and the golden SHALL
-  record the hook's outcome for that step
-- **AND** the trivial-action return SHALL be documented as outside the capture boundary, so its
-  absence from every golden reads as a stated exclusion rather than as untested behavior
+- **WHEN** a scenario declares the current activity's budget exhausted and the same step qualifies the LLM stages, with no trivial navigation action available — and none can be, since the trivial-activity path search walks graph edges the harness never records
+- **THEN** the step SHALL fall through the budget block to the stages below it, and the golden SHALL record the LLM stage's outcome for that step
+- **AND** the trivial-action return SHALL be documented as outside the capture boundary, so its absence from every golden reads as a stated exclusion rather than as untested behavior
+
+#### Scenario: the MOP coin follows the launcher and precedes SATA
+
+- **WHEN** a step with every LLM verdict declined, the cadence not reached, and an eligible weighted action on screen runs with `ape.mopCoinPercentage=1.0`
+- **THEN** the selected action SHALL be the MOP coin's pick, the action with the largest `mopWeight`
+- **AND WHEN** the same step runs with the cadence reached
+- **THEN** the selected action SHALL be the launcher's `EVENT_TRIGGER_ACTIVITY`
+
+#### Scenario: the component trigger is a recorded no-op that decides nothing
+
+- **WHEN** an `as` cell step reaches `COMPONENT_TRIGGER` with `u_C = 0.01 < 0.03` and the cursor selects the provider tuple of `androidx.startup.InitializationProvider`, the fixture's one provider
+- **THEN** `OracleSataAgent.triggerComponent()` SHALL dispatch no intent and the step's record SHALL carry `"trig":{"k":"provider","c":"androidx.startup.InitializationProvider"}`
+- **AND** the step's action SHALL be selected by the `MOP_COIN` or `SATA_CHAIN` stage, and the next step's `u_C` SHALL be the next value of `StepRng.componentCoin`
 
 ### Requirement: Deterministic LLM Stubbing
 
-LLM-preset goldens SHALL be captured with a scripted router (`ScriptedLlmRouter extends
-LlmRouter`) and never a live SGLang server. The stub SHALL override the three routing
-predicates with per-step scripted verdicts that honor the agent-side arguments
-(`shouldRouteNewState` honors `isNewState`; `shouldRouteStagnation` honors
-`firedThisEpisode`), and SHALL override `selectAction` with scripted results: **accept**
-(a `ModelAction` chosen from the passed action list by a deterministic selector named in the
-script), **decline** (null), or **timeout** (null, recorded distinctly as provenance). The
-stub SHALL NOT perform HTTP, SHALL NOT capture screenshots, and SHALL NOT record breaker
-transitions; scripts SHALL NOT model breaker-open episodes (out of oracle scope — wall-clock
-dependent). Script exhaustion, or a scripted consultation the agent never performed, SHALL
-fail the test.
+LLM-cell goldens SHALL be captured with a scripted router (`ScriptedLlmRouter extends LlmRouter`) and never a live SGLang server. The stub SHALL override the routing predicates with per-step scripted verdicts that honor the agent-side arguments (`shouldRouteNewState` honors `isNewState`; `shouldRouteStagnation` honors `firedThisEpisode`), and SHALL override `selectAction` with scripted results: **accept** (a `ModelAction` chosen from the passed action list by a deterministic selector named in the script), **decline** (null), or **timeout** (null, recorded distinctly as provenance). The LLM coin is not scripted: it is decided by the seeded `u_L` draw and the plan's `p_L`, and the declared gates are mounted from the plan as in production. The stub SHALL NOT perform HTTP, SHALL NOT capture screenshots, and SHALL NOT record breaker transitions; scripts SHALL NOT model breaker-open episodes (out of oracle scope — wall-clock dependent). Script exhaustion, or a scripted consultation the agent never performed, SHALL fail the test.
 
 #### Scenario: Accept returns a deterministic member of the offered actions
 
-- **WHEN** a scripted accept names selector "first-unvisited-targeted" and the step offers a
-  stable action list
+- **WHEN** a scripted accept names selector "first-unvisited-targeted" and the step offers a stable action list
 - **THEN** `selectAction` SHALL return that exact `ModelAction` on every capture and replay
 - **AND** no network connection SHALL be attempted at any point
 
 #### Scenario: Decline and timeout share the fall-through, differ in provenance
 
 - **WHEN** one step is scripted decline and another timeout
-- **THEN** both steps SHALL fall through to the mechanisms below the LLM blocks
+- **THEN** both steps SHALL fall through to the stages below the LLM stages
 - **AND** their golden records SHALL carry `llm:"declined"` and `llm:"timeout"` respectively
 
 #### Scenario: Unconsumed script entry fails loudly
 
-- **WHEN** the script declares a routed consultation at step 5 but the agent's preconditions
-  (e.g. `actionBufferSize() != 0`) prevent the hook from being consulted
+- **WHEN** the script declares a routed consultation at step 5 but a declared gate bars it (for example the minimum-actions gate, on a screen with two actions under `ape.llmGateMinActions=3`)
 - **THEN** the harness SHALL fail the test naming the unconsumed entry
 - **AND** SHALL NOT silently continue to the next entry
 
 ### Requirement: Golden Comparison as the Migration Gate
 
-The compare mode SHALL be the acceptance gate for `rearch-02-runspec` and
-`rearch-03-decision-pipeline` (report Sec. 9.9): those changes land only with every preset
-golden and the preemption golden green under `mvn test` against the goldens captured at the
-pre-migration behavior. On divergence the comparator SHALL report the first divergent field
-with preset, scenario, step, golden value, and actual value (INV-ORA-06). Goldens and
-scenario scripts are frozen during those stages (INV-ORA-07); the injection scaffold is the
-only adaptation layer.
+The compare mode SHALL be the acceptance gate for every change that restructures action selection without deciding a behaviour change: such a change lands only with every cell golden and the preemption golden green under `mvn test`. On divergence the comparator SHALL report the first divergent field with preset, scenario, step, golden value, and actual value (INV-ORA-06). A change that does decide a behaviour change — as `isolate-guidance-groups` does — SHALL recapture the affected goldens through the deliberate regeneration procedure, once, and SHALL say in the commit which decision changed them (INV-ORA-08); the goldens of the deleted presets are deleted, not regenerated.
 
 #### Scenario: Stage-3 regression is caught at the first divergent step
 
-- **WHEN** a pipeline restructuring accidentally evaluates the launcher before the LLM
-  stagnation hook and the `llm_mop` preemption scenario is replayed
+- **WHEN** a pipeline restructuring accidentally evaluates `MOP_COIN` before `LLM_COIN` and the `as_mop_llm` preemption scenario is replayed
 - **THEN** the comparison SHALL fail at the first step whose selected action differs
-- **AND** the report SHALL name the preset, scenario, step index, and the divergent field with
-  both values
+- **AND** the report SHALL name the preset, scenario, step index, and the divergent field with both values
 
 #### Scenario: Missing golden never auto-captures
 
 - **WHEN** compare mode runs and the golden file for a scenario does not exist
-- **THEN** the test SHALL fail with a message containing the deliberate-regeneration
-  instructions
+- **THEN** the test SHALL fail with a message containing the deliberate-regeneration instructions
 - **AND** no golden file SHALL be written
 
 ### Requirement: Deliberate Golden Regeneration
@@ -416,3 +351,31 @@ documented in `src/test/resources/goldens/README.md`.
 - **THEN** the rewritten goldens SHALL appear as working-tree modifications
 - **AND** the goldens README SHALL instruct that the change is committed with the decision
   that motivated it
+
+### Requirement: Base-Cell Parity of the SATA Extension Points
+
+The oracle SHALL pin, in the `base` cell, that the SATA extension points decide as upstream APE (`ape.jar`, `8f51b99c`) on the same candidates and the same seed (INV-ORA-09):
+
+- **X1** `LeastVisitedTie`: with zero mounted scorers, the pick SHALL be the first least-visited action of the array, as upstream `model/State.java:185-190`;
+- **X3** `AbaTargetTie`: on a tie between two ABA targets the incumbent SHALL be kept, and no RNG draw SHALL occur;
+- **X4** `TrivialPathPick`: the path to a trivial activity SHALL always be taken by `RandomHelper.randomPick`, consuming exactly one helper-stream draw.
+
+The fixtures SHALL be synthetic states that make each tie occur. The expected picks SHALL be derived from the upstream rule as stated above and committed with the test. The `base` cell's golden SHALL then be captured over the same oracle scaffold as the other cells.
+
+#### Scenario: X1 with zero scorers takes the first of the array
+
+- **WHEN** the `base` cell reaches the least-visited pick on a state whose actions `b0`, `b1`, `b2` all have visit count 0
+- **THEN** the selected action SHALL be `b0`
+- **AND** the record SHALL carry no scorer-sum tie-break
+
+#### Scenario: X3 keeps the incumbent and draws nothing
+
+- **WHEN** the `base` cell compares two ABA targets whose states tie, one of them in a MOP activity of the fixture
+- **THEN** the incumbent SHALL be kept
+- **AND** the helper and agent streams SHALL be at the same position after the comparison as before it
+
+#### Scenario: X4 draws once with randomPick
+
+- **WHEN** the `base` cell chooses among three paths to a trivial activity whose end states have different MOP densities
+- **THEN** the chosen path SHALL be the one `RandomHelper.randomPick` returns under the scenario's seed
+- **AND** exactly one helper-stream draw SHALL have been consumed

@@ -1,8 +1,10 @@
 ## Purpose
 
-`ApePromptBuilder` bridges APE-RV's internal data structures (State, ModelAction, MopData, the action history) and the LLM's multimodal input format. It constructs a prompt that gives the LLM a screenshot of the current screen, a structured list of available actions with their widget types, visited counts (in the variants that show them), and MOP markers that state the scoring's verdict on each line's actions, recent action history with each action's own result, and an instruction to select the most promising action for exploration. The `v13` and `v17` lists show one line per widget rather than one per action. The `GUITree` is not an input of `build`: the only thing the builder took from it was the dimensions to normalize by, and it now receives the display dimensions of the decision as arguments.
+`ApePromptBuilder` bridges APE-RV's internal data structures (State, ModelAction, the action history, and — through the mounted groups' contributions — `StaticGuiModel` and the run's `MopContext`) and the LLM's multimodal input format. It constructs a prompt that gives the LLM a screenshot of the current screen, a structured list of available actions with their widget types, visited counts (in the variants that show them), MOP markers that state the scoring's verdict on each line's actions (in a cell with MOP), recent action history with each action's own result, and an instruction to select the most promising action for exploration. The `v13` and `v17` lists show one line per widget rather than one per action. The `GUITree` is not an input of `build`: the only thing the builder took from it was the dimensions to normalize by, and it now receives the display dimensions of the decision as arguments.
 
-The prompt design follows a principle from the rvsmart experiments: the LLM performs best when it receives both visual (screenshot) and structured (widget list) information. The screenshot lets the LLM understand the visual layout and identify UI elements that the accessibility tree may miss — including **dynamic elements** (WebView content, custom-drawn views, canvas elements, dynamically loaded content) that do not appear in the UIAutomator dump. The widget list provides precise bounds, action types, visited counts, and MOP markers that the LLM cannot infer from pixels alone. Combining both reduces coordinate errors (from ~70% with image-only to ~84% with image+text) and enables MOP-aware reasoning.
+The prompt is built from the mounted behaviour groups (design D-B1, D-A3): `ApePromptBuilder` renders a base prompt and appends, at fixed extension points, what each mounted `PromptContribution` returns, STATIC before MOP. `RunContext` mounts `StaticPromptContribution` iff `Feature.STATIC` is in the plan and `MopPromptContribution` iff `Feature.MOP` is. MOP contributes the line markers, the `N/M MOP.` count, the `MOP NAVIGATION:` heading of `v17` and the MOP sentences of the system message; STATIC contributes the widget metadata suffix, read from `StaticGuiModel`. Without a group its contribution does not exist, so in a cell with LLM and no MOP no MOP instruction reaches the model, and the MOP-free wording of each sentence is the MOP sentence with its MOP clause deleted. The visit context (`NEW state.` / `Visited <N>x.`) is not MOP and appears in every cell (in `v17` under the neutral heading `NAVIGATION:` when MOP is absent).
+
+The prompt design follows a principle from the rvsmart experiments: the LLM performs best when it receives both visual (screenshot) and structured (widget list) information. The screenshot lets the LLM understand the visual layout and identify UI elements that the accessibility tree may miss — including **dynamic elements** (WebView content, custom-drawn views, canvas elements, dynamically loaded content) that do not appear in the UIAutomator dump. The widget list provides precise bounds, action types, visited counts, and (with MOP) MOP markers that the LLM cannot infer from pixels alone. Combining both reduces coordinate errors (from ~70% with image-only to ~84% with image+text) and, in a cell with MOP, enables MOP-aware reasoning.
 
 A key advantage of the LLM integration is the ability to perform **semantic clicks on elements invisible to UIAutomator**. While SATA can only interact with widgets present in the accessibility tree, the LLM sees the screenshot and can identify and click on visual elements that have no corresponding accessibility node — buttons inside WebViews, custom-rendered UI, dynamically injected content, etc. When the LLM targets such an element, `mapToModelAction()` may return null (no matching ModelAction), but a future enhancement could inject a raw coordinate click for these cases.
 
@@ -19,7 +21,7 @@ The prompt uses Qwen3-VL's normalized coordinate space [0, 1000) for both input 
 - `int deviceWidth`, `int deviceHeight` — the display dimensions of the decision, positive (source: `LlmEngine`, from `ScreenshotStep.deviceDimensions(tree)` in step 2 of the Action Selection Pipeline, `llm-routing`). The screenshot is captured at them and the answer is mapped with them; every [0,1000) coordinate in the prompt is computed from them ("Single Coordinate Base"). `build` takes no `GUITree`.
 - `State state` — current abstract state with activity name and visit count (source: `Model`)
 - `List<ModelAction> actions` — valid actions on current state, each optionally resolved to a `GUITreeNode` (source: `StatefulAgent`)
-- `MopContext mop` — the run's MOP context (the loaded `MopData`, the scoring mode, both modes' weights and the run's `MopRetirement`), null when no artifact is loaded (source: `StatefulAgent._mopContext`; it replaced `MopData mopData` in `llm-coordinate-single-base`, design D17). When available, provides per-widget reachability to operations monitored by RV specifications (e.g., JCA cryptographic API specs, Iterator protocol specs).
+- `List<PromptContribution> contributions` — the mounted groups' contributions, given to the `ApePromptBuilder` constructor (source: `RunContext`, from the plan): `StaticPromptContribution` (iff `Feature.STATIC`), bound to the run's `StaticGuiModel`, and `MopPromptContribution` (iff `Feature.MOP`), bound to the run's `MopContext` (the loaded `MopData`, the scoring mode, both modes' weights and the run's `MopRetirement`) through `LlmEngine.bindMopContext`. When bound, the MOP contribution provides per-widget reachability to operations monitored by RV specifications (e.g., JCA cryptographic API specs, Iterator protocol specs); unbound, it contributes nothing. `build` takes no MOP or static argument.
 - `String base64Image` — JPEG screenshot encoded as base64 (source: `ImageProcessor`)
 - `List<ActionHistoryEntry> recentActions` — last 3-5 selected model actions with their results (source: `StatefulAgent` action history ring buffer, `exploration` "StatefulAgent — Action History Ring Buffer"); each entry carries the action type (`click`, `long_click`, `type_text`, `back`, `menu`), the widget's class simple name and text-or-content-description, the executed widget's **pixel bounds** (`Rect bounds`, not a normalized pair; a one-pixel rectangle at the tap's pixel for an off-tree `MODEL_LLM_TAP`; null for `back` and `menu`), the typed text for `type_text`, and the result of that entry's own action (`same`, `new screen`, `previous screen`; empty until the next state update fills it). The builder normalizes the bounds at build time ("Action History"). May be empty on first steps.
 
@@ -33,7 +35,7 @@ The prompt uses Qwen3-VL's normalized coordinate space [0, 1000) for both input 
 
 ### Error
 
-- No exceptions. If input data is incomplete (e.g., null MopData, actions with unresolved nodes, empty history), the prompt builder SHALL produce a valid prompt with reduced information (omitting MOP markers, coordinates, or history section as needed).
+- No exceptions. If input data is incomplete (e.g., an unbound contribution, actions with unresolved nodes, empty history), the prompt builder SHALL produce a valid prompt with reduced information (omitting MOP markers, coordinates, or history section as needed).
 
 ---
 
@@ -42,9 +44,12 @@ The prompt uses Qwen3-VL's normalized coordinate space [0, 1000) for both input 
 - **INV-PRM-01**: `ApePromptBuilder.build()` SHALL always return a non-null, non-empty message list containing exactly 2 messages (system + user).
 - **INV-PRM-02**: The user message SHALL always contain exactly 2 content parts: one image (`ContentPart.imageUrl`) and one text (`ContentPart.text`), in that order.
 - **INV-PRM-03**: The element list of the shared line formatter (`ape_current`, `ape_reasoning`, `compact_v1`) SHALL include all actions from the input list, in the same order, and no action SHALL be filtered out or reordered; each target action's line SHALL include its visited count. The `v13` and `v17` lists SHALL list the target-requiring actions only, one line per widget, in the order of each widget's first action, with no visited count ("Element List of the v13 and v17 Variants"). In every variant, a listed coordinate is the centre of the widget's visible part in [0,1000) normalized space (INV-PRM-06), and it SHALL be omitted for an unresolved node and for a node wholly outside the display ("Single Coordinate Base").
-- **INV-PRM-04**: MOP annotations SHALL only appear when `mop` is non-null. When `mop` is null, no `[DM]` or `[M]` markers SHALL appear in the widget list.
+- **INV-PRM-04**: MOP annotations SHALL only appear when `Feature.MOP` is in the plan. Without it, no `[DM]` or `[M]` markers SHALL appear in the widget list.
 - **INV-PRM-05**: Every target-action element line whose node carries at least one of text / content-description / resource-id SHALL render a non-empty identifier (fallback order: text → content-description → short resource-id); rendered identifiers SHALL contain no unescaped `\n`/`\r`.
 - **INV-PRM-06**: Every [0,1000) coordinate in one prompt (element-list entries in every variant that lists coordinates, and every action-history entry) SHALL be computed by `CoordinateNormalizer.toNormalized` from a pixel position inside the display, the centre of the widget's visible part ("Single Coordinate Base"), and the `{width, height}` that `ScreenshotStep.deviceDimensions` returned for the same decision, the pair the screenshot was captured at and the answer is mapped with. No other divisor SHALL reach the prompt. In particular, the root node's bounds and any constant fallback inside `ApePromptBuilder` SHALL NOT be a source.
+- **INV-PRM-07**: A prompt built in a run whose plan does not contain `Feature.MOP` SHALL contain none of `[DM]`, `[M]`, `MOP`, `monitored operations` in any text the builder or a contribution writes: the system message, the line markers and suffixes, the exploration context and every section. Text read from the screen (widget text, content-descriptions, resource ids) is not covered.
+- **INV-PRM-08**: `ApePromptBuilder` SHALL NOT test whether MOP or static data is present (`mop != null`, `getMopData() != null`, a group feature) to decide what to render. It SHALL render the base prompt and append, at each extension point, what the mounted `PromptContribution`s return, in a fixed order: STATIC before MOP.
+- **INV-PRM-09**: The static widget metadata suffix SHALL come only from the STATIC contribution, which reads `StaticGuiModel`; no MOP contribution and no `MopData` read SHALL produce it.
 
 ---
 
@@ -53,6 +58,8 @@ The prompt uses Qwen3-VL's normalized coordinate space [0, 1000) for both input 
 ### Requirement: System Message
 
 `ApePromptBuilder` SHALL generate a system message with role `"system"`. The system message SHALL be compact (~120 tokens), modeled on rvsmart V13 which proved effective in experiments. Verbose reasoning steps (V17-style, ~300 tokens) did not show significant improvement and waste tokens/latency.
+
+With `Feature.MOP` in the plan, the `ape_current` system message is:
 
 ```
 You are an Android UI testing agent exploring an app.
@@ -68,11 +75,19 @@ Tools (coordinates in [0,1000) normalized space):
 Respond with one JSON: {"name": "<action>", "arguments": {<args>}}
 ```
 
+Without `Feature.MOP` it is the same text with the MOP clause deleted from the `PRIORITY` line, which then reads:
+
+```
+PRIORITY: unvisited (v:0) > visited.
+```
+
+The clause `[DM]/[M] elements > ` is the MOP contribution's system sentence for `ape_current` (and for `ape_reasoning`, which shares this message); it is the only MOP text of the message. The MOP-free wording of every variant is listed in "Prompt Built From Group Contributions".
+
 **Dynamic tool schema**: The `type_text` tool SHALL be included in the system message only when the current widget list contains at least one input-capable widget (EditText, SearchView, AutoCompleteTextView). When no input widgets are present, `type_text` is omitted from the tool list. This reduces LLM confusion and prevents wasted calls on inapplicable tools. The check is performed by `ApePromptBuilder.build()` when generating the system message.
 
 Key design choices:
 - **Compact format**: ~120 tokens saves ~300 tokens/call vs verbose V17. At 85 calls/session this saves ~25K tokens and ~0.5-1s latency per call.
-- **[DM]/[M] notation**: Compact markers matching rvsmart V17 (DM = direct monitored, M = transitive monitored)
+- **[DM]/[M] notation**: Compact markers matching rvsmart V17 (DM = direct monitored, M = transitive monitored), present only with `Feature.MOP`
 - **Coordinate convention**: Explicit [0, 1000) normalized space matching Qwen3-VL's native output format
 - **JSON response format**: `{"name": "<action>", "arguments": {<args>}}` — compatible with ToolCallParser's 3-level fallback
 - **Dialog handling**: Single line, covers permission and error dialogs
@@ -86,7 +101,7 @@ Key design choices:
 - **AND** it SHALL contain the DIALOG HANDLING, PRIORITY, and RULES sections
 - **AND** it SHALL declare the `click`, `long_click`, and `back` tool schemas
 - **AND** it SHALL specify that coordinates use [0, 1000) normalized space
-- **AND** it SHALL explain the meaning of [DM] and [M] markers
+- **AND** it SHALL explain the meaning of [DM] and [M] markers exactly when `Feature.MOP` is in the plan, and SHALL contain neither `[DM]` nor `[M]` otherwise
 
 #### Scenario: Dynamic tool schema — type_text included
 
@@ -100,7 +115,11 @@ Key design choices:
 - **THEN** `type_text` SHALL NOT appear in the tool list
 - **AND** the system message SHALL list only `click`, `long_click`, and `back`
 
----
+#### Scenario: ape_current PRIORITY line without MOP
+
+- **WHEN** variant `ape_current` builds a prompt in cell `as_llm`
+- **THEN** the system message SHALL contain the line `PRIORITY: unvisited (v:0) > visited.`
+- **AND** every other line SHALL be as in the message with `Feature.MOP`
 
 ### Requirement: Widget List Generation
 
@@ -127,7 +146,7 @@ Where:
 - `<text>` is the widget's **identifier text**, resolved by fallback: the widget's text; else its content-description; else its short resource-id (the `":id/"` suffix, rendered as `id=<shortId>`). Truncated to 50 characters; embedded `\n`/`\r` flattened to spaces, so the element list stays one physical line per action — the property the prompt format itself depends on. It is no longer a trace concern: the prompt and response dumps travel as JSON-escaped `sys`/`user`/`resp` fields of the step record's `llm[]` sub-event, where any character is safe by construction (`event-sink` INV-SNK-02). Only when text, content-description, AND resource-id are all empty is the identifier omitted. Measured motivation: 35.8% of grounding tests rendered elements with no identifier at all — the model hit 33.1% on identifier-less lines vs 71.4% with an identifier, and ImageView (0/210 hits) is the canonical victim: icon buttons routinely carry a content-description or resource-id but no text, and the previous rendering gave the model nothing to anchor the coordinates to.
 - `hint="<hint>"` is the widget's hint text, included only for input-capable widgets when `GUITreeNode.getHint()` is non-null and non-empty; truncated to 30 characters.
 - `@(<normX>,<normY>)` is the center of the widget's **visible part** (`getBoundsInScreen()` intersected with `[0, deviceWidth) × [0, deviceHeight)`, then `Rect.centerX()`, `Rect.centerY()`; "Single Coordinate Base") converted to Qwen3-VL [0,1000) normalized space by `CoordinateNormalizer.toNormalized(centerX, centerY, deviceWidth, deviceHeight)`: `normX = clamp((int)(centerX * 1000.0 / deviceWidth), 0, 999)`, and likewise for `normY`. `deviceWidth` and `deviceHeight` are the display dimensions `build` received, the ones the screenshot was captured at and the answer is mapped with ("Single Coordinate Base"). They are never the root node's bounds. This is what makes the list the same coordinate space the LLM responds in. Omitted if node is not resolved, if its bounds cannot be read, or if `Rect.intersect` finds no intersection with the display.
-- `<MOP_MARKER>` is `[DM]` (direct monitored), `[M]` (monitored with a positive MOP weight), or omitted. It is decided per line and per scoring mode (`ape.mopScoring`), from the line's own actions, as "MOP Marker Annotation" defines (design D22)
+- `<MOP_MARKER>` is `[DM]` (direct monitored), `[M]` (monitored with a positive MOP weight), or omitted. It is the MOP contribution's line marker: decided per line and per scoring mode (`ape.mopScoring`), from the line's own actions, as "MOP Marker Annotation" defines (design D22), and always omitted when `Feature.MOP` is not in the plan
 - `(v:<N>)` is the action's visited count in compact form
 
 The list SHALL be preceded by a compact header: `Screen "<ActivitySimpleName>":`.
@@ -138,7 +157,7 @@ _Scope (`llm-coordinate-single-base`):_ the one-line-per-action format above, wi
 
 - **WHEN** `build()` is called with a state on `com.example.MainActivity`, `deviceWidth=1080` and `deviceHeight=1920`
 - **AND** actions include BACK, MENU, a Button "Encrypt" with directMop (visited 0 times, device center 200,225), an EditText "Password" with hint "Enter password" (visited 3 times, device center 225,325), and a TextView "Help" with transitiveMop (visited 1 time, device center 250,420)
-- **AND** `mop` is non-null
+- **AND** `Feature.MOP` is in the plan, so the MOP contribution is mounted
 - **THEN** the text content SHALL contain:
   ```
   Screen "MainActivity":
@@ -162,9 +181,10 @@ _Scope (`llm-coordinate-single-base`):_ the one-line-per-action format above, wi
 
 #### Scenario: No MOP data (static analysis unavailable)
 
-- **WHEN** `build()` is called with `mop` equal to null
+- **WHEN** `build()` is called in a run whose plan contains neither `Feature.MOP` nor `Feature.STATIC` (no artifact, or an artifact loaded with both groups off), so neither contribution is mounted
 - **THEN** no `[DM]` or `[M]` markers SHALL appear in any action line
 - **AND** visited counts and normalized coordinates SHALL still be present
+- **AND** the same actions SHALL render the same lines, marker aside, as in a run with the MOP contribution mounted
 
 #### Scenario: Unresolved action node
 
@@ -184,7 +204,7 @@ _Scope (`llm-coordinate-single-base`):_ the one-line-per-action format above, wi
 
 ### Requirement: MOP Marker Annotation
 
-When `mop` is non-null, `ApePromptBuilder` SHALL mark each element-list line with the MOP verdict of the **line's actions** (design D22). In the shared line formatter (`ape_current`, `ape_reasoning`, `compact_v1`), a line has one action, the one it renders. In `v13` and `v17`, a line's actions are all the target-requiring actions of its widget ("Element List of the v13 and v17 Variants", design D10). When `mopData` is null, no line carries a marker (INV-PRM-04).
+When `Feature.MOP` is in the plan, the MOP prompt contribution (`MopPromptContribution.lineMarker`, "Prompt Built From Group Contributions") SHALL mark each element-list line with the MOP verdict of the **line's actions** (design D22). In the shared line formatter (`ape_current`, `ape_reasoning`, `compact_v1`), a line has one action, the one it renders. In `v13` and `v17`, a line's actions are all the target-requiring actions of its widget ("Element List of the v13 and v17 Variants", design D10). When `Feature.MOP` is not in the plan, the contribution is not mounted and no line carries a marker (INV-PRM-04); `ApePromptBuilder` does not test for MOP data, it renders what the mounted contributions return.
 
 For each of the line's actions that has a resolved node, the verdict SHALL come from `MopData.lookup(activity, node, event)` (design D17). `event` is `MopScorer.eventTypeOf(action)`. The lookup is applied to the same containment nodes the scoring pass uses: the node itself, up to two ancestors, and its descendants up to two levels down. The best result wins: the strongest flag under `flag`, and the smallest unretired distance under `distance`. The lookup reads the node's handler stamp for the event first, if `handlers` lists the stamp's class. Otherwise it reads the id key `(activity, shortId, event)`, with the per-event fallback to the aggregate flags (INV-MOP-14). The short resource id is `MopData.extractShortId(GUITreeNode.getResourceID())`: the substring after `":id/"`, or the empty string. An action with no resolved node contributes nothing.
 
@@ -196,7 +216,7 @@ The verdict depends on the run's `ape.mopScoring` mode (design D18):
 | Otherwise, at least one action has a **positive MOP weight**: the weight `MopScorer.score` gives it under the active mode is positive (design D18), before the tie split. | `[M]` |
 | Otherwise. This covers: lookup source `NONE`; a flag of `none` for the action's event; a stamped handler listed as reaching nothing; every target at `d ≥ 4` or retired; no resolved node. | (no marker) |
 
-A line therefore carries a marker if and only if the score treats one of its actions as MOP; an arm that zeroes the MOP weights shows no marker. (rv-android's `mop_off_llm_off` zeroes them but runs without the LLM, so it has no prompt; no current arm zeroes the weights with the LLM on.) The two never disagree on the reason, because they use the same lookup and the same containment. Under `distance`, a target retires after `ape.mopRetireAfter` first interactions (design D19). A retired target stops counting toward the marker, so a line whose only targets have retired loses its marker from the next prompt on. Under `flag`, nothing retires.
+A line therefore carries a marker if and only if the score treats one of its actions as MOP; an arm that zeroes the MOP weights shows no marker. The marker follows the undivided weight (`mopWeight`), not the split boost. (rv-android's `mop_off_llm_off` zeroes them but runs without the LLM, so it has no prompt; no current arm zeroes the weights with the LLM on.) The two never disagree on the reason, because they use the same lookup and the same containment. Under `distance`, a target retires after `ape.mopRetireAfter` first interactions (design D19). A retired target stops counting toward the marker, so a line whose only targets have retired loses its marker from the next prompt on. Under `flag`, nothing retires.
 
 The marker SHALL NOT query `activityHasMop`. A MOP-bearing activity does not mark any line by itself. This matches the score, which has had no activity-level fallback since mop-discriminative-boost.
 
@@ -207,7 +227,7 @@ Until this change, the requirement said the marker queried `mopData.getWidget(ac
 
 With D10's lines joining several actions, and with per-event distances and per-node stamps, a rule tied to one node cannot hold. Even under `flag`, the new rule adds and removes markers in the `v13` prompt beyond Part A's changes.
 
-The vocabulary (`[DM]`, `[M]`) and the system messages that cite it are unchanged.
+The vocabulary (`[DM]`, `[M]`) is unchanged. The system-message sentences that cite it are themselves part of the MOP contribution, so a prompt carries the vocabulary's explanation exactly when it can carry a marker ("System Message", "System Message of the v13 Variant").
 
 Note: "Monitored operations" refers to operations being monitored by runtime verification specifications. The specification sets vary by experiment — they may be cryptographic API misuse specs (JCA), generic protocol specs (e.g., Iterator hasNext/next), or other RV specification sets. The LLM does not need to know which specification set is active; it only needs to know that [DM]/[M] widgets lead to code paths under monitoring.
 
@@ -288,6 +308,11 @@ Note: "Monitored operations" refers to operations being monitored by runtime ver
 - **AND** its id key has `mop: {"click": "none", "longClick": "direct"}`
 - **THEN** its single line SHALL carry `[DM]`
 - **AND** with `mop: {"click": "transitive", "longClick": "none"}` instead, the line SHALL carry `[M]`
+
+#### Scenario: no marker in a cell without MOP
+
+- **WHEN** cell `as_llm` builds a prompt for a screen whose `btn_encrypt` has `mop: {"click": "direct"}` in the loaded artifact
+- **THEN** no line SHALL carry `[DM]` or `[M]`, because `Feature.MOP` is not in the plan and the MOP contribution is not mounted
 
 ### Requirement: Image Content Part
 
@@ -400,21 +425,29 @@ The text content SHALL include a compact one-line exploration context after the 
 - New state without MOP: `NEW state.`
 - Revisited state without MOP: `Visited <N>x.`
 
-`<M>` is the number of target-requiring actions. `<N>` is the number of those actions that have a resolved node and are MOP under the marker's per-action test ("MOP Marker Annotation", design D22): with a positive MOP weight under the run's `ape.mopScoring` mode. The test uses the D17 lookup with containment and, under `distance`, ignores retired targets. Both counts are per action, not per line, in every variant that shows the context: the default branch, `visual_only`, and `v17`'s `MOP NAVIGATION` block. The "with MOP" forms appear exactly when `mop` is non-null.
+The visit part (`NEW state.` / `Visited <N>x.`) is the builder's own: it is not a MOP signal and SHALL be rendered in every cell, with or without `Feature.MOP`. The count ` <N>/<M> MOP.` is the MOP contribution's context line (`MopPromptContribution.contextLine`), appended exactly when `Feature.MOP` is in the plan.
+
+`<M>` is the number of target-requiring actions. `<N>` is the number of those actions that have a resolved node and are MOP under the marker's per-action test ("MOP Marker Annotation", design D22): with a positive MOP weight under the run's `ape.mopScoring` mode. The test uses the D17 lookup with containment and, under `distance`, ignores retired targets. Both counts are per action, not per line, in every variant that shows the context: the default branch, `visual_only`, and `v17`'s `MOP NAVIGATION` block. The "with MOP" forms appear exactly when `Feature.MOP` is in the plan; the builder does not test for MOP data.
+
+In `v17`, the context is a block after the SCREEN line, and the block is rendered in every cell:
+- with `Feature.MOP` it is the `MOP NAVIGATION:` block, byte-identical to the text before this change: the heading `MOP NAVIGATION:`, then the visit part followed by the count (e.g. `Visited 2x. 3/8 MOP.`). The heading is the MOP contribution's section ("Prompt Built From Group Contributions");
+- without `Feature.MOP` the block keeps the visit part under the neutral heading `NAVIGATION:` (e.g. `NAVIGATION:` then `NEW state.`), with no count. No `MOP` token appears in it.
+
+The SCREEN line (`SCREEN: <Activity> | <tested>/<widgets> elements tested | visits: <N>`) is not MOP and is unchanged in every cell; `UICoverageTracker` is untouched by this change.
 
 Until this change, `<N>` counted actions whose node's own id key had any aggregate flag (`buildExplorationContext`, `ApePromptBuilder.java:567-612`). That test differed from both the score and the marker, in the same three ways listed in "MOP Marker Annotation". With the shared test, a line has a marker if and only if at least one of its actions is counted in `<N>`.
 
 #### Scenario: New state with MOP data
 
 - **WHEN** the state is being visited for the first time
-- **AND** `mop` is non-null
+- **AND** `Feature.MOP` is in the plan
 - **AND** 3 out of 8 target-requiring actions are MOP under the marker's per-action test
 - **THEN** the text SHALL contain: `NEW state. 3/8 MOP.`
 
 #### Scenario: Revisited state without MOP
 
 - **WHEN** the state has been visited 5 times
-- **AND** `mop` is null
+- **AND** `Feature.MOP` is not in the plan (cell `as_llm`)
 - **THEN** the text SHALL contain: `Visited 5x.`
 
 #### Scenario: the count uses the per-event test
@@ -430,7 +463,18 @@ Until this change, `<N>` counted actions whose node's own id key had any aggrega
 - **AND** target 4 has retired
 - **THEN** the context SHALL count that action out of `<N>`
 
----
+#### Scenario: v17 without MOP keeps the visit context under NAVIGATION
+
+- **WHEN** variant `v17` builds a prompt in cell `as_llm` for a new state whose screen lists 4 widgets, none visited
+- **THEN** the user text SHALL contain the line `NAVIGATION:` followed by the line `NEW state.`
+- **AND** it SHALL NOT contain `MOP NAVIGATION:`, `MOP.` or any other `MOP` token
+- **AND** its SCREEN line SHALL end `0/4 elements tested | visits: 0`, as in a cell with `Feature.MOP`
+- **AND** its last line SHALL be `Select action. Prioritize navigation to new screens.`
+
+#### Scenario: v17 with MOP keeps today's MOP NAVIGATION block
+
+- **WHEN** variant `v17` builds a prompt in cell `as_mop_llm` for a state visited 2 times where 3 of 8 target-requiring actions are MOP under the marker's per-action test
+- **THEN** the user text SHALL contain the line `MOP NAVIGATION:` followed by the line `Visited 2x. 3/8 MOP.`, byte-identical to the block the builder wrote before this change for the same state and actions
 
 ### Requirement: Single Coordinate Base
 
@@ -494,7 +538,7 @@ The base is the display rather than the root node because the display is what th
 
 ### Requirement: System Message of the v13 Variant
 
-When the prompt variant is `v13`, `ApePromptBuilder` SHALL produce exactly this system message, with the `type_text` line present only when "System Message" includes `type_text` (an input-capable widget among the actions):
+When the prompt variant is `v13` and `Feature.MOP` is in the plan, `ApePromptBuilder` SHALL produce exactly this system message, with the `type_text` line present only when "System Message" includes `type_text` (an input-capable widget among the actions):
 
 ```
 You are an Android UI testing agent. Your task is to explore the app by interacting with UI elements.
@@ -510,12 +554,21 @@ RULE: Do not click the same position twice in a row.
 Respond with exactly one action as JSON: {"name": "<action>", "arguments": {<args>}}
 ```
 
+When `Feature.MOP` is not in the plan, the message SHALL be the same text with the MOP clause deleted from the `PRIORITY` line, which then reads:
+
+```
+PRIORITY: navigation to new screens.
+```
+
+The clause `[DM]/[M] elements > ` is the MOP contribution's system sentence for `v13` (`MopPromptContribution.systemSentence("v13")`); no other line of the `v13` message names MOP.
+
 The `v13` system message SHALL NOT rank elements by how often they were visited, because the `v13` user text shows no visit count. Until this change its `PRIORITY` line ended `> unvisited elements > visited elements.`, a ranking the model could not apply from what the prompt shows; the other variants show visits (`(v:N)` in the shared line formatter, status tags in `v17`). The main spec's "System Message" requirement gives only the `ape_current` text, so this requirement is the first statement of the `v13` text.
 
 #### Scenario: v13 PRIORITY line has no visit ranks
-- **WHEN** variant `v13` builds a prompt
+- **WHEN** variant `v13` builds a prompt in a cell with `Feature.MOP` (`as_mop_llm`)
 - **THEN** the system message SHALL contain the line `PRIORITY: [DM]/[M] elements > navigation to new screens.`
 - **AND** it SHALL NOT contain `unvisited` or `visited`
+- **AND** in a cell without `Feature.MOP` (`as_llm`) the line SHALL be `PRIORITY: navigation to new screens.` and the message SHALL contain neither `[DM]` nor `[M]`
 
 #### Scenario: v13 system message offers type_text only with an input widget
 - **WHEN** variant `v13` builds a prompt whose actions include no input-capable widget
@@ -526,9 +579,9 @@ The `v13` system message SHALL NOT rank elements by how often they were visited,
 
 The `v13` (`UI elements:`) and `v17` (`ELEMENTS:`) element lists SHALL render **one line per widget**, not one line per action. A widget is the pair (target `Name`, resolved-node bounds) of a target-requiring action: two target-requiring actions whose `getTarget()` values are equal and whose resolved nodes' `getBoundsInScreen()` have the same four edges are one widget and share one line. The line is rendered from the resolved node of the widget's first action. Lines SHALL appear in the order of each widget's first target-requiring action in `actions`. An action whose node is not resolved, or whose bounds cannot be read, SHALL keep a line of its own, with no `@(x,y)` ("Single Coordinate Base").
 
-No line SHALL carry an ordinal prefix (`1. `, `2. `, …). Each line starts, after its indentation, with the widget's class. The rest of the line keeps its fields: identifier, `@(x,y)` per INV-PRM-06, MOP marker, static metadata, and in `v17` the status tag. The MOP marker is computed from all of the widget's target-requiring actions, not from the first one's node ("MOP Marker Annotation", design D22). In `v17`, the status tag SHALL be computed from the sum of `getVisitedCount()` over the widget's target-requiring actions.
+No line SHALL carry an ordinal prefix (`1. `, `2. `, …). Each line starts, after its indentation, with the widget's class. The rest of the line keeps its fields: identifier, `@(x,y)` per INV-PRM-06, MOP marker (only when `Feature.MOP` is in the plan), static metadata (only when `Feature.STATIC` is in the plan), and in `v17` the status tag. The MOP marker is computed from all of the widget's target-requiring actions, not from the first one's node ("MOP Marker Annotation", design D22). In `v17`, the status tag SHALL be computed from the sum of `getVisitedCount()` over the widget's target-requiring actions.
 
-The `v17` screen-info line SHALL count widgets on both sides of its ratio: the numerator is the number of listed widgets whose summed visit count is above 0, the denominator is the number of listed widgets, and the label reads `elements tested` instead of `actions tested` (`SCREEN: <Activity> | <tested>/<widgets> elements tested | visits: <N>`). The `MOP NAVIGATION` block that follows is produced by `buildExplorationContext`, which the default-branch variants share. It still counts target-requiring actions, not widgets. Its MOP test is the marker's ("Exploration Context in Prompt", design D22).
+The `v17` screen-info line SHALL count widgets on both sides of its ratio: the numerator is the number of listed widgets whose summed visit count is above 0, the denominator is the number of listed widgets, and the label reads `elements tested` instead of `actions tested` (`SCREEN: <Activity> | <tested>/<widgets> elements tested | visits: <N>`). The navigation block that follows (`MOP NAVIGATION:` with `Feature.MOP`, `NAVIGATION:` without it; "Exploration Context in Prompt") carries the visit part in every cell. Its count, present only with `Feature.MOP`, still counts target-requiring actions, not widgets, and its MOP test is the marker's (design D22).
 
 Every field of a line describes the widget, so one line per action wrote identical copies of it. In E6, 25.3 % of lines (279,463) shared their resolved node's bounds with an earlier line; 274,830 of them (24.9 % of all lines) also share the target `Name` and collapse (`evidence/dup_identity_e6.out`). The other 4,633 (in 4,434 prompts) are distinct `Name`s with identical bounds, such as a container and its single child; they keep a line each, because their class or identifier differs. Conversely, 17,865 lines share a `Name` with an earlier line but resolved, by alias sampling, to a node with other bounds; they keep a line each, because they show another point of the screen.
 
@@ -538,7 +591,7 @@ No tool, parser or mapper reads the ordinal: the answer is a coordinate, matched
 
 #### Scenario: widget with a click and a long-click is listed once
 - **WHEN** `actions` holds a `MODEL_CLICK` and a `MODEL_LONG_CLICK` with the same target `Name`, both resolved to an EditText `"Email"` at bounds `[0,480][1080,596]`
-- **AND** variant `v13` builds the prompt with `deviceWidth=1080`, `deviceHeight=1794` and `mop` null
+- **AND** variant `v13` builds the prompt with `deviceWidth=1080`, `deviceHeight=1794` and `Feature.MOP` absent from the plan
 - **THEN** the element list SHALL contain exactly one line for that EditText: `  EditText "Email" @(500,299)`
 
 #### Scenario: two scroll directions on one widget are listed once
@@ -575,3 +628,72 @@ No tool, parser or mapper reads the ordinal: the answer is a coordinate, matched
 - **WHEN** the list collapses a widget's two actions into one line
 - **THEN** `CoordinateMapper.map` SHALL still receive both actions in `actions`
 - **AND** a `long_click` answer at that widget's coordinate SHALL still match its `MODEL_LONG_CLICK`
+
+### Requirement: Prompt Built From Group Contributions
+
+`ApePromptBuilder` SHALL build the prompt from a base and from the contributions of the mounted groups. A contribution implements `llm/PromptContribution`:
+
+```java
+interface PromptContribution {
+    default String systemSentence(String point) { return ""; }
+    default String lineMarker(List<ModelAction> lineActions) { return ""; }
+    default String lineDetail(ModelAction a) { return ""; }
+    default String contextLine(State s, List<ModelAction> actions) { return ""; }
+    default String section(State s, List<ModelAction> actions) { return ""; }
+}
+```
+
+`systemSentence` is called once per **extension point** of a message, not once per variant: `point` is `"<variant>"` for a variant with a single MOP clause, or `"<variant>.<slot>"` where one message has several insertion points (the `v17` reasoning step, the `ELEMENTS` step's clause, the `PRIORITY` line; the `v13` and `v17` user-text closing clause). `PromptContribution`'s javadoc lists the point keys. A contribution returns the text for that point, and the builder renumbers the steps that follow an absent step. `lineMarker` receives **all the actions a line renders** (one action in the shared line formatter; every target-requiring action of the widget in `v13`/`v17`) and returns the line's single marker, so the contribution, not the builder, ranks verdicts (`[DM]` over `[M]`, "MOP Marker Annotation").
+
+The composition root mounts at most two contributions, from the plan, in this order:
+
+- `StaticPromptContribution`, when `Feature.STATIC` is in the plan. It contributes `lineDetail`: the widget metadata suffix (`prompt`, `spinnerMode`, `contentDescription`, `tooltipText`, `entries`, `inputType`, `hint`, each only when non-empty, with the existing caps) of the `v13` and `v17` lines, read from `StaticGuiModel` (INV-PRM-09).
+- `MopPromptContribution`, when `Feature.MOP` is in the plan. It contributes `systemSentence` (the MOP clauses of the system messages, table below), `lineMarker` (`[DM]`/`[M]`, "MOP Marker Annotation"), `contextLine` (` <N>/<M> MOP.`, "Exploration Context in Prompt") and `section` (the `v17` heading `MOP NAVIGATION:`, which takes the place of the builder's neutral heading `NAVIGATION:`). The MOP clauses of the `v13`/`v17` closing instructions are `systemSentence` points (`v13.close`, `v17.close`). The visit part under either heading is the builder's own.
+
+A group that is not in the plan has no contribution, and a contribution's absence removes its text entirely: no empty heading, no placeholder, no MOP sentence. `ApePromptBuilder` holds the list of mounted contributions and never tests for MOP or static data (INV-PRM-08). The LLM reads the MOP signal in a cell with `Feature.MOP` and `Feature.LLM` (D-A18 Q-8).
+
+The MOP text of each variant, and the wording without `Feature.MOP`, is the existing sentence with the MOP clause deleted:
+
+| Variant | With `Feature.MOP` | Without `Feature.MOP` |
+|---|---|---|
+| `ape_current`, `ape_reasoning` (system) | `PRIORITY: [DM]/[M] elements > unvisited (v:0) > visited.` | `PRIORITY: unvisited (v:0) > visited.` |
+| `compact_v1` (system) | `3. Prioritize [DM]/[M] > unvisited (v:0) > visited.` | `3. Prioritize unvisited (v:0) > visited.` |
+| `v13` (system) | `PRIORITY: [DM]/[M] elements > navigation to new screens.` | `PRIORITY: navigation to new screens.` |
+| `v17` (system, reasoning steps) | `3. MOP CHECK: If [DM] or [M] elements are shown, prioritize them.` | line absent; the steps that follow keep their text and are renumbered `3.`–`5.` |
+| `v17` (system, reasoning steps) | `5. ELEMENTS: Select unvisited element if no navigation or MOP target available.` | `4. ELEMENTS: Select unvisited element if no navigation target available.` |
+| `v17` (system, PRIORITY) | `- Elements reaching monitored operations ([DM] direct / [M] transitive) > other actions` | line absent |
+| `v17` (user text, navigation block) | `MOP NAVIGATION:` heading, then the visit part and the count (`NEW state. <N>/<M> MOP.` / `Visited <N>x. <N>/<M> MOP.`), byte-identical to today | `NAVIGATION:` heading, then the visit part alone (`NEW state.` / `Visited <N>x.`); the visit context is kept |
+| `v17` (user text, SCREEN line) | `SCREEN: <Activity> \| <tested>/<widgets> elements tested \| visits: <N>` | unchanged (not MOP) |
+| `v17` (user text, last line) | `Select action. Prioritize elements reaching monitored operations, then navigation to new screens.` | `Select action. Prioritize navigation to new screens.` |
+| `v13` (user text, last line) | `Choose ONE action to explore new UI states or trigger monitored operations.` | `Choose ONE action to explore new UI states.` |
+| `visual_only` (system) | no MOP text | no MOP text (the user text keeps the ` <N>/<M> MOP.` count with `Feature.MOP`, "Exploration Context in Prompt") |
+
+#### Scenario: as_llm prompt carries no MOP text
+
+- **WHEN** variant `v13` builds a prompt in cell `as_llm` (STATIC and LLM mounted, MOP not) for a screen with an EditText whose static metadata has `inputType="textEmailAddress"`
+- **THEN** no text the builder or a contribution writes in either message SHALL contain `[DM]`, `[M]`, `MOP` or `monitored operations` (INV-PRM-07)
+- **AND** the EditText's line SHALL carry ` inputType="textEmailAddress"` from the STATIC contribution
+
+#### Scenario: as_mop_llm prompt carries the MOP contribution
+
+- **WHEN** variant `v13` builds a prompt in cell `as_mop_llm` for a new state where 2 of 6 target-requiring actions have a positive MOP weight
+- **THEN** the system message SHALL contain `PRIORITY: [DM]/[M] elements > navigation to new screens.`
+- **AND** the user text SHALL contain `2/6 MOP.` and at least one line with a MOP marker
+
+#### Scenario: v17 system message without MOP
+
+- **WHEN** variant `v17` builds a prompt in cell `as_llm`
+- **THEN** its reasoning steps SHALL read `1. SCREEN`, `2. DIALOG`, `3. NAVIGATION`, `4. ELEMENTS: Select unvisited element if no navigation target available.`, `5. ACTION`
+- **AND** its PRIORITY list SHALL hold `- Actions leading to NEW screens > same-screen actions` and `- Unvisited (v:0) > visited`, and no line about monitored operations
+
+#### Scenario: metadata comes from STATIC, not MOP
+
+- **WHEN** a plan sets `ape.mop=true`, `ape.llm=true` and `ape.static=false`, and the artifact carries a `hint` for a widget on screen
+- **THEN** the widget's `v13` line SHALL carry no metadata suffix
+- **AND** it SHALL carry its MOP marker when its actions have a positive MOP weight
+
+#### Scenario: the builder renders contributions without testing data
+
+- **WHEN** `ApePromptBuilder` is constructed with an empty contribution list and called with a `State` whose activity is MOP-reachable in the artifact
+- **THEN** the prompt SHALL be the base prompt with no marker, no count, no metadata and the MOP-free sentences
+- **AND** no `MopData` or `StaticGuiModel` method SHALL be called during `build()`

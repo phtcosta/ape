@@ -1,12 +1,12 @@
 ## Purpose
 
-APE-RV's LLM infrastructure provides the low-level building blocks for communicating with an SGLang server running a vision-language model (Qwen3-VL). These components handle the full pipeline from screen capture to actionable coordinates: capturing a screenshot on the Android device, compressing and encoding the image for transmission, sending a multimodal chat request over HTTP, parsing the model's tool-call response with fallbacks for Qwen3-VL formatting quirks, converting between normalized coordinates and device pixels in both directions (the model's answer to a pixel, and a widget's pixel to the coordinate the prompt shows, `llm-coordinate-single-base`), and protecting the exploration loop from cascading LLM failures via a circuit breaker.
+APE-RV's LLM infrastructure provides the low-level building blocks for communicating with an OpenAI-compatible LLM server (vLLM; "SGLang" is a legacy name kept in class names) running a vision-language model (Qwen3-VL). These components handle the full pipeline from screen capture to actionable coordinates: capturing a screenshot on the Android device, compressing and encoding the image for transmission, sending a multimodal chat request over HTTP, parsing the model's tool-call response with fallbacks for Qwen3-VL formatting quirks, converting between normalized coordinates and device pixels in both directions (the model's answer to a pixel, and a widget's pixel to the coordinate the prompt shows, `llm-coordinate-single-base`), and protecting the exploration loop from cascading LLM failures via a circuit breaker.
 
 All 7 classes in this capability are copied from the rvsmart project (`rvsec-android/rvsmart/src/.../llm/`) with a package rename from `br.unb.cic.rvsmart.llm` to `com.android.commands.monkey.ape.llm`. During copy, `SglangClient` and `ToolCallParser` are converted from Gson (`com.google.gson`) to org.json (`org.json.JSONObject`, `org.json.JSONArray`), which is already available in the Android runtime and used by 24 existing files in APE-RV. This eliminates the need for any new Maven dependency. The remaining 5 classes have no JSON dependency and are copied as-is. Total: ~1000 LOC.
 
-The infrastructure communicates with SGLang via `java.net.HttpURLConnection` (available in the Android SDK) and uses `org.json` for JSON serialization. Screenshot capture uses `android.view.SurfaceControl` via reflection (hidden API, available from app_process context on API 28+).
+The infrastructure communicates with SGLang via `java.net.HttpURLConnection` (available in the Android SDK) and uses `org.json` for JSON serialization. Screenshot capture uses `android.view.SurfaceControl` via reflection (hidden API, available from app_process context on API 28+), at the display's current rotation (`AndroidDevice.getRotation()`, read through `Display`, API 30-safe), so a landscape screen reaches the model upright and uncropped.
 
-The infrastructure is designed for graceful degradation: if any component fails (screenshot capture returns null, HTTP times out, response is unparseable), the caller receives a null result and falls back to SATA action selection. The circuit breaker adds a second layer of protection by blocking all LLM attempts for 60 seconds after 3 consecutive failures, preventing the exploration loop from wasting time on a dead server.
+The infrastructure is designed for graceful degradation: if any component fails (screenshot capture returns null, HTTP times out, response is unparseable), the caller receives a null result and falls back to SATA action selection. The circuit breaker adds a second layer of protection by blocking all LLM attempts for `ape.llmBreakerOpenMs` (default 60 s) after `ape.llmBreakerFailures` (default 3) consecutive failures, preventing the exploration loop from wasting time on a dead server. Both are `LLM` plan keys; the breaker is consulted as a declared gate of the LLM coin (`llm-routing` "Declared LLM Gates", design D-B8).
 
 ---
 
@@ -14,12 +14,14 @@ The infrastructure is designed for graceful degradation: if any component fails 
 
 ### Input
 
-- `Config.llmUrl: String` — base URL for SGLang server including `/v1` suffix (e.g., `http://10.0.2.2:30000/v1`); null disables all LLM features (source: `ape.properties`)
-- `Config.llmModel: String` — model name for SGLang (default: `"default"`; source: `ape.properties`)
-- `Config.llmTemperature: double` — sampling temperature for LLM responses (default: `0.3`; source: `ape.properties`)
-- `Config.llmTopP: double` — nucleus sampling threshold (default: `0.6`; source: `ape.properties`)
-- `Config.llmTopK: int` — top-k sampling (default: `50`; source: `ape.properties`)
-- `Config.llmTimeoutMs: int` — HTTP timeout in milliseconds for SGLang requests (default: `15000`; source: `ape.properties`)
+- `ape.llmUrl: String` — base URL of the LLM server including the `/v1` suffix (e.g., `http://10.0.2.2:30000/v1`); owned by the `LLM` group and read as `RunContext.current().spec().llm().url()`. It has no neutral value: `ape.llm=true` without it aborts resolution (`MISSING_DEPENDENCY`), and a plan without `LLM` makes no LLM call (source: plan)
+- `ape.llmModel: String` — model name (default: `"default"`; `spec().llm().model()`; source: plan)
+- `ape.llmTemperature: double` — sampling temperature (default: `0.3`; source: plan)
+- `ape.llmTopP: double` — nucleus sampling threshold (default: `0.6`; source: plan)
+- `ape.llmTopK: int` — top-k sampling (default: `50`; source: plan)
+- `ape.llmTimeoutMs: int` — HTTP timeout in milliseconds (default: `15000`; source: plan)
+- `ape.llmBreakerFailures: int` / `ape.llmBreakerOpenMs: long` — the circuit breaker's failure threshold and open duration (defaults: `3` / `60000`; `spec().llm().breakerFailures()` / `breakerOpenMs()`; source: plan)
+- Every key above is an `LLM` group key with its default in `KeyOwnership`; `LlmClient` reads them from `LlmParams` at construction (the sampling keys and the timeout through `LlmParams.dbl`/`integer`)
 - `{width, height}: int[]` — the decision's device dimensions in pixels, the pair `ScreenshotStep.deviceDimensions(tree)` returns: the display bounds (`AndroidDevice.getDisplayBounds()`, each axis taken when positive), then the tree's root-node bounds only if the display call throws, then the `1080` × `1920` constants. Both conversion directions of `CoordinateNormalizer` are called with this one pair within a decision (source: `ScreenshotStep`)
 - `PNG bytes: byte[]` — raw screenshot data produced by `ScreenshotCapture` (source: SurfaceControl reflection)
 
@@ -58,6 +60,8 @@ The infrastructure is designed for graceful degradation: if any component fails 
 - **INV-LLM-11**: The `tools` array sent on the wire SHALL be exactly the schema supplied to that `chat()` invocation; no tools state SHALL persist on the client across invocations.
 - **INV-LLM-12**: When `capture()` returns null, exactly one failure stage SHALL be recorded, reset at the start of every `capture()` invocation; the seam SHALL never alter the null-return contract (INV-LLM-02).
 - **INV-LLM-13**: For every display dimension `d` with `0 < d < 2000` and every pixel `p` with `0 <= p < d`, the round trip `normalize(toNormalized(p))` on one axis SHALL return a pixel `q` with `p - 2 <= q <= p`. Both directions truncate, so the loss is always toward the origin and below `d/1000 + 1` px. This bound is what lets a coordinate copied from the prompt land inside the widget it names.
+- **INV-LLM-14**: Every SurfaceControl capture SHALL pass `ScreenshotCapture.displayRotation(AndroidDevice.getRotation())` as the rotation argument. `displayRotation(r)` SHALL return `r` when `0 <= r <= 3` and `0` otherwise. `AndroidDevice.getRotation()` SHALL return `DisplayManagerGlobal.getInstance().getRealDisplay(Display.DEFAULT_DISPLAY).getRotation()`, which is the display `getDisplayBounds()` reads its size from, and SHALL return `-1` when that read throws. A portrait display (rotation 0) is therefore captured with rotation `0`.
+- **INV-LLM-15**: `LlmCircuitBreaker`'s failure threshold and open duration SHALL be the plan's `ape.llmBreakerFailures` and `ape.llmBreakerOpenMs`, injected through `LlmParams` when `LlmClient` is constructed. With the defaults `3` and `60000`, every breaker transition SHALL be identical to the former hard-coded constants.
 
 ---
 
@@ -95,14 +99,32 @@ The failure-cause classification (`getLastErrorCause()`, INV-LLM-08) is unchange
 
 ### Requirement: ScreenshotCapture — SurfaceControl Screenshot
 
-`ScreenshotCapture.capture(int width, int height)` SHALL capture a screenshot of the device display and return it as a PNG byte array. The primary capture method SHALL use `android.view.SurfaceControl.screenshot(Rect, int, int, int)` via reflection (hidden API, available from `app_process` context). If reflection fails, a fallback to `UiAutomation.takeScreenshot()` SHALL be attempted.
+`ScreenshotCapture.capture(int width, int height)` SHALL capture a screenshot of the device display and return it
+as a PNG byte array. The primary capture method SHALL use `android.view.SurfaceControl.screenshot(Rect, int, int,
+int)` via reflection (a hidden API, available from the `app_process` context). It SHALL pass
+`Rect(0, 0, width, height)`, `width`, `height` and the display's current rotation,
+`displayRotation(AndroidDevice.getRotation())` (INV-LLM-14). If reflection fails, a fallback to
+`UiAutomation.takeScreenshot()` SHALL be attempted.
+
+`width × height` is the frame `Display.getSize()` reports for the current orientation, so the capture SHALL be
+taken in that orientation too. `displayRotation` clamps the value to `Surface.ROTATION_0…ROTATION_270` (`0..3`). Any
+other value, including the `-1` that `getRotation()` returns when the display cannot be read, becomes `0`, which
+is the call made before this change. `AndroidDevice.getRotation()` SHALL read the rotation from the real default
+display (`getRealDisplay(DEFAULT_DISPLAY).getRotation()`), the same display `getDisplayBounds()` reads its size
+from, so the size and the rotation describe one orientation. It SHALL NOT call `IWindowManager.getRotation()`,
+which does not exist on API 30.
+
+The same `getRotation()` value SHALL be written on every step as `dec.rot`, a value in `-1..3`: the rotation
+`0..3`, `0` included, or `-1` when unreadable (`event-sink`). `dec.rot` records the raw value; the capture uses
+`displayRotation` of it. Whether a call saw a landscape screen can then be read from the trace.
 
 #### Scenario: Successful capture via SurfaceControl
 
-- **WHEN** `capture(1080, 1920)` is called on an Android device with API 28+
+- **WHEN** `capture(1080, 1920)` is called on an Android device with API 28+ whose display is in portrait (`getRotation()` returns `0`)
 - **AND** `SurfaceControl.screenshot()` is accessible via reflection
 - **THEN** a non-null byte array containing valid PNG data SHALL be returned
 - **AND** the PNG dimensions SHALL match the requested width and height
+- **AND** the rotation argument SHALL be `0`, so the call is identical to the call made before this change
 
 #### Scenario: SurfaceControl reflection fails
 
@@ -110,6 +132,18 @@ The failure-cause classification (`getLastErrorCause()`, INV-LLM-08) is unchange
 - **THEN** the UiAutomation fallback SHALL be attempted
 - **AND** if both methods fail, `null` SHALL be returned
 - **AND** no exception SHALL propagate
+
+#### Scenario: landscape screen captured upright
+
+- **WHEN** the display is turned to landscape, `getRotation()` returns `1`, and `capture(1794, 1080)` is called
+- **THEN** `SurfaceControl.screenshot` SHALL be invoked with `Rect(0, 0, 1794, 1080)`, `1794`, `1080`, `1`
+- **AND** the PNG SHALL be 1794 × 1080 and show the screen in the orientation the display shows
+
+#### Scenario: unreadable rotation falls back to zero
+
+- **WHEN** `getRealDisplay(DEFAULT_DISPLAY).getRotation()` throws, so `AndroidDevice.getRotation()` returns `-1`
+- **THEN** `displayRotation(-1)` SHALL return `0` and the capture SHALL proceed with rotation `0`
+- **AND** `displayRotation(4)` SHALL also return `0`, while `displayRotation(3)` SHALL return `3`
 
 ---
 
@@ -316,24 +350,35 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 
 ### Requirement: LlmCircuitBreaker — Fault Tolerance
 
-`LlmCircuitBreaker` SHALL implement a 3-state circuit breaker (CLOSED, OPEN, HALF_OPEN) that protects the exploration loop from cascading LLM failures.
+`LlmCircuitBreaker` SHALL implement a 3-state circuit breaker (CLOSED, OPEN, HALF_OPEN) that protects the
+exploration loop from cascading LLM failures. Its two parameters SHALL come from the plan, through
+`LlmParams` (INV-LLM-15):
+- `failureThreshold` = `ape.llmBreakerFailures`, default `3`;
+- `openDurationMs` = `ape.llmBreakerOpenMs`, default `60000`.
+
+The breaker SHALL have no constructor that supplies defaults of its own. When `ape.llmBreakerFailures` is `0`,
+the `BreakerGate` is not mounted (`llm-routing` "Declared LLM Gates"): the breaker is then never consulted, so
+`shouldAttempt()` is never called, no breaker decision gates a call, and no `llm[]` entry with
+`result:"breaker_open"` is ever emitted; `RUN_END.counters.gateBreaker` stays `0`.
 
 **State transitions:**
-- CLOSED: normal operation. `recordFailure()` increments failure counter. When counter reaches `failureThreshold` (default: 3), transition to OPEN.
-- OPEN: all requests blocked. `shouldAttempt()` returns false. After `openDurationMs` (default: 60000ms), transition to HALF_OPEN.
+- CLOSED: normal operation. `recordFailure()` increments the failure counter. When the counter reaches `failureThreshold` (default: 3), transition to OPEN.
+- OPEN: all requests are blocked, and `shouldAttempt()` returns false. After `openDurationMs` (default: 60000 ms), transition to HALF_OPEN.
 - HALF_OPEN: one probe request allowed. `recordSuccess()` → CLOSED. `recordFailure()` → OPEN (reset timer).
 
 `recordSuccess()` SHALL always reset failure counter and transition to CLOSED regardless of current state.
 
 #### Scenario: Trip after 3 failures
 
-- **WHEN** `recordFailure()` is called 3 times consecutively from CLOSED state
+- **WHEN** `recordFailure()` is called 3 times consecutively from CLOSED state, with `ape.llmBreakerFailures` at its default `3`
 - **THEN** `shouldAttempt()` SHALL return `false`
 - **AND** `getStateName()` SHALL return `"OPEN"`
+- **AND WHEN** the plan sets `ape.llmBreakerFailures=5`
+- **THEN** the breaker SHALL still be `"CLOSED"` after 4 consecutive failures and `"OPEN"` after the 5th
 
 #### Scenario: Recovery after timeout
 
-- **WHEN** the circuit breaker is OPEN
+- **WHEN** the circuit breaker is OPEN, with `ape.llmBreakerOpenMs` at its default `60000`
 - **AND** 60 seconds have elapsed since the last failure
 - **THEN** `shouldAttempt()` SHALL return `true`
 - **AND** `getStateName()` SHALL return `"HALF_OPEN"`
@@ -372,11 +417,11 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 
 ### Requirement: LLM Configuration Keys
 
-`Config.java` SHALL declare the following `public static final` fields for LLM configuration, loaded from `ape.properties` at class-loading time:
+The following LLM configuration keys SHALL be plan keys, owned by the `LLM` feature family in `KeyOwnership` (`ape.llmPercentage` by its member `LLM_COIN`), resolved by `RunSpec` from `ape.properties` and the preset, and read through `RunContext.current().spec().llm()` (`url()`, `model()`, `promptVariant()`, and the typed getters `dbl`/`integer`/`bool` on the key for the others). `Config` SHALL declare no field for any of them: their former `Config` twins had no reader and are deleted (design D-B24), and their defaults are those of `KeyOwnership.defaultOf`:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `ape.llmUrl` | String | `null` | SGLang base URL (null = LLM disabled) |
+| `ape.llmUrl` | String | `null` | SGLang base URL; owned by `LLM` with no neutral value |
 | `ape.llmOnNewState` | boolean | `true` | Enable new-state LLM mode |
 | `ape.llmOnStagnation` | boolean | `true` | Enable stagnation LLM mode |
 | `ape.llmModel` | String | `"default"` | Model name for SGLang server |
@@ -384,70 +429,92 @@ Reference: Qwen3-VL coordinate convention — https://github.com/QwenLM/Qwen3-VL
 | `ape.llmTopP` | double | `0.6` | Nucleus sampling threshold |
 | `ape.llmTopK` | int | `50` | Top-k sampling |
 | `ape.llmTimeoutMs` | int | `15000` | HTTP timeout in milliseconds |
-| `ape.llmPercentage` | double | `0.02` | Probability of routing to LLM on each step (0.0 = disabled, 0.7 = 70%, 0.99 = nearly every step) |
+| `ape.llmPercentage` | double | `0.02` | The LLM coin `p_L`: probability that a step not taken by a guard or trigger is intended for the LLM (0.0 = no `LlmCoin` stage, 0.9 = the `LLM` block's value) |
 | `ape.llmMaxTokens` | int | `1024` | `max_tokens` for the chat completion request (J1c; default = the previously hard-coded value; not causal for truncation — observed `tokens_out` ≈ 25) |
 | `ape.llmSnapTolerancePx` | int | `50` | Floor of the euclidean snap tolerance `max(floor, min(w,h)/2)` in `mapToModelAction` (J1b; lever analyzed and discarded — default not swept) |
 | `ape.llmBoundaryTopPct` | double | `0.035` | Status-bar boundary reject band as a fraction of the display height, the `deviceHeight` of the decision (J1b; `0.035` = the campaign AVD's 63 px status bar over its 1794 px display, so a degenerate `(0,0)` is still rejected; set it for a device of another density) |
 
-The three J1b/J1c keys carry no clamping logic (researcher-facing knobs, like `llmTimeoutMs`/`llmTopK`). `ape.llmMaxTokens` and `ape.llmSnapTolerancePx` reproduce the previously hard-coded behavior bit-for-bit. `ape.llmBoundaryTopPct` does not: its old default `0.05` and the bottom band `ape.llmBoundaryBottomPct=0.94` were fractions of a 1920-high screen applied to the 1794-high display, and `llm-coordinate-single-base` re-derived the band in the display base (`llm-routing` INV-RTR-22). `ape.llmBoundaryBottomPct` is retired: on the display every value below 1.0 rejects app content and every value from 1.0 up never fires, so a properties file that sets it aborts resolution with that reason (`run-spec`, "Total Fail-Fast Validation"). In the run-spec `Feature` model, `ape.llmUrl` is the activation key of the `LLM` feature and every other key in this table is a sub-parameter owned by the `LLM` feature family: when `LLM` is absent from the resolved plan, `LlmParams` is null, no LLM object is constructed, and an explicitly-set LLM sub-parameter is accepted only at its neutral value (INV-RUN-05 of `run-spec`) — an explicitly enabled mode (`ape.llmOnNewState=true`, `ape.llmOnStagnation=true`, or `ape.llmPercentage>0`) without `ape.llmUrl` aborts resolution as a missing dependency.
+Three further keys are owned by the plan's `LLM` feature and read through `spec().llm()`, likewise with no `Config`
+field (design D-B8):
 
-When `Config.llmPercentage` is `0.0`, no random LLM calls SHALL occur — only new-state and stagnation modes apply. When `Config.llmPercentage` is `0.02` (default), approximately 2% of non-event steps SHALL attempt LLM calls.
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `ape.llmGateMinActions` | int | `3` | `MinActionsGate(min)`: an LLM stage calls only on a state with at least `min` actions; `0` = gate not mounted |
+| `ape.llmBreakerFailures` | int | `3` | `LlmCircuitBreaker` failure threshold; `0` = `BreakerGate` not mounted, so the breaker is never consulted and emits no `breaker_open` entry |
+| `ape.llmBreakerOpenMs` | long | `60000` | `LlmCircuitBreaker` open duration in milliseconds |
 
-When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-related objects SHALL be instantiated.
+Their defaults reproduce the former behaviour: `size() > 2`, 3 failures and 60 s.
+
+The three J1b/J1c keys carry no clamping logic (researcher-facing knobs, like `llmTimeoutMs`/`llmTopK`). `ape.llmMaxTokens` and `ape.llmSnapTolerancePx` reproduce the previously hard-coded behavior bit-for-bit. `ape.llmBoundaryTopPct` does not: its old default `0.05` and the bottom band `ape.llmBoundaryBottomPct=0.94` were fractions of a 1920-high screen applied to the 1794-high display, and `llm-coordinate-single-base` re-derived the band in the display base (`llm-routing` INV-RTR-22). `ape.llmBoundaryBottomPct` is retired: on the display every value below 1.0 rejects app content and every value from 1.0 up never fires, so a properties file that sets it aborts resolution with that reason (`run-spec`, "Total Fail-Fast Validation").
+
+In the run-spec `Feature` model, `ape.llm` is the activation key of the `LLM` group (`guidance-groups`, design
+D-B1). `ape.llmUrl` is owned by `LLM` with no neutral value, so `ape.llm=true` without `ape.llmUrl` aborts
+resolution as a missing dependency. Every other key in the two tables is a sub-parameter owned by the `LLM`
+feature family. When `LLM` is absent from the resolved plan:
+- `LlmParams` is null and no LLM object is constructed;
+- an explicitly-set LLM sub-parameter is accepted only at its neutral value (INV-RUN-05 of `run-spec`);
+- an explicitly enabled mode (`ape.llmOnNewState=true`, `ape.llmOnStagnation=true` or `ape.llmPercentage>0`)
+  aborts resolution as a missing dependency.
+
+When `ape.llmPercentage` is `0.0`, no coin step SHALL call the LLM: only the new-state and stagnation triggers
+apply. When it is `0.02` (the jar default), the coin SHALL hold on approximately 2 % of the steps that reach the
+`LlmCoin` stage.
+
+When the plan does not carry `LLM`, all LLM features SHALL be disabled and no LLM-related objects SHALL be instantiated.
 
 #### Scenario: LLM disabled by default
 
-- **WHEN** `ape.properties` does not contain `ape.llmUrl`
-- **THEN** `Config.llmUrl` SHALL be `null`
+- **WHEN** `ape.properties` sets neither `ape.llm` nor `ape.llmUrl`
+- **THEN** the resolved plan SHALL carry no `LLM` feature, `RunContext.current().spec().llm()` SHALL be null, and `KeyOwnership.defaultOf("ape.llmUrl")` SHALL be `null`
 - **AND** no `SglangClient`, `LlmRouter`, or other LLM objects SHALL be created
 
 #### Scenario: LLM enabled with URL
 
-- **WHEN** `ape.properties` contains `ape.llmUrl=http://10.0.2.2:30000/v1`
-- **THEN** `Config.llmUrl` SHALL equal `"http://10.0.2.2:30000/v1"`
-- **AND** `StatefulAgent` SHALL instantiate `LlmRouter` with the configured URL
+- **WHEN** `ape.properties` contains `ape.llm=true` and `ape.llmUrl=http://10.0.2.2:30000/v1`
+- **THEN** `RunContext.current().spec().llm().url()` SHALL equal `"http://10.0.2.2:30000/v1"`
+- **AND** the run SHALL construct its LLM units with the configured URL
 
 #### Scenario: Individual modes toggled
 
-- **WHEN** `ape.properties` contains `ape.llmUrl=http://10.0.2.2:30000/v1` and `ape.llmOnNewState=false`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl=http://10.0.2.2:30000/v1` and `ape.llmOnNewState=false`
 - **THEN** the new-state LLM mode SHALL be disabled
 - **AND** the stagnation mode SHALL remain enabled (per its default)
 
 #### Scenario: Custom sampling parameters
 
-- **WHEN** `ape.properties` contains `ape.llmTopP=0.9` and `ape.llmTopK=100`
-- **THEN** `Config.llmTopP` SHALL equal `0.9`
-- **AND** `Config.llmTopK` SHALL equal `100`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl=http://10.0.2.2:30000/v1`, `ape.llmTopP=0.9` and `ape.llmTopK=100`
+- **THEN** the resolved plan's `spec().llm().dbl("ape.llmTopP")` SHALL equal `0.9`
+- **AND** `spec().llm().integer("ape.llmTopK")` SHALL equal `100`
 - **AND** `SglangClient` SHALL use these values in the request body
 
 #### Scenario: Default 2% random routing
 
-- **WHEN** `ape.properties` does not contain `ape.llmPercentage`
-- **THEN** `Config.llmPercentage` SHALL be `0.02`
-- **AND** approximately 2% of non-event steps SHALL attempt LLM calls
+- **WHEN** `ape.properties` contains `ape.llm=true` and `ape.llmUrl`, no `ape.preset`, and no `ape.llmPercentage`
+- **THEN** the resolved plan's `spec().llm().dbl("ape.llmPercentage")` SHALL be `0.02`, the value of `KeyOwnership.defaultOf("ape.llmPercentage")`
+- **AND** the coin SHALL hold on approximately 2 % of the steps that reach the `LlmCoin` stage
 
 #### Scenario: Random routing disabled
 
-- **WHEN** `ape.properties` contains `ape.llmPercentage=0.0`
-- **THEN** `Config.llmPercentage` SHALL be `0.0`
-- **AND** `LlmRouter.shouldRouteRandom()` SHALL always return `false`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl` and `ape.llmPercentage=0.0`
+- **THEN** the resolved plan's `ape.llmPercentage` SHALL be `0.0` and `LLM_COIN` SHALL be absent from its `features`
+- **AND** no `LlmCoin` stage SHALL be assembled, while `u_L` is still drawn each step (`decision-pipeline` INV-DP-13)
 
 #### Scenario: High percentage for experiments
 
-- **WHEN** `ape.properties` contains `ape.llmPercentage=0.7`
-- **THEN** `Config.llmPercentage` SHALL be `0.7`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl` and `ape.llmPercentage=0.7`
+- **THEN** the resolved plan's `spec().llm().dbl("ape.llmPercentage")` SHALL be `0.7`, the `p_L` injected into the `LlmCoin` stage
 
 #### Scenario: J1b/J1c defaults reproduce the hard-coded values
 
-- **WHEN** `ape.properties` contains none of the three J1b/J1c keys
-- **THEN** `Config.llmMaxTokens` SHALL be `1024`, `Config.llmSnapTolerancePx` SHALL be `50`, and `Config.llmBoundaryTopPct` SHALL be `0.035`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl`, no `ape.preset` and none of the three J1b/J1c keys
+- **THEN** the resolved plan SHALL carry `ape.llmMaxTokens=1024`, `ape.llmSnapTolerancePx=50` and `ape.llmBoundaryTopPct=0.035` (`spec().llm().integer(…)`/`dbl(…)`), the values of `KeyOwnership.defaultOf` for the three keys
 - **AND** request `max_tokens` and the euclidean tolerance SHALL be identical to the pre-J1 hard-coded constants
 - **AND** the boundary reject SHALL NOT reproduce the hard-coded `0.05`/`0.94`: it SHALL be the status-bar band of `llm-routing` INV-RTR-22, with no lower band (`llm-coordinate-single-base`)
 
 #### Scenario: J1b/J1c keys configurable without rebuild
 
-- **WHEN** `ape.properties` contains `ape.llmMaxTokens=2048` and `ape.llmSnapTolerancePx=80`
-- **THEN** `Config.llmMaxTokens` SHALL be `2048` and `Config.llmSnapTolerancePx` SHALL be `80`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl`, `ape.llmMaxTokens=2048` and `ape.llmSnapTolerancePx=80`
+- **THEN** the resolved plan's `spec().llm().integer("ape.llmMaxTokens")` SHALL be `2048` and `spec().llm().integer("ape.llmSnapTolerancePx")` SHALL be `80`
 - **AND** the values SHALL flow into the request body / euclidean tolerance without any code change
 
 #### Scenario: New keys classified in the apePureMode registry
@@ -459,13 +526,13 @@ When `Config.llmUrl` is `null`, all LLM features SHALL be disabled and no LLM-re
 #### Scenario: LLM sub-parameters owned by the Feature model
 
 - **WHEN** the run-spec key-ownership totality test runs
-- **THEN** `llmMaxTokens`, `llmSnapTolerancePx`, and `llmBoundaryTopPct` SHALL each be owned by the `LLM` feature as sub-parameters
+- **THEN** `llmMaxTokens`, `llmSnapTolerancePx`, `llmBoundaryTopPct`, `llmGateMinActions`, `llmBreakerFailures` and `llmBreakerOpenMs` SHALL each be owned by the `LLM` feature as sub-parameters
 - **AND** `llmBoundaryBottomPct` SHALL be owned by no feature and SHALL appear among the retired keys
 - **AND** with `LLM` absent from the plan, none of them SHALL parameterize any constructed mechanism
 
 #### Scenario: LLM mode without a URL aborts
 
-- **WHEN** `ape.properties` contains `ape.llmOnStagnation=true` and no `ape.llmUrl`
+- **WHEN** `ape.properties` contains `ape.llm=true` and no `ape.llmUrl`, or `ape.llmOnStagnation=true` without `ape.llm=true`
 - **THEN** resolution SHALL abort with a missing-dependency diagnostic naming `LLM` (instead of silently loading a mode that can never fire)
 
 ### Requirement: SglangClient — Per-Request Tool Schema

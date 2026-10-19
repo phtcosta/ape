@@ -6,9 +6,11 @@ APE-RV's exploration engine is responsible for systematically exercising an Andr
 
 The central abstraction mechanism, inherited from the original APE tool (ICSE 2019), is CEGAR-style (Counterexample-Guided Abstraction Refinement). The `NamingFactory` component maps concrete `GUITree` snapshots to abstract `State` nodes via a configurable `Naming` (a level in a widget-attribute lattice). When the abstraction is too coarse — detected by observing non-deterministic transitions from a single abstract state — the naming is automatically refined to a finer level, splitting the offending state. This adaptive refinement ensures the model stays sound (no false merging of distinct screens) without over-specifying upfront.
 
-APE-RV supports selectable exploration strategies, each suited to a different use case. `SataAgent` (`--ape sata`) is the primary strategy and implements an epsilon-greedy heuristic that aggressively prioritises unvisited actions while using graph-guided navigation to reach under-explored parts of the app. `RandomAgent` (`--ape random`) provides an experimental baseline using priority-weighted random selection over model actions — it still uses the `StatefulAgent` priority infrastructure but without SATA's directed navigation. `ReplayAgent` (activated via the `ape.replayLog` configuration key) replays a recorded action sequence for deterministic regression testing. Phase 2 will add `ApeAgent` (`--ape ape`, full CEGAR naming-refinement), BFS (`--ape bfs`), and DFS (`--ape dfs`) as additional selectable strategies. The strategy is selected once at startup and does not change during a session.
+APE-RV supports selectable exploration strategies, each suited to a different use case. `SataAgent` (`--ape sata`) is the primary strategy and implements an epsilon-greedy heuristic that aggressively prioritises unvisited actions while using graph-guided navigation to reach under-explored parts of the app. `RandomAgent` (`--ape random`) provides an experimental baseline using priority-weighted random selection over model actions — it still uses the `StatefulAgent` priority infrastructure but without SATA's directed navigation. `ReplayAgent` (activated on the command line via `--ape replay --ape-replay <log>`; `ape.replayLog` is retired as a file key) replays a recorded action sequence for deterministic regression testing. Phase 2 will add `ApeAgent` (`--ape ape`, full CEGAR naming-refinement), BFS (`--ape bfs`), and DFS (`--ape dfs`) as additional selectable strategies. The strategy is selected once at startup and does not change during a session.
 
-The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is the heartbeat of the system. Each iteration captures the current screen as a `GUITree`, maps it to an abstract `State`, asks the active `Agent` to choose a `ModelAction`, translates that action into one or more `ApeEvent` objects (click, drag, key press, scroll gesture), enqueues those events in Monkey's event queue for execution on the device, then captures the resulting screen and updates the model. The loop terminates when a wall-clock time limit (`--running-minutes N`) or an event-count limit (`-v N`) is reached; on termination the serialised exploration graph is saved to disk. The priority system on `ModelAction` objects allows extensions such as the APE-RV Phase 3 MOP guidance layer to influence action selection without rewriting agent logic: `StatefulAgent.adjustActionsByGUITree()` is the designated hook where a higher-level component may call `action.setPriority(int)` to promote preferred actions before the agent's selection step.
+The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is the heartbeat of the system. Each iteration captures the current screen as a `GUITree`, maps it to an abstract `State`, asks the active `Agent` to choose a `ModelAction`, translates that action into one or more `ApeEvent` objects (click, drag, key press, scroll gesture), enqueues those events in Monkey's event queue for execution on the device, then captures the resulting screen and updates the model. The loop terminates when a wall-clock time limit (`--running-minutes N`) or an event-count limit (`-v N`) is reached; teardown then writes the run's closing telemetry (no exploration-graph file is saved). The priority system on `ModelAction` objects allows extensions such as the APE-RV Phase 3 MOP guidance layer to influence action selection without rewriting agent logic: `StatefulAgent.adjustActionsByGUITree()` is the designated hook where a higher-level component may call `action.setPriority(int)` to promote preferred actions before the agent's selection step.
+
+For `SataAgent` the step is a fixed sequence of owners (`decision-pipeline`), mounted by group (`guidance-groups`). The restart is a guard stage that runs before any selection, so a restart never replaces an action already chosen and the step records `dec.src="restart"` with its kind; `RandomAgent` and `ReplayAgent` have no pipeline and keep the post-selection `checkRestart`. The LLM hooks consult declared gates rather than the SATA buffer: a new state reached mid-path may go to the LLM, and the buffer is then abandoned without weakening. The fuzz toss is drawn from its own stream on every step. The ADDONS mechanisms of the engine — `MODEL_MENU`, the dynamic epsilon and the two event-generation guards — are read from the plan (`spec().has(Feature.X)`, design D-B6), so a cell without ADDONS behaves as upstream APE. Every key the engine reads is resolved once, at startup, into the run plan (`RunContext.current().spec()`), with its default in `KeyOwnership`.
 
 ## Data Contracts
 
@@ -17,14 +19,14 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - `--ape <strategy>: String` — selects the exploration strategy; currently accepted values are `sata` (default) and `random`; Phase 2 will add `ape`, `bfs`, `dfs`; passed as a Monkey command-line argument (source: `Monkey.main()`)
 - `--running-minutes <N>: int` — wall-clock time limit in minutes after which exploration stops (source: Monkey command-line)
 - `-v <N>: int` — maximum number of Monkey events; used as an alternative stop condition (source: Monkey command-line)
-- `/data/local/tmp/ape.properties` or `/sdcard/ape.properties: Properties file` — optional key-value configuration overrides loaded at startup by `Config` (source: device filesystem)
+- `/data/local/tmp/ape.properties` or `/sdcard/ape.properties: Properties file` — optional key-value configuration overrides, resolved at startup with the command line into the run plan (`RunSpec`); an unknown, retired or ill-typed key aborts the run before the first event (source: device filesystem)
 - `AccessibilityNodeInfo: Android API` — live accessibility tree of the current screen, fetched by `AndroidDevice` via `UiAutomation` at each step (source: Android AccessibilityService)
 - `ComponentName: Android API` — identity of the foreground activity, used to scope states per activity (source: `ActivityManager`)
 
 ### Output
 
-- `*.png screenshots: files` — per-step or per-new-state PNG screenshots written to the output directory (when `ape.takeScreenshot=true`, default `true`)
-- `*.xml GUITree files: files` — XML serialisation of the accessibility tree at each step (when `ape.saveGUITreeToXmlEveryStep=true`, default `true`)
+- `*.png screenshots: files` — per-step PNG screenshots (when `ape.takeScreenshot` (default `true`) and `ape.takeScreenshotForEveryStep` (default `false`) are both true) or per-new-state PNG screenshots (when `ape.takeScreenshot` and `ape.takeScreenshotForNewState` (default `false`) are both true), written to the output directory; both are off by default (INV-EXPL-17)
+- `*.xml GUITree files: files` — XML serialisation of the accessibility tree at each step (when `ape.saveGUITreeToXmlEveryStep=true`, default `false`)
 - `ape_log: logcat entries` — structured log lines emitted via `Logger` for every action selected, strategy event type, and state transition
 
 ### Side-Effects
@@ -48,7 +50,7 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-02**: `ActionType.MODEL_BACK.requireTarget()` and `ActionType.MODEL_MENU.requireTarget()` SHALL both return `false`. Neither `MODEL_BACK` nor `MODEL_MENU` requires a widget target; both map directly to Android key events.
 - **INV-EXPL-04**: `ActionType.MODEL_CLICK.requireTarget()`, `MODEL_LONG_CLICK.requireTarget()`, `MODEL_SCROLL_BOTTOM_UP.requireTarget()`, `MODEL_SCROLL_TOP_DOWN.requireTarget()`, `MODEL_SCROLL_LEFT_RIGHT.requireTarget()`, and `MODEL_SCROLL_RIGHT_LEFT.requireTarget()` SHALL each return `true`.
 - **INV-EXPL-05**: `ActionType.isModelAction()` SHALL return `true` for all `MODEL_*` enum constants (`MODEL_BACK`, `MODEL_MENU`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT`) and `false` for all other constants (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT_CLEAN_RESTART`, `EVENT_NOP`, `EVENT_ACTIVATE`, `EVENT_TRIGGER_ACTIVITY`).
-- **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point. (Unchanged by `rv-scoring-pipeline`: `Config.modelMenuEnabled` gates only whether the `menuAction` is added to the State's action *set* — the field itself stays non-null in every arm, including `ape_pure`, so this invariant holds verbatim.)
+- **INV-EXPL-06**: Every `State` object SHALL have non-null `backAction` and `menuAction` fields, each holding a `ModelAction` of their respective types (`MODEL_BACK` and `MODEL_MENU`). Both fields are initialised in the `State` constructor and MUST NOT be set to null at any point. (The plan feature `MODEL_MENU` (`ape.modelMenuEnabled`, ADDONS) gates only whether the `menuAction` is added to the State's selectable action *set* — the field itself stays non-null in every cell, including `base`, so this invariant holds verbatim.)
 - **INV-EXPL-13**: `MODEL_MENU` SHALL be positioned in the `ActionType` enum after `MODEL_BACK` and before `MODEL_CLICK`. This placement ensures that `requireTarget()`'s ordinal range check (`MODEL_CLICK` through `MODEL_SCROLL_RIGHT_LEFT`) continues to correctly identify target-requiring actions without any change to the range boundaries.
 - **INV-EXPL-09**: When `SataAgent` triggers a forced app restart due to graph stability (i.e., `graphStableCounter` reaching `ape.graphStableRestartThreshold`), the `graphStableCounter` MUST be reset to zero immediately after the restart is initiated.
 - **INV-EXPL-10**: `RandomAgent` extends `StatefulAgent` and uses the same priority-weighted selection infrastructure. It does NOT implement a separate pure-random algorithm. The distinction from `SataAgent` is that `RandomAgent` uses `StatefulAgent`'s base priority assignment without SATA's directed graph navigation heuristics.
@@ -62,6 +64,8 @@ The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is t
 - **INV-EXPL-18**: Every fuzz gesture branch SHALL emit exactly one event per invocation.
 - **INV-EXPL-19**: No touch event SHALL ever be delivered to coordinates derived from bounds other than the resolved node's own bounds — or, for coordinate-carrying actions without a node (`MODEL_LLM_TAP`), other than the action's own decided coordinate.
 - **INV-EXPL-30**: `MODEL_LLM_TAP` dispatch SHALL construct a non-degenerate rect `(x, y, x+1, y+1)` for the decided pixel `(x, y)`, and its validity domain SHALL be the physical display bounds (`AndroidDevice.getDisplayBounds()`), not the app root-node visible bounds. A tap whose pixel lies inside the display SHALL enqueue a touch down/up pair; a tap outside it SHALL be dropped with the `[APE-RV] off-screen action dropped` log line and no event. Node actions keep the root-node visible-bounds domain.
+- **INV-EXPL-31**: Each of `State` (menu action), `SataAgent.egreedy` (dynamic epsilon) and `MonkeySourceApe` (the foreign-activity and tree/package guards) SHALL decide through `RunContext.current().spec().has(Feature.X)`. None of them SHALL read the corresponding `Config` field. On a plan without the `ADDONS` group, each of these mechanisms SHALL behave as upstream APE.
+- **INV-EXPL-32**: For an agent with a decision pipeline (`SataAgent`), no restart SHALL replace a selected action after selection, and every restart SHALL be a step whose owner is `restart` (`decision-pipeline` INV-DP-14). The `Restart` stage is mounted if and only if `ape.checkRestart` is `true`. `RandomAgent` and `ReplayAgent` have no pipeline and keep the post-selection `checkRestart` wrapping unchanged (design D-B14.12).
 
 ## Requirements
 
@@ -190,7 +194,7 @@ Non-model types (`PHANTOM_CRASH`, `FUZZ`, `EVENT_START`, `EVENT_RESTART`, `EVENT
 
 Every `State` object SHALL hold a `menuAction` field of type `ModelAction(this, ActionType.MODEL_MENU)`, initialised in the `State` constructor immediately after `backAction`. The field SHALL be exposed via `State.getMenuAction()` and SHALL be non-null for the life of the state. This mirrors the `backAction` / `getBackAction()` pattern exactly.
 
-Inclusion of the `menuAction` in the state's **selectable** action set is gated by `Config.modelMenuEnabled` (declared by the `scoring-pipeline` capability; default `true`). When `modelMenuEnabled` is `true` (default), the `menuAction` SHALL be included in the array returned by `State.getActions()`, exactly as before this change. When `modelMenuEnabled` is `false` (the feature absent from the resolved plan — `run-spec` INV-RUN-05), the `menuAction` SHALL NOT be included in `State.getActions()` and the agent SHALL never select `MODEL_MENU`; the field SHALL still be constructed and returned by `State.getMenuAction()` (so `INV-EXPL-06` holds). This reproduces upstream APE, which has no model-level options-menu action.
+Inclusion of the `menuAction` in the state's **selectable** action set is gated by the plan feature `MODEL_MENU` (key `ape.modelMenuEnabled`, default `true`), a member of the ADDONS group (design D-B6, INV-GRP-06). `State` SHALL read `RunContext.current().spec().has(Feature.MODEL_MENU)` and SHALL NOT read `Config.modelMenuEnabled` (`model/State.java:78` before this change). Otherwise a cell without ADDONS would still carry the menu action. When the plan carries `MODEL_MENU` (the ADDONS block sets `ape.modelMenuEnabled=true`), the `menuAction` SHALL be included in the array returned by `State.getActions()`, exactly as before this change. When the plan does not carry it (ADDONS off, as in the `base` and `mop` cells, or `ape.modelMenuEnabled=false`), the `menuAction` SHALL NOT be included in `State.getActions()` and the agent SHALL never select `MODEL_MENU`; the field SHALL still be constructed and returned by `State.getMenuAction()` (so `INV-EXPL-06` holds). This reproduces upstream APE, which has no model-level options-menu action.
 
 `MonkeySourceApe.generateEventsForActionInternal()` SHALL handle `MODEL_MENU` in its switch statement by calling `generateKeyMenuEvent()`. No target widget node is required or inspected.
 
@@ -199,10 +203,10 @@ Inclusion of the `menuAction` in the state's **selectable** action set is gated 
 #### Scenario: State constructor initialises menuAction
 - **WHEN** a new `State` is constructed for any `StateKey`
 - **THEN** `state.getMenuAction()` MUST return a non-null `ModelAction` whose `getType()` returns `ActionType.MODEL_MENU`
-- **AND** when `Config.modelMenuEnabled` is `true` (default) the `menuAction` MUST be included in the actions array returned by `state.getActions()`
+- **AND** when the plan carries `MODEL_MENU` (e.g. the `as` cell) the `menuAction` MUST be included in the actions array returned by `state.getActions()`
 
 #### Scenario: MODEL_MENU excluded from selection when modelMenuEnabled is false
-- **WHEN** `Config.modelMenuEnabled` is `false` and a new `State` is constructed
+- **WHEN** the plan does not carry `MODEL_MENU` (the `base` cell, with ADDONS off, or `ape.modelMenuEnabled=false`) and a new `State` is constructed
 - **THEN** `state.getMenuAction()` MUST still return a non-null `ModelAction` of type `MODEL_MENU`
 - **AND** `state.getActions()` MUST NOT contain the `menuAction`
 - **AND** the agent MUST never select `MODEL_MENU` for that state
@@ -216,6 +220,8 @@ Inclusion of the `menuAction` in the state's **selectable** action set is gated 
 - **WHEN** `MonkeySourceApe.validateResolvedAction()` is called with a `ModelAction` of type `MODEL_MENU`
 - **THEN** the method SHALL return `true`
 - **AND** no widget validator (`validateClickAction`, `validateScrollAction`) SHALL be invoked
+
+---
 
 ### Requirement: SataAgent — Unvisited Action Priority
 
@@ -254,14 +260,17 @@ The `menuAction` check is added to `SataAgent.selectNewActionEpsilonGreedyRandom
 
 ### Requirement: SataAgent — Forced App Restart on Graph Stability
 
-`SataAgent` (via its superclass `StatefulAgent`) monitors whether the exploration graph has stopped growing. The counter `graphStableCounter` is incremented each step in which no new `State` or `StateTransition` is added to the `Graph`. When `graphStableCounter` reaches `ape.graphStableRestartThreshold` (default: `100`) consecutive stable steps, the agent SHALL trigger a forced app restart via an `EVENT_RESTART` action and MUST reset `graphStableCounter` to zero immediately. This prevents the exploration from getting stuck in a saturated region of the state space.
+`SataAgent` (via its superclass `StatefulAgent`) monitors whether the exploration graph has stopped growing. The counter `graphStableCounter` is incremented each step in which no new `State` or `StateTransition` is added to the `Graph`. When `graphStableCounter` exceeds `ape.graphStableRestartThreshold` (default: `100`) in step 2's `checkStable`, `onGraphStable` SHALL raise the restart flag with kind `graph` (`requestRestart()`) and the counter MUST be reset to zero immediately. This prevents the exploration from getting stuck in a saturated region of the state space. The state and activity stability checks raise the same flag with kinds `state` and `activity`. The activity threshold is `ape.activityStableRestartThreshold` when the plan carries the ADDONS member `ACTIVITY_STABLE_RESTART`, and otherwise the upstream `Integer.MAX_VALUE` (design D-B5).
+
+The restart itself is selected by the `Restart` guard stage of the decision pipeline (`decision-pipeline` "Restart Guard Stage"). That stage runs after `Budget` and before any LLM, MOP or SATA stage, and it selects an `EVENT_RESTART` or `EVENT_CLEAN_RESTART` start action. It is mounted if and only if `ape.checkRestart` is `true` (BASE, jar default `true`; design D-B14.12), read from the plan (`spec`) and never from `Config.checkRestart` (design D-B6, extended by author decision A10, no behaviour change), and it replaces, for an agent with a pipeline, the post-selection `checkRestart` that used to substitute the start action for the action already chosen. `RandomAgent` and `ReplayAgent` have no pipeline and keep that post-selection wrapping unchanged. The step's record carries `dec.src="restart"` and `dec.restart` set to the kind, and `dec.a` names the start action that ran. A restart preempts the step. It never replaces a selected action, so no selected model action is lost to it.
 
 #### Scenario: Graph stable for threshold steps
 
-- **WHEN** `graphStableCounter` reaches `100` (the value of `ape.graphStableRestartThreshold`) consecutive steps without any change to the `Graph`
-- **THEN** `StatefulAgent.onGraphStable(100)` SHALL be called on the active agent
-- **AND** `SataAgent.onGraphStable()` SHALL return `true`, indicating a restart should be performed
-- **AND** an `EVENT_RESTART` action SHALL be enqueued
+- **WHEN** `graphStableCounter` reaches `101` consecutive steps without any change to the `Graph`, exceeding `ape.graphStableRestartThreshold=100`
+- **THEN** `StatefulAgent.onGraphStable(101)` SHALL be called on the active agent in step 2's `checkStable`
+- **AND** `SataAgent.onGraphStable()` SHALL return `true` and raise the restart flag with kind `graph`, indicating a restart should be performed
+- **AND** at `graphStableCounter=100` it SHALL have returned `false`, because the threshold must be exceeded, not reached
+- **AND** the `Restart` stage of the same step SHALL select a start action (`EVENT_RESTART`, or `EVENT_CLEAN_RESTART` with probability 0.2) before any LLM or SATA stage is evaluated, with `dec.src="restart"`, `dec.ch="restart"` and `dec.restart="graph"`
 - **AND** `graphStableCounter` SHALL be reset to `0`
 
 #### Scenario: Graph grows; counter resets
@@ -338,9 +347,9 @@ Beyond simple greedy unvisited-action selection, `SataAgent` uses multi-step gra
 
 ### Requirement: StatefulAgent — Priority-Based Action Selection
 
-`StatefulAgent` and its subclasses SHALL use a `priority` integer field on each `ModelAction` to break ties and express preferences. Higher numeric priority means higher preference. The method `StatefulAgent.adjustActionsByGUITree()` is called after the base priority has been assigned and before the agent selects an action. This is the designated extension point where external components MAY call `ModelAction.setPriority(int)` to boost specific actions.
+`StatefulAgent` and its subclasses SHALL use a `priority` integer field on each `ModelAction` to break ties and express preferences. Higher numeric priority means higher preference. The method `StatefulAgent.adjustActionsByGUITree()` is called after the base priority has been assigned and before the agent selects an action. This is the designated extension point where the mounted scoring passes (`scoring-pipeline`) MAY call `ModelAction.setPriority(int)` to boost specific actions.
 
-When `Config.mopDataPath` is non-null, `StatefulAgent` SHALL load `MopData` at construction time and apply MOP scoring in `adjustActionsByGUITree()` after the base priority loop. The MOP scoring pass SHALL only apply to actions where `action.requireTarget() == true` AND `action.isValid() == true`. The boost is additive: `action.setPriority(action.getPriority() + MopScorer.score(...))`. When `Config.mopDataPath` is null, the MOP scoring pass is skipped entirely and the method behaves identically to its pre-Phase-3 form.
+`StatefulAgent` SHALL load the static-analysis artifact at construction time if and only if `STATIC` or `MOP` is in the resolved plan, from the path `ape.staticDataPath` (`spec.staticData().dataPath()`; `STATIC_DATA`), which replaces the retired `ape.mopDataPath` (design D-B2, D-B14.20). `Config.mopDataPath` no longer exists. The loader splits the artifact into `StaticGuiModel` and `MopData` (`mop-guidance`). `getMopData()` SHALL be null if and only if `MOP` is not in the plan: in the `as` and `as_llm` cells the artifact is loaded for `STATIC`, yet no consumer receives a `MopData` (design D-B14.21). With `MOP` mounted, the MOP scoring passes apply in `adjustActionsByGUITree()` after the base priority loop. A MOP pass SHALL only apply to actions where `action.requireTarget() == true` AND `action.isValid() == true`. The boost is additive: `action.setPriority(action.getPriority() + term)`, with the term written to the pass's own field. When `MOP` is not in the plan, no MOP pass is constructed and no `MopScorer` call is made.
 
 The selection method `RandomHelper.randomPickWithPriority(List<ModelAction>)` MUST prefer actions with higher priority; actions with equal priority are selected uniformly at random among that priority tier.
 
@@ -349,17 +358,18 @@ The selection method `RandomHelper.randomPickWithPriority(List<ModelAction>)` MU
 - **THEN** `actionA` SHALL be selected with probability proportional to its priority weight under `randomPickWithPriority`
 
 #### Scenario: MOP boost applied to direct-reachable widget
-- **WHEN** `Config.mopDataPath` points to a valid JSON AND `actionA` targets widget `btn_encrypt` which has `directMop=true`
-- **THEN** `actionA.getPriority()` after `adjustActionsByGUITree()` SHALL equal `basePriority + 500`
+- **WHEN** the plan is the `mop` cell with `ape.staticDataPath` naming a valid format-2 artifact under `ape.mopScoring=flag`, AND `actionA` targets widget `btn_encrypt`, which the artifact marks `direct` for `click`
+- **THEN** `actionA.getPriority()` after `adjustActionsByGUITree()` SHALL equal `basePriority + 500`, and its `mopBoost` SHALL be `500`
 
 #### Scenario: MOP scoring skipped when mopDataPath is null
-- **WHEN** `Config.mopDataPath` is `null`
-- **THEN** `adjustActionsByGUITree()` SHALL complete without any calls to `MopScorer`
-- **AND** all action priorities SHALL equal their base SATA-assigned values
+- **WHEN** `MOP` is not in the plan — the `base` cell with no `ape.staticDataPath`, or the `as` cell, which loads the artifact for `STATIC`
+- **THEN** `getMopData()` SHALL return `null` and `adjustActionsByGUITree()` SHALL complete without any call to `MopScorer`
+- **AND** no action SHALL carry a non-zero `mopBoost`, `mopFrontierBoost`, `wtgBoost` or `menuBoost`; in the `base` cell every priority SHALL equal its base SATA-assigned value
+- **AND** the header names the retired `ape.mopDataPath` because `openspec archive` matches scenarios by name
 
 #### Scenario: Non-target actions not boosted
-- **WHEN** MOP data is loaded AND `actionB` is `MODEL_BACK` (`requireTarget() == false`)
-- **THEN** `actionB.getPriority()` SHALL NOT be modified by the MOP scoring pass
+- **WHEN** `MOP` is in the plan AND `actionB` is `MODEL_BACK` (`requireTarget() == false`)
+- **THEN** `actionB.getPriority()` SHALL NOT be modified by any MOP scoring pass
 
 ---
 
@@ -458,13 +468,14 @@ written around is one this change deletes:
 
 ### Requirement: Fuzzing Integration
 
-When `ape.doFuzzing=false`, the fuzzing path is disabled and the agent never injects random `FUZZ` actions outside the structured exploration loop. When `ape.doFuzzing=true`, at each step the agent MAY inject a random `FuzzAction` with probability `ape.fuzzingRate` (default: `0.02`, i.e., 2% of steps). The fuzzing decision is made in `Agent.canFuzzing()` and checked in `MonkeySourceApe` before the normal action-selection path. Fuzzing MUST only activate after the app's activity has been visited at least `ape.fuzzingActivityVisitThreshold` (default: `10`) times, preventing fuzzing from disrupting early exploration.
+`ape.doFuzzing` and `ape.fuzzingRate` are BASE keys, and `MonkeySourceApe` SHALL read them from the plan (`spec`), never from `Config.doFuzzing`/`Config.fuzzingRate` (design D-B6, extended by author decision A10; no behaviour change). When `ape.doFuzzing=false`, the fuzzing path is disabled and the agent never injects random `FUZZ` actions outside the structured exploration loop. When `ape.doFuzzing=true` (the BASE feature `FUZZING`), at each step the agent MAY inject a random `FuzzAction` with probability `ape.fuzzingRate` (default: `0.02`, i.e., 2% of steps). The toss SHALL come from `StepRng`'s own `fuzz` stream (`decision-pipeline` INV-DP-13), not from `RandomHelper`. It is drawn at step open on **every** step, whether or not fuzzing is enabled and whatever the step's owner, so that enabling fuzzing or changing its rate never shifts a helper-stream draw. This changes the helper-stream sequence relative to `eea2b1a9`, where `MonkeySourceApe` drew `RandomHelper.toss(fuzzingRate)` only when `doFuzzing` was true. The design declares the change, and the goldens are recaptured. The injection happens when the toss holds, `ape.doFuzzing` is true and `Agent.canFuzzing()` admits; it is checked in `MonkeySourceApe` after the step's action events are generated. Fuzzing MUST only activate after the app's activity has been visited at least `ape.fuzzingActivityVisitThreshold` (default: `10`) times, preventing fuzzing from disrupting early exploration.
 
 #### Scenario: Fuzzing disabled
 
 - **WHEN** `ape.doFuzzing=false`
 - **THEN** `Agent.canFuzzing()` SHALL return `false` at every step
 - **AND** no `FuzzAction` SHALL be injected into the event queue
+- **AND** the fuzz toss SHALL still be drawn from the `fuzz` stream on every step, and no `RandomHelper` draw SHALL be made for fuzzing
 
 #### Scenario: Fuzzing fires at expected rate
 
@@ -477,18 +488,19 @@ When `ape.doFuzzing=false`, the fuzzing path is disabled and the agent never inj
 
 ### Requirement: Configuration Loading
 
-All tuning parameters MUST be loaded from `ape.properties` at process startup — `/data/local/tmp/ape.properties` first, then `/sdcard/ape.properties` (later wins) — and the loaded entries SHALL be **validated in full by `RunSpec.resolve`** (`run-spec` capability) before any component consumes them: unknown keys, foreign keys, retired keys, type-invalid values, missing feature dependencies, and invalid combinations abort the process before step 1. JVM system properties are not a configuration channel for `ape.*` behavior. All surviving `Config` fields are `public static final`, resolved once at class-loading time, and MUST NOT change for the lifetime of the process; the five formerly non-final test knobs no longer exist (tests construct `RunSpec` values instead). `Config` is a loading detail; the resolved `RunSpec` is the behavioral authority.
+All tuning parameters MUST be loaded from `ape.properties` at process startup — `/data/local/tmp/ape.properties` first, then `/sdcard/ape.properties` (later wins) — and the loaded entries SHALL be **validated in full by `RunSpec.resolve`** (`run-spec` capability) before any component consumes them: unknown keys, foreign keys, retired keys, type-invalid values, missing feature dependencies, and invalid combinations abort the process before step 1. JVM system properties are not a configuration channel for `ape.*` behavior. All surviving `Config` fields are `public static final`, resolved once at class-loading time, and MUST NOT change for the lifetime of the process; the five formerly non-final test knobs no longer exist (tests construct `RunSpec` values instead). `Config` is a loading detail; the resolved `RunSpec` is the behavioral authority. A key that the plan owns SHALL be read from the plan (`RunContext.current().spec()`), never from its `Config` twin: in particular `ape.doFuzzing`, `ape.fuzzingRate` and `ape.checkRestart` are BASE keys read from the plan (design D-B6, extended by author decision A10).
 
-The table below lists the configuration keys relevant to the exploration engine with their types and defaults (unchanged values):
+The table below lists the configuration keys relevant to the exploration engine with their types and defaults:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `ape.graphStableRestartThreshold` | int | 100 | Steps without graph growth before forced restart |
-| `ape.stateStableRestartThreshold` | int | 50 | Steps in same state before forced restart |
-| `ape.activityStableRestartThreshold` | int | 200 | Steps in same activity before forced restart |
+| `ape.graphStableRestartThreshold` | int | 100 | Steps without graph growth before forced restart (BASE) |
+| `ape.stateStableRestartThreshold` | int | 50 | Steps in same state before forced restart (BASE) |
+| `ape.activityStableRestartThreshold` | int | 200 in the ADDONS block | Steps in same activity before forced restart. Activation key of the ADDONS member `ACTIVITY_STABLE_RESTART` (POSITIVE, neutral 0), no longer a BASE key; when the feature is absent (ADDONS off, or the key `0`) the threshold is the upstream `Integer.MAX_VALUE` (design D-B5) |
 | `ape.evolveModel` | boolean | true | Enable CEGAR naming refinement |
-| `ape.doFuzzing` | boolean | true | Enable random fuzzing injection |
-| `ape.fuzzingRate` | double | 0.02 | Probability of fuzzing per step |
+| `ape.doFuzzing` | boolean | true | Enable random fuzzing injection (BASE, read from the plan) |
+| `ape.fuzzingRate` | double | 0.02 | Probability of fuzzing per step (BASE, read from the plan) |
+| `ape.checkRestart` | boolean | true | Mount the `Restart` guard stage (BASE, read from the plan) |
 | `ape.fuzzingActivityVisitThreshold` | int | 10 | Minimum activity visits before fuzzing activates |
 | `ape.defaultEpsilon` | double | 0.05 | Epsilon for SataAgent epsilon-greedy |
 | `ape.takeScreenshot` | boolean | true | Save screenshots |
@@ -496,24 +508,32 @@ The table below lists the configuration keys relevant to the exploration engine 
 | `ape.defaultGUIThrottle` | long (ms) | 200 | Delay between injected events |
 | `ape.trivialActivityRankThreshold` | int | 3 | Minimum activity count before trivial-activity logic activates |
 
-The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present.
+The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present. The keys `ape.mopDataPath` (renamed `ape.staticDataPath`), `ape.leastVisitedPriorityTiebreak` (replaced by the X1 scorer-sum tie) and `ape.mopTargetPickCap` (replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of picks per activity and widget (default 1)) are retired by this change and abort resolution with `retired_key` (`run-spec`).
 
 #### Scenario: Property file present on device
 
 - **WHEN** `/data/local/tmp/ape.properties` contains `ape.graphStableRestartThreshold=200`
-- **THEN** `Config.graphStableRestartThreshold` SHALL equal `200` for the entire session
+- **THEN** the plan's `spec().exploration().graphStableRestartThreshold()` SHALL equal `200` for the entire session
 - **AND** the default value of `100` SHALL NOT be used
 
 #### Scenario: No property file present
 
 - **WHEN** neither `/data/local/tmp/ape.properties` nor `/sdcard/ape.properties` exists
-- **THEN** all `Config` fields SHALL take their hardcoded default values
+- **THEN** all `Config` fields and all BASE plan keys SHALL take their hardcoded default values, and no group member SHALL be in the plan, so `ACTIVITY_STABLE_RESTART` is absent and the activity threshold is `Integer.MAX_VALUE`
 - **AND** resolution SHALL succeed (an absent file is valid; an invalid entry is not)
 
 #### Scenario: Typo aborts instead of defaulting
 
 - **WHEN** `/data/local/tmp/ape.properties` contains `ape.fuzzingRate=O.02` (letter O)
 - **THEN** the process SHALL abort with an invalid-type diagnostic before step 1
+
+#### Scenario: the activity-stable threshold follows ADDONS
+- **WHEN** the `as` cell resolves, whose ADDONS block sets `ape.activityStableRestartThreshold=200`
+- **THEN** `ACTIVITY_STABLE_RESTART` SHALL be in the plan and the activity-stability check SHALL raise the restart flag once the counter exceeds `200`
+- **AND WHEN** the `base` cell resolves
+- **THEN** `ACTIVITY_STABLE_RESTART` SHALL be absent and the threshold SHALL be `Integer.MAX_VALUE`, so the activity check never raises the flag
+
+---
 
 ### Requirement: StatefulAgent — LLM Router Integration
 
@@ -605,7 +625,7 @@ For a node action, `widgetClass` SHALL be produced by the helper the element lis
 
 The entry is immutable: the agent replaces it with a copy carrying the result. A filled result is never overwritten. When the step after an entry's action selects no model action, nothing is appended, and the next update finds the last entry already filled, so an outcome is never assigned to an action it does not belong to.
 
-**Restart**: When the restart check replaces the selected model action with a start action before it is dispatched (`ApeAgent.checkRestart`), the entry recorded for that model action SHALL be removed: the last entry, if its result is still empty. The action never runs, so no outcome belongs to it. A restart that replaces no model action removes nothing, and `startNewEpisode` called on any other path removes nothing.
+**Restart**: A restart is selected by the `Restart` guard stage before any model action is selected (`decision-pipeline` INV-DP-14). A restart step therefore appends no entry and removes none: the start action is not a model action, and no model action was recorded for that step. The post-selection removal that `StatefulAgent.checkRestart` performed no longer exists, and `startNewEpisode` removes nothing on any path.
 
 The buffer is passed to `ApePromptBuilder.build()` via `LlmEngine.selectAction()` as the `recentActions` parameter.
 
@@ -644,15 +664,14 @@ The buffer is passed to `ApePromptBuilder.build()` via `LlmEngine.selectAction()
 
 #### Scenario: a model action replaced by a restart leaves no entry
 - **WHEN** click A1 is selected and the next update fills its result
-- **AND** click A2 is selected and recorded with an empty result
-- **AND** the restart check replaces A2 with a start action
-- **THEN** A2's entry SHALL be removed
+- **AND** on the next step the `Restart` guard selects a start action before any model action is selected
+- **THEN** no entry SHALL be appended for that step, so no entry for a replaced action can exist
 - **AND** A1's entry SHALL remain the last entry, with the result filled first
 
 #### Scenario: a restart that replaces no model action removes nothing
 - **WHEN** click A1 is selected and the next update fills its result
-- **AND** that step's action is not a model action, and the restart check replaces it with a start action
-- **THEN** A1's entry SHALL remain, with its result
+- **AND** the `Restart` guard takes the following step with a start action
+- **THEN** A1's entry SHALL remain, with its result, and the buffer SHALL be unchanged
 
 #### Scenario: entry carries the pixel bounds
 - **WHEN** a click on a widget with bounds `[0,105][1080,252]` is selected
@@ -675,52 +694,54 @@ The buffer is passed to `ApePromptBuilder.build()` via `LlmEngine.selectAction()
 
 ### Requirement: SataAgent — LLM New-State Hook
 
-LLM new-state routing SHALL be the `LlmNewState` decision stage — the second stage of the pipeline (after `Budget`), assembled only when the plan enables the LLM new-state mode. `SataAgent.selectNewActionNonnull()` SHALL contain no inline LLM block: it delegates to `DecisionPipeline.decide()`, and the stage occupies the ladder position the inline block occupied (before stagnation/random/launcher/trigger/SATA — behavior parity gated by the per-preset goldens).
+LLM new-state routing SHALL be the `LlmNewState` decision stage, the first stage after the `Budget` and `Restart` guards. It is assembled only when the plan carries `LLM_NEW_STATE`. `SataAgent.selectNewActionNonnull()` SHALL contain no inline LLM block: it delegates to `DecisionPipeline.decide()`, and the stage occupies the ladder position the inline block occupied (before stagnation, coin, launcher, trigger, MOP coin and SATA; the per-cell goldens gate the behaviour).
 
-The stage's guards are unchanged in content: the shared LLM precondition — action buffer empty (to not interrupt multi-step navigation) AND the state has more than 2 actions (to skip trivial states like permission dialogs) — evaluated through the single `LlmGate` helper shared by the three LLM stages (the former verbatim triplication of this precondition is deleted); then the new-state trigger (`_isNewState`) and the breaker gate. On a non-null engine result the stage returns `Select` (stamping `DecisionSource.LLM`/`PickChannel.LLM`, and resolving a synthesized `MODEL_LLM_TAP` against the state — unchanged accept semantics); on null it returns `Continue` and the remaining pipeline decides (structural fallback).
+The stage checks the new-state trigger (`_isNewState`) first, with no coin (D-A17). It then evaluates the gate chain that all three LLM stages share (`llm-routing` "Declared LLM Gates"): `MinActionsGate(ape.llmGateMinActions)`, default 3, which skips trivial states such as permission dialogs with two actions or fewer; then `BreakerGate`. The action buffer is **not** a gate (D-A6, P-4). A new state reached while a SATA path is buffered goes to the LLM, and when the LLM takes the step the buffer is abandoned without `weakenStateTransition`, with `dec.buf="llm"` (`decision-pipeline` INV-DP-15). On a non-null engine result the stage returns `Select` (stamping `DecisionSource.LLM`/`PickChannel.LLM`, and resolving a synthesized `MODEL_LLM_TAP` against the state — unchanged accept semantics); on null it returns `Continue` and the remaining pipeline decides (structural fallback). Once this stage has called, the later LLM stages of the step do not call again: a step makes at most one LLM call.
 
 When the plan has no LLM feature, the stage does not exist and selection cost is zero.
 
 #### Scenario: LLM provides action on new state
 
-- **WHEN** the pipeline reaches `LlmNewState` with the buffer empty, `actions.size() > 2`, `_isNewState` true, breaker allowing
+- **WHEN** the pipeline reaches `LlmNewState` with `actions.size() >= 3`, `_isNewState` true, breaker allowing
 - **AND** the engine returns a non-null `ModelAction`
 - **THEN** the action SHALL decide the step (hard preemption — no later stage evaluated)
 
 #### Scenario: LLM returns null, SATA takes over
 
 - **WHEN** the engine returns `null`
-- **THEN** the stage SHALL return `Continue`
-- **AND** the launcher/trigger/SATA stages SHALL evaluate normally
+- **THEN** the stage SHALL return `Continue`, with `dec.own.fb` naming the reason
+- **AND** `LlmStagnation` and `LlmCoin` SHALL return `Continue` without calling the LLM again on that step, because a step makes at most one LLM call (`decision-pipeline` "Hard Preemption Order")
+- **AND** the launcher, trigger, MOP-coin and SATA stages SHALL evaluate normally
 
 #### Scenario: LLM skipped — buffer has pending navigation
 
-- **WHEN** the action buffer is non-empty (multi-step navigation in progress)
-- **THEN** the shared precondition SHALL fail and all three LLM stages SHALL return `Continue`
-- **AND** the buffered action SHALL be returned by the `SataChain` buffer rung (existing behavior)
+- **WHEN** the action buffer holds two planned transitions (multi-step navigation in progress), the state is new with 5 actions, the breaker allows, and the LLM returns an accepted action
+- **THEN** the LLM SHALL be called and its action SHALL decide the step: the buffer is no longer a gate
+- **AND** the buffer SHALL be abandoned without `weakenStateTransition`, and the step record SHALL carry `dec.buf="llm"`
+- **AND** the header is kept because `openspec archive` matches scenarios by name, although the LLM is no longer skipped
 
 #### Scenario: LLM skipped — trivial state
 
-- **WHEN** `actions.size() <= 2` (e.g., permission dialog)
-- **THEN** the LLM stages SHALL return `Continue` and the pipeline SHALL handle the state directly
+- **WHEN** `actions.size() <= 2` (e.g., permission dialog), with `ape.llmGateMinActions` at its default `3`
+- **THEN** `MinActionsGate` SHALL refuse, the LLM stages SHALL return `Continue` with `dec.own.g="min_actions"`, and the pipeline SHALL handle the state directly
 
 #### Scenario: LLM disabled, zero overhead
 
 - **WHEN** the plan carries no LLM feature
-- **THEN** no LLM stage SHALL exist and the pipeline SHALL be structurally identical to the non-LLM preset's
-- **AND** the decision sequence SHALL equal the non-LLM golden under the same seed
+- **THEN** no LLM stage SHALL exist, no `u_L` SHALL be drawn, and the pipeline SHALL be structurally identical to the corresponding non-LLM cell's (`as_mop_llm` without LLM is `as_mop`)
+- **AND** the decision sequence SHALL equal that cell's golden under the same seed
 
 ---
 
 ### Requirement: SataAgent — LLM Stagnation Hook
 
-LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled after `LlmNewState` and before `LlmRandom` when the plan enables the stagnation mode. The trigger is at-or-past the midpoint with the episode's single shot unspent: `graphStableCounter >= graphStableRestartThreshold / 2` AND the stage's per-episode fired flag is armed. The same shared precondition (`LlmGate`) applies.
+LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled after `LlmNewState` and before `LlmCoin` when the plan carries `LLM_STAGNATION`. The trigger is at-or-past the midpoint with the episode's single shot unspent: `graphStableCounter >= graphStableRestartThreshold / 2` AND the stage's per-episode fired flag is armed. The trigger consumes no coin (D-A17). When it holds, the same shared gate chain applies (`MinActionsGate`, then `BreakerGate`; `llm-routing` "Declared LLM Gates"). The action buffer is not a gate, and an accepted answer abandons a non-empty buffer without weakening (`decision-pipeline` INV-DP-15). A gate refusal leaves the flag armed, because no call was made.
 
-**Episode-state ownership (moved out of `StatefulAgent`):** the fired flag SHALL be a private field of the `LlmStagnation` stage. It is burned inside `decide()` whenever the trigger fires — whatever the LLM answers (a null result is a failed attempt, not an unused one; the restart at the full threshold is what follows if the stagnation persists) — and re-armed by the stage's `onStateTransition` hook on `NEW_ACTION`/`NEW_ACTION_TARGET` edges (a new edge ends the episode). The stage's own reset of `graphStableCounter` after a successful escape does not re-arm the flag: no new edge was observed, so it is the same episode.
+**Episode-state ownership (moved out of `StatefulAgent`):** the fired flag SHALL be a private field of the `LlmStagnation` stage. It is burned inside `decide()` whenever the trigger fires and the gates admit the call — whatever the LLM answers (a null result is a failed attempt, not an unused one; the restart at the full threshold is what follows if the stagnation persists) — and re-armed by the stage's `onStateTransition` hook on `NEW_ACTION`/`NEW_ACTION_TARGET` edges (a new edge ends the episode). The stage's own reset of `graphStableCounter` after a successful escape does not re-arm the flag: no new edge was observed, so it is the same episode.
 
 **One scenario below is a replacement, not a carry-forward.** `"Stagnation hook fires only once per phase"` asserted in the main spec that the hook fires *only* at `graphStableCounter == threshold/2` exactly — 49 and 51 both declined by the equality check. This change replaces that trigger with at-or-past the midpoint guarded by the episode flag, so the old body is contradicted rather than forgotten: 51 with the flag armed now fires. What the scenario's name asserts — one firing per episode — is what survives, and it survives structurally (the flag is burned in `decide()`, not re-derived from the counter), so the scenario is restated under its own header with the new mechanism as its body. The counter-jump case the old equality check would have missed is covered by `llm-routing :: Stagnation LLM Mode :: "midpoint skipped by a counter jump still fires"`.
 
-`graphStableCounter` remains a `StatefulAgent`/`RunContext` field — it is shared exploration state consumed by the forced-restart mechanism (`onGraphStable` at `counter > threshold`), which this stage does not modify. On an accepted escape the stage SHALL reset the counter to 0 through the `StepContext`'s single declared write method (unblocking exploration, unchanged semantics).
+`graphStableCounter` remains a `StatefulAgent`/`RunContext` field — it is shared exploration state consumed by the stability restart (`onGraphStable` raises the flag at `counter > threshold`, and the `Restart` guard selects the restart), which this stage does not modify. On an accepted escape the stage SHALL reset the counter to 0 through the `StepContext`'s single declared write method (unblocking exploration, unchanged semantics).
 
 #### Scenario: LLM breaks stagnation (single-shot at midpoint)
 
@@ -742,7 +763,7 @@ LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled af
 - **WHEN** the trigger fires and the engine returns `null`
 - **THEN** the flag SHALL be burned and the stage SHALL return `Continue`
 - **AND** the counter SHALL continue incrementing and the stage SHALL NOT fire again this episode
-- **AND** if `graphStableCounter` eventually exceeds `graphStableRestartThreshold`, `requestRestart()` SHALL be called (existing behavior per INV-EXPL-09)
+- **AND** if `graphStableCounter` eventually exceeds `graphStableRestartThreshold`, `requestRestart()` SHALL be called in step 2's `checkStable`, and the `Restart` guard SHALL select the restart in that same step, before any LLM stage is evaluated (INV-EXPL-09, `decision-pipeline` "Restart Guard Stage")
 
 #### Scenario: new edge re-arms the episode through the stage hook
 
@@ -755,6 +776,8 @@ LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled af
 - **WHEN** the change is complete
 - **THEN** `StatefulAgent` SHALL declare no LLM-stagnation fired flag
 - **AND** the only stagnation-episode state SHALL live in the `LlmStagnation` stage
+
+---
 
 ### Requirement: StatefulAgent — LLM Telemetry at tearDown
 
@@ -773,7 +796,7 @@ LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled af
 
 ### Requirement: Dynamic Epsilon Decay
 
-`SataAgent.egreedy()` SHALL compute a coverage-adaptive epsilon when `Config.dynamicEpsilon` is `true`. The epsilon value SHALL be interpolated between `Config.minEpsilon` and `Config.maxEpsilon` based on the current state's UI coverage gap:
+`SataAgent.egreedy()` SHALL compute a coverage-adaptive epsilon when the plan carries `DYNAMIC_EPSILON` (key `ape.dynamicEpsilon`). That feature is a member of the ADDONS group, so it is absent from the `base` and `mop` cells (design D-B1). `SataAgent` SHALL read the feature through `spec.has(Feature.DYNAMIC_EPSILON)`, never `Config.dynamicEpsilon`. The bounds are the `DYNAMIC_EPSILON` parameter keys `ape.minEpsilon` (`0.02`) and `ape.maxEpsilon` (`0.15`), read through the plan as today (`SataAgent.java:1214`); their dead `Config` twins are deleted. The epsilon value SHALL be interpolated between `Config.minEpsilon` and `Config.maxEpsilon` based on the current state's UI coverage gap:
 
 ```
 epsilon = minEpsilon + (maxEpsilon - minEpsilon) * coverageGap
@@ -783,7 +806,7 @@ Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(currentSt
 
 **Scope note**: `egreedy()` is called from `selectNewActionEpsilonGreedyRandomly()`, which is one of the last steps in the SATA selection chain. Dynamic epsilon has incremental impact — it improves decisions that reach epsilon-greedy, but does not affect decisions resolved earlier (LLM hooks, buffer, early-stage, trivial activity).
 
-When `Config.dynamicEpsilon` is `false`, the existing behavior SHALL be preserved: epsilon is the fixed value `Config.defaultEpsilon`.
+When the plan does not carry `DYNAMIC_EPSILON`, upstream APE's behavior SHALL be preserved: epsilon is the fixed value `defaultEpsilon`, the BASE plan key `ape.defaultEpsilon` (`spec.exploration().defaultEpsilon()`).
 
 #### Scenario: New state (high gap)
 - **WHEN** `egreedy()` is called in a state with coverageGap=1.0 and maxEpsilon=0.15, minEpsilon=0.02
@@ -794,22 +817,27 @@ When `Config.dynamicEpsilon` is `false`, the existing behavior SHALL be preserve
 - **THEN** the effective epsilon SHALL be 0.02 (minEpsilon)
 
 #### Scenario: Dynamic epsilon disabled
-- **WHEN** `Config.dynamicEpsilon` is `false`
-- **THEN** `egreedy()` SHALL use the fixed `Config.defaultEpsilon` value
+- **WHEN** the plan does not carry `DYNAMIC_EPSILON` (the `base` cell, or `ape.dynamicEpsilon=false`)
+- **THEN** `egreedy()` SHALL use the fixed `defaultEpsilon` value (`0.05`)
+
+---
 
 ### Requirement: Config Flags for Dynamic Epsilon
 
-`Config` SHALL declare the following flags controlling coverage-adaptive epsilon, loaded from `ape.properties` at class-loading time:
+Coverage-adaptive epsilon is the ADDONS member feature `DYNAMIC_EPSILON`, activated by `ape.dynamicEpsilon` (boolean, jar default `true`, depends on `ADDONS`; design D-B1). Every read site SHALL decide through `spec.has(Feature.DYNAMIC_EPSILON)`, never through `Config.dynamicEpsilon` (design D-B6). With `ape.addons=false` (the jar default and the `base`/`mop` cells) the feature is absent whatever its key says, unless the key is set explicitly, which aborts resolution with `MISSING_DEPENDENCY`.
 
-| Flag | Property Key | Type | Default | Description |
-|------|-------------|------|---------|-------------|
-| `dynamicEpsilon` | `ape.dynamicEpsilon` | boolean | `true` | Enable coverage-adaptive epsilon |
-| `maxEpsilon` | `ape.maxEpsilon` | double | `0.15` | Epsilon when coverage gap is 1.0 |
-| `minEpsilon` | `ape.minEpsilon` | double | `0.02` | Epsilon when coverage gap is 0.0 |
+The interpolation bounds are the parameter keys of `DYNAMIC_EPSILON`, read through the plan (`spec.exploration().minEpsilon()`/`maxEpsilon()`, as `SataAgent.java:1214` already does); their dead `Config` twins (`Config.java:218-219`) are deleted:
+
+| Key | Type | Default | Description |
+|------|------|-------|-------------|
+| `ape.maxEpsilon` | double | `0.15` | Epsilon when coverage gap is 1.0 |
+| `ape.minEpsilon` | double | `0.02` | Epsilon when coverage gap is 0.0 |
 
 #### Scenario: Dynamic epsilon flags default correctly
-- **WHEN** `ape.properties` sets none of `ape.dynamicEpsilon`, `ape.maxEpsilon`, or `ape.minEpsilon`
-- **THEN** `Config.dynamicEpsilon` SHALL default to `true`, `Config.maxEpsilon` to `0.15`, and `Config.minEpsilon` to `0.02`
+- **WHEN** `ape.properties` sets `ape.addons=true` and not `ape.dynamicEpsilon`
+- **THEN** `DYNAMIC_EPSILON` SHALL be in the plan's `features`, and `egreedy()` SHALL interpolate between `ape.minEpsilon = 0.02` and `ape.maxEpsilon = 0.15`
+- **AND WHEN** it sets neither `ape.addons` nor `ape.dynamicEpsilon`
+- **THEN** `DYNAMIC_EPSILON` SHALL be absent and `egreedy()` SHALL use the fixed `defaultEpsilon` (`0.05`)
 
 ---
 
@@ -844,12 +872,12 @@ When `waitForActivity` is active and the foreground package is not in the allowe
 
 ### Requirement: Per-Step Debug Artifact Defaults
 
-`ape.takeScreenshotForEveryStep` and `ape.saveGUITreeToXmlEveryStep` SHALL default to `false`. Both are debug aids: the experiment pipeline consumes neither (coverage comes from logcat, the trace from stdout; the aperv-tool pulls no per-step PNG/XML), and the LLM path captures its own screenshots on demand via `ScreenshotCapture`, independent of these flags. Per-step PNG + XML writes are pure I/O overhead on the exploration loop (estimated 20-40% of step throughput on an emulator). Debug runs re-enable either flag via `ape.properties`.
+`ape.takeScreenshotForEveryStep` and `ape.saveGUITreeToXmlEveryStep` SHALL default to `false`. Both are plan keys read through `RunContext.current().spec().exploration()` (`takeScreenshotForEveryStep()`, `saveGUITreeToXmlEveryStep()`), with their defaults in `KeyOwnership`; `Config` has no field for either (design D-B24). Both are debug aids: the experiment pipeline consumes neither (coverage comes from logcat, the trace from stdout; the aperv-tool pulls no per-step PNG/XML), and the LLM path captures its own screenshots on demand via `ScreenshotCapture`, independent of these flags. Per-step PNG + XML writes are pure I/O overhead on the exploration loop (estimated 20-40% of step throughput on an emulator). Debug runs re-enable either flag via `ape.properties`.
 
 #### Scenario: defaults are off
 - **WHEN** `ape.properties` contains neither key
-- **THEN** `Config.takeScreenshotForEveryStep` SHALL be `false`
-- **AND** `Config.saveGUITreeToXmlEveryStep` SHALL be `false`
+- **THEN** the resolved plan's `takeScreenshotForEveryStep()` SHALL be `false`
+- **AND** its `saveGUITreeToXmlEveryStep()` SHALL be `false`
 - **AND** no per-step PNG or XML SHALL be written
 
 #### Scenario: debug re-enable
@@ -859,8 +887,6 @@ When `waitForActivity` is active and the foreground package is not in the allowe
 #### Scenario: LLM screenshots unaffected
 - **WHEN** `ape.takeScreenshotForEveryStep=false` and the LLM routes a step
 - **THEN** `ScreenshotCapture` SHALL still capture its on-demand screenshot for the prompt
-
----
 
 ### Requirement: Fuzz Gesture Emission
 
@@ -973,15 +999,15 @@ and the drop log line remain single-sourced for node and coordinate actions alik
 
 ### Requirement: Foreign-Activity Guard in Event Generation
 
-When `ape.foreignActivityGuard` is true and the freshly fetched top activity component is non-null, `generateEvents` SHALL evaluate the pure decision `shouldModel(pkg, filterAccepts, systemWhitelist)` before calling `mAgent.updateState`, where `pkg` is `topComp.getPackageName()`, `filterAccepts` is `MonkeyUtils.getPackageFilter().isPackageValid(pkg)` (the same predicate the active backstop `checkAppActivity` gates on), and `systemWhitelist` is the fixed set {`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`} (the Google-image package is required because the RVSec AVD runs a Google emulator image whose runtime-permission UI is `com.google.android.permissioncontroller`; the AOSP entry alone would never match). `com.android.systemui` is NOT whitelisted — `checkAppActivity` already treats it as invalid and restarts on it, so the guard SHALL BACK out of it. When the decision is negative, the source SHALL enqueue exactly one BACK key event plus the standard throttle and return without invoking `updateState` — the foreign screen SHALL NOT be abstracted into a `State`, SHALL NOT be registered in UI-coverage tracking, and SHALL NOT contribute actions.
+When the plan carries `FOREIGN_ACTIVITY_GUARD` (key `ape.foreignActivityGuard`, a member of the ADDONS group) and the freshly fetched top activity component is non-null, `generateEvents` SHALL evaluate the pure decision `shouldModel(pkg, filterAccepts, systemWhitelist)` before calling `mAgent.updateState`, where `pkg` is `topComp.getPackageName()`, `filterAccepts` is `MonkeyUtils.getPackageFilter().isPackageValid(pkg)` (the same predicate the active backstop `checkAppActivity` gates on), and `systemWhitelist` is the fixed set {`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`} (the Google-image package is required because the RVSec AVD runs a Google emulator image whose runtime-permission UI is `com.google.android.permissioncontroller`; the AOSP entry alone would never match). `com.android.systemui` is NOT whitelisted — `checkAppActivity` already treats it as invalid and restarts on it, so the guard SHALL BACK out of it. When the decision is negative, the source SHALL enqueue exactly one BACK key event plus the standard throttle and return without invoking `updateState` — the foreign screen SHALL NOT be abstracted into a `State`, SHALL NOT be registered in UI-coverage tracking, and SHALL NOT contribute actions.
 
-The decision SHALL be based exclusively on the component's package name (the task's applicationId), never on activity class-name prefixes. A null top component SHALL bypass the guard (existing START/ACTIVATE handling proceeds). A null package SHALL be treated as modelable (uncheckable — defer to the existing paths). With `ape.foreignActivityGuard` false, event generation SHALL be identical to the pre-guard specification.
+The decision SHALL be based exclusively on the component's package name (the task's applicationId), never on activity class-name prefixes. A null top component SHALL bypass the guard (existing START/ACTIVATE handling proceeds). A null package SHALL be treated as modelable (uncheckable — defer to the existing paths). `MonkeySourceApe` SHALL read the feature from the plan (`spec().has(Feature.FOREIGN_ACTIVITY_GUARD)`) and SHALL NOT read `Config.foreignActivityGuard` (design D-B6, INV-GRP-06). When the plan does not carry it (ADDONS off, as in the `base` and `mop` cells, or the key false), event generation SHALL be identical to the pre-guard specification. Each deflection adds one to `RUN_END.counters.guardBacks`.
 
 The first deflection of each distinct foreign package SHALL log `[APE-RV] Foreign activity: pkg=<pkg> -> BACK`; subsequent deflections of the same package SHALL NOT log (throttle — a persistent foreign screen must not spam the trace). The dead `checkPackage(ComponentName, AccessibilityNodeInfo)` helper SHALL be deleted (P3 — it has no callers and the guard supersedes its intent).
 
 - **INV-EXPL-20**: No `State` or UI-coverage registration SHALL ever originate from a screen whose package fails the guard decision.
 - **INV-EXPL-21**: Screens of the system-interaction whitelist packages SHALL NOT be backed out by the guard (the guard SHALL be a no-op for them). This is a guard-local guarantee only: it does not assert durable in-package modeling — `checkAppActivity`, which this change does not touch, may still restart over these packages on a later cycle.
-- **INV-EXPL-22**: The `ape.foreignActivityGuard` flag SHALL gate the entire guard block; with the flag false, event generation SHALL follow the pre-guard path (no BACK deflections, no guard log lines). This is a reasoning invariant over the flag placement, not a pure-seam matrix case — `shouldModel` has no flag parameter.
+- **INV-EXPL-22**: The plan feature `FOREIGN_ACTIVITY_GUARD` SHALL gate the entire guard block; with the flag false, event generation SHALL follow the pre-guard path (no BACK deflections, no guard log lines). This is a reasoning invariant over the flag placement, not a pure-seam matrix case — `shouldModel` has no flag parameter.
 
 #### Scenario: launcher screen deflected
 - **WHEN** the app under test is `com.example.app`, a click lands the device on `com.google.android.apps.nexuslauncher/.NexusLauncherActivity`, and `generateEvents` runs with the guard enabled
@@ -996,22 +1022,24 @@ The first deflection of each distinct foreign package SHALL log `[APE-RV] Foreig
 - **THEN** the caller SHALL derive `pkg` from `topComp.getPackageName()` (the applicationId `info.metadude.android.fosdem.schedule`), never from the activity class prefix `nerd.tuxmobil.*`, so `filterAccepts` is true and the screen is modeled normally (a caller-level `getPackageName()` assertion, not a `shouldModel`-seam matrix case)
 
 #### Scenario: guard disabled
-- **WHEN** `ape.foreignActivityGuard=false` and a foreign screen reaches `generateEvents`
+- **WHEN** the plan does not carry `FOREIGN_ACTIVITY_GUARD` (the `base` cell, or `ape.foreignActivityGuard=false` with ADDONS on) and a foreign screen reaches `generateEvents`
 - **THEN** the screen SHALL be modeled exactly as before this change (leak-and-restart behavior), with no guard log line
+
+---
 
 ### Requirement: Tree/Package Guard in Event Generation
 
-When `ape.treePackageGuard` is true and the freshly fetched top activity component is non-null, `generateEvents` SHALL evaluate the pure decision `shouldRefetch(topPkg, treePkg, systemWhitelist)` before calling `mAgent.updateState`, where `topPkg` is `topComp.getPackageName()`, `treePkg` is `info.getPackageName()` (the accessibility root's owning package, converted null-safely to a String), and `systemWhitelist` is the `SYSTEM_INTERACTION_PACKAGES` set defined by `foreign-activity-guard` ({`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`}). `shouldRefetch` SHALL return true (mismatch) only when `treePkg` is non-null, differs from `topPkg`, and is not in the whitelist.
+When the plan carries `TREE_PACKAGE_GUARD` (key `ape.treePackageGuard`, a member of the ADDONS group) and the freshly fetched top activity component is non-null, `generateEvents` SHALL evaluate the pure decision `shouldRefetch(topPkg, treePkg, systemWhitelist)` before calling `mAgent.updateState`, where `topPkg` is `topComp.getPackageName()`, `treePkg` is `info.getPackageName()` (the accessibility root's owning package, converted null-safely to a String), and `systemWhitelist` is the `SYSTEM_INTERACTION_PACKAGES` set defined by `foreign-activity-guard` ({`com.android.packageinstaller`, `com.android.permissioncontroller`, `com.google.android.permissioncontroller`}). `shouldRefetch` SHALL return true (mismatch) only when `treePkg` is non-null, differs from `topPkg`, and is not in the whitelist.
 
 When `shouldRefetch` is true and at least one refetch iteration remains (`repeat > 0` inside the existing `while (repeat-- > 0)` loop), the source SHALL `continue` — re-fetching both `topComp` and `info` on the next loop iteration — and SHALL NOT invoke `updateState` on the current pair: the mismatched screen SHALL NOT be abstracted into a `State`, SHALL NOT be registered in UI-coverage tracking, and SHALL NOT be built into a `GUITree`. When `shouldRefetch` is true but the refetch iterations are exhausted (`repeat == 0`), the source SHALL fall through and model the pair exactly as today (fail-open) — the guard SHALL NOT deadlock capture on a persistent mismatch.
 
-The decision SHALL be based exclusively on package names (`topComp.getPackageName()` and `info.getPackageName()`), never on activity class-name prefixes. A null top component SHALL bypass the guard (existing null / START handling proceeds). A null tree package SHALL be treated as a match (uncheckable — defer to the existing paths, model normally). A tree owned by a whitelist package SHALL NOT be treated as a mismatch (a permission dialog legitimately owning the tree over the app is modeled, not re-fetched). With `ape.treePackageGuard` false, event generation SHALL be identical to the pre-guard specification.
+The decision SHALL be based exclusively on package names (`topComp.getPackageName()` and `info.getPackageName()`), never on activity class-name prefixes. A null top component SHALL bypass the guard (existing null / START handling proceeds). A null tree package SHALL be treated as a match (uncheckable — defer to the existing paths, model normally). A tree owned by a whitelist package SHALL NOT be treated as a mismatch (a permission dialog legitimately owning the tree over the app is modeled, not re-fetched). `MonkeySourceApe` SHALL read the feature from the plan (`spec().has(Feature.TREE_PACKAGE_GUARD)`) and SHALL NOT read `Config.treePackageGuard` (design D-B6, INV-GRP-06). When the plan does not carry it (ADDONS off, or the key false), event generation SHALL be identical to the pre-guard specification.
 
 The first mismatch of each distinct `top→tree` package pair SHALL log `[APE-RV] Tree/package mismatch: top=<pkg> tree=<pkg> -> refetch`; subsequent mismatches of the same pair SHALL NOT log (throttle — a persistent mismatch across the refetch iterations must not spam the trace). The guard SHALL be inserted after `foreign-activity-guard`'s top-component foreign check and before `updateState`, and SHALL reuse that change's whitelist set rather than redefining it.
 
 - **INV-EXPL-26**: While at least one refetch iteration remains, no `State`, `GUITree`, or UI-coverage registration SHALL originate from a `(topComp, tree)` pair whose tree package fails the guard decision (mismatched and not whitelisted).
 - **INV-EXPL-27**: On refetch-iteration exhaustion the guard SHALL fail open — a still-mismatched pair SHALL be modeled exactly as the pre-guard path; the guard SHALL NOT prevent capture indefinitely. (Reasoning invariant over the loop-exhaustion branch, not a pure-seam matrix case — `shouldRefetch` does not see `repeat`.)
-- **INV-EXPL-28**: The `ape.treePackageGuard` flag SHALL gate the entire guard block; with the flag false, event generation SHALL follow the pre-guard path (no refetch `continue`, no guard log lines). (Reasoning invariant over the flag placement — `shouldRefetch` has no flag parameter.)
+- **INV-EXPL-28**: The plan feature `TREE_PACKAGE_GUARD` SHALL gate the entire guard block; with the flag false, event generation SHALL follow the pre-guard path (no refetch `continue`, no guard log lines). (Reasoning invariant over the flag placement — `shouldRefetch` has no flag parameter.)
 
 #### Scenario: launcher tree under an in-package MainActivity is re-fetched
 - **WHEN** the app under test is `com.example.app`, `topComp` reports `com.example.app/.MainActivity` but the accessibility root's `getPackageName()` is `com.google.android.apps.nexuslauncher` (a relaunch frame not yet painted), the guard is enabled, and at least one refetch iteration remains
@@ -1026,8 +1054,10 @@ The first mismatch of each distinct `top→tree` package pair SHALL log `[APE-RV
 - **THEN** the guard SHALL NOT `continue` past loop exhaustion, and the pair SHALL be modeled via `updateState` exactly as the pre-guard behavior (fail-open — capture is not deadlocked)
 
 #### Scenario: guard disabled
-- **WHEN** `ape.treePackageGuard=false` and a `(topComp, tree)` pair with a foreign tree reaches `generateEvents`
+- **WHEN** the plan does not carry `TREE_PACKAGE_GUARD` (the `base` cell, or `ape.treePackageGuard=false` with ADDONS on) and a `(topComp, tree)` pair with a foreign tree reaches `generateEvents`
 - **THEN** the pair SHALL be modeled exactly as before this change (unchecked pairing), with no refetch `continue` and no guard log line
+
+---
 
 ### Requirement: Parametrized Idle-Wait Ceiling in Slow Tree Capture
 
@@ -1064,6 +1094,6 @@ The exploration run lifecycle SHALL begin with plan resolution and the `RUN_STAR
 
 ## Invariants (Dynamic Epsilon)
 
-- **INV-EPS-01**: The effective epsilon SHALL always be in [`Config.minEpsilon`, `Config.maxEpsilon`].
-- **INV-EPS-02**: When `Config.dynamicEpsilon` is `false`, behavior SHALL be identical to pre-change.
-- **INV-EPS-03**: When `UICoverageTracker` is null, `egreedy()` SHALL fall back to `Config.defaultEpsilon`.
+- **INV-EPS-01**: When `DYNAMIC_EPSILON` is in the plan and a `UICoverageTracker` is present, the effective epsilon SHALL always be in [`ape.minEpsilon`, `ape.maxEpsilon`] (`spec().exploration().minEpsilon()`/`maxEpsilon()`).
+- **INV-EPS-02**: When `DYNAMIC_EPSILON` is not in the plan (`ape.addons` false, as in the `base` and `mop` cells, or `ape.dynamicEpsilon=false`), `egreedy()` SHALL use the constant `ape.defaultEpsilon`, as upstream APE.
+- **INV-EPS-03**: When `UICoverageTracker` is null, `egreedy()` SHALL fall back to `ape.defaultEpsilon` (`spec().exploration().defaultEpsilon()`, default `0.05`).

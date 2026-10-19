@@ -6,6 +6,8 @@ The `InputValueGenerator` replaces random text with category-appropriate values.
 
 The generator is stateless except for a per-widget rotation counter that cycles through the value list on repeated visits. This ensures different values are tried across visits to the same field.
 
+The text an input action enters comes from the first generator the resolved plan admits (design D-B1, D-B6): artifact-typed text from the static `inputType`/`hint`, read from `StaticGuiModel` only, when the STATIC member `Feature.TYPED_FUZZ` (`ape.fuzzInputTyped`) is in the plan; then `InputValueGenerator`, when the ADDONS member `Feature.HEURISTIC_INPUT` (`ape.heuristicInput`) is in the plan; otherwise `StringCache.nextString()`, as in upstream APE. No generator is chosen outside the plan. The origin of each step's text (`typed`, `heuristic`, `random`, `form`, `llm`) is recorded in the step record as `dec.inp` (`event-sink`).
+
 ## Data Contracts
 
 ### Input
@@ -26,13 +28,18 @@ The generator is stateless except for a per-widget rotation counter that cycles 
 ## Invariants
 
 - **INV-INP-01**: `InputValueGenerator.generateForNode(node)` SHALL NOT return null for any non-null `GUITreeNode`.
-- **INV-INP-02**: When `Config.heuristicInput` is `false`, `ApeAgent.checkInput()` SHALL use `StringCache.nextString()` — identical to the behavior before this change.
+- **INV-INP-02**: When `Feature.HEURISTIC_INPUT` is not in the plan and typed input does not apply to the node, `ApeAgent.generateInputText()` SHALL use `StringCache.nextString()`.
 - **INV-INP-03**: Category detection SHALL be case-insensitive when matching keywords in resourceId and contentDescription.
 - **INV-INP-05**: Keyword matching in category detection SHALL compare whole tokens, never raw substrings.
 - **INV-INP-06**: `StringCache.nextString()` SHALL never throw; an empty cache yields a formatted random string (now drawn from the seeded stream).
 - **INV-INP-07**: Every random draw in input-string generation (`StringCache.nextString()`, `RandomHelper.nextFormattedString()`, the `randomFormattedStringProp` toss) SHALL come from the seeded run RNG (`RandomHelper`, seeded from `-s` and owned by `RunContext`). `ThreadLocalRandom`, `Math.random`, and unseeded `Random` instances SHALL NOT appear anywhere in the input-generation path. Consequence: given the same seed and the same sequence of `nextString()` calls over the same cache contents, the generated strings are identical across runs.
 - **INV-INP-04**: `ApeAgent.checkInput()` SHALL bypass the `RandomHelper.toss(ape.inputRate)` gate (deterministic fill) ONLY when the form-completion context holds for the current state. Outside that context the toss gate SHALL be retained. This invariant aligns with INV-FORM-03 of the `form-completion` capability.
+- **INV-INP-08**: The input generators SHALL be selected from the resolved plan only: `RunContext.current().spec().has(Feature.TYPED_FUZZ)` and `has(Feature.HEURISTIC_INPUT)`. No input path SHALL read `Config.heuristicInput`, and `Config` SHALL NOT declare it.
+- **INV-INP-09**: Typed input SHALL read widget `inputType`/`hint` from `StaticGuiModel` only, never from `MopData`, and SHALL apply only when `Feature.TYPED_FUZZ` is in the plan.
+- **INV-INP-10**: Every step on which `ApeAgent.checkInput()` sets a node's input text SHALL record the text's origin as `dec.inp`, one of `typed`, `heuristic`, `random`, `form`, `llm`, through `EventSink.input(...)`; a step that sets no text SHALL carry no `dec.inp`. Recording SHALL draw no RNG and SHALL NOT generate a second text.
+
 ## Requirements
+
 ### Requirement: InputValueGenerator — Category Detection
 
 `InputValueGenerator.detectCategory(GUITreeNode node)` SHALL detect the input category using the following priority order:
@@ -105,53 +112,89 @@ Keyword comparison SHALL be token-based, not raw substring: the identifier is sp
 
 ### Requirement: ApeAgent.checkInput() Integration
 
-`ApeAgent.checkInput()` SHALL generate text for an `EditText` node whose `getInputText()` is `null` using `generateInputText(node)` (which selects `InputValueGenerator.generateForNode(node)` when `Config.heuristicInput` is `true`, else `StringCache.nextString()`).
+`ApeAgent.checkInput()` SHALL generate text for an `EditText` node whose `getInputText()` is `null` using `generateInputText(node)`, which selects the generator from the plan, in this order:
 
-`checkInput()` SHALL gate whether a node is filled on the form-completion context (defined by the `form-completion` capability: the current state carries at least one resolved, valid `EditText` action whose node holds no text — `getInputText() == null` and `getText()` null or empty). The context SHALL be evaluated against the state reflecting the current screen at `checkInput` time (`currentState` — `newState` has already been nulled by `moveForward()` in the pipeline; INV-FORM-07):
+1. **typed** — when `Feature.TYPED_FUZZ` (STATIC, key `ape.fuzzInputTyped`) is in the plan and `StaticGuiModel` holds a non-empty `inputType` or `hint` for the node or one of its containment nodes (`MopScorer.containmentNodes`, node first; a tree-only helper: it reads only the tree and SHALL NOT read `MopData`, so calling it does not couple STATIC to MOP): `TypedInputGenerator.generateForType(inputType, hint, …)`;
+2. **heuristic** — otherwise, when `Feature.HEURISTIC_INPUT` (ADDONS, key `ape.heuristicInput`) is in the plan: `InputValueGenerator.generateForNode(node)`;
+3. **random** — otherwise: `StringCache.nextString()`.
+
+Without the static-analysis artifact, or with the STATIC group off, the first step never applies; with the ADDONS group off, the second never applies. In the `base` cell every generated text is therefore `StringCache.nextString()`.
+
+`checkInput()` SHALL gate whether a node is filled on the form-completion context (defined by the `form-completion` capability: `Feature.FORM_COMPLETION` is in the plan and the current state carries at least one resolved, valid `EditText` action whose node holds no text — `getInputText() == null` and `getText()` null or empty). The context SHALL be evaluated against the state reflecting the current screen at `checkInput` time (`currentState`; INV-FORM-07):
 
 - When the form-completion context holds for the current state, `checkInput()` SHALL fill the selected unfilled `EditText` node deterministically — it SHALL set the node's input text without evaluating the `RandomHelper.toss(ape.inputRate)` gate.
 - When the form-completion context does NOT hold, `checkInput()` SHALL retain the legacy probabilistic behavior — it SHALL set the node's input text only when `RandomHelper.toss(ape.inputRate)` succeeds.
+- An LLM decision on an input-capable widget fills deterministically, as before, with the same generator.
 
-In both cases the text source is unchanged (`generateInputText(node)`), and a node that already holds text (`getInputText() != null` or non-empty `getText()`) SHALL NOT be re-filled. `Config.heuristicInput` continues to select the generator within `generateInputText()` and is independent of the form-completion gate.
+In every case the text source is `generateInputText(node)`, and a node that already holds text (`getInputText() != null` or non-empty `getText()`) SHALL NOT be re-filled. The generator choice is independent of the form-completion gate.
+
+When `checkInput()` sets a node's input text, it SHALL record the origin in the step record's `dec.inp` (`event-sink`, INV-INP-10), by the first of these that holds:
+- `llm` — the fill is an LLM decision's text entry;
+- `form` — the fill bypassed the toss because the form-completion context holds;
+- otherwise the generator that produced the text: `typed`, `heuristic` or `random`.
 
 #### Scenario: Heuristic input enabled
-- **WHEN** `Config.heuristicInput` is `true` and an EditText action is selected with `getInputText() == null`
+- **WHEN** `Feature.HEURISTIC_INPUT` is in the plan (cell `as`, or `ape.addons=true` with `ape.heuristicInput` unset), typed input does not apply to the node, and an EditText action is selected with `getInputText() == null` outside a form context, and the `inputRate` toss succeeds
 - **THEN** `InputValueGenerator.generateForNode(node)` SHALL be called to generate the input text
+- **AND** the step record SHALL carry `dec.inp:"heuristic"`
 
 #### Scenario: Heuristic input disabled
-- **WHEN** `Config.heuristicInput` is `false` and an unfilled EditText action is filled
-- **THEN** `StringCache.nextString()` SHALL be used as the text source (identical to pre-change behavior)
+- **WHEN** `Feature.HEURISTIC_INPUT` is not in the plan (cell `base`, or `ape.heuristicInput=false`) and an unfilled EditText action is filled outside a form context
+- **THEN** `StringCache.nextString()` SHALL be used as the text source (upstream behavior)
+- **AND** the step record SHALL carry `dec.inp:"random"`
 
 #### Scenario: Deterministic fill in form-completion context
-- **WHEN** the form-completion context holds for the current state, `ape.inputRate` is `0.8`, and an unfilled `EditText` action is selected
+- **WHEN** `Feature.FORM_COMPLETION` is in the plan, the form-completion context holds for the current state, `ape.inputRate` is `0.8`, and an unfilled `EditText` action is selected
 - **THEN** `checkInput()` SHALL set the node's input text with probability 1.0 (the `RandomHelper.toss(ape.inputRate)` gate SHALL NOT be evaluated)
 - **AND** the text SHALL come from `generateInputText(node)`
+- **AND** the step record SHALL carry `dec.inp:"form"`
 
 #### Scenario: Legacy probabilistic fill outside form-completion context
 - **WHEN** the form-completion context does NOT hold and an unfilled `EditText` action is selected with `ape.inputRate == 0.8`
 - **THEN** `checkInput()` SHALL set the node's input text only when `RandomHelper.toss(0.8)` succeeds (legacy behavior)
+- **AND** when the toss fails the step record SHALL carry no `dec.inp`
 
 #### Scenario: Already-filled node is not re-filled
 - **WHEN** the selected `EditText` node already has `getInputText() != null`
 - **THEN** `checkInput()` SHALL NOT change the node's input text, regardless of the form-completion context
+- **AND** the step record SHALL carry no `dec.inp`
+
+#### Scenario: Typed input reads the static provider
+- **WHEN** `Feature.TYPED_FUZZ` is in the plan, `StaticGuiModel` holds `inputType="textEmailAddress"` for the node's resource id, and the toss succeeds outside a form context
+- **THEN** the text SHALL come from `TypedInputGenerator.generateForType("textEmailAddress", …)`
+- **AND** no `MopData` method SHALL be called to obtain it
+- **AND** the step record SHALL carry `dec.inp:"typed"`
+
+#### Scenario: Typed input off without the STATIC group
+- **WHEN** the plan is cell `mop` (artifact loaded, STATIC off) and the artifact holds `inputType="number"` for the selected EditText
+- **THEN** typed input SHALL NOT apply, and the text SHALL come from `StringCache.nextString()` (ADDONS is off too)
 
 ### Requirement: Config Flag for Heuristic Input
 
-`Config.java` SHALL declare the following flag:
+The heuristic generator SHALL be the plan feature `Feature.HEURISTIC_INPUT`, a member of the ADDONS group, activated by the plan key `ape.heuristicInput` (rule `TRUE`: active when the key is `true`; jar default `true`) and requiring `Feature.ADDONS` (`ape.addons`). `Config` SHALL NOT declare `heuristicInput`, and no input path SHALL read it outside the plan (INV-INP-08). The resolution rules are the plan's (`run-spec`, `guidance-groups`):
 
-| Flag | Property Key | Type | Default | Description |
-|------|-------------|------|---------|-------------|
-| `heuristicInput` | `ape.heuristicInput` | boolean | true | Enable context-aware text input (false = random StringCache) |
+| `ape.addons` | `ape.heuristicInput` | `HEURISTIC_INPUT` in the plan |
+|---|---|---|
+| `false` (default) | unset | no (member left out silently: its group is off) |
+| `false` | `true` (explicit) | resolution aborts with `missing_dependency` |
+| `true` | unset | yes |
+| `true` | `false` | no |
+
+The ADDONS block of the cell presets sets `heuristicInput=true`, so it is in the plan of `as`, `as_mop`, `as_llm` and `as_mop_llm`, and absent from `base` and `mop`.
 
 #### Scenario: Config flag loaded
-- **WHEN** `ape.properties` contains `ape.heuristicInput=false`
-- **THEN** `Config.heuristicInput` SHALL be `false`
+- **WHEN** `ape.properties` contains `ape.addons=true` and `ape.heuristicInput=false`
+- **THEN** the resolved plan SHALL NOT contain `Feature.HEURISTIC_INPUT`
+- **AND** `generateInputText()` SHALL NOT call `InputValueGenerator`
 
 #### Scenario: Default value
-- **WHEN** `ape.heuristicInput` is not set in properties
-- **THEN** `Config.heuristicInput` SHALL be `true`
+- **WHEN** `ape.heuristicInput` is not set in properties and `ape.addons=true`
+- **THEN** the resolved plan SHALL contain `Feature.HEURISTIC_INPUT`
+- **AND** with `ape.addons` unset as well, the resolved plan SHALL NOT contain it
 
----
+#### Scenario: explicit key without its group aborts
+- **WHEN** `ape.properties` contains `ape.heuristicInput=true` and no `ape.addons`
+- **THEN** resolution SHALL abort with `[APE-RUNSPEC-ABORT] reason=missing_dependency key=ape.heuristicInput`
 
 ### Requirement: StringCache Empty-Cache Behavior
 
@@ -180,4 +223,3 @@ When the cache is non-empty, the selection index SHALL be drawn from the seeded 
 
 - **WHEN** a legacy `/sdcard/ape.strings` file exists on the device (readable or not)
 - **THEN** class initialization SHALL NOT read it, SHALL NOT throw, and the cache SHALL start empty
-
