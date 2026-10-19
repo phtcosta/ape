@@ -12,21 +12,19 @@ import com.android.commands.monkey.ape.model.LlmTapAction;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
-import com.android.commands.monkey.ape.utils.MopContext;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
 
 /**
  * The new-state LLM hook: when it asks, what it does with an answer, and what it does with silence.
  *
- * <p>The order of the three guards is the part worth pinning. The shared precondition runs first,
- * the stage's own condition second, and the circuit breaker last — and only the breaker has a side
- * effect, advancing an OPEN&rarr;HALF_OPEN probe and latching a log line once per open episode. A
- * step either of the first two already declined must therefore not reach it, or a run would spend
- * probes on steps that were never the LLM's to decide.
+ * <p>The order of the guards is the part worth pinning. The stage's own trigger runs first, then
+ * the shared gate chain ({@code MinActionsGate}, then {@code BreakerGate}) — and only the breaker
+ * has a side effect, advancing an OPEN&rarr;HALF_OPEN probe and latching a log line once per open
+ * episode. A step the trigger or an earlier gate already declined must therefore not reach it, or a
+ * run would spend probes on steps that were never the LLM's to decide. The buffer is no condition:
+ * an accepted answer over a non-empty buffer abandons it (INV-DP-15).
  *
  * <p><b>The condition is the whole trigger now.</b> The predicate this stage inherited also tested
  * that new-state routing was enabled; that is the condition under which the stage is assembled at
@@ -55,7 +53,7 @@ public class LlmNewStateStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopContext mop, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             modeSeen = mode;
             treeSeen = tree;
@@ -91,7 +89,9 @@ public class LlmNewStateStageTest {
 
     private static LlmNewStateStage stageOver(StubEngine engine, Gate gate,
             List<ModelAction> resolved) {
-        return new LlmNewStateStage(engine, gate, resolved::add);
+        LlmKit kit = new LlmKit(engine, gate);
+        return new LlmNewStateStage(new LlmCall(engine, kit.call.gates(), kit.routing,
+                resolved::add, owner -> { }, () -> null));
     }
 
     @Test
@@ -112,9 +112,9 @@ public class LlmNewStateStageTest {
 
         assertEquals(StageResult.Kind.SELECT, result.kind());
         assertSame(answer, result.action());
-        assertEquals("LLM", result.decisionSource());
-        assertEquals("the label is the provenance the stage stamped (INV-DP-04)",
-                answer.getDecisionSource().name(), result.decisionSource());
+        assertEquals("llm", result.decisionSource());
+        assertEquals("the label is the owner of the provenance the stage stamped (INV-DP-04)",
+                answer.getDecisionSource().owner(), result.decisionSource());
         assertEquals(ModelAction.PickChannel.LLM, answer.getPickChannel());
         assertEquals("a matched widget action is already resolved and must not be re-resolved",
                 0, resolved.size());
@@ -181,18 +181,19 @@ public class LlmNewStateStageTest {
     }
 
     @Test
-    public void testANonEmptyBufferDeclinesBeforeConsultingTheBreaker() throws Exception {
-        StubEngine engine = new StubEngine(new ModelAction(null, ActionType.MODEL_CLICK));
-        Gate gate = new Gate(true);
+    public void testANonEmptyBufferIsAbandonedNotAGate() throws Exception {
+        ModelAction answer = new ModelAction(null, ActionType.MODEL_CLICK);
+        StubEngine engine = new StubEngine(answer);
+        LlmKit kit = new LlmKit(engine, new Gate(true));
         FakeStepContext ctx = routableStep();
-        ctx.actionBufferSize = 1;
+        ctx.actionBufferSize = 2;
 
-        StageResult result = stageOver(engine, gate, new java.util.ArrayList<>()).decide(ctx);
+        StageResult result = new LlmNewStateStage(kit.call).decide(ctx);
 
-        assertEquals(StageResult.Kind.CONTINUE, result.kind());
-        assertEquals("mid-sequence steps never reach the breaker: consulting it would spend a"
-                + " circuit-breaker probe on a step the LLM was never offered",
-                0, gate.calls);
+        assertEquals("the buffer is no gate (D-A6, INV-RTR-23)", StageResult.Kind.SELECT,
+                result.kind());
+        assertEquals("the preempted buffer is abandoned without weakening (INV-DP-15)",
+                java.util.Collections.singletonList("llm"), kit.abandoned);
     }
 
     @Test
@@ -205,19 +206,8 @@ public class LlmNewStateStageTest {
         StageResult result = stageOver(engine, gate, new java.util.ArrayList<>()).decide(ctx);
 
         assertEquals(StageResult.Kind.CONTINUE, result.kind());
-        assertEquals("the threshold is strictly more than two actions", 0, gate.calls);
-    }
-
-    @Test
-    public void testTheGateIsTheSameForEveryLlmStage() throws Exception {
-        FakeStepContext ctx = routableStep();
-        assertTrue(LlmGate.allows(ctx));
-
-        ctx.actionBufferSize = 1;
-        assertFalse(LlmGate.allows(ctx));
-
-        ctx.actionBufferSize = 0;
-        ctx.newState = FakeStepContext.stateWith(ACTIVITY, 3);
-        assertTrue("three actions is above the threshold", LlmGate.allows(ctx));
+        assertEquals("MinActionsGate(3) refuses two actions, and the breaker after it is not"
+                + " consulted", 0, gate.calls);
+        assertEquals(0, engine.selectCalls);
     }
 }

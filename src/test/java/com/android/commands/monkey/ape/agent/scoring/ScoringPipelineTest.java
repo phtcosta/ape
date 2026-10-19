@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -120,33 +121,35 @@ public class ScoringPipelineTest {
 
     // ---- fromParams assembly matrix: weights x substrate (2.4) --------------
 
-    private static MopData mopWithWtg() {
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
+    /** Mounts both providers on {@code ctx}: a static model with WTG data, and MOP data. */
+    private static void armWithWtg(StubScoringContext ctx) {
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
         wtg.put("com.x.Main", Collections.singletonList(
-                new MopData.WtgTransition("btn", "com.x.Detail")));
-        return MopData.forTest(null, null, wtg);
+                new StaticGuiModel.WtgTransition("btn", "com.x.Detail")));
+        ctx.staticModel = new StaticGuiModel(null, null, wtg, null, null, null, null, null);
+        ctx.mopData = MopData.forTest(null, null);
     }
 
     @Test
     public void fullMopArmAssemblesSixInOrderWhenTheMopFrontierWeightIsZero() {
         StubScoringContext ctx = new StubScoringContext();
-        ctx.mopData = mopWithWtg();
+        armWithWtg(ctx);
         ScoringPipeline p = ScoringPipeline.fromParams(withoutMopFrontier(), ctx, new NoopSink());
         assertEquals(Arrays.asList(
                 "MopWidgetPass", "MenuGatewayPass", "WtgPass",
-                "FrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
+                "NavFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
     }
 
     @Test
     public void mopFrontierSitsAfterFrontierAndBeforeCoverageWhenWeighted() {
         // Task 4.3 / INV-MFP registration position: MopFrontierPass joins the roster only when the
-        // weight is positive, immediately after the generic FrontierPass and before CoveragePass —
+        // feature is mounted, immediately after NavFrontierPass and before CoveragePass —
         // the frontier family stays contiguous (INV-ARCH-03 relative order preserved).
         StubScoringContext ctx = new StubScoringContext();
-        ctx.mopData = mopWithWtg();
+        armWithWtg(ctx);
         ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx, new NoopSink());
         assertEquals(Arrays.asList(
-                "MopWidgetPass", "MenuGatewayPass", "WtgPass", "FrontierPass",
+                "MopWidgetPass", "MenuGatewayPass", "WtgPass", "NavFrontierPass",
                 "MopFrontierPass", "CoveragePass", "FormCompletionPass"), p.passNames());
     }
 
@@ -159,7 +162,7 @@ public class ScoringPipelineTest {
         // Config is mutated and no plan is installed, because there is nothing global left for the
         // assembly to consult (INV-ARCH-11).
         StubScoringContext ctx = new StubScoringContext();
-        ctx.mopData = mopWithWtg();
+        armWithWtg(ctx);
 
         ScoringPipeline without = ScoringPipeline.fromParams(withoutMopFrontier(), ctx, new NoopSink());
         ScoringPipeline with = ScoringPipeline.fromParams(allOn(), ctx, new NoopSink());
@@ -176,10 +179,9 @@ public class ScoringPipelineTest {
      * the retired {@code apePureMode} switch and could not be produced in this JVM at all, so
      * INV-ARCH-02's strict no-op was asserted through the package-private constructor instead.
      *
-     * <p>It takes both halves, and that is the point worth pinning: zeroing every weight is not
-     * enough, because {@code MopWidgetPass} and {@code MenuGatewayPass} gate on the substrate
-     * alone. An arm that wants no scoring states no MOP data path either — which is what "a plan
-     * carrying no scoring feature" means, since the data path is the MOP feature's activation key.
+     * <p>It takes both halves, and that is the point worth pinning: absent member features are not
+     * enough, because {@code MopWidgetPass} is mounted by the group root {@code MOP} itself. A plan
+     * carrying no scoring feature mounts no MOP either, so its context carries no MOP data.
      */
     @Test
     public void aPlanWithNoScoringFeatureAssemblesNothing() {
@@ -193,23 +195,23 @@ public class ScoringPipelineTest {
     }
 
     @Test
-    public void zeroedWeightsAloneDoNotEmptyThePipeline() {
+    public void absentMembersAloneDoNotEmptyThePipeline() {
         // The complement of the case above, asserted so the two halves cannot be confused: with
-        // the substrate present, the two MopData-gated passes survive every weight being zero.
+        // MOP mounted, the pass its root mounts survives every member feature being absent.
         StubScoringContext ctx = new StubScoringContext();
-        ctx.mopData = mopWithWtg();
+        armWithWtg(ctx);
 
         ScoringPipeline p = ScoringPipeline.fromParams(
                 new ScoringParams(0, 0, 0, 0, 0, false), ctx, new NoopSink());
 
-        assertEquals(Arrays.asList("MopWidgetPass", "MenuGatewayPass"), p.passNames());
+        assertEquals(Arrays.asList("MopWidgetPass"), p.passNames());
     }
 
     // ---- the candidate census: what the pass list does NOT say (5.2a) --------
 
     @Test
     public void theCensusCarriesEveryCandidateAndItsVerdict() {
-        // No MopData: the four MOP-family passes are candidates that were not constructed, which
+        // No provider: the MOP and WTG-family passes are candidates that were not constructed, which
         // is exactly the fact the [APE-ARCH] line cannot express — it shows their absence only as
         // names that are not there.
         StubScoringContext ctx = new StubScoringContext();
@@ -218,7 +220,7 @@ public class ScoringPipelineTest {
         Map<String, Boolean> census = p.candidates();
 
         assertEquals("every candidate is named, constructed or not",
-                Arrays.asList("MopWidgetPass", "MenuGatewayPass", "WtgPass", "FrontierPass",
+                Arrays.asList("MopWidgetPass", "MenuGatewayPass", "WtgPass", "NavFrontierPass",
                         "MopFrontierPass", "CoveragePass", "FormCompletionPass"),
                 new ArrayList<>(census.keySet()));
         assertEquals(Boolean.FALSE, census.get("WtgPass"));
@@ -251,8 +253,8 @@ public class ScoringPipelineTest {
     }
 
     @Test
-    public void coverageOnlyArmWhenNoMopData() {
-        StubScoringContext ctx = new StubScoringContext(); // mopData == null
+    public void addonsOnlyArmWhenNoProvider() {
+        StubScoringContext ctx = new StubScoringContext(); // neither STATIC nor MOP mounted
         ScoringPipeline p = ScoringPipeline.fromParams(allOn(), ctx, new NoopSink());
         assertEquals(Arrays.asList("CoveragePass", "FormCompletionPass"), p.passNames());
     }

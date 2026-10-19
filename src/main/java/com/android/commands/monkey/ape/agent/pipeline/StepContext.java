@@ -18,13 +18,16 @@ package com.android.commands.monkey.ape.agent.pipeline;
 import java.util.List;
 import java.util.Random;
 
+import com.android.commands.monkey.ape.agent.StepRng;
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 /**
  * What a stage may know about the step it is deciding.
@@ -64,8 +67,8 @@ public interface StepContext {
     boolean isNewState();
 
     /**
-     * How many actions are queued in the agent's buffer. Zero is the LLM stages' shared
-     * precondition: mid-sequence steps are not the LLM's to redirect.
+     * How many actions are queued in the agent's buffer. A preempting stage that selects while it
+     * is non-zero abandons the buffer without weakening (INV-DP-15); it is no stage's precondition.
      */
     int actionBufferSize();
 
@@ -99,6 +102,25 @@ public interface StepContext {
         MopContext mop = mopContext();
         return mop == null ? null : mop.data();
     }
+
+    /**
+     * The run's static GUI model — the WTG, the widget metadata, the package and the manifest
+     * components — or {@code null} when the artifact was not loaded, which is when neither
+     * {@code STATIC} nor {@code MOP} is mounted (design D-B14.20).
+     */
+    StaticGuiModel staticModel();
+
+    /**
+     * The run's four per-step streams (design D-B9). A stage draws its coin here and never from
+     * {@link #random()}, so mounting it does not move SATA's draws (INV-DP-13).
+     */
+    StepRng stepRng();
+
+    /**
+     * The run's event sink, where the pipeline writes {@code dec.own} and the stages add their
+     * counters. Handed in, never reached for through a static (INV-DP-12).
+     */
+    EventSink sink();
 
     /** The exploration graph. */
     Graph graph();

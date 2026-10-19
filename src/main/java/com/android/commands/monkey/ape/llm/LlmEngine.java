@@ -7,6 +7,7 @@ import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopContext;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import java.util.List;
 
@@ -16,7 +17,7 @@ import java.util.List;
  * <p>The ten steps of the pipeline are here and almost nothing else: each one asks a unit and reads
  * its answer, so this class holds the <em>sequence</em> and the units hold the work. That division
  * is what the sequence is worth stating for — the order the steps run in is behaviour, not style.
- * The attempt is counted before anything can fail, the breaker is told about a failure at the three
+ * The attempt is counted before anything can fail, the breaker is told about a failure at the two
  * sites that are failures and about success at the one site that is not, the error seam is read at
  * exactly one of them, and the decision line is emitted last, after the answer has been judged.
  *
@@ -45,6 +46,12 @@ public class LlmEngine {
     private final LlmTelemetry telemetry;
 
     /**
+     * Why the last {@link #selectAction} returned null — {@code error}, {@code no_match} or
+     * {@code decline} (llm-routing "Declared LLM Fallback") — and null after a call that selected.
+     */
+    private String lastFallback;
+
+    /**
      * @param screenshot the screen-to-string step
      * @param promptBuilder the prompt assembler
      * @param client the run's single door to the model, breaker included
@@ -63,22 +70,50 @@ public class LlmEngine {
     }
 
     /**
+     * Binds the run's MOP context to the prompt's mounted MOP contribution, which its markers and
+     * count read. Called once, by the agent, right after the artifact loads: the engine is built
+     * before that, so the context cannot be a constructor argument. A plan without {@code MOP}
+     * mounts no MOP contribution, and the call changes nothing.
+     *
+     * @param mop the run's MOP context, or null
+     */
+    public void bindMopContext(MopContext mop) {
+        for (PromptContribution c : promptBuilder.contributions()) {
+            if (c instanceof MopPromptContribution) ((MopPromptContribution) c).bind(mop);
+        }
+    }
+
+    /**
+     * Binds the run's static GUI model to the prompt's mounted STATIC contribution, which its
+     * widget metadata reads. Called once, by the agent, right after the artifact loads, as
+     * {@link #bindMopContext}. A plan without {@code STATIC} mounts no STATIC contribution, and the
+     * call changes nothing.
+     *
+     * @param model the run's static GUI model, or null
+     */
+    public void bindStaticModel(StaticGuiModel model) {
+        for (PromptContribution c : promptBuilder.contributions()) {
+            if (c instanceof StaticPromptContribution) ((StaticPromptContribution) c).bind(model);
+        }
+    }
+
+    /**
      * Run the pipeline and return the action the model asked for, or null.
      *
      * <p>Null is an ordinary outcome, not an error: the LLM declined, failed, or was refused, and
      * the remainder of the assembled pipeline decides the step (INV-DP-11).
      *
-     * <p><b>The five per-step values arrive as arguments and that is deliberate.</b> This object is
-     * built once per run and owned by {@code RunContext}, while {@code mop} and
-     * {@code recentActions} belong to the step the calling stage is deciding; sourcing them here
-     * would mean holding the agent or its step view, which is exactly the coupling design D2 exists
-     * to prevent.
+     * <p><b>The per-step values arrive as arguments and that is deliberate.</b> This object is
+     * built once per run and owned by {@code RunContext}, while {@code recentActions} belongs to the
+     * step the calling stage is deciding; sourcing it here would mean holding the agent or its step
+     * view, which is exactly the coupling design D2 exists to prevent. What the mounted groups add
+     * to the prompt reads the run's data, not the step's, so it is bound once
+     * ({@link #bindMopContext}, {@link #bindStaticModel}).
      *
      * @param tree the current tree, the dimension fallback of {@code ScreenshotStep.deviceDimensions}
      *        when the display cannot be read; not a prompt input
      * @param state the current abstract state
      * @param actions the candidate actions the state offers
-     * @param mop the run's MOP context for the prompt's markers and context line; may be null
      * @param recentActions the action-history ring the prompt shows; may be null or empty
      * @param mode which hook asked — {@code new-state}, {@code stagnation} or {@code random} — as
      *        the decision sub-event reports it
@@ -87,11 +122,12 @@ public class LlmEngine {
     public ModelAction selectAction(GUITree tree,
                                     State state,
                                     List<ModelAction> actions,
-                                    MopContext mop,
                                     List<ApePromptBuilder.ActionHistoryEntry> recentActions,
                                     String mode) {
         telemetry.countAttempt();
         long startMs = System.currentTimeMillis();
+        // Every exit before mapping is an abandoned attempt; the mapped exit below overwrites it.
+        lastFallback = FALLBACK_ERROR;
 
         int[] dimensions = screenshot.deviceDimensions(tree);
         int deviceWidth = dimensions[0];
@@ -103,14 +139,12 @@ public class LlmEngine {
         List<SglangClient.Message> messages = null;
 
         try {
-            // Step 2: read the screen. A null capture (secure window) is a failure, not a free
-            // retry: recording it is what eventually opens the breaker on an app that never yields
-            // a screen, and stops the run paying per-step for a call that cannot work.
+            // Step 2: read the screen. A null capture (secure window) is not a breaker failure —
+            // the server was never asked, so nothing about the model's health was learned, and a
+            // HALF_OPEN breaker stays HALF_OPEN (D-B18). The attempt still spends the step's call.
             pngBytes = screenshot.capture(deviceWidth, deviceHeight);
             if (pngBytes == null) {
-                client.recordFailure();
-                telemetry.screenshotFailed(activityOf(state), screenshot.getLastFailureStage());
-                return null;
+                return captureFailed(state, screenshot.getLastFailureStage());
             }
 
             // Step 3: resize and encode. Not a breaker failure — the screen was readable and the
@@ -122,7 +156,7 @@ public class LlmEngine {
             }
 
             // Step 4: build the prompt and record it
-            messages = promptBuilder.build(deviceWidth, deviceHeight, state, actions, mop, base64,
+            messages = promptBuilder.build(deviceWidth, deviceHeight, state, actions, base64,
                     recentActions);
             telemetry.logPrompt(messages);
 
@@ -186,6 +220,7 @@ public class LlmEngine {
                     nearest, response, elapsedMs);
 
             // Step 10
+            lastFallback = fallbackOf(match, verdict);
             return match;
 
         } catch (Exception e) {
@@ -197,6 +232,52 @@ public class LlmEngine {
             base64 = null;
             messages = null;
         }
+    }
+
+    /**
+     * The null-capture exit of {@link #selectAction}: counts {@code screenshot_failed}, sets
+     * {@link #FALLBACK_SCREENSHOT} and returns null. The breaker is not told — no failure is
+     * recorded, so its count, its state and a {@code HALF_OPEN} probe are left as they were (D-B18).
+     *
+     * @param state the current abstract state, for the activity the failure is reported on
+     * @param stage which capture path failed last, or {@code null}
+     * @return null, always
+     */
+    ModelAction captureFailed(State state, String stage) {
+        lastFallback = FALLBACK_SCREENSHOT;
+        telemetry.screenshotFailed(activityOf(state), stage);
+        return null;
+    }
+
+    /** {@link #lastFallback()}: the attempt was abandoned before mapping. */
+    public static final String FALLBACK_ERROR = "error";
+    /** {@link #lastFallback()}: the LLM screenshot could not be captured (design D-B18). */
+    public static final String FALLBACK_SCREENSHOT = "screenshot";
+    /** {@link #lastFallback()}: the answer was refused at mapping. */
+    public static final String FALLBACK_NO_MATCH = "no_match";
+    /** {@link #lastFallback()}: no action for any other reason. */
+    public static final String FALLBACK_DECLINE = "decline";
+
+    /**
+     * Why the last {@link #selectAction} returned null, for {@code dec.own.fb}: {@code screenshot}
+     * when the screen could not be captured, {@code error} when the attempt was abandoned before
+     * mapping for another reason (image, HTTP, timeout, parse or internal),
+     * {@code no_match} when the answer was refused at mapping, {@code decline} otherwise; null
+     * after a call that selected, or before any call.
+     */
+    public String lastFallback() {
+        return lastFallback;
+    }
+
+    /**
+     * The fallback reason of a call that reached its verdict: none when it selected,
+     * {@code no_match} when the verdict refused the answer at mapping, {@code decline} otherwise.
+     */
+    static String fallbackOf(ModelAction match, Verdict verdict) {
+        if (match != null) {
+            return null;
+        }
+        return "no_match".equals(verdict.result) ? FALLBACK_NO_MATCH : FALLBACK_DECLINE;
     }
 
     // -------------------------------------------------------------------------

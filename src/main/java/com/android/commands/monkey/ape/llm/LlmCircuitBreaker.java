@@ -31,12 +31,12 @@ public class LlmCircuitBreaker {
     private int tripCount;
 
     /**
-     * Default thresholds: 3 failures trip the breaker, 60 s recovery window.
+     * The breaker's two parameters come from the plan (INV-LLM-15); it supplies no defaults of its
+     * own.
+     *
+     * @param failureThreshold {@code ape.llmBreakerFailures}: consecutive failures that open it
+     * @param openDurationMs {@code ape.llmBreakerOpenMs}: how long it stays open before a probe
      */
-    public LlmCircuitBreaker() {
-        this(3, 60_000L);
-    }
-
     public LlmCircuitBreaker(int failureThreshold, long openDurationMs) {
         this.failureThreshold = failureThreshold;
         this.openDurationMs = openDurationMs;

@@ -14,6 +14,8 @@ import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import org.json.JSONObject;
@@ -34,9 +36,9 @@ import static org.junit.Assert.*;
 /**
  * event-sink "StepRecord Schema" and "RUN_END As the Natural Last Record" at the agent
  * (llm-coordinate-single-base, design D23, task 16.1): the decision source writes {@code dec.mopd}
- * and {@code dec.mops} from the one {@code MopScorer.weigh} of the chosen action, {@code dec.ret}
- * reaches the same record from {@code moveForward}, and teardown hands {@code RUN_END} the stamp and
- * retirement counts.
+ * and {@code dec.mops} (with {@code dec.hnd}, design D-B17) from the one {@code MopScorer.weigh} of
+ * the chosen action, {@code dec.ret} reaches the same record from {@code moveForward}, and teardown
+ * hands {@code RUN_END} the stamp and retirement counts.
  *
  * <p>The agent is {@code Unsafe}-allocated as in {@code StatefulAgentMopRetirementTest}, with the
  * fields the reached methods read set by hand, and the plan installed with a real
@@ -111,15 +113,16 @@ public class StatefulAgentMopTelemetryTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(json);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
 
     /** The run's context, built as {@code StatefulAgent} builds it, installed on the agent. */
     private MopContext context(MopData data) throws Exception {
-        MopContext mop = MopContext.fromSpec(data, RunContext.current().spec().mop());
+        MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY, RunContext.current().spec().mop());
         setField(agent, "_mopContext", mop);
+        setField(agent, "_mopLedger", new MopInteractionLedger(1));
         return mop;
     }
 
@@ -154,7 +157,7 @@ public class StatefulAgentMopTelemetryTest {
 
     /**
      * One step as {@code updateStateInternal} runs it for a model action: the record opens, the
-     * decision is recorded, {@code moveForward} takes the retirement count, and the restart check applies it.
+     * decision is recorded, and {@code moveForward} applies the retirement count.
      */
     private void select(State state, ModelAction action) {
         RunContext.current().sink().beginStep(++step, step, ACT, true, "S1");
@@ -162,7 +165,6 @@ public class StatefulAgentMopTelemetryTest {
         agent.newState = state;
         agent.newAction = action;
         agent.moveForward();
-        agent.checkRestart(action);
     }
 
     /** The {@code dec} of the one step record {@link #select} wrote for {@code action}. */
@@ -197,6 +199,8 @@ public class StatefulAgentMopTelemetryTest {
         assertEquals(400, dec.getInt("mop"));
         assertEquals(2, dec.getInt("mopd"));
         assertEquals("s", dec.getString("mops"));
+        assertEquals("dec.hnd names the stamp behind the weight (D-B17)", STAMP,
+                dec.getString("hnd"));
     }
 
     /** Scenario "distance zero is written, not omitted". */
@@ -209,6 +213,7 @@ public class StatefulAgentMopTelemetryTest {
         assertTrue(dec.has("mopd"));
         assertEquals(0, dec.getInt("mopd"));
         assertEquals("i", dec.getString("mops"));
+        assertFalse("an id-key lookup names no handler", dec.has("hnd"));
     }
 
     /**
@@ -233,6 +238,7 @@ public class StatefulAgentMopTelemetryTest {
                 "\"" + STAMP + "\":{\"mop\":{\"click\":\"none\"}}"));
         JSONObject dec = decisionOf(click("//btn", node("btn", STAMP), 0));
         assertEquals("s", dec.getString("mops"));
+        assertEquals(STAMP, dec.getString("hnd"));
         assertFalse(dec.has("mop"));
         assertFalse(dec.has("mopd"));
     }
@@ -257,6 +263,7 @@ public class StatefulAgentMopTelemetryTest {
         context(artifact("\"w\":{\"dist\":{\"click\":[[3,0]]}}", ""));
         JSONObject dec = decisionOf(click("//other", node("other", "com.x.Unlisted$9"), 0));
         assertFalse(dec.has("mops"));
+        assertFalse("an unlisted stamp names no handler", dec.has("hnd"));
         assertFalse(dec.has("mopd"));
     }
 
@@ -267,6 +274,7 @@ public class StatefulAgentMopTelemetryTest {
         setField(agent, "_mopContext", null);
         JSONObject dec = decisionOf(click("//w", node("w", STAMP), 0));
         assertFalse(dec.has("mops"));
+        assertFalse(dec.has("hnd"));
         assertFalse(dec.has("mopd"));
     }
 
@@ -310,7 +318,7 @@ public class StatefulAgentMopTelemetryTest {
         StatefulAgentTearDownTest.ThrowingAgent teardown =
                 allocate(StatefulAgentTearDownTest.ThrowingAgent.class);
         MopContext mop = MopContext.fromSpec(
-                artifact("\"w\":{\"dist\":{\"click\":[[7,1],[8,1]]}}", ""),
+                artifact("\"w\":{\"dist\":{\"click\":[[7,1],[8,1]]}}", ""), StaticGuiModel.EMPTY,
                 RunContext.current().spec().mop());
         MopData.Lookup lookup = mop.data().lookup(ACT, node("w", null), "click");
         for (int i = 0; i < 3; i++) {

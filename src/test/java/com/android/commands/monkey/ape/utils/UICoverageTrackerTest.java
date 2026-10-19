@@ -730,8 +730,10 @@ public class UICoverageTrackerTest {
         Map<String, Integer> d = data("//x|MODEL_CLICK", 1);
         assertTrue(tracker.formatCoverageLine(state, d, s -> true).endsWith("mopReach=1"));
         assertTrue(tracker.formatCoverageLine(state, d, s -> false).endsWith("mopReach=0"));
-        // Null predicate (e.g. _mopData == null at the call site) => 0.
-        assertTrue(tracker.formatCoverageLine(state, d, null).endsWith("mopReach=0"));
+        // No predicate (MOP not mounted): the token is omitted, not written as 0 (INV-SNK-18).
+        String withoutMop = tracker.formatCoverageLine(state, d, null);
+        assertFalse(withoutMop, withoutMop.contains("mopReach"));
+        assertTrue(withoutMop, withoutMop.endsWith("byType=MODEL_CLICK:1/1"));
     }
 
     @Test

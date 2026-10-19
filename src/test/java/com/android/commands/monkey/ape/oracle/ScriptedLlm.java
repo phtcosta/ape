@@ -5,7 +5,6 @@ import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.tree.GUITree;
-import com.android.commands.monkey.ape.utils.MopContext;
 
 import java.util.List;
 import java.util.function.BooleanSupplier;
@@ -39,7 +38,7 @@ import java.util.function.BooleanSupplier;
  *
  * <p><b>Accept returns a member of the offered list, never a synthesized tap.</b> That is not a
  * stylistic choice: an accepted {@code MODEL_LLM_TAP} is resolved against {@code newState}
- * ({@code LlmGate.accept} into {@code SataAgent.resolveSynthesizedTap}), which leaves the JVM. A
+ * ({@code LlmAcceptance.accept} into {@code SataAgent.resolveSynthesizedTap}), which leaves the JVM. A
  * selector therefore only ever picks from the {@code actions} the agent offered.
  */
 public class ScriptedLlm {
@@ -197,7 +196,6 @@ public class ScriptedLlm {
         public ModelAction selectAction(GUITree tree,
                                         State state,
                                         List<ModelAction> actions,
-                                        MopContext mop,
                                         List<ApePromptBuilder.ActionHistoryEntry> recentActions,
                                         String mode) {
             if (entry == null) {

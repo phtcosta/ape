@@ -14,7 +14,6 @@ import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateTransition;
 import com.android.commands.monkey.ape.model.StateTransitionVisitType;
 import com.android.commands.monkey.ape.tree.GUITree;
-import com.android.commands.monkey.ape.utils.MopContext;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -61,7 +60,7 @@ public class LlmStagnationStageTest {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopContext mop, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             modeSeen = mode;
             return answer;
@@ -93,9 +92,33 @@ public class LlmStagnationStageTest {
         return ctx;
     }
 
-    private static LlmStagnationStage stageOver(StubEngine engine, Gate gate) {
-        return new LlmStagnationStage(engine, gate, RESTART_THRESHOLD,
-                new ArrayList<ModelAction>()::add);
+    /** The stage over a fresh shared LLM unit; each {@link #decide} is a new step. */
+    private static final class Run {
+
+        private final LlmKit kit;
+        private final LlmStagnationStage stage;
+
+        Run(StubEngine engine, Gate gate) {
+            this.kit = new LlmKit(engine, gate);
+            this.stage = new LlmStagnationStage(kit.call, RESTART_THRESHOLD);
+        }
+
+        String name() {
+            return stage.name();
+        }
+
+        StageResult decide(StepContext ctx) {
+            kit.step();
+            return stage.decide(ctx);
+        }
+
+        void onStateTransition(StateTransition edge) {
+            stage.onStateTransition(edge);
+        }
+    }
+
+    private static Run stageOver(StubEngine engine, Gate gate) {
+        return new Run(engine, gate);
     }
 
     private static StateTransition edgeOfType(StateTransitionVisitType type) throws Exception {
@@ -137,7 +160,7 @@ public class LlmStagnationStageTest {
     public void testADeclinedShotIsStillSpent() throws Exception {
         StubEngine engine = new StubEngine(null);
         Gate gate = new Gate(true);
-        LlmStagnationStage stage = stageOver(engine, gate);
+        Run stage = stageOver(engine, gate);
         FakeStepContext ctx = stagnantStep();
 
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
@@ -159,7 +182,7 @@ public class LlmStagnationStageTest {
         // distinction is observable — the trigger and the flag are otherwise inseparable.
         StubEngine engine = new StubEngine(new ModelAction(null, ActionType.MODEL_CLICK));
         Gate gate = new Gate(false);
-        LlmStagnationStage stage = stageOver(engine, gate);
+        Run stage = stageOver(engine, gate);
         FakeStepContext ctx = stagnantStep();
 
         assertEquals(StageResult.Kind.CONTINUE, stage.decide(ctx).kind());
@@ -176,14 +199,14 @@ public class LlmStagnationStageTest {
     public void testAnAcceptedEscapeResetsTheCounterAndAlsoSpendsTheShot() throws Exception {
         ModelAction answer = new ModelAction(null, ActionType.MODEL_CLICK);
         StubEngine engine = new StubEngine(answer);
-        LlmStagnationStage stage = stageOver(engine, new Gate(true));
+        Run stage = stageOver(engine, new Gate(true));
         FakeStepContext ctx = stagnantStep();
 
         StageResult result = stage.decide(ctx);
 
         assertEquals(StageResult.Kind.SELECT, result.kind());
-        assertEquals("LLM", result.decisionSource());
-        assertEquals(answer.getDecisionSource().name(), result.decisionSource());
+        assertEquals("llm", result.decisionSource());
+        assertEquals(answer.getDecisionSource().owner(), result.decisionSource());
         assertEquals("the escape resets the stability counter, once", 1, ctx.graphStableCounterResets);
 
         stage.decide(ctx);
@@ -194,7 +217,7 @@ public class LlmStagnationStageTest {
     @Test
     public void testANewEdgeReArmsTheShot() throws Exception {
         StubEngine engine = new StubEngine(null);
-        LlmStagnationStage stage = stageOver(engine, new Gate(true));
+        Run stage = stageOver(engine, new Gate(true));
         FakeStepContext ctx = stagnantStep();
 
         stage.decide(ctx);
@@ -215,7 +238,7 @@ public class LlmStagnationStageTest {
     @Test
     public void testAnExistingEdgeDoesNotReArmTheShot() throws Exception {
         StubEngine engine = new StubEngine(null);
-        LlmStagnationStage stage = stageOver(engine, new Gate(true));
+        Run stage = stageOver(engine, new Gate(true));
         FakeStepContext ctx = stagnantStep();
 
         stage.decide(ctx);
@@ -228,18 +251,24 @@ public class LlmStagnationStageTest {
     }
 
     @Test
-    public void testTheSharedPreconditionGatesTheTriggerHereToo() throws Exception {
+    public void testTheSharedGateChainGatesTheTriggerHereToo() throws Exception {
         StubEngine engine = new StubEngine(null);
         Gate gate = new Gate(true);
         FakeStepContext ctx = stagnantStep();
-        ctx.actionBufferSize = 1;
+        ctx.newState = FakeStepContext.stateWith(ACTIVITY, 2);
+        Run stage = stageOver(engine, gate);
 
-        StageResult result = stageOver(engine, gate).decide(ctx);
+        StageResult result = stage.decide(ctx);
 
         assertEquals(StageResult.Kind.CONTINUE, result.kind());
-        assertEquals("the breaker's consultation has a side effect, so a gated step must not reach"
-                + " it", 0, gate.calls);
+        assertEquals("the breaker's consultation has a side effect, so a step MinActionsGate"
+                + " refused must not reach it", 0, gate.calls);
         assertEquals(0, engine.selectCalls);
+
+        ctx.newState = FakeStepContext.stateWith(ACTIVITY, 3);
+        stage.decide(ctx);
+        assertEquals("a gate that bars leaves the shot armed (no call was made)",
+                1, engine.selectCalls);
     }
 
     // -------------------------------------------------------------------------

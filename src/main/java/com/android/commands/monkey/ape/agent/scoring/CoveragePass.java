@@ -9,7 +9,8 @@ import com.android.commands.monkey.ape.utils.UICoverageTracker;
  * rv-scoring-pipeline: the per-action coverage boost, extracted verbatim from the inline block in
  * {@code StatefulAgent.adjustActionsByGUITree()}. Boosts widgets untested anywhere in the current
  * Activity (activity-scoped novelty), decaying with per-state visits. Scoring semantics owned by
- * {@code ui-coverage} (Coverage Boost — Per-Action). Enabled when {@code coverageBoostWeight != 0}.
+ * {@code ui-coverage} (Coverage Boost — Per-Action). The ADDONS member {@code COVERAGE_BOOST}:
+ * enabled iff the feature is mounted (a non-zero {@code coverageBoostWeight}).
  */
 public final class CoveragePass implements ScoringPass {
 

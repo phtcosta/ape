@@ -55,10 +55,12 @@ public class LlmClientTest {
 
     /** A plan carrying the LLM feature, from which the client takes every value it sends. */
     private static RunSpec.LlmParams llmParams(String... keyValues) {
-        String[] withUrl = new String[keyValues.length + 2];
-        withUrl[0] = "ape.llmUrl";
-        withUrl[1] = URL;
-        System.arraycopy(keyValues, 0, withUrl, 2, keyValues.length);
+        String[] withUrl = new String[keyValues.length + 4];
+        withUrl[0] = "ape.llm";
+        withUrl[1] = "true";
+        withUrl[2] = "ape.llmUrl";
+        withUrl[3] = URL;
+        System.arraycopy(keyValues, 0, withUrl, 4, keyValues.length);
         return TestRunSpecs.spec(withUrl).llm();
     }
 
@@ -195,7 +197,7 @@ public class LlmClientTest {
         assertTrue(ApePromptBuilder.hasInputField(actions));
 
         String systemMessage = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                .build(1080, 1920, null, actions, null, null, null).get(0).getTextContent();
+                .build(1080, 1920, null, actions, null, null).get(0).getTextContent();
         List<String> wire = toolNames(sglang().buildRequestBody(messages(),
                 LlmClient.buildToolsSchema(ApePromptBuilder.hasInputField(actions),
                         ApePromptBuilder.VARIANT_APE_CURRENT)));
@@ -211,7 +213,7 @@ public class LlmClientTest {
         assertFalse(ApePromptBuilder.hasInputField(actions));
 
         String systemMessage = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                .build(1080, 1920, null, actions, null, null, null).get(0).getTextContent();
+                .build(1080, 1920, null, actions, null, null).get(0).getTextContent();
         List<String> wire = toolNames(sglang().buildRequestBody(messages(),
                 LlmClient.buildToolsSchema(ApePromptBuilder.hasInputField(actions),
                         ApePromptBuilder.VARIANT_APE_CURRENT)));

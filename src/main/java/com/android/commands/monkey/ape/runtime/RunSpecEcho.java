@@ -50,8 +50,11 @@ public final class RunSpecEcho {
      * {@code mop_frontier} or {@code pick_channel} field and realises {@code mop=} over
      * {@code {0,300}} where the decisive campaign realises {@code {0,500}} — and neither trace
      * says which it is. This field is what makes the next such comparison fail loudly.
+     *
+     * <p>Version 2 (isolate-guidance-groups, design D-B14.22): {@code dec.src} names the step's
+     * executed owner instead of its largest boost, and {@code variant} may be present.
      */
-    public static final int FORMAT_VERSION = 1;
+    public static final int FORMAT_VERSION = 2;
 
     /** The record's discriminator, which stage 4's other record types are read against. */
     public static final String RECORD_TYPE = "RUN_START";
@@ -79,6 +82,10 @@ public final class RunSpecEcho {
         record.put("seed", spec.seed());
         record.put("agent", spec.agentType());
         record.put("preset", spec.presetName());
+        if (spec.variant() != null) {
+            // Omitted rather than defaulted when the harness passed none (INV-RUN-10).
+            record.put("variant", spec.variant());
+        }
         record.put("features", featureNames(spec));
         record.put("params", params(spec));
         record.put("inert", new ArrayList<String>(spec.inertKeys()));
@@ -125,6 +132,9 @@ public final class RunSpecEcho {
             if (isDefault(key, entry.getValue()) && !isActiveActivationKey(spec, key)) {
                 continue;
             }
+            if (isUnreadDataPath(spec, key)) {
+                continue;
+            }
             chosen.put(key, KeyOwnership.typeOf(key).parse(key, entry.getValue()));
         }
         return chosen;
@@ -134,6 +144,14 @@ public final class RunSpecEcho {
     private static boolean isDefault(String key, String value) {
         String jarDefault = KeyOwnership.defaultOf(key);
         return jarDefault != null && KeyOwnership.typeOf(key).sameValue(key, value, jarDefault);
+    }
+
+    /**
+     * The artifact path when no group reads it: listed in {@code inert} only, so the line does not
+     * name an input the run never opened (design D-B14.20).
+     */
+    private static boolean isUnreadDataPath(RunSpec spec, String key) {
+        return key.equals(Feature.STATIC_DATA.activationKey()) && spec.inertKeys().contains(key);
     }
 
     private static boolean isActiveActivationKey(RunSpec spec, String key) {

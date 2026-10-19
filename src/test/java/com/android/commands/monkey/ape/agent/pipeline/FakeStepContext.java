@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.agent.StepRng;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,10 +43,15 @@ class FakeStepContext implements StepContext {
     MopData mopData;
     /** When set, the step's MOP context; otherwise the jar-default one over {@link #mopData}. */
     MopContext mopContext;
+    /** When set, the step's static model; otherwise the one over {@link #mopData}, if any. */
+    StaticGuiModel staticModel;
+    StepRng stepRng = new StepRng(0L);
     Graph graph;
     ActivityBudgetTracker budgetTracker;
     List<ApePromptBuilder.ActionHistoryEntry> actionHistory = new ArrayList<>();
     int graphStableCounterResets;
+    /** What the pipeline and the stages wrote to the sink on this context's steps. */
+    final RecordingSink recorder = new RecordingSink();
 
     @Override public State newState() { return newState; }
     @Override public GUITree newGUITree() { return newGUITree; }
@@ -55,6 +62,14 @@ class FakeStepContext implements StepContext {
     @Override public Random random() { return random; }
     @Override public MopContext mopContext() {
         return mopContext != null ? mopContext : TestMopContexts.defaults(mopData);
+    }
+    @Override public StaticGuiModel staticModel() {
+        return staticModel != null ? staticModel
+                : mopData != null ? StaticGuiModel.EMPTY : null;
+    }
+    @Override public StepRng stepRng() { return stepRng; }
+    @Override public com.android.commands.monkey.ape.telemetry.EventSink sink() {
+        return recorder.sink;
     }
     @Override public Graph graph() { return graph; }
     @Override public ActivityBudgetTracker budgetTracker() { return budgetTracker; }

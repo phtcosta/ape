@@ -36,29 +36,54 @@ public class ModelAction extends Action {
      * budget-exhausted early-return set their own source explicitly.
      */
     public enum DecisionSource {
-        SATA, MOP, MopFrontier, Coverage, LLM, Fuzz, Menu, WTG, Component, Budget, Form
+        SATA, MOP, LLM, Budget, RESTART, LAUNCHER;
+
+        /**
+         * The owner this source names on the wire as {@code dec.src} (design D-B7):
+         * {@code budget}, {@code restart}, {@code llm}, {@code launcher}, {@code mop} or
+         * {@code sata}.
+         */
+        public String owner() {
+            switch (this) {
+            case SATA:
+                return "sata";
+            case MOP:
+                return "mop";
+            case LLM:
+                return "llm";
+            case Budget:
+                return "budget";
+            case RESTART:
+                return "restart";
+            case LAUNCHER:
+                return "launcher";
+            default:
+                throw new AssertionError(this);
+            }
+        }
     }
 
     /**
      * The selection channel that picked this action, for the {@code pick_channel} field of
      * the step record (A-5, INV-SEL-05). Independent of {@link DecisionSource}: the source names
-     * the mechanism whose boost was largest, the channel names the code path that consumed it.
-     * Measured motivation — the unvisited-MOP short-circuit yields 15.1% new states while the
-     * MOP-boosted roulette yields 1.4%, and aggregating them under {@code decision_source=MOP}
-     * mixes mechanism with noise.
+     * the owner that selected the action, the channel the code path that picked it.
      *
      * <p>The enum is total: every path that is not one of the named channels reports
      * {@code sata_other}, so the field is never absent and never free-form.
      */
     public enum PickChannel {
-        SHORT_CIRCUIT_UNVISITED("short_circuit_unvisited"),
-        SHORT_CIRCUIT_0STEP("short_circuit_0step"),
         ROULETTE_GREEDY("roulette_greedy"),
         ROULETTE_EARLY("roulette_early"),
         LAUNCHER("launcher"),
         LLM("llm"),
         BUFFER("buffer"),
-        SATA_OTHER("sata_other");
+        SATA_OTHER("sata_other"),
+        /** A step the MOP coin took (design D-B10). */
+        MOP_COIN("mop_coin"),
+        /** A step the Budget guard took (design D-B14.17). */
+        BUDGET("budget"),
+        /** A step the RESTART guard took (design D-B14.17). */
+        RESTART("restart");
 
         private final String label;
 
@@ -86,36 +111,24 @@ public class ModelAction extends Action {
     // the most recent adjustActionsByGUITree pass. Boosts are reset each pass.
     private DecisionSource decisionSource = DecisionSource.SATA;
     private PickChannel pickChannel = PickChannel.SATA_OTHER;
-    // A3 (INV-SEL-08): what the channel that picked this action would have selected with the MOP
-    // boosts zeroed. Stamped at the same four pick sites that stamp the channel, so a line can
-    // never pair one step's channel with another step's counterfactual. Transient: it is telemetry
-    // of one selection and has no place in the serialized exploration model.
-    private transient ModelAction counterfactualPick;
     private int mopBoost;
     /**
      * The MOP weight before the {@code distance} mode's tie split (mop-guidance "MopScorer —
-     * Priority Boost", design D18): the undivided weight the MOP shortcut ranks by (D21), stored by
+     * Priority Boost", design D18): the undivided weight the MOP coin ranks by (D-B10), stored by
      * {@code MopWidgetPass} beside the split {@link #mopBoost}. Equal to {@link #mopBoost} under
      * {@code flag}; 0 when the action has no MOP weight.
      */
     private int mopWeight;
+    /** The MOP-reach WTG term ({@code WtgPass}, its only writer — INV-ARCH-10). */
     private int wtgBoost;
-    /**
-     * Which pass wrote {@link #wtgBoost} — {@code wtg}, {@code frontier}, or {@code both} when they
-     * stacked. Null while the boost is zero.
-     *
-     * <p>The summed field alone cannot answer it. {@code WtgPass} overwrites the boost and
-     * {@code FrontierPass} adds to it, and the campaign configured both at weight 200: of the steps
-     * that carry a boost, 10,231 sit at 200 — either producer, indistinguishably — and only 91 sit
-     * at 400 and so prove both fired. The stamp costs one string reference at each of the two write
-     * sites and leaves the accumulated value exactly as it was.
-     */
-    private String wtgSource;
-    // The MOP-frontier contribution, kept apart from wtgBoost (INV-ARCH-10). Three passes used to
-    // accumulate into wtgBoost — WtgPass, the generic FrontierPass and MopFrontierPass — so
-    // decision_source=WTG conflated a MOP mechanism with generic WTG navigation and the corpus's
-    // stacked 400/600 values could not be decomposed by mechanism.
+    /** The MOP-frontier term ({@code MopFrontierPass}, INV-ARCH-10). */
     private int mopFrontierBoost;
+    /**
+     * The navigation-frontier term ({@code NavFrontierPass}, STATIC), in its own field so that the
+     * STATIC frontier and the MOP {@code WtgPass} never share {@link #wtgBoost}; with one producer
+     * per field no source stamp is needed.
+     */
+    private int navFrontierBoost;
     private int coverageBoost;
     private int menuBoost;
     private int formBoost;
@@ -302,18 +315,6 @@ public class ModelAction extends Action {
         this.decisionSource = decisionSource;
     }
 
-    /**
-     * The counterfactual pick of this selection, or null when it could not be recomputed. Equal to
-     * this action when the MOP boosts made no difference.
-     */
-    public ModelAction getCounterfactualPick() {
-        return this.counterfactualPick;
-    }
-
-    public void setCounterfactualPick(ModelAction counterfactualPick) {
-        this.counterfactualPick = counterfactualPick;
-    }
-
     public PickChannel getPickChannel() {
         return this.pickChannel;
     }
@@ -332,8 +333,8 @@ public class ModelAction extends Action {
         this.mopBoost = 0;
         this.mopWeight = 0;
         this.wtgBoost = 0;
-        this.wtgSource = null;
         this.mopFrontierBoost = 0;
+        this.navFrontierBoost = 0;
         this.coverageBoost = 0;
         this.menuBoost = 0;
         this.formBoost = 0;
@@ -351,30 +352,13 @@ public class ModelAction extends Action {
 
     public void setWtgBoost(int wtgBoost) { this.wtgBoost = wtgBoost; }
 
-    /** The WTG-boost source labels, which are also the values the step record's {@code wtgsrc} takes. */
-    public static final String WTG_SOURCE_WTG = "wtg";
-    public static final String WTG_SOURCE_FRONTIER = "frontier";
-    public static final String WTG_SOURCE_BOTH = "both";
-
-    /** Which pass wrote the WTG boost, or null while it is zero. */
-    public String getWtgSource() { return this.wtgSource; }
-
-    /**
-     * Records that {@code source} contributed to the WTG boost, promoting to {@code both} when the
-     * other producer has already contributed on this pass.
-     *
-     * @param source {@link #WTG_SOURCE_WTG} or {@link #WTG_SOURCE_FRONTIER} — a constant named at
-     *        the write site, so the two producers cannot be told apart by anything but the site
-     *        that wrote them
-     */
-    public void markWtgSource(String source) {
-        this.wtgSource = this.wtgSource == null || this.wtgSource.equals(source)
-                ? source : WTG_SOURCE_BOTH;
-    }
-
     public int getMopFrontierBoost() { return this.mopFrontierBoost; }
 
     public void setMopFrontierBoost(int mopFrontierBoost) { this.mopFrontierBoost = mopFrontierBoost; }
+
+    public int getNavFrontierBoost() { return this.navFrontierBoost; }
+
+    public void setNavFrontierBoost(int navFrontierBoost) { this.navFrontierBoost = navFrontierBoost; }
 
     public int getCoverageBoost() { return this.coverageBoost; }
 

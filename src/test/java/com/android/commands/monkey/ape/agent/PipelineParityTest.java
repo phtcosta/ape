@@ -12,6 +12,7 @@ import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.utils.TestMopContexts;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
@@ -111,13 +112,15 @@ public class PipelineParityTest {
     /** A ScoringContext wired the way {@code StatefulAgent}'s constructor wires it. */
     private static ScoringContext ctxFor(final MopData mopData, final UICoverageTracker tracker) {
         return new ScoringContext() {
+            @Override public StaticGuiModel getStaticModel() {
+                return mopData == null ? null : StaticGuiModel.EMPTY;
+            }
             @Override public MopContext getMopContext() {
                 return TestMopContexts.flag(mopData, 500, 300); // the weights of defaultMopArm()
             }
             @Override public UICoverageTracker getCoverageTracker() { return tracker; }
             @Override public Graph getGraph() { return null; }
             @Override public int getTimestamp() { return 1; }
-            @Override public boolean menuPickEligible(String activity) { return true; }
         };
     }
 
@@ -144,7 +147,7 @@ public class PipelineParityTest {
 
     /** A MopData with no widget/WTG data but a fixed OPTIONSMENU gateway set (private-final field). */
     private static MopData mopWithMenuGateway(String activity) throws Exception {
-        MopData mop = MopData.forTest(null, null, null);
+        MopData mop = MopData.forTest(null, null);
         setField(mop, "activitiesWithMopOptionsMenu", new HashSet<>(Collections.singletonList(activity)));
         return mop;
     }
@@ -163,7 +166,7 @@ public class PipelineParityTest {
     public void mopArmAssemblesFourPassesWithoutWtgData() throws Exception {
         // MopData present but no widget/WTG data: WtgPass/FrontierPass gate off (hasWtgData()==false),
         // the always-on MOP-widget/menu passes plus coverage/form remain.
-        ScoringContext ctx = ctxFor(MopData.forTest(null, null, null), new UICoverageTracker());
+        ScoringContext ctx = ctxFor(MopData.forTest(null, null), new UICoverageTracker());
         assertEquals(Arrays.asList(
                         "MopWidgetPass", "MenuGatewayPass", "CoveragePass", "FormCompletionPass"),
                 ScoringPipeline.fromParams(defaultMopArm(), ctx, new NoopSink()).passNames());
@@ -176,7 +179,7 @@ public class PipelineParityTest {
         ModelAction backUnvisited = nonTargetAction(ActionType.MODEL_BACK, false);
         ModelAction backVisited = nonTargetAction(ActionType.MODEL_BACK, true);
         SataAgent agent = bareAgent(stateWith("com.x.Main", backUnvisited, backVisited),
-                MopData.forTest(null, null, null));
+                MopData.forTest(null, null));
 
         agent.adjustActionsByGUITree();
 
@@ -207,7 +210,7 @@ public class PipelineParityTest {
     public void menuGatewayPassIsInertWhenActivityIsNotAGateway() throws Exception {
         String activity = "com.x.Main";
         ModelAction menu = nonTargetAction(ActionType.MODEL_MENU, true);
-        SataAgent agent = bareAgent(stateWith(activity, menu), MopData.forTest(null, null, null));
+        SataAgent agent = bareAgent(stateWith(activity, menu), MopData.forTest(null, null));
 
         agent.adjustActionsByGUITree();
 
@@ -229,7 +232,7 @@ public class PipelineParityTest {
         ModelAction backUnvisited = nonTargetAction(ActionType.MODEL_BACK, false);
         ModelAction backVisited = nonTargetAction(ActionType.MODEL_BACK, true);
         SataAgent agent = bareAgent(stateWith("com.x.Main", backUnvisited, backVisited),
-                MopData.forTest(null, null, null));
+                MopData.forTest(null, null));
         setField(agent, "scoringPipeline", emptyPipeline());
 
         agent.adjustActionsByGUITree();

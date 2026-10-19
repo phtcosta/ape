@@ -22,60 +22,57 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The four campaign arms, resident in the jar instead of in a Python dictionary.
+ * The cell presets, resident in the jar instead of in a Python dictionary.
  *
- * <p>Each preset is the base key vector of one campaign arm; explicit keys override it, and the
- * merged result passes exactly the same validation as a plan written out key by key. An ablation
- * is a named override on a preset, never a fifth preset.
+ * <p>A cell is a set of behaviour groups (guidance-groups), and its preset is the union of the
+ * blocks of those groups: {@code base} states no block, {@code mop} the MOP block, {@code as}
+ * ADDONS and STATIC, and {@code as_mop}, {@code as_llm} and {@code as_mop_llm} add MOP, LLM or
+ * both. Explicit keys override the vector, and the merged result passes exactly the same
+ * validation as a plan written out key by key. A dose or an ablation is a named override on a
+ * cell, never a seventh preset.
  *
- * <p><b>Provenance.</b> The vectors are translated from the arm dictionaries of the harness at
- * {@code rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/tool.py}, read at rvsec commit
- * {@code 6dc8a0af} (sha256 {@code 660f151709b12dc311e6ddaa221d4af968b2630d235149cd22f94bada7736612}):
- * {@code aperv} from arm {@code sata}, {@code mop} from {@code sata_mop_widget}, {@code llm} from
- * {@code sata_llm} and {@code llm_mop} from {@code sata_mop_llm}. They are read from the code
- * rather than from the design document on purpose — a preset vector asserted from prose is a
- * guess with a citation.
+ * <p><b>Provenance.</b> The blocks reproduce Study 03's campaign E6 (design D-B3): the ADDONS block
+ * is the addon configuration of E6's APE-RV arms, the STATIC block the frontier at 200 with typed
+ * input and component triggering at 0.03 (D-B13), the MOP block arm 3's MOP configuration
+ * ({@code mopd_on_llm_off}) plus {@code p_M = 1.0}, and the LLM block arm 4's sampling
+ * configuration ({@code mopd_on_llm_90}) with {@code p_L = 0.9}.
  *
- * <p>That read predates the harness edit retiring {@code ape_pure_mode}, so the vectors were
- * translated from a source that still carried the key, minus the key. {@code PresetsTest} closes
- * the gap: it resolves each preset against a fixture captured from the harness <em>after</em> the
- * edit (rvsec {@code d8f1df0a}, {@code tool.py} sha256 {@code aba920ea…c93ae8}) and requires the
- * same plan digest. The vectors are therefore pinned against the file a device actually receives,
- * not against a translation of it.
- *
- * <p><b>What a preset deliberately omits.</b> Three kinds of value stay out:
+ * <p><b>What a preset deliberately omits.</b>
  * <ul>
- * <li><b>Deployment-specific</b> — {@code ape.mopDataPath} and {@code ape.llmUrl} name a file and
- *     a server that belong to the machine, not to the arm, so they must come explicitly. The
- *     consequence is worth stating because it is a fail-fast, not a fallback: {@code ape.preset=llm}
- *     without an explicit {@code ape.llmUrl} aborts, because the preset states the LLM routing
- *     gates ON while the mechanism they parameterize is absent.</li>
+ * <li><b>Deployment-specific values</b> — {@code ape.staticDataPath}, {@code ape.llmUrl} and
+ *     {@code ape.variant} name a file, a server and a harness label that belong to the machine,
+ *     not to the cell, so they must come explicitly. That is a fail-fast, not a fallback:
+ *     {@code ape.preset=as} without {@code ape.staticDataPath} aborts, because the preset states
+ *     {@code ape.static=true} while the data it reads is absent.</li>
  * <li><b>The agent type</b> — {@code --ape} is a command-line value and {@code ape.agentType} is
- *     retired as a file key. The {@code aperv} arm's agent is {@code sata}, which is already the
- *     default when {@code --ape} is absent, so a preset entry for it could only either duplicate
- *     the default or contradict the command line.</li>
- * <li><b>{@code ape.apePureMode}</b> — retired. A preset feeds the same validator as an explicit
- *     plan, so baking the key into {@code aperv} would make the preset abort on itself.</li>
+ *     retired as a file key; a cell's agent is {@code sata}, the default.</li>
+ * <li><b>{@code ape.mopWeightOpenMenu}</b> — a preset key counts as explicit, so stating it in the
+ *     MOP block would abort the {@code mop} cell, which has no {@code MODEL_MENU}. Its jar default
+ *     (250) mounts the gateway wherever the menu action exists (D-B14.1).</li>
  * </ul>
  */
 public final class Presets {
 
-    /** Campaign arm {@code sata}: RV exploration on, no MOP substrate, no LLM. */
-    public static final String APERV = "aperv";
-    /** Campaign arm {@code sata_mop_widget}: {@link #APERV} plus the four MOP scoring weights. */
+    /** The cell with no group: the jar defaults, BASE alone. */
+    public static final String BASE = "base";
+    /** BASE plus MOP. */
     public static final String MOP = "mop";
-    /** Campaign arm {@code sata_llm}: {@link #APERV} plus the LLM sampling block. */
-    public static final String LLM = "llm";
-    /** Campaign arm {@code sata_mop_llm}: the MOP weights and the LLM block together. */
-    public static final String LLM_MOP = "llm_mop";
+    /** BASE plus ADDONS and STATIC: the full tool without specifications. */
+    public static final String AS = "as";
+    /** {@link #AS} plus MOP. */
+    public static final String AS_MOP = "as_mop";
+    /** {@link #AS} plus LLM. */
+    public static final String AS_LLM = "as_llm";
+    /** All four groups. */
+    public static final String AS_MOP_LLM = "as_mop_llm";
 
     private static final List<String> NAMES = Collections.unmodifiableList(
-            Arrays.asList(APERV, MOP, LLM, LLM_MOP));
+            Arrays.asList(BASE, MOP, AS, AS_MOP, AS_LLM, AS_MOP_LLM));
 
     private Presets() {
     }
 
-    /** The four valid preset names, for the unknown-preset diagnostic. */
+    /** The valid preset names, for the unknown-preset diagnostic. */
     public static List<String> names() {
         return NAMES;
     }
@@ -86,79 +83,84 @@ public final class Presets {
      * @throws RunSpecException with {@link RunSpecException.Reason#UNKNOWN_PRESET} for any other name
      */
     public static Map<String, String> resolve(String name) {
-        if (APERV.equals(name)) {
-            return aperv();
+        Map<String, String> vector = new LinkedHashMap<>();
+        if (BASE.equals(name)) {
+            return vector;
         }
         if (MOP.equals(name)) {
-            return mop();
+            vector.putAll(mopBlock());
+            return vector;
         }
-        if (LLM.equals(name)) {
-            return llm();
-        }
-        if (LLM_MOP.equals(name)) {
-            Map<String, String> vector = mop();
-            vector.putAll(llmBlock());
+        if (AS.equals(name) || AS_MOP.equals(name) || AS_LLM.equals(name)
+                || AS_MOP_LLM.equals(name)) {
+            vector.putAll(addonsBlock());
+            vector.putAll(staticBlock());
+            if (AS_MOP.equals(name) || AS_MOP_LLM.equals(name)) {
+                vector.putAll(mopBlock());
+            }
+            if (AS_LLM.equals(name) || AS_MOP_LLM.equals(name)) {
+                vector.putAll(llmBlock());
+            }
             return vector;
         }
         throw new RunSpecException(RunSpecException.Reason.UNKNOWN_PRESET, KeyOwnership.KEY_PRESET,
                 "unknown preset '" + name + "'; valid names are " + NAMES);
     }
 
-    /**
-     * Arm {@code sata}: the seventeen arm-defining flags that survive the retirement of
-     * {@code ape_pure_mode}, at the values the harness pushes, plus the campaign throttle. RV
-     * exploration on; MOP, reach and LLM off.
-     */
-    private static Map<String, String> aperv() {
-        Map<String, String> vector = new LinkedHashMap<>();
-        vector.put("ape.backMenuPickCap", "3");
-        vector.put("ape.foreignActivityGuard", "true");
-        vector.put("ape.treePackageGuard", "true");
-        vector.put("ape.dynamicEpsilon", "true");
-        vector.put("ape.heuristicInput", "true");
-        vector.put("ape.fuzzInputTyped", "true");
-        vector.put("ape.formCompletionEnabled", "true");
-        vector.put("ape.modelMenuEnabled", "true");
-        vector.put("ape.leastVisitedPriorityTiebreak", "true");
-        vector.put("ape.treeEnhancementsEnabled", "true");
-        vector.put("ape.activityBudgetEnabled", "true");
-        // The sentinel every baseline arm pushes: accepted as inert on a plan with no LLM.
-        vector.put("ape.llmPercentageNoSubstrate", "-1");
-        vector.put("ape.frontierBoostWeight", "0");
-        vector.put("ape.activityTriggerEnabled", "false");
-        vector.put("ape.mopActivitySourceComponents", "false");
-        vector.put("ape.mopFrontierWeight", "0");
-        // throttle_ms in the arm dictionary; ape.defaultGUIThrottle on the wire.
-        vector.put("ape.defaultGUIThrottle", "200");
-        return vector;
+    /** The ADDONS block: the addon keys of E6's APE-RV arms (design D-B3). */
+    private static Map<String, String> addonsBlock() {
+        Map<String, String> block = new LinkedHashMap<>();
+        block.put("ape.addons", "true");
+        block.put("ape.backMenuPickCap", "3");
+        block.put("ape.foreignActivityGuard", "true");
+        block.put("ape.treePackageGuard", "true");
+        block.put("ape.dynamicEpsilon", "true");
+        block.put("ape.heuristicInput", "true");
+        block.put("ape.formCompletionEnabled", "true");
+        block.put("ape.modelMenuEnabled", "true");
+        block.put("ape.treeEnhancementsEnabled", "true");
+        block.put("ape.activityBudgetEnabled", "true");
+        block.put("ape.activityStableRestartThreshold", "200");
+        block.put("ape.coverageBoostWeight", "100");
+        return block;
     }
 
-    /** Arm {@code sata_mop_widget}: {@code aperv} plus the four MOP scoring weights. */
-    private static Map<String, String> mop() {
-        Map<String, String> vector = aperv();
-        vector.put("ape.mopWeightDirect", "500");
-        vector.put("ape.mopWeightTransitive", "300");
-        vector.put("ape.mopWeightOpenMenu", "250");
-        vector.put("ape.mopWeightWtg", "200");
-        return vector;
+    /** The STATIC block: the WTG frontier, typed input and component triggering (D-B3, D-B13). */
+    private static Map<String, String> staticBlock() {
+        Map<String, String> block = new LinkedHashMap<>();
+        block.put("ape.static", "true");
+        block.put("ape.frontierBoostWeight", "200");
+        block.put("ape.fuzzInputTyped", "true");
+        block.put("ape.componentPercentage", "0.03");
+        return block;
     }
 
-    /** Arm {@code sata_llm}: {@code aperv} plus the LLM sampling block. */
-    private static Map<String, String> llm() {
-        Map<String, String> vector = aperv();
-        vector.putAll(llmBlock());
-        return vector;
+    /** The MOP block: E6 arm 3's distance guidance, plus the MOP coin at {@code p_M = 1.0}. */
+    private static Map<String, String> mopBlock() {
+        Map<String, String> block = new LinkedHashMap<>();
+        block.put("ape.mop", "true");
+        block.put("ape.mopScoring", "distance");
+        block.put("ape.mopWeightWtg", "200");
+        block.put("ape.mopFrontierWeight", "200");
+        block.put("ape.activityTriggerEnabled", "true");
+        block.put("ape.mopActivitySourceComponents", "true");
+        block.put("ape.mopCoinPercentage", "1.0");
+        return block;
     }
 
-    /** The shared LLM sampling block, minus the deployment-specific server URL. */
+    /** The LLM block: E6 arm 4's sampling configuration, at {@code p_L = 0.9}; no server URL. */
     private static Map<String, String> llmBlock() {
         Map<String, String> block = new LinkedHashMap<>();
+        block.put("ape.llm", "true");
         block.put("ape.llmOnNewState", "true");
         block.put("ape.llmOnStagnation", "true");
-        block.put("ape.llmModel", "default");
-        block.put("ape.llmTemperature", "0.3");
-        block.put("ape.llmTopP", "0.6");
-        block.put("ape.llmTopK", "50");
+        block.put("ape.llmPercentage", "0.9");
+        block.put("ape.llmPromptVariant", "v13");
+        block.put("ape.llmTemperature", "0.0");
+        block.put("ape.llmTopP", "1.0");
+        block.put("ape.llmTopK", "-1");
+        block.put("ape.llmSnapTolerancePx", "150");
+        block.put("ape.llmModel", "Qwen/Qwen3-VL-4B-Instruct-FP8");
         block.put("ape.llmTimeoutMs", "15000");
         return block;
     }

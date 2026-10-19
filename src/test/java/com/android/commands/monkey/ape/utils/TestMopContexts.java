@@ -9,7 +9,8 @@ import com.android.commands.monkey.ape.runtime.TestRunSpecs;
  *
  * <p>{@link #defaults} goes through {@link MopContext#fromSpec} over the jar-default MOP arm, so a
  * fake built here carries exactly the mode and weights a run without overrides would — the same
- * route {@code StatefulAgent} takes, rather than a second copy of the defaults.
+ * route {@code StatefulAgent} takes, rather than a second copy of the defaults. A context built
+ * without a static model carries {@link StaticGuiModel#EMPTY}.
  */
 public final class TestMopContexts {
 
@@ -18,7 +19,17 @@ public final class TestMopContexts {
 
     /** The jar-default context ({@code flag}, 500/300) over {@code data}; null when data is null. */
     public static MopContext defaults(MopData data) {
-        return MopContext.fromSpec(data, TestRunSpecs.mopSpec().mop());
+        return defaults(data, StaticGuiModel.EMPTY);
+    }
+
+    /** {@link #defaults(MopData)} over both providers of one loaded artifact. */
+    public static MopContext defaults(MopData data, StaticGuiModel staticModel) {
+        return MopContext.fromSpec(data, staticModel, TestRunSpecs.mopSpec().mop());
+    }
+
+    /** {@link #defaults(MopData, StaticGuiModel)} over a loaded artifact. */
+    public static MopContext defaults(StaticArtifactLoader.Loaded loaded) {
+        return defaults(loaded.mopData, loaded.staticModel);
     }
 
     /**
@@ -29,7 +40,7 @@ public final class TestMopContexts {
         if (data == null) {
             return null;
         }
-        return new MopContext(data, MopScoring.FLAG, weightDirect, weightTransitive,
-                500, 400, 300, 3, 6, null);
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.FLAG, weightDirect,
+                weightTransitive, 500, 400, 300, 3, 6, null);
     }
 }

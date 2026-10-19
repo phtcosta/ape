@@ -1,0 +1,5 @@
+{"kind":"header","preset":"as_llm","scenario":"baseline","seed":6075,"fixture":"cryptoapp.apk.mop.json","capturedAt":"f588eb6194e6acc904fc7dff8dcc4d3c84a35ea9"}
+{"step":0,"actionType":"MODEL_CLICK","target":"//*[@resource-id='h0']","decisionSource":"LLM","pickChannel":"llm","llm":"accepted"}
+{"step":1,"actionType":"MODEL_CLICK","target":"//*[@resource-id='s1']","decisionSource":"SATA","pickChannel":"roulette_early","llm":"declined"}
+{"step":2,"actionType":"MODEL_CLICK","target":"//*[@resource-id='s2']","decisionSource":"SATA","pickChannel":"roulette_early","llm":"timeout"}
+{"step":3,"actionType":"MODEL_BACK","decisionSource":"SATA","pickChannel":"roulette_early","llm":"not_routed","trig":"provider:androidx.startup.InitializationProvider"}

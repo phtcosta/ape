@@ -15,7 +15,8 @@ import java.util.List;
  * (MopScorer — Priority Boost): the pass weighs every target action of the state through
  * {@link MopScorer#weigh}, stores each undivided weight as the action's {@code mopWeight}, then splits
  * the ties of the state's best level ({@link MopScorer#splitTies}) into {@code mopBoost} and the
- * priority (design D18). Enabled whenever MOP data is present ({@code mopContext != null}).
+ * priority (design D18). Mounted by the group root {@code MOP}: enabled iff the context carries a
+ * {@code MopContext}, which it does exactly when MOP is mounted (design D-B14.21).
  *
  * <p>The mode and the widget weights come from the run's {@link MopContext}
  * ({@link ScoringContext#getMopContext()}, design D17 "Plumbing"), which also carries what the
@@ -25,6 +26,8 @@ import java.util.List;
  * undivided weight as the action's {@code mopWeight}, then splits the ties at the state's best
  * level ({@link MopScorer#splitTies}, {@code distance} only, design D18); the split weight is what
  * is added to the priority and stored as {@code mopBoost}. Under {@code flag} the two are equal.
+ * Every weighted action is boosted, whether or not its key was already executed: the pass does not
+ * read the MOP interaction ledger (design D-B19, reverted).
  */
 public final class MopWidgetPass implements ScoringPass {
 
@@ -59,6 +62,7 @@ public final class MopWidgetPass implements ScoringPass {
         int timestamp = ctx.getTimestamp();
         String activity = state.getActivity();
         int boostedCount = 0;
+        int weightedCount = 0;
         int totalTarget = 0;
         int maxBoost = 0;
         int containmentBoostedCount = 0;
@@ -87,6 +91,7 @@ public final class MopWidgetPass implements ScoringPass {
             ModelAction action = scoredActions.get(k);
             if (weights[k] > 0) {
                 action.setMopWeight(weights[k]);
+                weightedCount++;
             }
             int boost = boosts[k];
             if (boost > 0) {
@@ -105,6 +110,7 @@ public final class MopWidgetPass implements ScoringPass {
         // than being threaded back out to the decision site: it is the denominator that turns "the
         // MOP scorer fired on 0.4 % of decisions" into a statement about opportunity rather than
         // about luck, and it is per-step — a state can realise more than one pair within a run.
-        sink.mopExposure(boostedCount, totalTarget);
+        // Its first member counts the weighted actions: the opportunity, not the boost.
+        sink.mopExposure(weightedCount, totalTarget);
     }
 }

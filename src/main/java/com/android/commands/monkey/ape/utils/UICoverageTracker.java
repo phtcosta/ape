@@ -331,7 +331,7 @@ public class UICoverageTracker {
      * Emits one read-only {@code [APE-RV] UICOV} line per tracked state, so per-screen
      * exploration completeness — invisible in the trace during a run — becomes observable
      * at teardown. Each line reports the per-state widget coverage already held in
-     * {@code stateData} plus a {@code mopReach} flag supplied by the caller.
+     * {@code stateData} plus, when MOP is mounted, a {@code mopReach} flag supplied by the caller.
      *
      * <p>The dump is strictly read-only: it iterates {@code stateData} without get/put, so it
      * neither reorders the access-ordered map nor triggers LRU eviction, and it mutates no
@@ -340,7 +340,8 @@ public class UICoverageTracker {
      *
      * @param mopReach predicate over each tracked {@link State}; printed as {@code mopReach=1|0}.
      *                 Supplied by the caller because the tracker holds no {@code MopData}
-     *                 reference. May be null (treated as always-false).
+     *                 reference. Null when MOP is not mounted, and then the token is omitted
+     *                 (ui-coverage, INV-SNK-18).
      */
     public void dump(Predicate<State> mopReach) {
         for (Map.Entry<State, Map<String, Integer>> entry : stateData.entrySet()) {
@@ -449,7 +450,9 @@ public class UICoverageTracker {
      * {@code TYPE} segment of each {@code "<xpath>|<TYPE>"} / {@code "<TYPE>"} key (the
      * {@link #widgetId(ModelAction)} convention) — ordered by {@link ActionType} declaration
      * order. The gap is formatted with {@code Locale.ROOT} so it always parses as {@code 0.7}
-     * (never a locale-specific {@code 0,7}); the raw integer W/D carry full precision.
+     * (never a locale-specific {@code 0,7}); the raw integer W/D carry full precision. The
+     * {@code mopReach} token is written only when a predicate is supplied: without MOP the line
+     * ends at {@code byType}.
      */
     String formatCoverageLine(State state, Map<String, Integer> data, Predicate<State> mopReach) {
         int discovered = (data != null) ? data.size() : 0;
@@ -474,10 +477,13 @@ public class UICoverageTracker {
             }
         }
         float gap = discovered == 0 ? 1.0f : 1.0f - ((float) interacted / discovered);
-        int mopReachFlag = (mopReach != null && mopReach.test(state)) ? 1 : 0;
-        return String.format(Locale.ROOT,
-                "[APE-RV] UICOV state=%s discovered=%d interacted=%d gap=%.1f byType=%s mopReach=%d",
-                state.getStateKey(), discovered, interacted, gap, formatByType(byType), mopReachFlag);
+        String line = String.format(Locale.ROOT,
+                "[APE-RV] UICOV state=%s discovered=%d interacted=%d gap=%.1f byType=%s",
+                state.getStateKey(), discovered, interacted, gap, formatByType(byType));
+        if (mopReach == null) {
+            return line;
+        }
+        return line + " mopReach=" + (mopReach.test(state) ? 1 : 0);
     }
 
     /** The {@code TYPE} segment of a widget key: substring after the last {@code |}, or the whole key. */

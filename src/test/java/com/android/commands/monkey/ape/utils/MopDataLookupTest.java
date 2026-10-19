@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
 
@@ -25,6 +27,15 @@ import static org.junit.Assert.*;
  */
 public class MopDataLookupTest {
 
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
+
     private static final String CRYPTO = "br.unb.cic.cryptoapp.generated.CryptographyActivity";
     private static final String CRYPTO_LAMBDA =
             "br.unb.cic.cryptoapp.generated.CryptographyActivity$$ExternalSyntheticLambda0";
@@ -41,8 +52,7 @@ public class MopDataLookupTest {
     private static MopData cryptoapp() {
         java.net.URL url = MopDataLookupTest.class.getResource("/cryptoapp.apk.mop.json");
         assertNotNull("fixture not on classpath", url);
-        MopData data = MopData.load(new File(url.getFile()).getAbsolutePath(), null, null,
-                new NoopSink());
+        MopData data = StaticArtifactLoader.load(new File(url.getFile()).getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
@@ -59,7 +69,7 @@ public class MopDataLookupTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(artifact);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull("synthetic artifact must load", data);
         return data;
     }
@@ -99,6 +109,7 @@ public class MopDataLookupTest {
         MopData data = cryptoapp();
         MopData.Lookup l = data.lookup(CRYPTO, node(null, CRYPTO_LAMBDA, null), "click");
         assertEquals(MopData.Lookup.Source.STAMP, l.source);
+        assertEquals("the lookup names the stamped class (D-B17)", CRYPTO_LAMBDA, l.handler);
         assertTrue(l.transitive);
         assertFalse(l.direct);
         assertPairs(new int[][] {{16, 3}, {17, 3}, {18, 3}}, l.dist);
@@ -145,6 +156,7 @@ public class MopDataLookupTest {
                 "\"com.x.Foo$1\":{\"mop\":{\"click\":\"direct\"},\"dist\":{\"click\":[[2,0]]}}");
         MopData.Lookup l = data.lookup(ACT, node("btn", null, "com.x.Foo$1"), "longClick");
         assertEquals(MopData.Lookup.Source.STAMP, l.source);
+        assertEquals("the long-click stamp is the one named", "com.x.Foo$1", l.handler);
         assertFalse("no aggregate fallback through a stamp", l.direct);
         assertFalse(l.transitive);
         assertPairs(new int[0][], l.dist);
@@ -161,6 +173,7 @@ public class MopDataLookupTest {
         MopData.Lookup l = data.lookup(MDA, node("buttonGenerateHash", DECLARED_ON_CLICK, null),
                 "click");
         assertEquals(MopData.Lookup.Source.ID, l.source);
+        assertNull("an unlisted stamp is not the handler of an id-key lookup", l.handler);
         assertTrue(l.transitive);
         assertFalse(l.direct);
         assertPairs(new int[][] {{22, 2}}, l.dist);
@@ -175,6 +188,7 @@ public class MopDataLookupTest {
         MopData data = cryptoapp();
         MopData.Lookup l = data.lookup(MDA, node("buttonGenerateHash", null, null), "click");
         assertEquals(MopData.Lookup.Source.ID, l.source);
+        assertNull(l.handler);
         assertTrue(l.transitive);
         assertFalse(l.direct);
         assertPairs(new int[][] {{22, 2}}, l.dist);

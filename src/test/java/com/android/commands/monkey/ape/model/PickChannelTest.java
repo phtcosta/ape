@@ -23,8 +23,8 @@ public class PickChannelTest {
             labels.add(channel.getLabel());
         }
         assertEquals(new HashSet<>(Arrays.asList(
-                "short_circuit_unvisited", "short_circuit_0step", "roulette_greedy",
-                "roulette_early", "launcher", "llm", "buffer", "sata_other")), labels);
+                "roulette_greedy", "roulette_early", "launcher", "llm", "buffer", "sata_other", "mop_coin", "budget",
+                "restart")), labels);
     }
 
     @Test

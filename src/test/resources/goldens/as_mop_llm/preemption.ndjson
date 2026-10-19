@@ -1,0 +1,5 @@
+{"kind":"header","preset":"as_mop_llm","scenario":"preemption","seed":8080,"fixture":"cryptoapp.apk.mop.json","capturedAt":"f588eb6194e6acc904fc7dff8dcc4d3c84a35ea9"}
+{"step":0,"actionType":"MODEL_CLICK","target":"//*[@resource-id='e0']","decisionSource":"LLM","pickChannel":"llm","llm":"accepted"}
+{"step":1,"actionType":"EVENT_TRIGGER_ACTIVITY","target":"br.unb.cic.cryptoapp.generated.CryptographyActivity","llm":"declined"}
+{"step":2,"actionType":"MODEL_CLICK","target":"//*[@resource-id='p_mop']","decisionSource":"MOP","pickChannel":"mop_coin","llm":"declined"}
+{"step":3,"actionType":"MODEL_CLICK","target":"//*[@resource-id='q1']","decisionSource":"SATA","pickChannel":"roulette_early","llm":"not_routed"}

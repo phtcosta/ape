@@ -175,4 +175,33 @@ public class LlmEngineTest {
         // not a failed pipeline, and the engine's never-throws contract starts here.
         LlmEngine.applyTypedText(unresolvedAction(), parsed("type_text", 500, 499, "hello"));
     }
+
+    // -------------------------------------------------------------------------
+    // lastFallback — why a call returned no action (dec.own.fb)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void aCallThatSelectedHasNoFallback() {
+        ModelAction match = action(ActionType.MODEL_CLICK, "android.widget.Button");
+        LlmEngine.Verdict verdict = LlmEngine.classify(match, false, parsed("click", 500, 499, null));
+
+        assertNull(LlmEngine.fallbackOf(match, verdict));
+    }
+
+    @Test
+    public void anAnswerRefusedAtMappingFallsBackAsNoMatch() {
+        // dead_pair, boundary and degenerate are all refusals at mapping.
+        assertEquals("no_match", LlmEngine.fallbackOf(null,
+                LlmEngine.classify(null, true, parsed("click", 500, 499, null))));
+        assertEquals("no_match", LlmEngine.fallbackOf(null,
+                LlmEngine.classify(null, false, parsed("click", 0, 0, null))));
+        assertEquals("no_match", LlmEngine.fallbackOf(null,
+                LlmEngine.classify(null, false, parsed("type_text", 500, 12, "x"))));
+    }
+
+    @Test
+    public void aNullAnswerOfAnyOtherVerdictIsADecline() {
+        assertEquals("decline", LlmEngine.fallbackOf(null,
+                new LlmEngine.Verdict("matched", null, "none")));
+    }
 }

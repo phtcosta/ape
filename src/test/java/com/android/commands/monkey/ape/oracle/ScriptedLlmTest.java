@@ -4,7 +4,7 @@ import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.utils.Config;
+import com.android.commands.monkey.ape.runtime.KeyOwnership;
 
 import org.junit.Test;
 
@@ -65,7 +65,7 @@ public class ScriptedLlmTest {
         if (!llm.gateFor(hook).getAsBoolean()) {
             return null;
         }
-        return llm.engine().selectAction(null, null, offeredActions(script), null, null, hook);
+        return llm.engine().selectAction(null, null, offeredActions(script), null, hook);
     }
 
     // ---- verdicts --------------------------------------------------------------------------
@@ -81,7 +81,7 @@ public class ScriptedLlmTest {
         llm.beginStep(0);
         assertTrue(llm.gateFor(ScriptedLlm.NEW_STATE).getAsBoolean());
         ModelAction first =
-                llm.engine().selectAction(null, null, actions, null, null, "new-state");
+                llm.engine().selectAction(null, null, actions, null, "new-state");
 
         assertNotNull(first);
         assertEquals(W0, first.getTarget().toXPath());
@@ -89,7 +89,7 @@ public class ScriptedLlmTest {
         // Same offered list, same answer — the selector is a function of the list, not of a draw.
         llm.beginStep(0);
         llm.gateFor(ScriptedLlm.NEW_STATE).getAsBoolean();
-        assertSame(first, llm.engine().selectAction(null, null, actions, null, null, "new-state"));
+        assertSame(first, llm.engine().selectAction(null, null, actions, null, "new-state"));
     }
 
     @Test
@@ -140,7 +140,8 @@ public class ScriptedLlmTest {
     public void theRealPipelineNeverRuns() throws Exception {
         // Jar default: no server is configured, and none is needed — the stub replaces the
         // pipeline outright rather than short-circuiting inside it.
-        assertNull("the harness runs on jar defaults, with no LLM endpoint", Config.llmUrl);
+        assertNull("the harness runs on jar defaults, with no LLM endpoint",
+                KeyOwnership.defaultOf("ape.llmUrl"));
 
         ScenarioScript script = scriptWith(ScenarioScript.step(true, 0,
                 ScenarioScript.accept(true, false, false, ScriptedLlm.FIRST_TARGETED)));
@@ -243,7 +244,7 @@ public class ScriptedLlmTest {
         ScriptedLlm llm = new ScriptedLlm(script);
         llm.beginStep(0);
         try {
-            llm.engine().selectAction(null, null, offeredActions(script), null, null, "new-state");
+            llm.engine().selectAction(null, null, offeredActions(script), null, "new-state");
             fail("an unscripted step the agent routed must fail");
         } catch (IllegalStateException expected) {
             assertTrue(expected.getMessage().contains("declares no LLM entry"));
@@ -258,7 +259,7 @@ public class ScriptedLlmTest {
                 ScenarioScript.accept(true, false, false, ScriptedLlm.XPATH_PREFIX + W1)));
         ScriptedLlm llm = new ScriptedLlm(script);
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.LLM, script, llm);
+                OracleScaffold.Cell.AS_LLM, script, llm);
         OracleScaffold.setField(agent, "_isNewState", true);
         llm.beginStep(0);
 
@@ -268,7 +269,7 @@ public class ScriptedLlmTest {
         assertTrue(selected instanceof ModelAction);
         ModelAction picked = (ModelAction) selected;
         assertEquals(W1, picked.getTarget().toXPath());
-        // The accepting LLM stage (LlmGate.accept) stamps the provenance the golden records.
+        // The accepting LLM stage (LlmAcceptance.accept) stamps the provenance the golden records.
         assertEquals(ModelAction.DecisionSource.LLM, picked.getDecisionSource());
         assertEquals(ModelAction.PickChannel.LLM, picked.getPickChannel());
         assertEquals(ScriptedLlm.Provenance.ACCEPTED, llm.getProvenance());

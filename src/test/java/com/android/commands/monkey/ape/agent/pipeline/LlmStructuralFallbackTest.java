@@ -22,9 +22,9 @@ import static org.junit.Assert.assertSame;
  * pipeline, because "the remainder" is a fact about the roster rather than about any one stage.
  *
  * <p><b>Why the remainder is asserted twice, on two plans.</b> Under the {@code llm} arm the
- * remainder is the SATA chain, so the fallback is attributed {@code SATA}. Add the MOP substrate and
+ * remainder is the SATA chain, so the fallback is owned by {@code sata}. Add the MOP substrate and
  * turn the activity trigger on and the launcher sits between the LLM stages and the chain, so the
- * same declined step is decided by the launcher and attributed {@code Component}. A test that only
+ * same declined step is decided by the launcher and owned by {@code launcher}. A test that only
  * ever saw {@code SATA} would pass just as well against a hardcoded chain — the second plan is what
  * makes "the configured remainder" mean something.
  *
@@ -34,8 +34,8 @@ import static org.junit.Assert.assertSame;
  * decline and a timeout falling through to {@code SATA}. Writing two identical stage-level tests
  * would assert the same code path twice under two names.
  *
- * <p><b>Breaker denial arrives as a declined trigger.</b> The breaker is the last conjunct of every
- * hook, so from below it a breaker-open step is indistinguishable from a step whose own condition
+ * <p><b>Breaker denial arrives as a barred call.</b> The breaker is the last gate of the shared
+ * chain, so from below it a breaker-open step takes the same path as a step whose own condition
  * failed — which is the whole point of INV-DP-11 having one path. The breaker's own contract, that
  * its OPEN line is logged once per open episode, is asserted where the latch lives, in
  * {@code LlmClientTest}.
@@ -52,8 +52,8 @@ public class LlmStructuralFallbackTest {
         Action decided = pipeline.decide(PipelineFixture.routableStep());
 
         assertSame("the remainder decides the step, and nothing retries", fromTheChain, decided);
-        assertEquals("all three routing modes asked and all three were answered with nothing",
-                3, llm.selectCalls);
+        assertEquals("at most one LLM call per step: the failed new-state call is the only one"
+                + " (INV-RTR-26)", 1, llm.selectCalls);
         assertEquals(1, agent.chainCalls);
         assertEquals(ModelAction.DecisionSource.SATA, fromTheChain.getDecisionSource());
         assertNotEquals("a step the LLM did not decide must not be attributed to it",
@@ -88,16 +88,20 @@ public class LlmStructuralFallbackTest {
                 DecisionPipeline.fromSpec(PipelineFixture.llmWithLauncherPlan(1), agent);
         FakeStepContext ctx = PipelineFixture.routableStep();
         ctx.mopData = PipelineFixture.census();
+        ctx.staticModel = PipelineFixture.staticCensus();
         ctx.graph = PipelineFixture.emptyGraph();
 
         Action decided = pipeline.decide(ctx);
 
-        assertEquals(Arrays.asList("Budget", "LlmNewState", "LlmStagnation", "LlmRandom",
-                "MopLauncher", "SataChain"), pipeline.stageNames());
+        assertEquals(Arrays.asList("Budget", "Restart", "LlmNewState", "LlmStagnation", "LlmCoin",
+                "MopLauncher", "ComponentTrigger", "MopCoin", "SataChain"), pipeline.stageNames());
         assertEquals("the declined step falls through to the launcher, not past it to the chain",
                 ActivityTriggerAction.class, decided.getClass());
         assertEquals(PipelineFixture.TRIGGER_TARGET,
                 ((ActivityTriggerAction) decided).getClassName());
         assertEquals("the chain was never reached", 0, agent.chainCalls);
+        RecordingSink.Own own = ctx.recorder.lastOwner();
+        assertEquals("the LLM claimed the step first (D-B14.6)", "llm", own.i);
+        assertEquals("new_state", own.trg);
     }
 }

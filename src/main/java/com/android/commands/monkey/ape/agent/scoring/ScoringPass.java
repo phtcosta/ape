@@ -8,13 +8,15 @@ import com.android.commands.monkey.ape.model.State;
  *
  * <p>The RV scoring path used to be a wall of inline {@code if}-blocks in
  * {@code StatefulAgent.adjustActionsByGUITree()}. Each block is now one {@code ScoringPass}, assembled
- * in fixed order by {@link ScoringPipeline#fromParams}. A pass reads every collaborator (MopData,
- * coverage tracker, graph, per-run pick eligibility) through the {@link ScoringContext} handed to
- * {@link #apply}; it holds no run-mutable field of its own, so it stays unit-testable with a stub
+ * in fixed order by {@link ScoringPipeline#fromParams}. A pass is a scorer (rule R1): it computes
+ * its term from the screen, the model and its own group's data only — never from the priority or
+ * another pass's field — writes it to its own field and adds it to the priority. It reads every
+ * collaborator (its group's provider, coverage tracker, graph) through the {@link ScoringContext}
+ * handed to {@link #apply}; it holds no run-mutable field of its own, so it stays unit-testable with a stub
  * context and all cross-step state lives on the agent reached through the context.
  *
  * <p>{@link #isEnabled()} is decided once, in the constructor, from the injected
- * {@link ScoringParams} (and the run-fixed {@code MopData}); it is never re-evaluated per
+ * {@link ScoringParams} (and the run-fixed providers of the context); it is never re-evaluated per
  * {@code apply}. A disabled pass is not added to the
  * assembled pipeline and is therefore a strict no-op for the run — zero priority mutations, zero
  * provenance writes, zero log lines.

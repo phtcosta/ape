@@ -12,8 +12,9 @@ import java.util.Objects;
  * <p><b>Absent, never null.</b> A field that does not apply to a step is left out of the line
  * entirely rather than written as {@code null}: {@code pickChannel} and {@code decisionSource} for
  * a return that is not a {@code ModelAction}, {@code target} for a targetless action, {@code llm}
- * for a preset with no LLM. The distinction is not cosmetic — it is what keeps an {@code aperv}
- * golden textually free of the LLM axis, so a diff shows only what the preset actually has.
+ * for a cell with no LLM, {@code trig} for a step the component trigger did not fire on. The
+ * distinction is not cosmetic — it is what keeps an {@code as} golden textually free of the LLM
+ * axis, so a diff shows only what the cell actually has.
  *
  * <p><b>Why the line is built by hand instead of through {@code JSONObject.toString()}.</b>
  * {@code org.json}'s {@code JSONObject} is {@code HashMap}-backed, so its key order is whatever the
@@ -31,7 +32,7 @@ public final class DecisionRecord {
      * {@code step} leads because it is the coordinate every other field is read against.
      */
     static final String[] FIELDS =
-            {"step", "actionType", "target", "decisionSource", "pickChannel", "llm"};
+            {"step", "actionType", "target", "decisionSource", "pickChannel", "llm", "trig"};
 
     private final int step;
     private final String actionType;
@@ -39,6 +40,7 @@ public final class DecisionRecord {
     private final String decisionSource;
     private final String pickChannel;
     private final String llm;
+    private final String trig;
 
     /**
      * @param step           the selection step, monotonically increasing from the scenario's first
@@ -49,19 +51,29 @@ public final class DecisionRecord {
      *                       was not a {@code ModelAction}
      * @param pickChannel    the returned action's {@code PickChannel} label
      *                       ({@code ModelAction.PickChannel.getLabel()}, e.g.
-     *                       {@code short_circuit_unvisited}); null on the same condition
+     *                       {@code mop_coin}); null on the same condition
      * @param llm            {@code ScriptedLlm.Provenance.getLabel()} —
      *                       {@code accepted | declined | timeout | not_routed}; null for a preset
      *                       with no LLM
+     * @param trig           the step's component trigger as {@code <kind>:<class>}, the
+     *                       {@code dec.trig} members ({@code broadcast}, {@code service} or
+     *                       {@code provider}); null when no trigger fired on the step
      */
     public DecisionRecord(int step, String actionType, String target, String decisionSource,
-                          String pickChannel, String llm) {
+                          String pickChannel, String llm, String trig) {
         this.step = step;
         this.actionType = actionType;
         this.target = target;
         this.decisionSource = decisionSource;
         this.pickChannel = pickChannel;
         this.llm = llm;
+        this.trig = trig;
+    }
+
+    /** A record of a step on which no component trigger fired. */
+    public DecisionRecord(int step, String actionType, String target, String decisionSource,
+                          String pickChannel, String llm) {
+        this(step, actionType, target, decisionSource, pickChannel, llm, null);
     }
 
     public int getStep() { return step; }
@@ -70,6 +82,7 @@ public final class DecisionRecord {
     public String getDecisionSource() { return decisionSource; }
     public String getPickChannel() { return pickChannel; }
     public String getLlm() { return llm; }
+    public String getTrig() { return trig; }
 
     /**
      * The value of {@code field} as the comparator reports it, or null when the field is absent
@@ -84,6 +97,7 @@ public final class DecisionRecord {
             case "decisionSource": return decisionSource;
             case "pickChannel": return pickChannel;
             case "llm": return llm;
+            case "trig": return trig;
             default: throw new IllegalArgumentException("unknown DecisionRecord field: " + field);
         }
     }
@@ -125,7 +139,8 @@ public final class DecisionRecord {
                     optional(json, "target"),
                     optional(json, "decisionSource"),
                     optional(json, "pickChannel"),
-                    optional(json, "llm"));
+                    optional(json, "llm"),
+                    optional(json, "trig"));
         } catch (JSONException malformed) {
             throw new IllegalStateException("malformed golden record: " + line, malformed);
         }
@@ -149,12 +164,13 @@ public final class DecisionRecord {
                 && Objects.equals(target, that.target)
                 && Objects.equals(decisionSource, that.decisionSource)
                 && Objects.equals(pickChannel, that.pickChannel)
-                && Objects.equals(llm, that.llm);
+                && Objects.equals(llm, that.llm)
+                && Objects.equals(trig, that.trig);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(step, actionType, target, decisionSource, pickChannel, llm);
+        return Objects.hash(step, actionType, target, decisionSource, pickChannel, llm, trig);
     }
 
     /** The golden line itself — the form a failure message is most useful in. */

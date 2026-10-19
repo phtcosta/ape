@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 
 /**
@@ -7,18 +8,20 @@ import com.android.commands.monkey.ape.runtime.RunSpec;
  * (INV-ARCH-11). It is what makes the passes' parameters arrive by constructor instead of being
  * fetched from a static field or an ambient run context at the moment they are needed.
  *
- * <p>The six values span two scopes of the plan — four belong to the MOP family, two
- * ({@code coverageBoostWeight}, {@code formCompletionEnabled}) do not — and a pass has no business
- * knowing which. The MOP-widget weights are not here: the MOP-widget pass reads them, with the
- * scoring mode and the distance weights, from the run's {@code MopContext}, built from the same
+ * <p>The six values span the three scorer groups — four belong to MOP members, one
+ * ({@code frontierBoostWeight}) to the STATIC member {@code NAV_FRONTIER}, two
+ * ({@code coverageBoostWeight}, {@code formCompletionEnabled}) to ADDONS members — and a pass has
+ * no business knowing which. The MOP-widget weights are not here: the MOP-widget pass reads them,
+ * with the scoring mode and the distance weights, from the run's {@code MopContext}, built from the same
  * plan (llm-coordinate-single-base, design D17). Collapsing them here is what lets {@link ScoringPipeline#fromParams} be the one
  * place that reads a plan, and every pass below it be a function of the numbers it was handed.
  *
- * <p><b>An absent feature reads as its off value</b>, never as an error: a plan without MOP has no
- * {@code MopParams} at all, and a plan with MOP but without the WTG feature carries no
- * {@code ape.mopWeightWtg}. Both mean the same thing to a pass — the weight is zero, so the gate is
- * shut — and {@link #fromSpec} is where that equivalence is stated once instead of at each of the
- * seven construction sites.
+ * <p><b>Each value is its pass's mounting feature</b> (scoring-pipeline "Scorer Ownership by
+ * Group"): {@link #fromSpec} reads a weight only when the member feature that owns it is in the
+ * plan, and reads the off value — 0, or false — otherwise. A pass is therefore enabled iff its
+ * feature is mounted (and its data gate holds), and {@link #fromSpec} is where that is stated once
+ * instead of at each of the seven construction sites. {@code MopWidgetPass} has no value here: the
+ * group root {@code MOP} mounts it, which the scoring context's {@code MopContext} states.
  *
  * <p>Nothing else observes the plan-to-params mapping: the parity goldens never execute scoring
  * (it runs in {@code adjustActionsByGUITree()}, above their entry point), the pass unit tests
@@ -53,20 +56,21 @@ public final class ScoringParams {
     }
 
     /**
-     * The scoring parameters of a resolved plan. A plan with no MOP feature has no
-     * {@code MopParams}, which is the same thing to every MOP-family pass as a zero weight, so the
-     * four MOP values collapse to zero together.
+     * The scoring parameters of a resolved plan: each value read through its mounting feature
+     * ({@code MENU_GATEWAY}, {@code WTG}, {@code NAV_FRONTIER}, {@code MOP_FRONTIER},
+     * {@code COVERAGE_BOOST}, {@code FORM_COMPLETION}), the off value when the feature is absent.
      */
     public static ScoringParams fromSpec(RunSpec spec) {
         RunSpec.MopParams mop = spec.mop();
+        RunSpec.StaticParams staticData = spec.staticData();
         RunSpec.ExplorationParams exploration = spec.exploration();
         return new ScoringParams(
-                mop == null ? 0 : mop.weightOpenMenu(),
-                mop == null ? 0 : mop.weightWtg(),
-                mop == null ? 0 : mop.frontierBoostWeight(),
-                mop == null ? 0 : mop.frontierWeight(),
-                exploration.coverageBoostWeight(),
-                exploration.formCompletionEnabled());
+                spec.has(Feature.MENU_GATEWAY) ? mop.weightOpenMenu() : 0,
+                spec.has(Feature.WTG) ? mop.weightWtg() : 0,
+                spec.has(Feature.NAV_FRONTIER) ? staticData.frontierBoostWeight() : 0,
+                spec.has(Feature.MOP_FRONTIER) ? mop.frontierWeight() : 0,
+                spec.has(Feature.COVERAGE_BOOST) ? exploration.coverageBoostWeight() : 0,
+                spec.has(Feature.FORM_COMPLETION) && exploration.formCompletionEnabled());
     }
 
     /** Boost for the {@code MODEL_MENU} action of an activity whose OPTIONSMENU is a gateway. */
@@ -79,7 +83,7 @@ public final class ScoringParams {
         return mopWeightWtg;
     }
 
-    /** Boost for a widget whose WTG transition targets an unvisited activity, MOP or not. */
+    /** Boost for a widget whose WTG transition targets an unvisited activity ({@code NAV_FRONTIER}). */
     public int frontierBoostWeight() {
         return frontierBoostWeight;
     }

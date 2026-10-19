@@ -41,7 +41,9 @@ public class ScoringParamsDefaultsTest {
      */
     @Test
     public void aDefaultMopPlanCarriesTheJarsScoringWeights() {
-        RunSpec spec = TestRunSpecs.spec("ape.mopDataPath", TestRunSpecs.MOP_PATH);
+        // The weights belong to three groups (ADDONS, STATIC, MOP), each stated on.
+        RunSpec spec = TestRunSpecs.spec("ape.staticDataPath", TestRunSpecs.MOP_PATH,
+                "ape.addons", "true", "ape.static", "true", "ape.mop", "true");
 
         ScoringParams params = ScoringParams.fromSpec(spec);
 
@@ -61,7 +63,7 @@ public class ScoringParamsDefaultsTest {
      */
     @Test
     public void aPlanWithoutMopZeroesEveryMopWeightAndKeepsTheRest() {
-        ScoringParams params = ScoringParams.fromSpec(TestRunSpecs.spec());
+        ScoringParams params = ScoringParams.fromSpec(TestRunSpecs.spec("ape.addons", "true"));
 
         assertEquals("ape.mopWeightOpenMenu without MOP", 0, params.mopWeightOpenMenu());
         assertEquals("ape.mopWeightWtg without MOP", 0, params.mopWeightWtg());
@@ -82,7 +84,8 @@ public class ScoringParamsDefaultsTest {
     @Test
     public void statedOffValuesReadAsTheAbsentFeatureDoes() {
         ScoringParams params = ScoringParams.fromSpec(TestRunSpecs.spec(
-                "ape.mopDataPath", TestRunSpecs.MOP_PATH,
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH, "ape.mop", "true",
+                "ape.addons", "true", "ape.static", "true",
                 "ape.frontierBoostWeight", "0",
                 "ape.mopWeightWtg", "0",
                 "ape.coverageBoostWeight", "0",

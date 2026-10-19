@@ -7,11 +7,15 @@ import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopScorer;
 
 /**
- * rv-scoring-pipeline: the gh13 OPTIONSMENU gateway boost, extracted verbatim from the inline block
- * in {@code StatefulAgent.adjustActionsByGUITree()} — make the agent open the menu that leads to MOP.
- * Scoring semantics owned by {@code mop-guidance} (OPTIONSMENU-Aware Menu Boost). Enabled whenever MOP
- * data is present ({@code mopData != null}); the back-menu-pick-cap gate is applied per-apply through
- * {@link ScoringContext#menuPickEligible} (base agent: always eligible; SataAgent: cap check).
+ * The gh13 OPTIONSMENU gateway scorer, the MOP member {@code MENU_GATEWAY}: make the agent open the
+ * menu that leads to MOP. Scoring semantics owned by {@code mop-guidance} (OPTIONSMENU-Aware Menu
+ * Boost). Enabled iff {@code MENU_GATEWAY} is mounted (a positive {@code mopWeightOpenMenu}) and MOP
+ * data is present.
+ *
+ * <p>Under rule R1 its term depends only on the activity's gateway status and the injected weight.
+ * It does not read the ADDONS BACK/MENU pick cap (design D-B14.19): a capped MENU is already kept
+ * out of selection by the cap itself, so reading it here would couple a MOP scorer to an ADDONS
+ * member's state.
  */
 public final class MenuGatewayPass implements ScoringPass {
 
@@ -19,8 +23,8 @@ public final class MenuGatewayPass implements ScoringPass {
     private final int weightOpenMenu;
 
     public MenuGatewayPass(ScoringContext ctx, ScoringParams params) {
-        this.enabled = ctx.getMopData() != null;
         this.weightOpenMenu = params.mopWeightOpenMenu();
+        this.enabled = weightOpenMenu > 0 && ctx.getMopData() != null;
     }
 
     @Override
@@ -36,11 +40,7 @@ public final class MenuGatewayPass implements ScoringPass {
     @Override
     public void apply(State state, ModelAction[] actions, ScoringContext ctx) {
         String activity = state.getActivity();
-        // back-menu-pick-cap: gate the +menuBoost by menuPickEligible so a MENU whose (activity,
-        // MODEL_MENU) key is capped stops re-dominating the roulette. No setPriority/setMenuBoost
-        // when the gate is closed.
-        int menuBoost = ctx.menuPickEligible(activity)
-                ? MopScorer.scoreOpenMenu(activity, ctx.getMopData(), weightOpenMenu) : 0;
+        int menuBoost = MopScorer.scoreOpenMenu(activity, ctx.getMopData(), weightOpenMenu);
         if (menuBoost > 0) {
             for (ModelAction action : actions) {
                 if (action.getType() == ActionType.MODEL_MENU) {

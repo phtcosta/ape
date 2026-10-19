@@ -44,9 +44,9 @@ import java.util.Map;
 public interface EventSink {
 
     /**
-     * The value that means "this field has no value for this step", for the two tri-state integers
-     * whose absence is itself information ({@code dec.patched}, {@code dec.cf.changed}) and for the
-     * MOP exposure pair. Zero cannot serve: {@code patched=0} and a boosted count of {@code 0} are
+     * The value that means "this field has no value for this step", for the tri-state integers
+     * whose absence is itself information ({@code dec.patched}, {@code dec.mopd}) and for the MOP
+     * exposure pair. Zero cannot serve: {@code patched=0} and a boosted count of {@code 0} are
      * both real observations, and the whole point of the tri-state is that "no resolved target" and
      * "a target that was not patched" are different facts.
      */
@@ -90,16 +90,13 @@ public interface EventSink {
      * @param mop the MOP boost; like every boost below, a zero is omitted from the record
      *        (INV-SNK-05) and materialized again by the reader
      * @param mopFrontier the MOP-frontier boost
-     * @param wtg the WTG boost, summed across its two producers
+     * @param wtg the WTG-reach boost ({@code WtgPass}, MOP)
+     * @param navFrontier {@code dec.navf}: the navigation-frontier boost ({@code NAV_FRONTIER},
+     *        STATIC), in its own field since the two producers stopped sharing {@code wtg}
      * @param coverage the coverage boost
      * @param menu the menu boost
      * @param form the form-completion boost
-     * @param wtgSource which pass wrote {@code wtg} — {@code wtg}, {@code frontier} or
-     *        {@code both}; recorded only when the boost is non-zero, because with both weights
-     *        configured at 200 the emitted value alone cannot say which producer fired
      * @param patched {@code 0}/{@code 1}, or {@link #ABSENT} when the action has no resolved target
-     * @param cfChanged {@code 0}/{@code 1}, or {@link #ABSENT} off the four MOP-sensitive channels
-     * @param cfAction the counterfactual action, only when it diverges from the factual pick
      * @param mopDistance {@code dec.mopd} (design D23): under {@code ape.mopScoring=distance}, the
      *        distance {@code d} of the nearest unretired target behind the action's MOP weight, or
      *        {@link #ABSENT} when the action has no such weight (and always under {@code flag}).
@@ -111,11 +108,13 @@ public interface EventSink {
      *        source is {@code NONE} or the action has no resolved target. It travels with the
      *        decision rather than through a call of its own because, unlike {@code dec.ret}, it is
      *        known when the decision is made
+     * @param handler {@code dec.hnd} (design D-B17): the binary class name of the handler stamp
+     *        that answered the action's MOP weight lookup; written only when {@code mopSource} is
+     *        {@link #MOP_SOURCE_STAMP}, so {@code null} otherwise
      */
     void decision(String action, String decisionSource, String pickChannel, int priority,
-            int mop, int mopFrontier, int wtg, int coverage, int menu, int form,
-            String wtgSource, int patched, int cfChanged, String cfAction, int mopDistance,
-            String mopSource);
+            int mop, int mopFrontier, int wtg, int navFrontier, int coverage, int menu, int form,
+            int patched, int mopDistance, String mopSource, String handler);
 
     /**
      * Records a finalized non-model action: the event-level actions that carry no priority and no
@@ -124,8 +123,8 @@ public interface EventSink {
     void decisionNonModel(String action, String decisionSource, String pickChannel);
 
     /**
-     * Records how many of the screen's actions were eligible for MOP steering and how many were
-     * boosted — the denominator without which "the MOP scorer fired on 0.4 % of decisions" cannot
+     * Records how many of the screen's actions carry a positive MOP weight, tried or not (design
+     * D-B19), and how many were eligible for MOP steering — the denominator without which "the MOP scorer fired on 0.4 % of decisions" cannot
      * be split into "the mechanism had no opportunity" and "it had one and lost the roulette".
      *
      * <p>It arrives from the scoring pass rather than riding {@link #decision} because that is
@@ -133,7 +132,7 @@ public interface EventSink {
      * is not constant per abstract state — measured across 25 campaign traces, 14 show a state
      * with more than one realised pair.
      */
-    void mopExposure(int boosted, int total);
+    void mopExposure(int weighted, int total);
 
     /**
      * Records the targets the step's action retired, for the step's {@code dec.ret} (design D23,
@@ -165,6 +164,95 @@ public interface EventSink {
      * @param error the failure enum, or {@code null} when the launch was accepted
      */
     void componentLaunch(int result, String error);
+
+    // --- the routing and selection members of isolate-guidance-groups ---------------------------
+    //
+    // Each adds one member to the open step's `dec` (design § Telemetry contract, event-sink
+    // "StepRecord Schema"). Like mopExposure and mopRetired, they may arrive before or after the
+    // decision call, since the record writes `dec` when it closes. Every one is pure (INV-SNK-16):
+    // a caller hands over a value it already computed and reads nothing back.
+
+    /**
+     * Contributes to {@code dec.own}, the step's routing record, written on every step. The
+     * pipeline and the LLM and MOP stages each fill the members they know, so a call merges: a
+     * null string or a {@code NaN} draw leaves that member as it was.
+     *
+     * @param intended {@code i}: the first claimer of the step in pipeline order ({@code budget},
+     *        {@code restart}, {@code llm}, {@code launcher}, {@code mop}, {@code sata})
+     * @param trigger {@code trg}: {@code new_state}, {@code stagnation} or {@code coin}
+     * @param uL the LLM coin's draw, when {@code LLM} is mounted
+     * @param uM the MOP coin's draw, when {@code MOP} is mounted
+     * @param gate {@code g}: the LLM gate that barred the call, {@code min_actions} or
+     *        {@code breaker}
+     * @param fallback {@code fb}: why the executed owner differs from {@code i} ({@code gate},
+     *        {@code error}, {@code decline}, {@code no_match}, {@code ineligible})
+     */
+    void owner(String intended, String trigger, double uL, double uM, String gate,
+            String fallback);
+
+    /**
+     * Adds one key to {@code dec.cfc}: whether the pick, recomputed with {@code scorer}'s field
+     * zeroed on every candidate and the same recorded draw, selects another action.
+     *
+     * @param scorer {@code mop}, {@code mopf}, {@code wtg}, {@code navf}, {@code cov},
+     *        {@code menu} or {@code form}
+     */
+    void cfc(String scorer, boolean changed);
+
+    /** {@code dec.draw}: the integer a roulette drew and the bound it was drawn below. */
+    void draw(int index, int total);
+
+    /**
+     * {@code dec.nav}: the SATA extension point that decided a tie among two or more candidates.
+     *
+     * @param point {@code X1}, {@code X3} or {@code X4}
+     * @param variant {@code ape} or {@code mop}, the mounted variant
+     * @param alt whether the MOP variant decided by its own rule (design D-B14.8)
+     * @param drew whether the decision consumed a draw
+     */
+    void nav(String point, String variant, boolean alt, boolean drew);
+
+    /**
+     * {@code dec.inp}: the origin of the text the step's input refiner set — {@code typed},
+     * {@code heuristic}, {@code random}, {@code form} or {@code llm}.
+     */
+    void input(String origin);
+
+    /**
+     * {@code dec.restart}: the kind of restart a RESTART step dispatched — {@code graph},
+     * {@code state}, {@code activity} or {@code periodic}.
+     */
+    void restart(String kind);
+
+    /** {@code dec.bmc}: candidates the BACK/MENU cap removed from the pick; 0 is omitted. */
+    void backMenuCapped(int removed);
+
+    /** {@code dec.strat}: the path inside SATA that selected the action. */
+    void strategy(String path);
+
+    /**
+     * {@code dec.rot}: the display rotation at step open, {@code 0..3}, or {@code -1} when it could
+     * not be read. Written on every step record, {@code 0} included.
+     */
+    void rotation(int rotation);
+
+    /**
+     * {@code dec.buf}: the owner that took the step while the SATA buffer was non-empty and
+     * abandoned it without weakening the planned edge.
+     */
+    void bufferAbandoned(String owner);
+
+    /**
+     * {@code dec.trig}: the component the trigger fired on this step, a side effect that names no
+     * owner.
+     *
+     * @param kind {@code broadcast}, {@code service} or {@code provider}
+     * @param className the component's class name
+     */
+    void componentTrigger(String kind, String className);
+
+    /** Adds one to a {@code RUN_END.counters} member of isolate-guidance-groups. */
+    void count(RunCounter counter);
 
     /**
      * Stages the prompt and response dumps for the next LLM sub-event of this step.
@@ -270,12 +358,15 @@ public interface EventSink {
      * {@code RUN_START.params}, and the passes do not evaluate them in a uniform order, so a
      * "first failing conjunct" would encode source order rather than cause.
      *
-     * @param stages the static list of candidate stage names — never a constructed disabled-stage
-     *        object, which the decision-pipeline capability forbids (INV-DP-03)
+     * @param stages the names of the assembled decision stages, in the fixed candidate order
      * @param candidates every candidate pass in declaration order, mapped to whether it was
      *        constructed
+     * @param stageCandidates every candidate decision stage in the fixed order, mapped to whether
+     *        it was assembled — a static list of names, never a constructed disabled-stage object,
+     *        which the decision-pipeline capability forbids (INV-DP-03, design D-B23)
      */
-    void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates);
+    void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates,
+            Map<String, Boolean> stageCandidates);
 
     /** Records the model the server actually served, at most once per run. */
     void llmAck(String serverModel);
@@ -311,6 +402,9 @@ public interface EventSink {
      *        is not a parameter: it counts the written records whose {@code dec.mops} is
      *        {@link #MOP_SOURCE_STAMP}, which the sink alone knows, and is at most one per step by
      *        construction
+     * <p>The routing counters of {@link RunCounter} are written in full on every run, zero
+     * included, beside the three MOP counters: the clean-control gate reads their zeros.
+     *
      * @param counters the LLM totals, or {@code null} on a plan with no LLM — in which case the
      *        record carries no LLM counter block at all, since a zeroed one would read as an LLM
      *        that was asked nothing rather than an arm that has none

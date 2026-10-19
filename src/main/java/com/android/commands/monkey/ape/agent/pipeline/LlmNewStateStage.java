@@ -15,50 +15,32 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
-import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
-
-import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.ModelAction;
 
 /**
  * Ask the model when the agent has just walked into a screen it has never seen.
  *
- * <p>This is the first of the three LLM hooks and therefore the one that preempts the other two, the
- * MOP launcher and the whole SATA chain whenever it answers. Its trigger is two conjuncts in a fixed
- * order: the step entered an unseen state, and then the circuit breaker allows an attempt. The order
- * is behaviour, not style — the breaker's consultation has a side effect (the OPEN→HALF_OPEN probe
- * and the once-per-open-episode log latch) and must not be reached on a step the first conjunct
- * already declined.
+ * <p>The first of the three LLM stages, after the {@code Budget} and {@code Restart} guards. Its
+ * trigger is the step entering an unseen state, and it consumes no coin (D-A5, D-A17). When the
+ * trigger holds, the LLM claims the step and the shared gate chain decides whether the call is made
+ * ({@link LlmCall}); the SATA action buffer is no condition, and a selection over a non-empty buffer
+ * abandons it without weakening (INV-DP-15).
  *
- * <p><b>The mode conjunct is gone, and assembly is the whole reason it could go.</b> The predicate
- * this stage inherited also tested that new-state routing was enabled, which is precisely the
- * condition under which this stage exists at all (INV-DP-03). Inside the stage it is necessarily
- * true, so testing it would be asking whether the object running the test was constructed.
- *
- * <p><b>A declining model does not change the step's shape.</b> Precondition unmet, trigger false,
- * breaker open, or an engine that returns null for any of its reasons — screenshot failure, transport
- * failure, unparseable answer, a coordinate matching nothing, a banned dead pair — all take the one
- * path out of here, {@code Continue}, and the rest of the assembled pipeline decides the step
- * (INV-DP-11). There is no retry within a step and no substitute action invented here.
+ * <p><b>A declining model does not change the step's shape.</b> Trigger false, a gate that bars, or
+ * an engine that returns null for any of its reasons all take the one path out of here,
+ * {@code Continue}, and the rest of the assembled pipeline decides the step (INV-DP-11). A step makes
+ * at most one LLM call: when an earlier stage already called, this one returns {@code Continue}
+ * without evaluating anything (INV-RTR-26).
  */
 public final class LlmNewStateStage implements DecisionStage {
 
-    private final LlmEngine engine;
-    private final BooleanSupplier breakerAllows;
-    private final Consumer<ModelAction> resolveSynthesizedTap;
+    private final LlmCall llm;
 
     /**
-     * @param engine the run's LLM orchestrator; non-null, because this stage exists only on a plan
-     *        carrying the new-state LLM feature and such a plan has one
-     * @param breakerAllows the run's single breaker consultation, {@code LlmClient.allows}
-     * @param resolveSynthesizedTap the agent's per-state resolution, for the synthesized tap
+     * @param llm the gate chain, call budget and acceptance the three LLM stages share
      */
-    public LlmNewStateStage(LlmEngine engine, BooleanSupplier breakerAllows,
-                            Consumer<ModelAction> resolveSynthesizedTap) {
-        this.engine = engine;
-        this.breakerAllows = breakerAllows;
-        this.resolveSynthesizedTap = resolveSynthesizedTap;
+    public LlmNewStateStage(LlmCall llm) {
+        this.llm = llm;
     }
 
     @Override
@@ -68,15 +50,14 @@ public final class LlmNewStateStage implements DecisionStage {
 
     @Override
     public StageResult decide(StepContext ctx) {
-        if (!LlmGate.allows(ctx) || !ctx.isNewState() || !breakerAllows.getAsBoolean()) {
+        if (llm.spent() || !ctx.isNewState()
+                || !llm.admits(ctx, StepRouting.TRIGGER_NEW_STATE)) {
             return StageResult.continueChain();
         }
-        ModelAction result = engine.selectAction(ctx.newGUITree(), ctx.newState(),
-                ctx.newState().getActions(), ctx.mopContext(), ctx.actionHistory(), "new-state");
+        ModelAction result = llm.call(ctx, StepRouting.TRIGGER_NEW_STATE, "new-state");
         if (result == null) {
             return StageResult.continueChain();
         }
-        ModelAction accepted = LlmGate.accept(result, resolveSynthesizedTap);
-        return StageResult.select(accepted, accepted.getDecisionSource().name());
+        return llm.select(ctx, result);
     }
 }

@@ -15,12 +15,12 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.agent.SataAgent.SataEventType;
 import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ModelAction;
 
-import java.util.Random;
 
 /**
  * The agent behaviours assembly binds into stages.
@@ -76,6 +76,16 @@ public interface StageCollaborators {
     ModelAction selectNewActionForTrivialActivity();
 
     /**
+     * The {@code Budget} stage's navigation: {@link #selectNewActionForTrivialActivity()} run with the
+     * SATA buffer detached without weakening. A {@code null} result restores the buffer; a navigation
+     * abandons a non-empty detached buffer with owner {@code budget} and keeps the path it planned
+     * (design D-B20).
+     *
+     * @return the trivial-activity navigation action, or {@code null}
+     */
+    ModelAction budgetNavigation();
+
+    /**
      * The backward walk over the graph towards unfinished work, or {@code null} when no such path
      * exists.
      *
@@ -123,27 +133,16 @@ public interface StageCollaborators {
     LlmEngine llmEngine();
 
     /**
-     * The run's single breaker consultation, asked once by whichever LLM hook reached it.
+     * The run's breaker consultation, {@code LlmClient.allows()}, which {@link BreakerGate} makes
+     * once per evaluation of the gate chain.
      *
      * <p>A method rather than a handle on the client because consulting the breaker has a side
-     * effect — the OPEN&rarr;HALF_OPEN probe and the once-per-open-episode log latch — so a caller
-     * holding the client could spend the probe twice on one step. One call site per hook, and no
-     * way to ask a second time.
+     * effect — the OPEN&rarr;HALF_OPEN probe and the once-per-open-episode log latch — so the gate
+     * is the one place that asks.
      *
      * @return whether an LLM attempt may be made on this step
      */
     boolean llmBreakerAllows();
-
-    /**
-     * The agent's own generator — {@code ape.getRandom()}, Monkey's {@code mRandom}.
-     *
-     * <p>Named here rather than taken from the step's view because the probabilistic hook holds it
-     * for the run, exactly as the predicate it replaced did, and because which of the run's two
-     * streams a coin comes from is a parity constraint rather than a convenience (INV-DP-10).
-     *
-     * @return the agent-side stream
-     */
-    Random agentRandom();
 
     /**
      * Resolves an LLM-synthesized tap against the current state, so the action carries the
@@ -157,7 +156,7 @@ public interface StageCollaborators {
     void resolveSynthesizedTap(ModelAction tap);
 
     /**
-     * How many component-trigger targets the arm's census yields, building the pool on first ask.
+     * How many component-trigger targets the manifest pool yields, building the pool on first ask.
      *
      * <p>Two methods rather than one because the round-robin walk and the dispatch belong to
      * different owners: the cursor is the stage's episode state (INV-DP-07), while the pool and the
@@ -167,15 +166,56 @@ public interface StageCollaborators {
      * one to fire.
      *
      * @return the size of the combined (component × filter × action) and (provider × operation)
-     *         pool; zero when the census yields no triggerable target
+     *         pool; zero when the pool yields no triggerable target
      */
-    int mopComponentTargetCount();
+    int componentTargetCount();
 
     /**
      * Fires the component-trigger target at {@code target}, which the caller took from the range
-     * {@link #mopComponentTargetCount} reported.
+     * {@link #componentTargetCount} reported.
      *
      * @param target the index of the target to fire
      */
-    void triggerMopComponent(int target);
+    void triggerComponent(int target);
+
+    /**
+     * Whether a restart is due on this step (decision-pipeline "Restart Guard Stage", design D-B7):
+     * the stability flag the graph update raised, or the periodic threshold passed with the
+     * previous step's selection not disabling it.
+     *
+     * @return whether the RESTART guard takes the step
+     */
+    default boolean restartDue() {
+        throw new UnsupportedOperationException("restartDue is implemented in wave 1 (F5, 8.1)");
+    }
+
+    /**
+     * The restart action the RESTART guard dispatches when {@link #restartDue} holds; starting it
+     * opens a new episode.
+     *
+     * @return the restart action, never {@code null}
+     */
+    default Action restartAction() {
+        throw new UnsupportedOperationException("restartAction is implemented in wave 1 (F5, 8.1)");
+    }
+
+    /**
+     * Clears a non-empty SATA buffer that a preempting owner is taking the step from, without
+     * weakening the planned edge, and records {@code dec.buf} (action-selection, P-4).
+     *
+     * @param owner the owner taking the step: {@code budget}, {@code llm}, {@code launcher} or
+     *        {@code mop}
+     */
+    default void abandonBuffer(String owner) {
+        throw new UnsupportedOperationException("abandonBuffer is implemented in wave 1 (F5, 8.2)");
+    }
+
+    /**
+     * The run's record of first MOP interactions, or {@code null} when {@code MOP} is not mounted.
+     *
+     * @return the ledger the MOP coin and target retirement read
+     */
+    default MopInteractionLedger mopLedger() {
+        throw new UnsupportedOperationException("mopLedger is implemented in wave 1 (F5, 8.3)");
+    }
 }

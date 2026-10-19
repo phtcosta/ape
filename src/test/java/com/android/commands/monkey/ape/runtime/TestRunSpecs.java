@@ -19,8 +19,9 @@ import java.util.Map;
 public final class TestRunSpecs {
 
     /**
-     * The path a MOP arm states. Its <em>presence</em> is what activates {@link Feature#MOP} — the
-     * resolver does not open the file — so a test can name one that does not exist.
+     * The artifact path a MOP arm states. Its <em>presence</em> is what activates
+     * {@link Feature#STATIC_DATA} — the resolver does not open the file — so a test can name one
+     * that does not exist.
      */
     public static final String MOP_PATH = "/data/local/tmp/static_analysis.json";
 
@@ -44,8 +45,9 @@ public final class TestRunSpecs {
     }
 
     /**
-     * Resolves and installs a MOP arm: the given pairs plus {@code ape.mopDataPath}, which the
-     * MOP-family keys depend on. Stating one of them without it is a resolution abort, not a plan.
+     * Resolves and installs a MOP arm: the given pairs plus {@code ape.staticDataPath} and
+     * {@code ape.mop=true}, which the MOP members depend on. Stating one of them without both is a
+     * resolution abort, not a plan.
      */
     public static RunSpec installMop(String... keyValues) {
         return install(withMopPath(keyValues));
@@ -57,10 +59,12 @@ public final class TestRunSpecs {
     }
 
     private static String[] withMopPath(String... keyValues) {
-        String[] withPath = new String[keyValues.length + 2];
-        withPath[0] = "ape.mopDataPath";
+        String[] withPath = new String[keyValues.length + 4];
+        withPath[0] = "ape.staticDataPath";
         withPath[1] = MOP_PATH;
-        System.arraycopy(keyValues, 0, withPath, 2, keyValues.length);
+        withPath[2] = "ape.mop";
+        withPath[3] = "true";
+        System.arraycopy(keyValues, 0, withPath, 4, keyValues.length);
         return withPath;
     }
 }

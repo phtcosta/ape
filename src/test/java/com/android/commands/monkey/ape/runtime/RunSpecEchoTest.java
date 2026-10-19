@@ -104,17 +104,17 @@ public class RunSpecEchoTest {
     /**
      * A preset plus the two keys a preset deliberately leaves out.
      *
-     * <p>{@code Presets} carries no {@code ape.mopDataPath} and no {@code ape.llmUrl}: those say
-     * where <em>this</em> deployment put its static-analysis artifact and its server, which is not
-     * part of what the arm is. Since they are also the activation keys of the MOP and LLM
-     * families, a preset naming either family does not resolve without them.
+     * <p>{@code Presets} carries no {@code ape.staticDataPath} and no {@code ape.llmUrl}: those
+     * say where <em>this</em> deployment put its static-analysis artifact and its server, which is
+     * not part of what the cell is. A preset whose groups need either does not resolve without it.
      */
     private static Map<String, String> presetPlan(String preset) {
         Map<String, String> plan = entries("ape.preset", preset);
-        if (Presets.MOP.equals(preset) || Presets.LLM_MOP.equals(preset)) {
-            plan.put("ape.mopDataPath", MOP_PATH);
+        Map<String, String> vector = Presets.resolve(preset);
+        if ("true".equals(vector.get("ape.static")) || "true".equals(vector.get("ape.mop"))) {
+            plan.put("ape.staticDataPath", MOP_PATH);
         }
-        if (Presets.LLM.equals(preset) || Presets.LLM_MOP.equals(preset)) {
+        if ("true".equals(vector.get("ape.llm"))) {
             plan.put("ape.llmUrl", LLM_URL);
         }
         return plan;
@@ -144,11 +144,11 @@ public class RunSpecEchoTest {
         // The heaviest arm of the decisive campaign: MOP substrate, the menu gateway, the LLM and
         // one non-default sampling parameter. Nothing here may need tool.py to be readable.
         RunSpec original = resolve(entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true", "ape.addons", "true",
                 "ape.mopWeightDirect", "500",
                 "ape.modelMenuEnabled", "true",
                 "ape.mopWeightOpenMenu", "250",
-                "ape.llmUrl", LLM_URL,
+                "ape.llm", "true", "ape.llmUrl", LLM_URL,
                 "ape.llmOnNewState", "true",
                 "ape.llmTemperature", "0.7"));
         JSONObject json = record(original);
@@ -164,7 +164,7 @@ public class RunSpecEchoTest {
         // A reader parses the record; it does not re-parse property text out of it. Each value
         // here differs from its jar default, which is what puts it in the record at all.
         JSONObject params = record(resolve(entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopWeightDirect", "777",
                 "ape.mopStrictPackageMatch", "true",
                 "ape.defaultEpsilon", "0.25"))).getJSONObject("params");
@@ -172,12 +172,12 @@ public class RunSpecEchoTest {
         assertEquals(777, params.getInt("ape.mopWeightDirect"));
         assertTrue(params.getBoolean("ape.mopStrictPackageMatch"));
         assertEquals(0.25d, params.getDouble("ape.defaultEpsilon"), 0.0d);
-        assertEquals(MOP_PATH, params.getString("ape.mopDataPath"));
+        assertEquals(MOP_PATH, params.getString("ape.staticDataPath"));
     }
 
     @Test
     public void defaultsAreOmittedButActiveActivationKeysAreNot() throws Exception {
-        RunSpec spec = resolve(entries("ape.mopDataPath", MOP_PATH));
+        RunSpec spec = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true"));
         JSONObject params = record(spec).getJSONObject("params");
 
         // ape.mopWeightDirect's jar default is already the campaign's 500, so a plan that states
@@ -237,7 +237,7 @@ public class RunSpecEchoTest {
      */
     @Test
     public void runStartCarriesEveryFieldOfTheRetiredLlmConfigManifest() throws Exception {
-        Map<String, String> plan = entries();
+        Map<String, String> plan = entries("ape.llm", "true");
         for (String[] field : RETIRED_LLM_MANIFEST) {
             plan.put(field[1], field[2]);
         }
@@ -271,7 +271,7 @@ public class RunSpecEchoTest {
     @Test
     public void aManifestFieldLeftAtItsDefaultStaysRecoverableFromTheJarTheRecordNames()
             throws Exception {
-        JSONObject json = record(resolve(entries("ape.llmUrl", LLM_URL)));
+        JSONObject json = record(resolve(entries("ape.llm", "true", "ape.llmUrl", LLM_URL)));
         JSONObject params = json.getJSONObject("params");
 
         assertFalse("the build stamp is what the omitted defaults are recovered from",
@@ -295,28 +295,30 @@ public class RunSpecEchoTest {
 
     @Test
     public void inertListsTheKeysAcceptedForAMechanismThePlanDoesNotHave() throws Exception {
-        // Every baseline arm pushes this key on a run with no LLM at all. It is recorded as
+        // p_L = 0 states OFF on a run with no LLM at all. It is recorded as
         // accepted-and-doing-nothing, and it is not a plan value, so it is not in params.
-        JSONObject json = record(resolve(entries("ape.llmPercentageNoSubstrate", "-1")));
+        JSONObject json = record(resolve(entries("ape.llmPercentage", "0")));
 
         JSONArray inert = json.getJSONArray("inert");
         assertEquals(1, inert.length());
-        assertEquals("ape.llmPercentageNoSubstrate", inert.getString(0));
+        assertEquals("ape.llmPercentage", inert.getString(0));
         assertFalse("an inert key parameterizes nothing, so it is not a parameter",
-                json.getJSONObject("params").has("ape.llmPercentageNoSubstrate"));
+                json.getJSONObject("params").has("ape.llmPercentage"));
         // The feature it belongs to is not in the plan — which is the whole reason it is inert.
         // (The plan is not featureless: a bare run carries every feature whose activation key
         // defaults on, which is why this asserts an absence rather than an empty list.)
-        assertFalse(names(json.getJSONArray("features")).contains(Feature.LLM_RANDOM.name()));
+        assertFalse(names(json.getJSONArray("features")).contains(Feature.LLM_COIN.name()));
         assertFalse(names(json.getJSONArray("features")).contains(Feature.LLM.name()));
     }
 
     @Test
     public void weightsTheModeDoesNotReadAreMarkedInert() throws Exception {
-        // The run-spec scenario: llm_mop with the distance mode. The mode is read from params, and
-        // the flag weights the preset vector states are listed as parameterizing nothing.
-        Map<String, String> plan = presetPlan(Presets.LLM_MOP);
-        plan.put("ape.mopScoring", "distance");
+        // The run-spec scenario: as_mop_llm, whose MOP block states the distance mode, with the flag
+        // weights stated too. The mode is read from params, and the flag weights are listed as
+        // parameterizing nothing.
+        Map<String, String> plan = presetPlan(Presets.AS_MOP_LLM);
+        plan.put("ape.mopWeightDirect", "500");
+        plan.put("ape.mopWeightTransitive", "300");
         JSONObject json = record(resolve(plan));
 
         assertEquals("distance", json.getJSONObject("params").getString("ape.mopScoring"));
@@ -331,7 +333,7 @@ public class RunSpecEchoTest {
         // flag is the jar default, so the record omits it, and the weights in force are the flag
         // weights; distance keys stated alongside are reported as inert.
         JSONObject json = record(resolve(entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopWeightD2", "450",
                 "ape.mopRetireAfter", "5")));
         JSONObject params = json.getJSONObject("params");
@@ -382,7 +384,8 @@ public class RunSpecEchoTest {
         JSONObject json = record(spec);
 
         assertEquals("RUN_START", json.getString("type"));
-        assertEquals(1, json.getInt("v"));
+        assertEquals(RunSpecEcho.FORMAT_VERSION, json.getInt("v"));
+        assertEquals(2, json.getInt("v"));
         assertEquals(RunContext.current().runId(), json.getString("run_id"));
         assertEquals(12345L, json.getLong("seed"));
         assertEquals("sata", json.getString("agent"));
@@ -417,7 +420,7 @@ public class RunSpecEchoTest {
         // A newline in it would split the record, and a quote would end it early.
         String hostile = "ape_current\"v2\\draft\nsecond line\ttabbed";
         RunSpec spec = resolve(entries(
-                "ape.llmUrl", LLM_URL,
+                "ape.llm", "true", "ape.llmUrl", LLM_URL,
                 "ape.llmPromptVariant", hostile));
 
         String written = emit(spec);
@@ -469,6 +472,33 @@ public class RunSpecEchoTest {
     // -----------------------------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------------------------
+
+    /** INV-RUN-10: the harness variant is echoed verbatim, omitted when absent, outside the digest. */
+    @Test
+    public void theVariantIsEchoedAndKeptOutOfTheDigest() throws Exception {
+        RunSpec as = resolve(entries("ape.preset", Presets.AS, "ape.staticDataPath", MOP_PATH,
+                "ape.variant", "as"));
+        RunSpec rerun = resolve(entries("ape.preset", Presets.AS, "ape.staticDataPath", MOP_PATH,
+                "ape.variant", "as_rerun"));
+        assertEquals("as", record(as).getString("variant"));
+        assertEquals("as_rerun", record(rerun).getString("variant"));
+        assertEquals(as.digest(), rerun.digest());
+        assertFalse("the variant is not a plan value",
+                record(as).getJSONObject("params").has("ape.variant"));
+
+        RunSpec none = resolve(entries("ape.preset", Presets.AS, "ape.staticDataPath", MOP_PATH));
+        assertFalse(record(none).has("variant"));
+        assertEquals(as.digest(), none.digest());
+    }
+
+    /** D-B14.20: a path with no group that reads it is inert, and the params do not name it. */
+    @Test
+    public void anUnreadArtifactPathIsInertAndNotAParameter() throws Exception {
+        JSONObject json = record(resolve(entries("ape.staticDataPath", MOP_PATH)));
+        assertFalse(json.getJSONObject("params").has("ape.staticDataPath"));
+        assertTrue(names(json.getJSONArray("inert")).contains("ape.staticDataPath"));
+        assertTrue(names(json.getJSONArray("features")).contains(Feature.STATIC_DATA.name()));
+    }
 
     /**
      * Turns a record's {@code params} object back into resolver input — the reconstruction under

@@ -33,7 +33,7 @@ public class CoordinateMapperMappingTest {
      */
     private static CoordinateMapper newMapper() {
         return new CoordinateMapper(
-                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm());
+                TestRunSpecs.spec("ape.llm", "true", "ape.llmUrl", "http://localhost:9999/v1").llm());
     }
 
     private static final int W = 1080;

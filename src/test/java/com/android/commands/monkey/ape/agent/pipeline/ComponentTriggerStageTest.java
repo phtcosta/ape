@@ -19,48 +19,28 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Random;
 
 import org.junit.Test;
 
 import com.android.commands.monkey.ape.utils.ComponentInfo;
-import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 /**
- * The coin, the guard, and the cursor.
+ * The coin, the pool guard, and the cursor.
  *
- * <p>What this stage does is dispatch, and what it must get right is <em>when</em>. The draw is the
- * delicate part: it comes from the run's seeded stream, shared with every later decision, so a coin
- * flipped on a step that should not have flipped one shifts the whole rest of the run (INV-DP-10).
- * That is asserted here by counting draws against a stream whose values the test dictates, rather
- * than by observing an outcome that a wrongly-ordered draw could still produce by chance.
+ * <p>What this stage does is dispatch, and what it must get right is <em>when</em>. The coin is
+ * {@code u_C}, drawn at step open from its own stream ({@link StepRouting#uC()}, INV-DP-13), so the
+ * tests state it on the routing; the pool is the static model's manifest components, read without
+ * any MOP data (design D-B13).
  *
  * <p>The second thing it must get right is that it never decides the step: the trigger is an effect
  * the pipeline records and passes over, and a {@code Select} here would cost the step its GUI action
  * (INV-DP-05).
  */
 public class ComponentTriggerStageTest {
-
-    /** A stream that hands out the values the test names, counting what was taken. */
-    private static class ScriptedRandom extends Random {
-
-        private static final long serialVersionUID = 1L;
-
-        private final double[] values;
-        private int draws;
-
-        ScriptedRandom(double... values) {
-            this.values = values;
-        }
-
-        @Override
-        public double nextDouble() {
-            return values[draws++];
-        }
-    }
 
     /** Records which targets were fired, in order. */
     private static class Dispatches {
@@ -72,49 +52,40 @@ public class ComponentTriggerStageTest {
         }
     }
 
-    /**
-     * MopData carrying a component list, or none. Allocated rather than parsed: the loader wants a
-     * JSON artifact, and {@code hasComponents()} reads exactly the four lists set below.
-     */
-    private static MopData censusWith(int receivers) throws Exception {
-        Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-        java.lang.reflect.Field theUnsafe = unsafeClass.getDeclaredField("theUnsafe");
-        theUnsafe.setAccessible(true);
-        MopData data = (MopData) unsafeClass.getMethod("allocateInstance", Class.class)
-                .invoke(theUnsafe.get(null), MopData.class);
+    /** A static model carrying {@code receivers} receivers and no other component. */
+    private static StaticGuiModel censusWith(int receivers) {
         List<ComponentInfo.ReceiverInfo> pool = new ArrayList<>();
         for (int i = 0; i < receivers; i++) {
             pool.add(new ComponentInfo.ReceiverInfo("com.example.app.R" + i, false,
-                    Collections.<ComponentInfo.IntentFilter>emptyList(), true,
-                    Collections.<String>emptyList(), null));
+                    Collections.<ComponentInfo.IntentFilter>emptyList(), null));
         }
-        FakeStepContext.setField(data, "receivers", pool);
-        FakeStepContext.setField(data, "services", new ArrayList<ComponentInfo.ServiceInfo>());
-        FakeStepContext.setField(data, "activities", new ArrayList<ComponentInfo.ActivityInfo>());
-        FakeStepContext.setField(data, "providers", new ArrayList<ComponentInfo.ProviderInfo>());
-        return data;
+        return new StaticGuiModel(null, null, null, null, pool, null, null, null);
     }
 
-    private static FakeStepContext stepOver(MopData data, Random random) {
+    /** A step on {@code staticModel}, the coin already drawn as {@code uC}. */
+    private static FakeStepContext stepOver(StaticGuiModel staticModel, StepRouting routing,
+            double uC) {
         FakeStepContext ctx = new FakeStepContext();
-        ctx.mopData = data;
-        ctx.random = random;
+        ctx.staticModel = staticModel;
+        routing.open(Double.NaN, Double.NaN, uC);
         return ctx;
     }
 
     @Test
     public void testStageNameIsItsCandidateName() {
         assertEquals(DecisionPipeline.Candidate.COMPONENT_TRIGGER.stageName(),
-                new ComponentTriggerStage(0.5d, () -> 1, target -> { }).name());
+                new ComponentTriggerStage(0.5d, new StepRouting(false, false, true), () -> 1,
+                        target -> { }).name());
     }
 
     @Test
     public void testAWinningCoinFiresAndTheStepGoesOn() throws Exception {
         Dispatches dispatches = new Dispatches();
+        StepRouting routing = new StepRouting(false, false, true);
         ComponentTriggerStage stage =
-                new ComponentTriggerStage(0.5d, () -> 3, dispatches::fire);
+                new ComponentTriggerStage(0.5d, routing, () -> 3, dispatches::fire);
 
-        StageResult result = stage.decide(stepOver(censusWith(3), new ScriptedRandom(0.4d)));
+        StageResult result = stage.decide(stepOver(censusWith(3), routing, 0.4d));
 
         assertEquals("the trigger acts, it does not decide (INV-DP-05)",
                 StageResult.Kind.SIDE_EFFECT, result.kind());
@@ -125,39 +96,58 @@ public class ComponentTriggerStageTest {
     @Test
     public void testALosingCoinPassesWithoutFiring() throws Exception {
         Dispatches dispatches = new Dispatches();
+        StepRouting routing = new StepRouting(false, false, true);
         ComponentTriggerStage stage =
-                new ComponentTriggerStage(0.5d, () -> 3, dispatches::fire);
+                new ComponentTriggerStage(0.5d, routing, () -> 3, dispatches::fire);
 
-        // The draw is at the rate, and the comparison is strict: 0.5 is not below 0.5.
-        StageResult result = stage.decide(stepOver(censusWith(3), new ScriptedRandom(0.5d)));
+        // The coin is at the rate, and the comparison is strict: 0.5 is not below 0.5.
+        StageResult result = stage.decide(stepOver(censusWith(3), routing, 0.5d));
 
         assertEquals(StageResult.Kind.CONTINUE, result.kind());
         assertTrue(dispatches.fired.isEmpty());
     }
 
     @Test
-    public void testAnEmptyCensusConsumesNoDraw() throws Exception {
-        ScriptedRandom random = new ScriptedRandom(0.1d);
-        ComponentTriggerStage stage = new ComponentTriggerStage(0.5d, () -> 3, target -> { });
+    public void testAnEmptyPoolPassesOnAWinningCoin() throws Exception {
+        Dispatches dispatches = new Dispatches();
+        StepRouting routing = new StepRouting(false, false, true);
+        ComponentTriggerStage stage =
+                new ComponentTriggerStage(0.5d, routing, () -> 3, dispatches::fire);
 
-        StageResult result = stage.decide(stepOver(censusWith(0), random));
+        StageResult result = stage.decide(stepOver(censusWith(0), routing, 0.1d));
 
-        // The original conjunction short-circuited before the coin, and the seeded stream is shared
-        // with every later decision: a draw taken here would move the whole rest of the run.
         assertEquals(StageResult.Kind.CONTINUE, result.kind());
-        assertEquals("the data guard runs before the coin (INV-DP-10)", 0, random.draws);
+        assertTrue(dispatches.fired.isEmpty());
+    }
+
+    @Test
+    public void testThePoolIsReadFromTheStaticModelWithoutMopData() throws Exception {
+        Dispatches dispatches = new Dispatches();
+        StepRouting routing = new StepRouting(false, false, true);
+        ComponentTriggerStage stage =
+                new ComponentTriggerStage(1.0d, routing, () -> 1, dispatches::fire);
+        FakeStepContext ctx = stepOver(censusWith(1), routing, 0d);
+        ctx.mopContext = null;
+        ctx.mopData = null;
+
+        StageResult result = stage.decide(ctx);
+
+        assertEquals("the as cell has no MopData, and the trigger still fires (design D-B13)",
+                StageResult.Kind.SIDE_EFFECT, result.kind());
+        assertEquals(Arrays.asList(0), dispatches.fired);
     }
 
     @Test
     public void testTheCursorWalksTheTargetsRoundRobinAndWraps() throws Exception {
         Dispatches dispatches = new Dispatches();
+        StepRouting routing = new StepRouting(false, false, true);
         ComponentTriggerStage stage =
-                new ComponentTriggerStage(1.0d, () -> 2, dispatches::fire);
-        FakeStepContext ctx = stepOver(censusWith(2), new ScriptedRandom(0d, 0d, 0d));
+                new ComponentTriggerStage(1.0d, routing, () -> 2, dispatches::fire);
+        StaticGuiModel data = censusWith(2);
 
-        stage.decide(ctx);
-        stage.decide(ctx);
-        stage.decide(ctx);
+        stage.decide(stepOver(data, routing, 0d));
+        stage.decide(stepOver(data, routing, 0d));
+        stage.decide(stepOver(data, routing, 0d));
 
         assertEquals("the cursor persists across firings and wraps (INV-DP-07)",
                 Arrays.asList(0, 1, 0), dispatches.fired);
@@ -166,16 +156,17 @@ public class ComponentTriggerStageTest {
     @Test
     public void testAFiringWithNoTriggerableTargetLeavesTheCursorWhereItWas() throws Exception {
         Dispatches dispatches = new Dispatches();
-        // Components are declared, but every one of them was filtered out as unreachable — so the
-        // guard passes, the coin is spent, and there is still nothing to fire.
+        // Components are declared, but every one of them was filtered out — so the guard passes,
+        // the coin is won, and there is still nothing to fire.
         final int[] targets = {0};
+        StepRouting routing = new StepRouting(false, false, true);
         ComponentTriggerStage stage =
-                new ComponentTriggerStage(1.0d, () -> targets[0], dispatches::fire);
-        FakeStepContext ctx = stepOver(censusWith(1), new ScriptedRandom(0d, 0d));
+                new ComponentTriggerStage(1.0d, routing, () -> targets[0], dispatches::fire);
+        StaticGuiModel data = censusWith(1);
 
-        StageResult empty = stage.decide(ctx);
+        StageResult empty = stage.decide(stepOver(data, routing, 0d));
         targets[0] = 2;
-        stage.decide(ctx);
+        stage.decide(stepOver(data, routing, 0d));
 
         assertEquals("a winning coin is a side effect whatever the pool yields",
                 StageResult.Kind.SIDE_EFFECT, empty.kind());

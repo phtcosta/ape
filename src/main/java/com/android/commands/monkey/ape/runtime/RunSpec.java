@@ -49,9 +49,9 @@ import java.util.TreeMap;
  * copies at the boundary — because this tree is Java 11 on Dalvik with no dependencies. Equality
  * is by value so tests can compare two plans directly.
  *
- * <p><b>Grouping of the parameter objects.</b> {@code MopParams}, {@code LlmParams} and
- * {@code TelemetryParams} are null exactly when their gating feature is absent, so a null is the
- * plan saying the mechanism does not exist. {@code ExplorationParams} is always present and holds
+ * <p><b>Grouping of the parameter objects.</b> {@code StaticParams}, {@code MopParams} and
+ * {@code LlmParams} are null exactly when their gating feature ({@code STATIC_DATA}, {@code MOP},
+ * {@code LLM}) is absent, so a null is the plan saying the mechanism does not exist. {@code ExplorationParams} is always present and holds
  * both the base keys and the keys of the active standalone features (menu action, form completion,
  * epsilon adaptation, the guards, and so on) — features that gate a behavior but not a subsystem,
  * and whose parameters have nowhere else to live.
@@ -74,6 +74,7 @@ public final class RunSpec {
     public static final String PRESET_EXPLICIT = "explicit";
 
     private final String presetName;
+    private final String variant;
     private final long seed;
     private final String runId;
     private final String corpusBasis;
@@ -81,6 +82,7 @@ public final class RunSpec {
     private final String replayLog;
     private final Set<Feature> features;
     private final ExplorationParams exploration;
+    private final StaticParams staticData;
     private final MopParams mop;
     private final LlmParams llm;
     private final TelemetryParams telemetry;
@@ -89,12 +91,13 @@ public final class RunSpec {
     private final String digest;
     private final String propertiesDigest;
 
-    private RunSpec(String presetName, long seed, String runId, String corpusBasis,
-            String agentType, String replayLog, Set<Feature> features,
-            ExplorationParams exploration, MopParams mop, LlmParams llm, TelemetryParams telemetry,
-            Map<String, String> effective, List<String> inert, String digest,
-            String propertiesDigest) {
+    private RunSpec(String presetName, String variant, long seed, String runId,
+            String corpusBasis, String agentType, String replayLog, Set<Feature> features,
+            ExplorationParams exploration, StaticParams staticData, MopParams mop, LlmParams llm,
+            TelemetryParams telemetry, Map<String, String> effective, List<String> inert,
+            String digest, String propertiesDigest) {
         this.presetName = presetName;
+        this.variant = variant;
         this.seed = seed;
         this.runId = runId;
         this.corpusBasis = corpusBasis;
@@ -102,6 +105,7 @@ public final class RunSpec {
         this.replayLog = replayLog;
         this.features = Collections.unmodifiableSet(features);
         this.exploration = exploration;
+        this.staticData = staticData;
         this.mop = mop;
         this.llm = llm;
         this.telemetry = telemetry;
@@ -185,6 +189,7 @@ public final class RunSpec {
         //    input decides the outcome: an explicit statement aborts, a jar default does not — a
         //    bare run must stay valid even though ape.activityTriggerEnabled defaults to true.
         Set<Feature> features = deriveFeatures(effective, explicit);
+        requireKeysOfMountedFeatures(effective, features);
 
         // 5. The inert rule, the substitute for the old exemption registry: a key of an inactive
         //    feature is accepted only at its neutral value. You may state OFF for a mechanism that
@@ -194,11 +199,16 @@ public final class RunSpec {
         //     selected scoring mode does not read are accepted at any value of their type, keep
         //     that value in the plan, and are reported as parameterizing nothing.
         inert = addModeInertKeys(inert, explicit, effective, features);
+        // 5c. The artifact path with neither group that reads it mounted parameterizes nothing:
+        //     nothing loads it, so it is reported as inert (design D-B14.20).
+        inert = addUnreadDataPath(inert, features);
 
         Map<String, String> planValues = planValues(effective, features, inert);
 
         ExplorationParams exploration = new ExplorationParams(
                 scope(planValues, features, ParamScope.EXPLORATION));
+        StaticParams staticData = features.contains(Feature.STATIC_DATA)
+                ? new StaticParams(scope(planValues, features, ParamScope.STATIC)) : null;
         MopParams mop = features.contains(Feature.MOP)
                 ? new MopParams(scope(planValues, features, ParamScope.MOP)) : null;
         LlmParams llm = features.contains(Feature.LLM)
@@ -210,9 +220,10 @@ public final class RunSpec {
 
         String digest = computeDigest(agentType, features, planValues);
 
-        return new RunSpec(presetName, cli.seed(), fileEntries.get(KeyOwnership.KEY_RUN_ID),
+        return new RunSpec(presetName, fileEntries.get(KeyOwnership.KEY_VARIANT), cli.seed(),
+                fileEntries.get(KeyOwnership.KEY_RUN_ID),
                 fileEntries.get(KeyOwnership.KEY_CORPUS_BASIS), agentType, cli.replayLog(),
-                features, exploration, mop, llm, telemetry, planValues, inert, digest,
+                features, exploration, staticData, mop, llm, telemetry, planValues, inert, digest,
                 propertiesDigest);
     }
 
@@ -264,17 +275,23 @@ public final class RunSpec {
             int value = (Integer) ValueType.INT.parse(key, raw);
             return value < 0 ? "0" : raw;
         }
-        if ("ape.llmPercentage".equals(key)) {
+        if ("ape.mopCoinLedgerMaxInteractions".equals(key)) {
+            int value = (Integer) ValueType.INT.parse(key, raw);
+            return value < 1 ? "1" : raw;
+        }
+        if (PROBABILITY_KEYS.contains(key)) {
+            // The three doses are probabilities: an out-of-range value is clamped, never an
+            // abort (INV-RUN-11).
             double value = (Double) ValueType.DOUBLE.parse(key, raw);
             return Double.toString(Math.max(0.0d, Math.min(1.0d, value)));
         }
-        if ("ape.llmPercentageNoSubstrate".equals(key)) {
-            double value = (Double) ValueType.DOUBLE.parse(key, raw);
-            // The -1 sentinel means "no override"; any real negative collapses to it.
-            return Double.toString(value < 0.0d ? -1.0d : Math.min(1.0d, value));
-        }
         return raw;
     }
+
+    /** The dose keys clamped to {@code [0, 1]}: {@code p_L}, {@code p_M} and the component coin. */
+    private static final Set<String> PROBABILITY_KEYS = Collections.unmodifiableSet(
+            new LinkedHashSet<>(Arrays.asList("ape.llmPercentage", "ape.mopCoinPercentage",
+                    "ape.componentPercentage")));
 
     private static Set<Feature> deriveFeatures(Map<String, String> effective,
             Map<String, String> explicit) {
@@ -307,6 +324,25 @@ public final class RunSpec {
         return active;
     }
 
+    /**
+     * A mounted feature whose run needs a key with no neutral value — {@code ape.llmUrl} for
+     * {@code LLM} — aborts when the plan does not carry it: {@code ape.llm=true} without a server
+     * is a plan error, not an LLM arm that never calls (design D-B1).
+     */
+    private static void requireKeysOfMountedFeatures(Map<String, String> effective,
+            Set<Feature> features) {
+        for (Feature feature : features) {
+            for (String key : feature.requiredKeys()) {
+                String value = effective.get(key);
+                if (value == null || value.trim().isEmpty()) {
+                    throw new RunSpecException(RunSpecException.Reason.MISSING_DEPENDENCY,
+                            feature.activationKey(),
+                            feature + " requires " + key + ", which the plan does not carry");
+                }
+            }
+        }
+    }
+
     private static List<String> applyInertRule(Map<String, String> explicit,
             Map<String, String> effective, Set<Feature> features) {
         List<String> inert = new ArrayList<>();
@@ -324,7 +360,10 @@ public final class RunSpec {
                 throw new RunSpecException(RunSpecException.Reason.MISSING_DEPENDENCY, key,
                         owner + " is not in the plan and " + key + " has no neutral value");
             }
-            if (!spec.type().sameValue(key, effective.get(key), neutral)) {
+            // An activation value its own rule reads as off (<= 0 for a POSITIVE feature) states OFF
+            // as much as the neutral value does, so it is inert too (design D-B22): no abort on it.
+            boolean statesOff = key.equals(owner.activationKey()) && owner.readsAsOff(effective.get(key));
+            if (!statesOff && !spec.type().sameValue(key, effective.get(key), neutral)) {
                 throw new RunSpecException(RunSpecException.Reason.MISSING_DEPENDENCY, key,
                         owner + " is not in the plan, so " + key + " is accepted only at its "
                                 + "neutral value " + neutral + "; you may state OFF for an absent "
@@ -364,6 +403,22 @@ public final class RunSpec {
     }
 
     /**
+     * Adds {@code ape.staticDataPath} to {@code inert} when {@code STATIC_DATA} is in the plan and
+     * neither {@code STATIC} nor {@code MOP} is: the path keeps its value in the plan and in the
+     * digest, and is left out of {@code RUN_START.params} (D-B14.20).
+     */
+    private static List<String> addUnreadDataPath(List<String> inert, Set<Feature> features) {
+        if (!features.contains(Feature.STATIC_DATA) || features.contains(Feature.STATIC)
+                || features.contains(Feature.MOP)) {
+            return inert;
+        }
+        List<String> out = new ArrayList<>(inert);
+        out.add(Feature.STATIC_DATA.activationKey());
+        Collections.sort(out);
+        return out;
+    }
+
+    /**
      * The effective values that are actually part of the plan: base keys, plus the keys of every
      * active feature. Keys of absent features are excluded — they parameterize nothing — and so
      * are the resolver's own keys, which select the plan rather than belong to it.
@@ -385,7 +440,7 @@ public final class RunSpec {
         return values;
     }
 
-    private enum ParamScope { EXPLORATION, MOP, LLM, TELEMETRY }
+    private enum ParamScope { EXPLORATION, STATIC, MOP, LLM, TELEMETRY }
 
     /**
      * The base keys that belong to the telemetry scope rather than to exploration.
@@ -412,6 +467,10 @@ public final class RunSpec {
         if (owner == Feature.LLM || owner.dependencies().contains(Feature.LLM)) {
             return ParamScope.LLM;
         }
+        if (owner == Feature.STATIC_DATA || owner == Feature.STATIC
+                || owner.dependencies().contains(Feature.STATIC)) {
+            return ParamScope.STATIC;
+        }
         return ParamScope.EXPLORATION;
     }
 
@@ -432,8 +491,9 @@ public final class RunSpec {
      *
      * <p>Three things are deliberately outside it. <b>Seed and run id</b>, so two runs of the same
      * arm share a digest — the digest identifies the arm, which is what drift auditing joins on.
-     * <b>The preset name</b>, because the same plan expressed as a preset and written out key by
-     * key must produce the same digest; the preset is how the plan was written, not what it is.
+     * <b>The preset name and the variant name</b>, because the same plan expressed as a preset and
+     * written out key by key must produce the same digest, and so must two harness variants of one
+     * cell: they say how the plan was written or launched, not what it is (INV-RUN-10).
      * And <b>the corpus basis</b>, which is provenance about the run's place in a campaign rather
      * than a parameter of its behavior.
      *
@@ -511,6 +571,11 @@ public final class RunSpec {
         return presetName;
     }
 
+    /** The harness's {@code ape.variant}, or null. Echoed, never read by a decision. */
+    public String variant() {
+        return variant;
+    }
+
     public long seed() {
         return seed;
     }
@@ -547,6 +612,11 @@ public final class RunSpec {
 
     public ExplorationParams exploration() {
         return exploration;
+    }
+
+    /** Null exactly when {@link Feature#STATIC_DATA} is absent from the plan. */
+    public StaticParams staticData() {
+        return staticData;
     }
 
     /** Null exactly when {@link Feature#MOP} is absent from the plan. */
@@ -600,6 +670,7 @@ public final class RunSpec {
         RunSpec that = (RunSpec) other;
         return seed == that.seed
                 && Objects.equals(presetName, that.presetName)
+                && Objects.equals(variant, that.variant)
                 && Objects.equals(runId, that.runId)
                 && Objects.equals(corpusBasis, that.corpusBasis)
                 && Objects.equals(agentType, that.agentType)
@@ -613,7 +684,7 @@ public final class RunSpec {
 
     @Override
     public int hashCode() {
-        return Objects.hash(presetName, seed, runId, corpusBasis, agentType, replayLog, features,
+        return Objects.hash(presetName, variant, seed, runId, corpusBasis, agentType, replayLog, features,
                 effective, inert, digest, propertiesDigest);
     }
 
@@ -668,7 +739,7 @@ public final class RunSpec {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * The shared shape of the four parameter objects: an immutable, scope-checked view of the
+     * The shared shape of the five parameter objects: an immutable, scope-checked view of the
      * effective values its owner is responsible for.
      *
      * <p>The typed lookups take a key because stage 2 migrates only the read sites it is forced to
@@ -757,11 +828,6 @@ public final class RunSpec {
             super(values);
         }
 
-        /** Type-aware input fuzzing; false when the key is absent. */
-        public boolean fuzzInputTyped() {
-            return has("ape.fuzzInputTyped") && bool("ape.fuzzInputTyped");
-        }
-
         /** The per-action coverage boost; zero when the coverage feature is absent. */
         public int coverageBoostWeight() {
             return has("ape.coverageBoostWeight") ? integer("ape.coverageBoostWeight") : 0;
@@ -770,6 +836,22 @@ public final class RunSpec {
         /** Form filling and submission; false when the form feature is absent. */
         public boolean formCompletionEnabled() {
             return has("ape.formCompletionEnabled") && bool("ape.formCompletionEnabled");
+        }
+
+        /**
+         * Whether the agent may restart the app (BASE, {@code ape.checkRestart}); read from the
+         * plan, never from {@code Config} (design D-B6, verification A10).
+         */
+        public boolean checkRestart() {
+            return bool("ape.checkRestart");
+        }
+
+        /**
+         * The per-step fuzzing probability; zero when {@code FUZZING} is absent, which is the
+         * only condition under which the key is not in the plan.
+         */
+        public double fuzzingRate() {
+            return has("ape.fuzzingRate") ? dbl("ape.fuzzingRate") : 0.0d;
         }
 
         /** The epsilon the agent starts a run at, before any dynamic adjustment. */
@@ -796,9 +878,12 @@ public final class RunSpec {
             return dbl("ape.maxEpsilon");
         }
 
-        /** Discretionary BACK/MENU re-picks allowed per (activity, type); zero or less disables the cap. */
+        /**
+         * Discretionary BACK/MENU re-picks allowed per (activity, type); zero or less disables the
+         * cap. Zero, the neutral value, when {@code BACK_MENU_CAP} is absent (design D-B6).
+         */
         public int backMenuPickCap() {
-            return integer("ape.backMenuPickCap");
+            return has("ape.backMenuPickCap") ? integer("ape.backMenuPickCap") : 0;
         }
 
         /** Below this many known activities, none of them counts as trivial. */
@@ -826,9 +911,14 @@ public final class RunSpec {
             return bool("ape.fallbackToGraphTransition");
         }
 
-        /** Steps without a new activity before the agent forces a restart. */
+        /**
+         * Steps without a new activity before the agent forces a restart. Upstream APE's
+         * {@code Integer.MAX_VALUE} — never — when {@code ACTIVITY_STABLE_RESTART} is absent
+         * (design D-B5).
+         */
         public int activityStableRestartThreshold() {
-            return integer("ape.activityStableRestartThreshold");
+            return has("ape.activityStableRestartThreshold")
+                    ? integer("ape.activityStableRestartThreshold") : Integer.MAX_VALUE;
         }
 
         /** Steps without graph growth before the agent forces a restart. */
@@ -905,15 +995,41 @@ public final class RunSpec {
             return has("ape.fuzzingActivityVisitThreshold")
                     ? integer("ape.fuzzingActivityVisitThreshold") : 0;
         }
+    }
 
-        /**
-         * Whether a tie on the lowest visit count is broken by the highest priority, which is what
-         * lets every boost reach the greedy path. False when the tiebreak feature is absent — the
-         * {@code ape_pure} arm, where ties fall back to array order as upstream APE resolves them.
-         */
-        public boolean leastVisitedPriorityTiebreak() {
-            return has("ape.leastVisitedPriorityTiebreak")
-                    && bool("ape.leastVisitedPriorityTiebreak");
+    /**
+     * Present exactly when the plan carries {@link Feature#STATIC_DATA}: the artifact path, the
+     * package check and the parameters of the STATIC members, each at its neutral value when its
+     * member is absent (design D-B14.3).
+     */
+    public static final class StaticParams extends Params {
+        private StaticParams(Map<String, String> values) {
+            super(values);
+        }
+
+        /** The device path of the static-analysis artifact. */
+        public String dataPath() {
+            return str("ape.staticDataPath");
+        }
+
+        /** Whether a package or mainActivity mismatch rejects the artifact instead of warning. */
+        public boolean strictPackageMatch() {
+            return bool("ape.mopStrictPackageMatch");
+        }
+
+        /** The unvisited-activity frontier boost; zero when {@code NAV_FRONTIER} is absent. */
+        public int frontierBoostWeight() {
+            return has("ape.frontierBoostWeight") ? integer("ape.frontierBoostWeight") : 0;
+        }
+
+        /** Type-aware input fuzzing; false when {@code TYPED_FUZZ} is absent. */
+        public boolean fuzzInputTyped() {
+            return has("ape.fuzzInputTyped") && bool("ape.fuzzInputTyped");
+        }
+
+        /** The component coin's probability; zero when {@code COMPONENT_TRIGGER} is absent. */
+        public double componentPercentage() {
+            return has("ape.componentPercentage") ? dbl("ape.componentPercentage") : 0.0d;
         }
     }
 
@@ -921,15 +1037,6 @@ public final class RunSpec {
     public static final class MopParams extends Params {
         private MopParams(Map<String, String> values) {
             super(values);
-        }
-
-        public String dataPath() {
-            return str("ape.mopDataPath");
-        }
-
-        /** Whether a package or mainActivity mismatch rejects the MOP data instead of warning. */
-        public boolean strictPackageMatch() {
-            return bool("ape.mopStrictPackageMatch");
         }
 
         /**
@@ -951,11 +1058,6 @@ public final class RunSpec {
             return has("ape.mopWeightWtg") ? integer("ape.mopWeightWtg") : 0;
         }
 
-        /** The generic unvisited-activity frontier boost; zero when that feature is absent. */
-        public int frontierBoostWeight() {
-            return has("ape.frontierBoostWeight") ? integer("ape.frontierBoostWeight") : 0;
-        }
-
         /** Zero when the gateway feature is absent. */
         public int weightOpenMenu() {
             return has("ape.mopWeightOpenMenu") ? integer("ape.mopWeightOpenMenu") : 0;
@@ -968,11 +1070,6 @@ public final class RunSpec {
          */
         public int frontierWeight() {
             return has("ape.mopFrontierWeight") ? integer("ape.mopFrontierWeight") : 0;
-        }
-
-        /** False when the launcher feature is absent. */
-        public boolean activityTriggerEnabled() {
-            return has("ape.activityTriggerEnabled") && bool("ape.activityTriggerEnabled");
         }
 
         /**
@@ -988,21 +1085,18 @@ public final class RunSpec {
             return integer("ape.activityTriggerMaxPerRun");
         }
 
-        /**
-         * The probability that a selection pass fires a component trigger. Read only when the
-         * component-trigger feature is present — and since this key being positive is what
-         * activates that feature, a plan that carries the feature always carries the key.
-         */
-        public double componentPercentage() {
-            return dbl("ape.componentPercentage");
+        /** The MOP coin's probability {@code p_M}; zero when {@code MOP_COIN} is absent. */
+        public double coinPercentage() {
+            return has("ape.mopCoinPercentage") ? dbl("ape.mopCoinPercentage") : 0.0d;
         }
 
         /**
-         * Re-picks allowed per MOP target before it stops being offered; zero or less disables the
-         * cap. Owned by {@code MOP} itself, so a plan that carries this object carries the key.
+         * The MOP coin's budget k: executions per (activity, key) while the coin stays eligible
+         * (D-B17). One, the first-interaction rule, when {@code MOP_COIN} is absent.
          */
-        public int targetPickCap() {
-            return integer("ape.mopTargetPickCap");
+        public int coinLedgerMaxInteractions() {
+            return has("ape.mopCoinLedgerMaxInteractions")
+                    ? integer("ape.mopCoinLedgerMaxInteractions") : 1;
         }
 
         /**
@@ -1058,6 +1152,21 @@ public final class RunSpec {
         /** Which prompt the builder writes; run-frozen, so it is read once at construction. */
         public String promptVariant() {
             return str("ape.llmPromptVariant");
+        }
+
+        /** The fewest actions a new state needs for an LLM call; 0 unmounts the gate (D-B8). */
+        public int gateMinActions() {
+            return integer("ape.llmGateMinActions");
+        }
+
+        /** Consecutive failures that open the circuit breaker; 0 unmounts the gate (D-B8). */
+        public int breakerFailures() {
+            return integer("ape.llmBreakerFailures");
+        }
+
+        /** How long an open breaker stays open, in milliseconds (D-B8). */
+        public long breakerOpenMs() {
+            return lng("ape.llmBreakerOpenMs");
         }
     }
 

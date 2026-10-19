@@ -67,4 +67,17 @@ public interface DecisionStage {
      */
     default void onStateTransition(StateTransition edge) {
     }
+
+    /**
+     * A step opened: advance whatever this stage counts per step, whether or not the pipeline
+     * reaches the stage on it.
+     *
+     * <p>Broadcast to every mounted stage before any stage decides (decision-pipeline, design D-B11),
+     * which is what makes the launcher's cadence global: a step an LLM or a guard took still counts.
+     * Default no-op, like {@link #onStateTransition}.
+     *
+     * @param ctx the step that opened
+     */
+    default void onStepOpen(StepContext ctx) {
+    }
 }

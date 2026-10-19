@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -38,6 +40,15 @@ import static org.junit.Assert.*;
 public class MopScorerTest {
 
     /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
+
+    /**
      * The weights the scorer is asked to apply. Deliberately NOT the jar defaults: a test that
      * passes the default and asserts the default cannot tell an injected weight from a static one
      * it forgot to remove. These values exist nowhere else, so an assertion below can only hold if
@@ -72,17 +83,28 @@ public class MopScorerTest {
                 MopScorer.containmentLookups(data, activity, node, eventType)).weight;
     }
 
+    /** The two providers a WTG score reads: the edges, and the MOP activity set. */
+    private static final class Wtg {
+        final StaticGuiModel edges;
+        final MopData mop;
+
+        Wtg(StaticGuiModel edges, MopData mop) {
+            this.edges = edges;
+            this.mop = mop;
+        }
+    }
+
     /**
-     * Build a MopData with WTG transitions and MOP activity markers.
+     * Build the WTG transitions and the MOP activity markers.
      *
      * @param sourceActivity  the source activity for transitions
      * @param transitions     list of WTG transitions from that activity
      * @param mopActivities   set of activities that have MOP-reachable methods
      */
-    private static MopData buildData(String sourceActivity,
-                                     List<MopData.WtgTransition> transitions,
+    private static Wtg buildData(String sourceActivity,
+                                     List<StaticGuiModel.WtgTransition> transitions,
                                      Set<String> mopActivities) {
-        Map<String, List<MopData.WtgTransition>> wtg = new HashMap<>();
+        Map<String, List<StaticGuiModel.WtgTransition>> wtg = new HashMap<>();
         if (sourceActivity != null && transitions != null) {
             wtg.put(sourceActivity, transitions);
         }
@@ -95,7 +117,8 @@ public class MopScorerTest {
             widgets.put("_dummy", flags);
             widgetData.put(act, widgets);
         }
-        return MopData.forTest(widgetData, mopActivities, wtg);
+        return new Wtg(new StaticGuiModel(null, null, wtg, null, null, null, null, null),
+                MopData.forTest(widgetData, mopActivities));
     }
 
     // -------------------------------------------------------------------------
@@ -108,17 +131,17 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_widgetLeadsToMopActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
 
-        MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
+        Wtg data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", data, W_WTG);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", data.edges, data.mop, W_WTG);
         assertEquals("Widget leading to MOP activity should get mopWeightWtg boost",
                 W_WTG, score);
     }
@@ -128,17 +151,17 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_widgetLeadsToNonMopActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "about",
                 "com.example.AboutActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         // AboutActivity is NOT in mopActivities
 
-        MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
+        Wtg data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "about", data, W_WTG);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "about", data.edges, data.mop, W_WTG);
         assertEquals("Widget leading to non-MOP activity should return 0", 0, score);
     }
 
@@ -147,17 +170,17 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_noMatchForWidget() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
 
-        MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
+        Wtg data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "unknown_widget", data, W_WTG);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "unknown_widget", data.edges, data.mop, W_WTG);
         assertEquals("Widget with no WTG match should return 0", 0, score);
     }
 
@@ -166,7 +189,7 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_nullData() {
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", null, W_WTG);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", null, null, W_WTG);
         assertEquals("Null MopData should return 0", 0, score);
     }
 
@@ -175,10 +198,10 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_noWtgData() {
-        // MopData with no WTG transitions
-        MopData data = MopData.forTest(null, null, null);
+        // No WTG transitions
+        Wtg data = new Wtg(StaticGuiModel.EMPTY, MopData.forTest(null, null));
 
-        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", data, W_WTG);
+        int score = MopScorer.scoreWtg("com.example.MainActivity", "settings", data.edges, data.mop, W_WTG);
         assertEquals("No WTG data should return 0", 0, score);
     }
 
@@ -187,17 +210,17 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_nullActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
 
-        MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
+        Wtg data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        int score = MopScorer.scoreWtg(null, "settings", data, W_WTG);
+        int score = MopScorer.scoreWtg(null, "settings", data.edges, data.mop, W_WTG);
         assertEquals(0, score);
     }
 
@@ -206,18 +229,18 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_nullOrEmptyShortId() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
 
-        MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
+        Wtg data = buildData("com.example.MainActivity", transitions, mopActivities);
 
-        assertEquals(0, MopScorer.scoreWtg("com.example.MainActivity", null, data, W_WTG));
-        assertEquals(0, MopScorer.scoreWtg("com.example.MainActivity", "", data, W_WTG));
+        assertEquals(0, MopScorer.scoreWtg("com.example.MainActivity", null, data.edges, data.mop, W_WTG));
+        assertEquals(0, MopScorer.scoreWtg("com.example.MainActivity", "", data.edges, data.mop, W_WTG));
     }
 
     /**
@@ -228,11 +251,11 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_menuItemToMopActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "menu_item_cipher",
                 "br.unb.cic.cryptoapp.cipher.CipherActivity"));
-        transitions.add(new MopData.WtgTransition(
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "menu_item_message_digest",
                 "br.unb.cic.cryptoapp.messagedigest.MessageDigestActivity"));
 
@@ -240,15 +263,15 @@ public class MopScorerTest {
         mopActivities.add("br.unb.cic.cryptoapp.cipher.CipherActivity");
         // MessageDigestActivity NOT in mopActivities
 
-        MopData data = buildData(
+        Wtg data = buildData(
                 "br.unb.cic.cryptoapp.MainActivity", transitions, mopActivities);
 
         assertEquals(W_WTG,
                 MopScorer.scoreWtg("br.unb.cic.cryptoapp.MainActivity",
-                        "menu_item_cipher", data, W_WTG));
+                        "menu_item_cipher", data.edges, data.mop, W_WTG));
         assertEquals(0,
                 MopScorer.scoreWtg("br.unb.cic.cryptoapp.MainActivity",
-                        "menu_item_message_digest", data, W_WTG));
+                        "menu_item_message_digest", data.edges, data.mop, W_WTG));
     }
 
     /**
@@ -256,18 +279,18 @@ public class MopScorerTest {
      */
     @Test
     public void testScoreWtg_wrongSourceActivity() {
-        List<MopData.WtgTransition> transitions = new ArrayList<>();
-        transitions.add(new MopData.WtgTransition(
+        List<StaticGuiModel.WtgTransition> transitions = new ArrayList<>();
+        transitions.add(new StaticGuiModel.WtgTransition(
                 "settings",
                 "com.example.SettingsActivity"));
 
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add("com.example.SettingsActivity");
 
-        MopData data = buildData("com.example.MainActivity", transitions, mopActivities);
+        Wtg data = buildData("com.example.MainActivity", transitions, mopActivities);
 
         // Query from a different activity — no transitions registered there
-        int score = MopScorer.scoreWtg("com.example.OtherActivity", "settings", data, W_WTG);
+        int score = MopScorer.scoreWtg("com.example.OtherActivity", "settings", data.edges, data.mop, W_WTG);
         assertEquals(0, score);
     }
 
@@ -295,7 +318,7 @@ public class MopScorerTest {
         String artifact = "{\"formatVersion\":2,\"targets\":0,\"handlers\":{},"
                 + "\"package\":\"p\",\"mainActivity\":\"p.C\","
                 + "\"optionsMenus\":[{\"activity\":\"C\",\"hasFlaggedWidget\":true}]}";
-        return MopData.load(writeTempJson(artifact), null, null, new NoopSink());
+        return StaticArtifactLoader.load(writeTempJson(artifact), null, null, new NoopSink()).mopData;
     }
 
     /** Widget b with click→MOP-direct and longClick→not (per-event-type maps). */
@@ -304,7 +327,7 @@ public class MopScorerTest {
                 + "\"package\":\"p\",\"mainActivity\":\"p.C\","
                 + "\"widgets\":{\"C\":{\"b\":{\"mop\":{\"click\":\"direct\",\"longclick\":\"none\"}}}},"
                 + "\"mopActivities\":[\"C\"]}";
-        return MopData.load(writeTempJson(artifact), null, null, new NoopSink());
+        return StaticArtifactLoader.load(writeTempJson(artifact), null, null, new NoopSink()).mopData;
     }
 
     @Test // 17.1
@@ -345,7 +368,7 @@ public class MopScorerTest {
                 + "\"package\":\"p\",\"mainActivity\":\"p.C\","
                 + "\"widgets\":{\"C\":{\"b\":{\"mop\":{\"select\":\"direct\"},"
                 + "\"dist\":{\"select\":[[4,2]]}}}},\"mopActivities\":[\"C\"]}";
-        MopData d = MopData.load(writeTempJson(artifact), null, null, new NoopSink());
+        MopData d = StaticArtifactLoader.load(writeTempJson(artifact), null, null, new NoopSink()).mopData;
         GUITreeNode node = new GUITreeNode(null);
         node.setResourceID("p:id/b");
         MopData.Lookup l = d.lookup("C", node, null);
@@ -368,7 +391,7 @@ public class MopScorerTest {
     public void testScoreReturnsZeroWhenMopDataNull() {
         assertEquals(0, MopScorer.score(null, null, null));
         assertEquals(0, MopScorer.scoreOpenMenu("a", null, W_OPEN_MENU));
-        assertEquals(0, MopScorer.scoreWtg("a", "b", null, W_WTG));
+        assertEquals(0, MopScorer.scoreWtg("a", "b", null, null, W_WTG));
         assertEquals(0, MopScorer.stateMopDensity(null, ctx(null), 0));
     }
 
@@ -400,7 +423,7 @@ public class MopScorerTest {
         widgetData.put(activity, widgets);
         Set<String> mopActivities = new HashSet<>();
         mopActivities.add(activity);
-        return MopData.forTest(widgetData, mopActivities, null);
+        return MopData.forTest(widgetData, mopActivities);
     }
 
     /**

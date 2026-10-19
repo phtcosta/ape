@@ -38,7 +38,7 @@ public class CoordinateMapperDeadPairTest {
      */
     private static CoordinateMapper newMapper() {
         return new CoordinateMapper(
-                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm());
+                TestRunSpecs.spec("ape.llm", "true", "ape.llmUrl", "http://localhost:9999/v1").llm());
     }
 
     /** Minimal {@link Name} whose only meaningful behavior is the XPath the ban keys on. */
@@ -277,7 +277,7 @@ public class CoordinateMapperDeadPairTest {
         // both — where a ban storm must leave the client's breaker exactly as it found it.
         CoordinateMapper mapper = newMapper();
         LlmClient client = new LlmClient(
-                TestRunSpecs.spec("ape.llmUrl", "http://localhost:9999/v1").llm(), new NoopSink());
+                TestRunSpecs.spec("ape.llm", "true", "ape.llmUrl", "http://localhost:9999/v1").llm(), new NoopSink());
         ModelAction help = matched("//Button[@text='Help']", ActionType.MODEL_CLICK,
                 "android.widget.Button");
         LlmCircuitBreaker breaker = client.getBreaker();

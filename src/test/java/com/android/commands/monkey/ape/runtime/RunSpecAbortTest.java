@@ -118,20 +118,20 @@ public class RunSpecAbortTest {
                 "ape.fuzzInputTyped", "false",
                 "ape.formCompletionEnabled", "false",
                 "ape.modelMenuEnabled", "false",
-                "ape.leastVisitedPriorityTiebreak", "false",
                 "ape.treeEnhancementsEnabled", "false",
                 "ape.activityBudgetEnabled", "false",
                 "ape.mopActivitySourceComponents", "false",
                 "ape.mopFrontierWeight", "0",
                 "ape.frontierBoostWeight", "0",
                 "ape.activityTriggerEnabled", "false",
-                "ape.llmPercentageNoSubstrate", "-1");
+                "ape.llmPercentage", "0");
     }
 
     /** A complete MOP arm: substrate, the four live weights, and the baseline flags stated on. */
     private static Map<String, String> mopShapedArm() {
         return entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.addons", "true", "ape.static", "true",
                 "ape.defaultGUIThrottle", "200",
                 "ape.mopWeightDirect", "500",
                 "ape.mopWeightTransitive", "300",
@@ -145,14 +145,13 @@ public class RunSpecAbortTest {
                 "ape.fuzzInputTyped", "true",
                 "ape.formCompletionEnabled", "true",
                 "ape.modelMenuEnabled", "true",
-                "ape.leastVisitedPriorityTiebreak", "true",
                 "ape.treeEnhancementsEnabled", "true",
                 "ape.activityBudgetEnabled", "true",
                 "ape.mopActivitySourceComponents", "false",
                 "ape.mopFrontierWeight", "0",
                 "ape.frontierBoostWeight", "0",
                 "ape.activityTriggerEnabled", "false",
-                "ape.llmPercentageNoSubstrate", "-1");
+                "ape.llmPercentage", "0");
     }
 
     @Test
@@ -191,7 +190,7 @@ public class RunSpecAbortTest {
 
         RunSpec mop = RunSpec.resolve(mopShapedArm(), RunSpec.CliValues.of("sata", 42L, null));
         assertTrue("the substrate the weights hang off must be active", mop.has(Feature.MOP));
-        assertEquals(MOP_PATH, mop.mop().dataPath());
+        assertEquals(MOP_PATH, mop.staticData().dataPath());
     }
 
     @Test
@@ -234,7 +233,7 @@ public class RunSpecAbortTest {
         // The run-spec scenario: a mode outside {flag, distance} aborts rather than falling back
         // to flag, which would run the E6 arm under a name nobody chose.
         RunSpecException failure = abort(entries(
-                "ape.mopDataPath", "/data/local/tmp/mop-artifact.json",
+                "ape.staticDataPath", "/data/local/tmp/mop-artifact.json", "ape.mop", "true",
                 "ape.mopScoring", "nearest"));
         assertEquals(RunSpecException.Reason.INVALID_TYPE, failure.getReason());
         assertEquals("ape.mopScoring", failure.getKey());
@@ -249,7 +248,7 @@ public class RunSpecAbortTest {
         // spelling. Each of these is a mode nobody defined.
         for (String value : new String[] {"bogus", "Flag", "DISTANCE", " distance", "flag ", ""}) {
             RunSpecException failure = abort(entries(
-                    "ape.mopDataPath", MOP_PATH, "ape.mopScoring", value));
+                    "ape.staticDataPath", MOP_PATH, "ape.mop", "true", "ape.mopScoring", value));
             assertEquals("'" + value + "' must abort",
                     RunSpecException.Reason.INVALID_TYPE, failure.getReason());
         }
@@ -268,7 +267,7 @@ public class RunSpecAbortTest {
     public void aNonIntegerDistanceKeyAborts() {
         for (String key : new String[] {"ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3",
                 "ape.mopRetireAfter", "ape.mopLauncherDmax"}) {
-            RunSpecException failure = abort(entries("ape.mopDataPath", MOP_PATH, key, "near"));
+            RunSpecException failure = abort(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true", key, "near"));
             assertEquals(key, RunSpecException.Reason.INVALID_TYPE, failure.getReason());
             assertEquals(key, failure.getKey());
         }
@@ -296,7 +295,7 @@ public class RunSpecAbortTest {
     public void theLauncherWithoutAMopSubstrateAborts() {
         RunSpecException failure = abort(entries("ape.activityTriggerEnabled", "true"));
         assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
-        assertTrue(failure.getDetail().contains("ACTIVITY_TRIGGER"));
+        assertTrue(failure.getDetail().contains("MOP_LAUNCHER"));
         assertTrue(failure.getDetail().contains("MOP"));
     }
 
@@ -305,13 +304,55 @@ public class RunSpecAbortTest {
         // Both dependencies matter, and this case isolates the one that is easy to forget: the
         // substrate is present, the boost is configured, and there is no menu action to steer.
         RunSpecException failure = abort(entries(
-                "ape.mopDataPath", MOP_PATH,
+                "ape.addons", "true", "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopWeightOpenMenu", "250",
                 "ape.modelMenuEnabled", "false"));
         assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
         assertEquals("ape.mopWeightOpenMenu", failure.getKey());
         assertTrue(failure.getDetail().contains("MENU_GATEWAY"));
         assertTrue(failure.getDetail().contains("MODEL_MENU"));
+    }
+
+    /** The three keys isolate-guidance-groups retires, each with the reason naming its successor. */
+    @Test
+    public void theKeysRetiredByTheGroupSplitAbortWithTheirReasons() {
+        String[][] retired = {
+                {"ape.mopDataPath", MOP_PATH, "ape.staticDataPath"},
+                {"ape.leastVisitedPriorityTiebreak", "true", "X1/R2"},
+                {"ape.mopTargetPickCap", "3", "ape.mopCoinLedgerMaxInteractions"},
+        };
+        for (String[] row : retired) {
+            RunSpecException failure = abort(entries(row[0], row[1]));
+            assertEquals(row[0], RunSpecException.Reason.RETIRED_KEY, failure.getReason());
+            assertEquals(row[0], failure.getKey());
+            assertTrue(failure.getDetail(), failure.getDetail().contains(row[2]));
+        }
+    }
+
+    @Test
+    public void theLlmGroupWithoutAUrlAborts() {
+        RunSpecException failure = abort(entries("ape.llm", "true"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
+        assertTrue(failure.getDetail(), failure.getDetail().contains("ape.llmUrl"));
+    }
+
+    @Test
+    public void aUrlWithoutTheLlmGroupAborts() {
+        RunSpecException failure = abort(entries("ape.llmUrl", "http://10.0.2.2:30000/v1"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
+        assertEquals("ape.llmUrl", failure.getKey());
+        assertTrue(failure.getDetail(), failure.getDetail().contains("LLM"));
+    }
+
+    @Test
+    public void anOutOfRangeDoseIsClampedAndAnUnparsableOneAborts() {
+        RunSpec spec = RunSpec.resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.mopCoinPercentage", "1.5"), RunSpec.CliValues.of("sata", 42L, null));
+        assertEquals(1.0, spec.mop().coinPercentage(), 0.0);
+        RunSpecException failure = abort(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.mopCoinPercentage", "abc"));
+        assertEquals(RunSpecException.Reason.INVALID_TYPE, failure.getReason());
+        assertEquals("ape.mopCoinPercentage", failure.getKey());
     }
 
     // -----------------------------------------------------------------------------------------
@@ -372,7 +413,8 @@ public class RunSpecAbortTest {
         // Deliberate and worth pinning: the preset states the routing gates ON, and the server
         // they route to is deployment-specific. A preset that quietly resolved to "LLM off" would
         // be the silent-degradation failure this whole change exists to end.
-        RunSpecException failure = abort(entries("ape.preset", Presets.LLM));
+        RunSpecException failure = abort(entries("ape.preset", Presets.AS_LLM,
+                "ape.staticDataPath", "/data/local/tmp/mop-artifact.json"));
         assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
     }
 

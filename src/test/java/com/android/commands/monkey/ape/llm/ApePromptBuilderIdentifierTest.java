@@ -57,7 +57,7 @@ public class ApePromptBuilderIdentifierTest {
     /** The element list as the model receives it. */
     private static String userText(List<ModelAction> actions) {
         List<SglangClient.ContentPart> parts = new ApePromptBuilder(ApePromptBuilder.VARIANT_APE_CURRENT)
-                .build(1080, 1920, null, actions, null, "data", null).get(1).getContentParts();
+                .build(1080, 1920, null, actions, "data", null).get(1).getContentParts();
         for (SglangClient.ContentPart part : parts) {
             if ("text".equals(part.getType())) return part.getText();
         }

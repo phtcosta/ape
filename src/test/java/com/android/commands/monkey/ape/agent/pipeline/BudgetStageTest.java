@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.agent.StepRng;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Random;
@@ -64,13 +66,19 @@ public class BudgetStageTest {
         }
 
         @Override
+        public com.android.commands.monkey.ape.telemetry.EventSink sink() {
+            return new com.android.commands.monkey.ape.telemetry.NoopSink();
+        }
+
+        @Override
         public boolean isNewState() {
             throw new UnsupportedOperationException("the budget gate does not care about novelty");
         }
 
         @Override
         public int actionBufferSize() {
-            throw new UnsupportedOperationException("the budget gate does not read the buffer");
+            throw new UnsupportedOperationException(
+                    "the budget's navigation owns the buffer, not the stage (D-B20)");
         }
 
         @Override
@@ -91,6 +99,16 @@ public class BudgetStageTest {
         @Override
         public MopContext mopContext() {
             throw new UnsupportedOperationException("the budget gate does not read MOP data");
+        }
+
+        @Override
+        public StaticGuiModel staticModel() {
+            throw new UnsupportedOperationException("the budget gate does not read the static model");
+        }
+
+        @Override
+        public StepRng stepRng() {
+            throw new UnsupportedOperationException("the budget gate draws nothing (INV-DP-10)");
         }
 
         @Override
@@ -166,11 +184,12 @@ public class BudgetStageTest {
 
         assertEquals(StageResult.Kind.SELECT, result.kind());
         assertSame(trivial, result.action());
-        assertEquals("Budget", result.decisionSource());
-        assertEquals("the label is the provenance stamped on the action itself (INV-DP-04)",
-                trivial.getDecisionSource().name(), result.decisionSource());
+        assertEquals("budget", result.decisionSource());
+        assertEquals("the label is the owner of the provenance stamped on the action (INV-DP-04)",
+                trivial.getDecisionSource().owner(), result.decisionSource());
         assertEquals(ModelAction.DecisionSource.Budget, trivial.getDecisionSource());
-        assertEquals(ModelAction.PickChannel.SATA_OTHER, trivial.getPickChannel());
+        assertEquals("a guard step carries its own channel (D-B14.17)",
+                ModelAction.PickChannel.BUDGET, trivial.getPickChannel());
     }
 
     @Test

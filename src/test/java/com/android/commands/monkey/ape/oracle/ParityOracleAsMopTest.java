@@ -1,0 +1,135 @@
+package com.android.commands.monkey.ape.oracle;
+
+import org.junit.Test;
+
+import java.util.List;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+
+/**
+ * The {@code as_mop} cell's baseline golden (isolate-guidance-groups 11.3): the {@code mop}
+ * scenario with ADDONS and STATIC mounted as well. The component trigger the STATIC block mounts
+ * fires on step 3 ({@code u_C < 0.03} under the scenario's seed), beside the MOP coin's pick.
+ *
+ * <h2>The two MOP mechanisms this golden pins</h2>
+ * <ol>
+ *   <li><b>The cadence launcher.</b> {@code MopLauncherStage} advances its counter at every step's
+ *       open and fires on the first step it is reached at or past {@code ape.activityTriggerStagnationStep}
+ *       (50, design D-B11). The scenario declares the counter seeded at 48 (design D2), which puts the
+ *       fire on step 1. Under the MOP block's {@code distance} mode the candidate is the census
+ *       activity nearest to an unretired target ({@code activityDist}, D20), and the screens run on
+ *       the fixture's <b>main</b> activity: the launcher skips any activity already in the graph,
+ *       so a scenario borrowing a census name would starve its own candidate.</li>
+ *   <li><b>The MOP coin.</b> At {@code p_M = 1.0} it takes the first interaction with a
+ *       MOP-weighted action (design D-B10). The scenario declares the weight (finding 6.1-a), since
+ *       nothing below the oracle's entry point assigns one; the driver writes no ledger, so the
+ *       weighted widget stays eligible on every later step.</li>
+ * </ol>
+ *
+ * <p>The launcher's record is the format's one non-{@code ModelAction} shape: an
+ * {@code EVENT_TRIGGER_ACTIVITY} whose {@code target} is a class name, with no
+ * {@code decisionSource} and no {@code pickChannel}.
+ */
+public class ParityOracleAsMopTest {
+
+    private static final long SEED = 5306L;
+
+    private static final String PRESET = "as_mop";
+    private static final String SCENARIO = "baseline";
+
+    /** The fixture's own main activity: outside the census, so it never eats a candidate. */
+    private static final String HOST_ACTIVITY = "br.unb.cic.cryptoapp.MainActivity";
+
+    /**
+     * The census activity nearest to an unretired target: under the MOP block's {@code distance}
+     * mode the launcher orders the eligible activities by {@code activityDist} (design D20).
+     */
+    private static final String EXPECTED_TRIGGER =
+            "br.unb.cic.cryptoapp.generated.CryptographyActivity";
+
+    /**
+     * Two below the cadence: the block's increment is its first statement, so step 0 lands on 49
+     * and step 1 lands on the fire. Seeding one below would fire on step 0 and cost the golden the
+     * step that shows the launcher <i>not</i> firing.
+     */
+    private static final int SEEDED_CADENCE = 48;
+
+    private static final int BOOSTED_PRIORITY = 20;
+    private static final int PLAIN_PRIORITY = 12;
+    private static final int NAV_PRIORITY = 5;
+    private static final int DECLARED_WEIGHT = 7;
+
+    private static ScenarioScript baseline() {
+        return ScenarioScript.named(SCENARIO, SEED)
+                .screens(
+                        // A genuinely fresh screen: nothing visited, nothing saturated, BACK and
+                        // MENU included. They are unsaturated too — isSaturated() is visit-based
+                        // for targetless actions — so the EARLY_STAGE priority roulette offers
+                        // them alongside the widgets. The low navigation priority is what keeps
+                        // the walk on the widgets, and it is a declared input like every other.
+                        ScenarioScript.screen("home", HOST_ACTIVITY, NAV_PRIORITY, false,
+                                ScenarioScript.widget("//*[@resource-id='h0']", BOOSTED_PRIORITY, false, 0.0F),
+                                ScenarioScript.widget("//*[@resource-id='h1']", BOOSTED_PRIORITY, false, 0.0F),
+                                ScenarioScript.widget("//*[@resource-id='h2']", BOOSTED_PRIORITY, false, 0.0F)),
+                        // Saturated everywhere, so without MOP the chain would fall to the
+                        // epsilon-greedy rung; the declared weight makes the MOP coin eligible.
+                        ScenarioScript.screen("mopish", HOST_ACTIVITY, NAV_PRIORITY, true,
+                                ScenarioScript.widget("//*[@resource-id='m_boost']",
+                                        BOOSTED_PRIORITY, false, 1.0F, DECLARED_WEIGHT),
+                                ScenarioScript.widget("//*[@resource-id='m1']", PLAIN_PRIORITY, true, 1.0F),
+                                ScenarioScript.widget("//*[@resource-id='m2']", PLAIN_PRIORITY, true, 1.0F)))
+                .transition("home", "//*[@resource-id='h0']", "mopish")
+                .transition("home", "//*[@resource-id='h1']", "mopish")
+                .transition("home", "//*[@resource-id='h2']", "mopish")
+                .stepsSinceLauncherFiring(SEEDED_CADENCE)
+                // `mopish` carries pre-visited actions, so it is not a first visit and its steps say
+                // so: `_isNewState` is the script's stand-in for what `updateStateInternal` computed
+                // before the visit mark erased it, and declaring it true on a screen whose actions
+                // are already visited would be a claim the state itself contradicts.
+                .steps(
+                        ScenarioScript.step(true, 0),
+                        ScenarioScript.step(false, 0),
+                        ScenarioScript.step(false, 1),
+                        ScenarioScript.step(false, 2))
+                .build();
+    }
+
+    @Test
+    public void ladderConfigDefaultsAreUnchanged() {
+        LadderConfigGuard.assertCellValues(OracleScaffold.Cell.AS_MOP);
+    }
+
+    @Test
+    public void baselineGoldenIsReproduced() throws Exception {
+        ScenarioScript script = baseline();
+        OracleSataAgent agent = OracleScaffold.newAgent(OracleScaffold.Cell.AS_MOP, script, null);
+
+        List<DecisionRecord> records = OracleDriver.run(agent, script);
+
+        assertEquals("one record per scripted step", script.getSteps().size(), records.size());
+
+        DecisionRecord launcher = records.get(1);
+        assertEquals("the seeded cadence puts the launcher fire on step 1",
+                "EVENT_TRIGGER_ACTIVITY", launcher.getActionType());
+        assertEquals("the launcher's target is the census candidate's class",
+                EXPECTED_TRIGGER, launcher.getTarget());
+        assertNull("a launcher return is not a ModelAction, so it carries no decision source",
+                launcher.getDecisionSource());
+        assertNull("nor a pick channel", launcher.getPickChannel());
+
+        DecisionRecord mopPick = records.get(2);
+        assertEquals("the declared weight makes the step eligible, and the MOP coin takes it",
+                "MOP", mopPick.getDecisionSource());
+        assertEquals("on the MOP coin's channel", "mop_coin", mopPick.getPickChannel());
+        assertEquals("the weighted widget", "//*[@resource-id='m_boost']", mopPick.getTarget());
+
+        for (DecisionRecord record : records) {
+            assertNull("a preset without an LLM has no llm axis at all", record.getLlm());
+        }
+
+        GoldenFile.captureOrCompare(new GoldenFile.Header(
+                PRESET, SCENARIO, SEED, OracleScaffold.MOP_FIXTURE, GoldenFile.capturedAt()),
+                records);
+    }
+}

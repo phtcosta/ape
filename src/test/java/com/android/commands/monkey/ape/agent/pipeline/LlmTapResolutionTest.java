@@ -11,7 +11,7 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * llm-coordinate-tap §5 — the guard that decides whether an LLM-routed action must be resolved
- * against the current state before dispatch ({@link LlmGate#requiresSynthesizedResolution}).
+ * against the current state before dispatch ({@link LlmAcceptance#requiresSynthesizedResolution}).
  *
  * <p>The resolution the guard gates is agent-side ({@code SataAgent.resolveSynthesizedTap}) and needs
  * a live {@code State}, GUITree and model graph, none of which the JVM suite has, so it is exercised
@@ -33,16 +33,16 @@ public class LlmTapResolutionTest {
         // The off-tree tap is the ONLY action an LLM stage must resolve before selecting it (D7).
         LlmTapAction tap = new LlmTapAction(null, 600, 900, false);
         assertTrue("MODEL_LLM_TAP must be resolved in the LLM stages",
-                LlmGate.requiresSynthesizedResolution(tap));
+                LlmAcceptance.requiresSynthesizedResolution(tap));
     }
 
     @Test
     public void matchedWidgetActionIsNotReResolved() {
         // A matched widget action returned on the same path is already resolved; re-resolving it
         // would re-pick its node. The guard must therefore skip every widget type.
-        assertFalse(LlmGate.requiresSynthesizedResolution(
+        assertFalse(LlmAcceptance.requiresSynthesizedResolution(
                 new ModelAction(null, ActionType.MODEL_CLICK)));
-        assertFalse(LlmGate.requiresSynthesizedResolution(
+        assertFalse(LlmAcceptance.requiresSynthesizedResolution(
                 new ModelAction(null, ActionType.MODEL_LONG_CLICK)));
     }
 
@@ -50,9 +50,9 @@ public class LlmTapResolutionTest {
     public void targetlessModelActionsFromStateAreNotReResolved() {
         // MODEL_BACK / MODEL_MENU are targetless too, but they ARE members of State.actions and are
         // resolved by the normal per-state pass — the stages must not touch them either.
-        assertFalse(LlmGate.requiresSynthesizedResolution(
+        assertFalse(LlmAcceptance.requiresSynthesizedResolution(
                 new ModelAction(null, ActionType.MODEL_BACK)));
-        assertFalse(LlmGate.requiresSynthesizedResolution(
+        assertFalse(LlmAcceptance.requiresSynthesizedResolution(
                 new ModelAction(null, ActionType.MODEL_MENU)));
     }
 }

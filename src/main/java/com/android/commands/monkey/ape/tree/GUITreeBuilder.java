@@ -22,7 +22,6 @@ import static com.android.commands.monkey.ape.utils.Config.excludeEmptyChild;
 import static com.android.commands.monkey.ape.utils.Config.excludeInvisibleNode;
 import static com.android.commands.monkey.ape.utils.Config.ignoreWebViewThreshold;
 import static com.android.commands.monkey.ape.utils.Config.patchGUITree;
-import static com.android.commands.monkey.ape.utils.Config.treeEnhancementsEnabled;
 
 import java.util.Comparator;
 import java.util.HashMap;
@@ -46,6 +45,8 @@ import org.w3c.dom.NodeList;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
+import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.naming.Naming;
 import com.android.commands.monkey.ape.naming.Naming.NamingResult;
 import com.android.commands.monkey.ape.naming.NamingManager;
@@ -441,7 +442,7 @@ public class GUITreeBuilder {
         // bar on non-actionable content nodes and get discarded unexplored.
         // rv-scoring-pipeline (treeEnhancementsEnabled): off -> upstream over-prune (count every
         // descendant), so the pure arm inherits upstream WebView perception (INV-ARCH-01).
-        int countNodesWithAction = treeEnhancementsEnabled
+        int countNodesWithAction = treeEnhancementsEnabled()
                 ? countActionableDescendants(node)
                 : node.getDescendantCount();
         if (countNodesWithAction > ignoreWebViewThreshold) {
@@ -451,6 +452,15 @@ public class GUITreeBuilder {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Whether the fork's three perception enhancements are on: an ADDONS member, read from the
+     * plan rather than from {@code Config} (guidance-groups INV-GRP-06). Off reproduces upstream
+     * APE's perception, which is what the base cell runs.
+     */
+    public static boolean treeEnhancementsEnabled() {
+        return RunContext.current().spec().has(Feature.TREE_ENHANCEMENTS);
     }
 
     /**

@@ -41,7 +41,7 @@ public class GoldenFileTest {
     // ---- fixtures ---------------------------------------------------------------------------
 
     private static GoldenFile.Header header(String fixture) {
-        return new GoldenFile.Header("llm_mop", "baseline", SEED, fixture, "5f62b3f");
+        return new GoldenFile.Header("as_mop_llm", "baseline", SEED, fixture, "5f62b3f");
     }
 
     /**
@@ -75,7 +75,7 @@ public class GoldenFileTest {
 
     private Path goldenWith(GoldenFile.Header header, List<DecisionRecord> records)
             throws IOException {
-        Path file = temp.getRoot().toPath().resolve("llm_mop").resolve("baseline.ndjson");
+        Path file = temp.getRoot().toPath().resolve("as_mop_llm").resolve("baseline.ndjson");
         capture(new GoldenFile(header, records), file);
         return file;
     }
@@ -103,7 +103,7 @@ public class GoldenFileTest {
 
         GoldenFile read = GoldenFile.read(file);
 
-        assertEquals("llm_mop", read.getHeader().getPreset());
+        assertEquals("as_mop_llm", read.getHeader().getPreset());
         assertEquals("baseline", read.getHeader().getScenario());
         assertEquals(SEED, read.getHeader().getSeed());
         assertEquals(FIXTURE, read.getHeader().getFixture());
@@ -155,7 +155,7 @@ public class GoldenFileTest {
         assertEquals("{\"step\":2,\"actionType\":\"MODEL_BACK\",\"decisionSource\":\"SATA\","
                         + "\"pickChannel\":\"sata_other\"}",
                 threeRecords().get(2).toJsonLine());
-        assertEquals("{\"kind\":\"header\",\"preset\":\"llm_mop\",\"scenario\":\"baseline\","
+        assertEquals("{\"kind\":\"header\",\"preset\":\"as_mop_llm\",\"scenario\":\"baseline\","
                         + "\"seed\":42,\"fixture\":\"" + FIXTURE + "\","
                         + "\"capturedAt\":\"5f62b3f\"}",
                 header(FIXTURE).toJsonLine());
@@ -167,7 +167,7 @@ public class GoldenFileTest {
         // an unescaped one would split a record in two and shift every step index after it.
         List<DecisionRecord> records = new ArrayList<>(threeRecords());
         records.add(new DecisionRecord(3, "MODEL_CLICK", "//*[@text='line\nbreak\"quoted']",
-                "MOP", "short_circuit_unvisited", "accepted"));
+                "MOP", "mop_coin", "accepted"));
         Path file = goldenWith(header(FIXTURE), records);
 
         List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
@@ -195,7 +195,7 @@ public class GoldenFileTest {
                 divergenceOf(file, new GoldenFile(header(FIXTURE), replayed));
 
         String message = divergence.getMessage();
-        assertTrue(message, message.contains("llm_mop/baseline"));
+        assertTrue(message, message.contains("as_mop_llm/baseline"));
         assertTrue(message, message.contains("step 1"));
         assertTrue(message, message.contains("field 'target'"));
         assertTrue(message, message.contains("com.example.SettingsActivity"));
@@ -276,7 +276,7 @@ public class GoldenFileTest {
         // It necessarily differs between the capture and every later run, so comparing it would
         // make every golden red the moment it was committed.
         GoldenFile.compare(file, new GoldenFile(
-                new GoldenFile.Header("llm_mop", "baseline", SEED, FIXTURE, "deadbee"),
+                new GoldenFile.Header("as_mop_llm", "baseline", SEED, FIXTURE, "deadbee"),
                 threeRecords()));
     }
 
@@ -284,7 +284,7 @@ public class GoldenFileTest {
 
     @Test
     public void missingGoldenFailsWithTheRegenerationInstructionsAndWritesNothing() throws Exception {
-        Path absent = temp.getRoot().toPath().resolve("aperv").resolve("baseline.ndjson");
+        Path absent = temp.getRoot().toPath().resolve("as").resolve("baseline.ndjson");
 
         AssertionError failure =
                 divergenceOf(absent, new GoldenFile(header(null), threeRecords()));
@@ -300,7 +300,7 @@ public class GoldenFileTest {
     @Test
     public void defaultModeWritesNothingUnderTheGoldensTree() throws Exception {
         assertFalse("the default build must not be in capture mode", GoldenFile.captureRequested());
-        Path target = GoldenFile.path("aperv", "default-mode-must-not-write-this");
+        Path target = GoldenFile.path("as", "default-mode-must-not-write-this");
 
         boolean refused = false;
         try {
@@ -337,7 +337,7 @@ public class GoldenFileTest {
         // than target/test-classes — the property that lets a capture show up in `git status` and
         // a comparison read the file the capture wrote.
         assertEquals(java.nio.file.Paths.get(
-                        "src/test/resources/goldens/llm_mop/preemption.ndjson"),
-                GoldenFile.path("llm_mop", "preemption"));
+                        "src/test/resources/goldens/as_mop_llm/preemption.ndjson"),
+                GoldenFile.path("as_mop_llm", "preemption"));
     }
 }

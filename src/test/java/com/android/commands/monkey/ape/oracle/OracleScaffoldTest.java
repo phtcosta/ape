@@ -1,6 +1,10 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.runtime.RunSpec;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.scoring.ScoringPipeline;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.Graph;
@@ -39,7 +43,7 @@ public class OracleScaffoldTest {
     private static final List<String> LLM_STAGE_NAMES = java.util.Arrays.asList(
             DecisionPipeline.Candidate.LLM_NEW_STATE.stageName(),
             DecisionPipeline.Candidate.LLM_STAGNATION.stageName(),
-            DecisionPipeline.Candidate.LLM_RANDOM.stageName());
+            DecisionPipeline.Candidate.LLM_COIN.stageName());
 
     private static ScenarioScript oneScreenScript(int widgetCount) {
         ScenarioScript.Widget[] widgets = new ScenarioScript.Widget[widgetCount];
@@ -69,7 +73,7 @@ public class OracleScaffoldTest {
         assertNotNull(state.getBackAction());
         assertNotNull(state.getMenuAction());
         // MODEL_MENU joins the selectable set only under the fork's gate (State.java:58-73).
-        int expected = Config.modelMenuEnabled ? 5 : 4;
+        int expected = RunContext.current().spec().has(Feature.MODEL_MENU) ? 5 : 4;
         assertEquals(expected, state.getActions().size());
         assertEquals("com.example.MainActivity", state.getActivity());
     }
@@ -105,7 +109,7 @@ public class OracleScaffoldTest {
     @Test
     public void registeredStateSupportsTheDriverBookkeeping() throws Exception {
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.APERV, oneScreenScript(3), null);
+                OracleScaffold.Cell.AS, oneScreenScript(3), null);
         Graph graph = agent.getGraph();
         State state = newStateOf(agent);
 
@@ -126,7 +130,7 @@ public class OracleScaffoldTest {
     @Test
     public void bothRngStreamsAreSeededFromTheDeclaredSeed() throws Exception {
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.APERV, oneScreenScript(3), null);
+                OracleScaffold.Cell.AS, oneScreenScript(3), null);
 
         // The static stream, which the EARLY_STAGE roulette draws from...
         assertEquals(new Random(SEED).nextInt(), RandomHelper.nextInt());
@@ -137,19 +141,34 @@ public class OracleScaffoldTest {
     // ---- preset injection profiles (design D2) ----------------------------------------------
 
     @Test
-    public void eachPresetWiresItsFieldCombination() throws Exception {
-        for (OracleScaffold.Preset preset : OracleScaffold.Preset.values()) {
+    public void eachCellWiresItsFieldCombination() throws Exception {
+        for (OracleScaffold.Cell preset : OracleScaffold.Cell.values()) {
             ScenarioScript script = oneScreenScript(3);
             ScriptedLlm llm = preset.hasLlm() ? new ScriptedLlm(script) : null;
             OracleSataAgent agent = OracleScaffold.newAgent(preset, script, llm);
 
             MopData mopData = agent.mopData(); // derived from the injected _mopContext
-            if (preset.hasMopData()) {
-                assertNotNull(preset + " wires MopData", mopData);
+            RunSpec spec = RunContext.current().spec();
+            assertEquals(preset + " wires MopData iff MOP is mounted", spec.has(Feature.MOP),
+                    mopData != null);
+            if (preset.hasStaticData()) {
                 assertEquals(preset + " loads the committed fixture",
-                        "br.unb.cic.cryptoapp", mopData.getPackageName());
+                        "br.unb.cic.cryptoapp", agent.staticModel().packageName());
             } else {
-                assertNull(preset + " leaves MopData null", mopData);
+                assertNull(preset + " loads no artifact", agent.staticModel());
+            }
+            // STATIC's consumers are mounted by STATIC, never by MopData (design D-B13, D-B14.20):
+            // in as/as_llm MopData is null and the frontier pass and the component trigger are
+            // still there, the trigger's pool read from the static model.
+            ScoringPipeline scoring = (ScoringPipeline) OracleScaffold.getField(agent, "scoringPipeline");
+            assertEquals(preset + " mounts NavFrontierPass iff STATIC", spec.has(Feature.STATIC),
+                    scoring.passNames().contains("NavFrontierPass"));
+            assertEquals(preset + " assembles ComponentTrigger iff STATIC", spec.has(Feature.STATIC),
+                    ((DecisionPipeline) OracleScaffold.getField(agent, "decisionPipeline"))
+                            .stageNames().contains("ComponentTrigger"));
+            if (spec.has(Feature.STATIC)) {
+                assertEquals(preset + " reads the trigger pool from the static model",
+                        3, agent.componentTargetCount());
             }
             // The LLM axis is a roster fact rather than a field: the run's units reach the ladder as
             // the three stages the plan assembled, so a preset without the axis is one whose
@@ -163,8 +182,9 @@ public class OracleScaffoldTest {
             }
 
             // Common to every profile: what the ladder dereferences unconditionally.
-            assertNotNull(preset + " wires the budget tracker",
-                    OracleScaffold.getField(agent, "_budgetTracker"));
+            assertEquals(preset + " wires the budget tracker iff ACTIVITY_BUDGET is mounted",
+                    spec.has(Feature.ACTIVITY_BUDGET),
+                    OracleScaffold.getField(agent, "_budgetTracker") != null);
             assertNotNull(preset + " wires the scoring pipeline",
                     OracleScaffold.getField(agent, "scoringPipeline"));
             assertNotNull(preset + " wires the action buffer",
@@ -179,16 +199,16 @@ public class OracleScaffoldTest {
     }
 
     @Test
-    public void presetAndScriptedLlmArgumentMustAgree() throws Exception {
+    public void cellAndScriptedLlmArgumentMustAgree() throws Exception {
         ScenarioScript script = oneScreenScript(3);
         try {
-            OracleScaffold.newAgent(OracleScaffold.Preset.APERV, script, new ScriptedLlm(script));
+            OracleScaffold.newAgent(OracleScaffold.Cell.AS, script, new ScriptedLlm(script));
             fail("a scripted LLM supplied to a non-LLM preset must fail loudly");
         } catch (IllegalArgumentException expected) {
-            assertTrue(expected.getMessage().contains("APERV"));
+            assertTrue(expected.getMessage().contains("AS"));
         }
         try {
-            OracleScaffold.newAgent(OracleScaffold.Preset.LLM, script, null);
+            OracleScaffold.newAgent(OracleScaffold.Cell.AS_LLM, script, null);
             fail("an LLM preset without a scripted LLM must fail loudly");
         } catch (IllegalArgumentException expected) {
             assertTrue(expected.getMessage().contains("LLM"));
@@ -200,7 +220,7 @@ public class OracleScaffoldTest {
     @Test
     public void theWiredAgentDrivesTheLadder() throws Exception {
         OracleSataAgent agent = OracleScaffold.newAgent(
-                OracleScaffold.Preset.APERV, oneScreenScript(3), null);
+                OracleScaffold.Cell.AS, oneScreenScript(3), null);
 
         Action selected = agent.ladder();
 

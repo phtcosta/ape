@@ -6,13 +6,13 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Random;
 
 import com.android.commands.monkey.ape.agent.SataAgent;
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
 import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -22,8 +22,8 @@ import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.utils.ActivityBudgetTracker;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
-import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 /**
  * A whole run's worth of collaborators, stated as values, for the tests that assert a property of an
@@ -100,7 +100,7 @@ final class PipelineFixture {
 
         @Override
         public ModelAction selectAction(GUITree tree, State state, List<ModelAction> actions,
-                MopContext mop, List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
+                List<ApePromptBuilder.ActionHistoryEntry> history, String mode) {
             selectCalls++;
             return answer;
         }
@@ -119,15 +119,18 @@ final class PipelineFixture {
         private final ModelAction fromTheChain;
         private final int componentTargets;
 
-        /**
-         * The stream the probabilistic hook draws from. Seeded and its own, so the coin never
-         * competes with {@link FakeStepContext#random}, which is the component trigger's.
-         */
-        private final Random agentRandom = new Random(11L);
+        /** The agent's own stream; no stage reads it, the coins come from the step's routing. */
 
         int chainCalls;
         int triggerCalls;
         int lastTriggeredTarget = -1;
+        /** Whether a restart is due; {@link #restartDue} is read once per step, as the agent's is. */
+        boolean restartDue;
+        int restartDueCalls;
+        /** The owners that abandoned the buffer, in order. */
+        final List<String> abandoned = new ArrayList<>();
+        /** The run's execution ledger, as a plan with MOP holds one at the default k = 1. */
+        final MopInteractionLedger ledger = new MopInteractionLedger(1);
 
         FakeAgent(StubLlm llm, ModelAction fromTheChain) {
             this(llm, fromTheChain, 1);
@@ -141,14 +144,14 @@ final class PipelineFixture {
 
         @Override public LlmEngine llmEngine() { return llm; }
         @Override public boolean llmBreakerAllows() { return llm.allows(); }
-        @Override public Random agentRandom() { return agentRandom; }
         @Override public ModelAction selectNewActionForTrivialActivity() { return null; }
+        @Override public ModelAction budgetNavigation() { return null; }
         @Override public ModelAction selectNewActionBackToActivity() { return null; }
         @Override public ModelAction selectNewActionEarlyStageForward() { return null; }
         @Override public ModelAction selectNewActionEarlyStageBackward() { return null; }
         @Override public ModelAction selectNewActionEpsilonGreedyRandomly() { return null; }
         @Override public void logActionSelected(Action action, SataAgent.SataEventType type) { }
-        @Override public int mopComponentTargetCount() { return componentTargets; }
+        @Override public int componentTargetCount() { return componentTargets; }
 
         @Override
         public ModelAction selectNewActionFromBuffer() {
@@ -163,9 +166,33 @@ final class PipelineFixture {
         }
 
         @Override
-        public void triggerMopComponent(int target) {
+        public void triggerComponent(int target) {
             triggerCalls++;
             lastTriggeredTarget = target;
+        }
+
+        @Override
+        public boolean restartDue() {
+            restartDueCalls++;
+            return restartDue;
+        }
+
+        @Override
+        public Action restartAction() {
+            if (!restartDue) {
+                throw new IllegalStateException("no restart is due");
+            }
+            return new ModelAction(null, ActionType.MODEL_BACK);
+        }
+
+        @Override
+        public void abandonBuffer(String owner) {
+            abandoned.add(owner);
+        }
+
+        @Override
+        public MopInteractionLedger mopLedger() {
+            return ledger;
         }
 
         @Override
@@ -197,9 +224,10 @@ final class PipelineFixture {
         "ape.graphStableRestartThreshold", "10",
         "ape.llmPercentage", "1.0"};
 
-    /** The shipped {@code llm} arm: the three LLM stages, then the chain. */
+    /** The {@code as_llm} cell: the three LLM stages, the component trigger, then the chain. */
     static RunSpec llmPlan() {
-        return preset(Presets.LLM, join(new String[] {"ape.llmUrl", LLM_URL}, LIVE_HOOK_KEYS));
+        return preset(Presets.AS_LLM, join(new String[] {"ape.llmUrl", LLM_URL,
+                "ape.staticDataPath", TestRunSpecs.MOP_PATH}, LIVE_HOOK_KEYS));
     }
 
     static String[] join(String[] first, String[] second) {
@@ -210,17 +238,14 @@ final class PipelineFixture {
     }
 
     /**
-     * The {@code llm} arm with the MOP substrate and the activity trigger on, which puts the launcher
-     * between the LLM stages and the chain.
+     * The {@code as_mop_llm} cell, which puts the launcher between the LLM stages and the chain.
      *
      * @param cadence the launcher's firing period, so a test can put the firing point where it needs
      *        it rather than counting to the jar default of fifty
      */
     static RunSpec llmWithLauncherPlan(int cadence) {
-        return preset(Presets.LLM, join(new String[] {
-                "ape.llmUrl", LLM_URL,
-                "ape.mopDataPath", TestRunSpecs.MOP_PATH,
-                "ape.activityTriggerEnabled", "true",
+        return preset(Presets.AS_MOP_LLM, join(new String[] {
+                "ape.llmUrl", LLM_URL, "ape.staticDataPath", TestRunSpecs.MOP_PATH,
                 "ape.activityTriggerStagnationStep", Integer.toString(cadence)}, LIVE_HOOK_KEYS));
     }
 
@@ -245,35 +270,21 @@ final class PipelineFixture {
         return new ModelAction(null, ActionType.MODEL_CLICK);
     }
 
+    /** MopData carrying just the MOP census the MOP stages read: the one MOP activity. */
+    static MopData census() {
+        return MopData.forTest(null, new HashSet<>(Arrays.asList(TRIGGER_TARGET)));
+    }
+
     /**
-     * MopData carrying just the census the MOP stages read: one launchable activity, and the three
-     * empty component lists {@code hasComponents()} walks before it reaches the activities.
-     *
-     * <p>Allocated rather than parsed, because the loader wants a JSON artifact and every field below
-     * is one a stage names directly.
+     * The static model beside {@link #census()}: the package, the main activity, and one
+     * launchable activity, with no receiver, service or provider.
      */
-    static MopData census() throws Exception {
-        Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-        Field theUnsafe = unsafeClass.getDeclaredField("theUnsafe");
-        theUnsafe.setAccessible(true);
-        MopData data = (MopData) unsafeClass.getMethod("allocateInstance", Class.class)
-                .invoke(theUnsafe.get(null), MopData.class);
+    static StaticGuiModel staticCensus() {
         List<ComponentInfo.ActivityInfo> activities = new ArrayList<>();
         activities.add(new ComponentInfo.ActivityInfo(TRIGGER_TARGET, false,
-                Collections.<ComponentInfo.IntentFilter>emptyList(), true,
-                Collections.<String>emptyList(), null));
-        FakeStepContext.setField(data, "activities", activities);
-        FakeStepContext.setField(data, "receivers",
-                Collections.<ComponentInfo.ReceiverInfo>emptyList());
-        FakeStepContext.setField(data, "services",
-                Collections.<ComponentInfo.ServiceInfo>emptyList());
-        FakeStepContext.setField(data, "providers",
-                Collections.<ComponentInfo.ProviderInfo>emptyList());
-        FakeStepContext.setField(data, "packageName", PACKAGE);
-        FakeStepContext.setField(data, "mainActivity", PACKAGE + ".MainActivity");
-        FakeStepContext.setField(data, "mopActivities",
-                new HashSet<>(Arrays.asList(TRIGGER_TARGET)));
-        return data;
+                Collections.<ComponentInfo.IntentFilter>emptyList(), null));
+        return new StaticGuiModel(PACKAGE, PACKAGE + ".MainActivity", null, null, null, null,
+                activities, null);
     }
 
     /** A graph with no visited activity node, so the census candidate is eligible to launch. */

@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
+import com.android.commands.monkey.ape.agent.StepRng;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Field;
@@ -19,8 +21,6 @@ import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
-import com.android.commands.monkey.ape.runtime.Feature;
-import com.android.commands.monkey.ape.runtime.Presets;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 import com.android.commands.monkey.ape.tree.GUITree;
@@ -46,13 +46,7 @@ import static org.junit.Assert.assertTrue;
  * {@link StageCollaborators} instead of the agent class: these properties belong to the assembly and
  * would otherwise only be assertable on a device.
  *
- * <p>The last group asserts the four <em>shipped</em> presets rather than plans invented for the
- * assertion, and that is the point of it: {@link DecisionPipelineTest} already covers what each
- * feature gates, so what is left to get wrong is which features a campaign arm actually states. Two
- * of those rosters are not what a reading of the stage table predicts. No shipped arm assembles the
- * launcher or the component trigger, MOP substrate or not; and both LLM arms assemble the random
- * stage neither of them mentions, because its rate is a jar default rather than a preset value.
- * Both facts are recoverable only by resolving the arms, which is what these four tests do.
+ * <p>The rosters of the six cell presets are asserted in {@link PipelineParityTest}.
  */
 public class DecisionPipelineFromSpecTest {
 
@@ -78,6 +72,11 @@ public class DecisionPipelineFromSpecTest {
 
         @Override
         public ModelAction selectNewActionForTrivialActivity() {
+            return trivial;
+        }
+
+        @Override
+        public ModelAction budgetNavigation() {
             return trivial;
         }
 
@@ -133,25 +132,36 @@ public class DecisionPipelineFromSpecTest {
         }
 
         @Override
-        public Random agentRandom() {
-            return new Random(0L);
-        }
-
-        @Override
         public void resolveSynthesizedTap(ModelAction tap) {
             throw new UnsupportedOperationException("no test here decides through an LLM stage");
         }
 
         @Override
-        public int mopComponentTargetCount() {
+        public int componentTargetCount() {
             throw new UnsupportedOperationException("no MOP stage is assembled in these plans");
         }
 
         @Override
-        public void triggerMopComponent(int target) {
+        public void triggerComponent(int target) {
             throw new UnsupportedOperationException("no MOP stage is assembled in these plans");
         }
+
+        /** Whether a restart is due; read once per step by the restart guard. */
+        private boolean restartDue;
+
+        @Override
+        public boolean restartDue() {
+            return restartDue;
+        }
+
+        @Override
+        public Action restartAction() {
+            return RESTART_ACTION;
+        }
     }
+
+    /** The start action the fake agent's restart yields. */
+    private static final ModelAction RESTART_ACTION = new ModelAction(null, ActionType.MODEL_BACK);
 
     /**
      * A context carrying the state and the tracker the budget gate reads. The discipline of what a
@@ -176,9 +186,14 @@ public class DecisionPipelineFromSpecTest {
         @Override public int timestamp() { return 1; }
         @Override public Random random() { return null; }
         @Override public MopContext mopContext() { return null; }
+        @Override public StaticGuiModel staticModel() { return null; }
+        @Override public StepRng stepRng() { return new StepRng(0L); }
         @Override public Graph graph() { return null; }
         @Override public List<ApePromptBuilder.ActionHistoryEntry> actionHistory() { return null; }
         @Override public void resetGraphStableCounter() { }
+        @Override public com.android.commands.monkey.ape.telemetry.EventSink sink() {
+            return new RecordingSink().sink;
+        }
     }
 
     private static State stateOn(String activity) throws Exception {
@@ -231,29 +246,44 @@ public class DecisionPipelineFromSpecTest {
 
     @Test
     public void aBareplanAssemblesTheBudgetGateAndTheTerminalStage() {
-        DecisionPipeline pipeline = assemble(TestRunSpecs.spec(),
+        // The budget is an ADDONS member, so the plan states the group.
+        DecisionPipeline pipeline = assemble(TestRunSpecs.spec("ape.addons", "true"),
                 new FakeCollaborators(null, action()));
 
-        assertEquals(Arrays.asList("Budget", "SataChain"), pipeline.stageNames());
+        assertEquals(Arrays.asList("Budget", "Restart", "SataChain"), pipeline.stageNames());
     }
 
     @Test
     public void aPlanWithTheBudgetOffAssemblesNoBudgetStage() {
         DecisionPipeline pipeline = assemble(
-                TestRunSpecs.spec("ape.activityBudgetEnabled", "false"),
+                TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false"),
                 new FakeCollaborators(null, action()));
 
         // Structural absence, not a stage that answers "disabled" (INV-DP-03).
-        assertEquals(Arrays.asList("SataChain"), pipeline.stageNames());
+        assertEquals(Arrays.asList("Restart", "SataChain"), pipeline.stageNames());
     }
 
     @Test
     public void assemblyEchoesTheRosterItBuilt() {
         List<DecisionPipeline> built = new java.util.ArrayList<>();
-        String echoed = echoOf(TestRunSpecs.spec(),
+        String echoed = echoOf(TestRunSpecs.spec("ape.addons", "true"),
                 new FakeCollaborators(null, action()), built);
 
-        assertTrue("got: " + echoed, echoed.contains("[APE-ARCH] stages=[Budget, SataChain]"));
+        assertTrue("got: " + echoed,
+                echoed.contains("[APE-ARCH] stages=[Budget, Restart, SataChain]"));
+    }
+
+    @Test
+    public void theRestartStageIsWiredToTheAgentsRestart() throws Exception {
+        FakeCollaborators agent = new FakeCollaborators(null, action());
+        agent.restartDue = true;
+        DecisionPipeline pipeline = assemble(TestRunSpecs.spec(), agent);
+
+        Action decided = pipeline.decide(new FakeContext(stateOn(ACTIVITY), exhausted()));
+
+        assertSame("a due restart is selected before every later stage (INV-DP-14)",
+                RESTART_ACTION, decided);
+        assertEquals(0, agent.chainCalls);
     }
 
     @Test
@@ -274,100 +304,12 @@ public class DecisionPipelineFromSpecTest {
         ModelAction trivial = action();
         FakeCollaborators agent =
                 new FakeCollaborators(trivial, action());
-        DecisionPipeline pipeline = assemble(TestRunSpecs.spec(), agent);
+        DecisionPipeline pipeline = assemble(TestRunSpecs.spec("ape.addons", "true"), agent);
 
         Action decided = pipeline.decide(new FakeContext(stateOn(ACTIVITY), exhausted()));
 
         assertSame("assembly bound the budget gate to the wrong producer", trivial, decided);
         assertEquals("the budget gate preempts the rest of the ladder (INV-DP-02)",
                 0, agent.chainCalls);
-    }
-
-    // --- The four shipped presets: feature absent = stage absent (INV-DP-03) -------------------
-
-    /**
-     * A deployment URL, stated so an LLM preset resolves at all. Only its <em>presence</em> matters
-     * — it is what activates {@link Feature#LLM} — and nothing here opens a connection, the same
-     * way {@link TestRunSpecs#MOP_PATH} names a file the resolver never reads.
-     */
-    private static final String LLM_URL = "http://10.0.2.2:30000/v1";
-
-    /**
-     * The plan a preset states, plus the deployment-specific keys it deliberately omits.
-     *
-     * <p>A preset carries no {@code ape.mopDataPath} and no {@code ape.llmUrl} because a path and a
-     * server belong to the machine rather than to the arm, and the MOP and LLM feature families
-     * depend on them: {@code ape.preset=llm} without a URL aborts instead of quietly resolving to
-     * "LLM off". So a preset can only be assembled the way a device receives it — name plus
-     * deployment keys.
-     */
-    private static RunSpec preset(String name, String... deploymentKeys) {
-        String[] entries = new String[deploymentKeys.length + 2];
-        entries[0] = "ape.preset";
-        entries[1] = name;
-        System.arraycopy(deploymentKeys, 0, entries, 2, deploymentKeys.length);
-        return TestRunSpecs.spec(entries);
-    }
-
-    /** Assembles the plan and asserts both the roster it built and the line it echoed. */
-    private static void assertAssembles(RunSpec spec, List<String> roster) {
-        List<DecisionPipeline> built = new ArrayList<>();
-        String echoed = echoOf(spec, new FakeCollaborators(null, action()), built);
-
-        assertEquals(roster, built.get(0).stageNames());
-        assertTrue("echoed: " + echoed,
-                echoed.contains("[APE-ARCH] stages=[" + String.join(", ", roster) + "]"));
-    }
-
-    @Test
-    public void theApervPresetAssemblesTheBudgetGateAndTheTerminalStage() {
-        // The baseline arm: the budget flag is the only decision-stage gate it turns on, and it
-        // turns ape.activityTriggerEnabled explicitly off.
-        assertAssembles(preset(Presets.APERV), Arrays.asList("Budget", "SataChain"));
-    }
-
-    @Test
-    public void theMopPresetAssemblesNoMopStage() {
-        // The distinction the roster makes and a feature list does not: `mop` is `aperv` plus four
-        // *scoring* weights (mopWeightDirect/Transitive/OpenMenu/Wtg), which the scoring pipeline
-        // reads and no decision stage gates on. The MOP substrate is present — the arm's whole
-        // point — and still assembles neither MopLauncher (ape.activityTriggerEnabled stays false,
-        // inherited from aperv) nor ComponentTrigger (no preset states ape.componentPercentage, so
-        // it keeps its neutral 0). Guidance in this arm travels through candidate scores, never
-        // through a stage of its own.
-        RunSpec spec = preset(Presets.MOP, "ape.mopDataPath", TestRunSpecs.MOP_PATH);
-
-        assertTrue("the mop arm's substrate must be present", spec.has(Feature.MOP));
-        assertAssembles(spec, Arrays.asList("Budget", "SataChain"));
-    }
-
-    @Test
-    public void theLlmPresetAssemblesAllThreeRoutingStages() {
-        // llmBlock() states onNewState and onStagnation and says nothing about ape.llmPercentage —
-        // and the third stage is assembled anyway, because that key's jar default is 0.02
-        // (KeyOwnership) and a positive rate is what LLM_RANDOM gates on. The "0" beside
-        // LLM_RANDOM in Feature's table is the *neutral* value a plan may state for an inactive
-        // feature, not the value an unstated key resolves to. So the llm arm really does route
-        // about one step in fifty at random, and the roster is where that becomes visible.
-        RunSpec spec = preset(Presets.LLM, "ape.llmUrl", LLM_URL);
-
-        assertTrue("the random-routing rate is what assembles the third stage",
-                spec.has(Feature.LLM_RANDOM));
-        assertAssembles(spec, Arrays.asList(
-                "Budget", "LlmNewState", "LlmStagnation", "LlmRandom", "SataChain"));
-    }
-
-    @Test
-    public void theLlmMopPresetAssemblesTheSameRosterAsLlm() {
-        // llm_mop is mop + llmBlock(), and mop's contribution is scoring weights, so the two LLM
-        // arms are structurally identical decision paths that differ only in how the SataChain's
-        // candidates are scored.
-        RunSpec spec = preset(Presets.LLM_MOP,
-                "ape.mopDataPath", TestRunSpecs.MOP_PATH,
-                "ape.llmUrl", LLM_URL);
-
-        assertTrue("the llm_mop arm's substrate must be present", spec.has(Feature.MOP));
-        assertAssembles(spec, Arrays.asList(
-                "Budget", "LlmNewState", "LlmStagnation", "LlmRandom", "SataChain"));
     }
 }

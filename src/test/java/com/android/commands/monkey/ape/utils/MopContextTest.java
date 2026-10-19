@@ -16,13 +16,13 @@ import static org.junit.Assert.*;
 public class MopContextTest {
 
     private static MopData someData() {
-        return MopData.forTest(null, null, null);
+        return MopData.forTest(null, null);
     }
 
     @Test
     public void fromSpecCarriesThePlanDefaults() {
         MopData data = someData();
-        MopContext mop = MopContext.fromSpec(data, TestRunSpecs.mopSpec().mop());
+        MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY, TestRunSpecs.mopSpec().mop());
         assertSame(data, mop.data());
         assertEquals(MopScoring.FLAG, mop.scoring());
         assertEquals(500, mop.weightDirect());
@@ -41,7 +41,7 @@ public class MopContextTest {
                 "ape.mopWeightDirect", "71", "ape.mopWeightTransitive", "53",
                 "ape.mopWeightD1", "41", "ape.mopWeightD2", "31", "ape.mopWeightD3", "23",
                 "ape.mopRetireAfter", "5", "ape.mopLauncherDmax", "4").mop();
-        MopContext mop = MopContext.fromSpec(someData(), params);
+        MopContext mop = MopContext.fromSpec(someData(), StaticGuiModel.EMPTY, params);
         assertEquals(MopScoring.DISTANCE, mop.scoring());
         assertEquals(71, mop.weightDirect());
         assertEquals(53, mop.weightTransitive());
@@ -55,8 +55,8 @@ public class MopContextTest {
 
     @Test
     public void noArtifactNoContext() {
-        assertNull(MopContext.fromSpec(null, TestRunSpecs.mopSpec().mop()));
-        assertNull(MopContext.fromSpec(null, null));
+        assertNull(MopContext.fromSpec(null, StaticGuiModel.EMPTY, TestRunSpecs.mopSpec().mop()));
+        assertNull(MopContext.fromSpec(null, StaticGuiModel.EMPTY, null));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -68,6 +68,6 @@ public class MopContextTest {
         Object unsafe = f.get(null);
         MopRetirement retirement = (MopRetirement) unsafeClass
                 .getMethod("allocateInstance", Class.class).invoke(unsafe, MopRetirement.class);
-        new MopContext(someData(), MopScoring.FLAG, 500, 300, 500, 400, 300, 3, 6, retirement);
+        new MopContext(someData(), StaticGuiModel.EMPTY, MopScoring.FLAG, 500, 300, 500, 400, 300, 3, 6, retirement);
     }
 }

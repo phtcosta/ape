@@ -18,15 +18,17 @@ package com.android.commands.monkey.ape.agent.pipeline;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
-import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.runtime.MopScoring;
+import com.android.commands.monkey.ape.telemetry.RunCounter;
 import com.android.commands.monkey.ape.utils.ComponentInfo;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.MopData;
 import com.android.commands.monkey.ape.utils.MopRetirement;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 
 /**
  * Launch the next unvisited activity of the arm's MOP census, on a fixed cadence.
@@ -42,28 +44,38 @@ import com.android.commands.monkey.ape.utils.MopRetirement;
  * contrast, is consumed only when an activity is actually launched (INV-CT-12), because a firing that
  * finds nothing has spent no budget.
  *
- * <p><b>The cadence counter advances at entry, which is a decision.</b> A step decided by an earlier
- * stage never reaches this one, so it never advances the cadence — an LLM-preempted step does not
- * bring the next launch closer (finding 3.3-1, INV-DP-08). That is preserved behaviour, and it is
- * preserved <em>by construction</em> here rather than by a comment: hard preemption means the
- * increment is simply not executed. The counter is defensible on its own terms too, since it counts
- * SATA-eligible selection passes, and a step the LLM decided is not one.
+ * <p><b>The cadence is global</b> (design D-A16, D-B11, INV-DP-08). The counter advances once per
+ * step in {@link #onStepOpen}, whichever stage then takes the step, so a step a guard or the LLM
+ * took still brings the next launch closer. The launcher is <em>due</em> once the counter is at or
+ * past the cadence with launch budget left, and it fires on the first due step the pipeline reaches
+ * it, which means no guard and no LLM took that step. A due launcher claims the step
+ * ({@code dec.own.i:"launcher"}); when it finds no eligible activity the step falls through with
+ * {@code dec.own.fb:"ineligible"}. A launch counts {@code launches} and abandons a non-empty
+ * buffer without weakening ({@code dec.buf:"launcher"}).
  *
- * <p>The block used to increment before checking whether the launcher was enabled at all, so a run
- * with no MOP data advanced a counter that could never fire, was never logged, and died with the
- * process. That counter is gone rather than relocated: this stage exists only where a launcher does
- * (INV-DP-03).
+ * <p><b>Two providers.</b> The activity list, the main activity and the package come from
+ * {@link StaticGuiModel} ({@link StepContext#staticModel()}); the MOP census and the
+ * {@code activityDist} distances from {@link MopData} ({@link StepContext#mopData()}) — the MOP
+ * group reads both (plan P-1).
  *
  * <p><b>Which eligible activity, by scoring mode</b> (component-triggering "Cadence-Based MOP
  * Activity Launch", design D20, INV-CT-15). Under {@code flag} the walk is the manifest round-robin
  * of {@link #selectTriggerCandidate}. Under {@code distance} it is {@link #selectByDistance}: a
  * rotation over the eligible activities ordered by their nearest unretired {@code activityDist}
  * target within {@code ape.mopLauncherDmax}, then manifest order. The mode and the bound are
- * injected at assembly; the artifact and the run's retirement, which the stage reads and never
+ * injected at assembly; the MOP artifact and the run's retirement, which the stage reads and never
  * writes, arrive through {@link StepContext#mopContext()} (INV-DP-12). Eligibility is the same in
  * both modes, and neither reads the launch result (INV-CT-14).
+ *
+ * <p><b>Each activity is launched at most once per run</b> (design D-B15). The walks see every
+ * activity the stage has selected as visited, so one whose launch did not open it (a cold launch
+ * that crashes without its extras) leaves the eligible set as one that opened does. The set is
+ * filled from the stage's own selection, never from the launch result.
  */
 public final class MopLauncherStage implements DecisionStage {
+
+    /** The launcher's owner value, {@code dec.src}. */
+    public static final String OWNER = "launcher";
 
     /**
      * Framework/tooling class-name prefixes that are never genuine app screens (Compose preview,
@@ -85,8 +97,10 @@ public final class MopLauncherStage implements DecisionStage {
     private final int maxPerRun;
     private final MopScoring scoring;
     private final int launcherDmax;
+    private final StepRouting routing;
+    private final Consumer<String> abandonBuffer;
 
-    /** Selection passes since the last firing point; reset there, whatever the scan found. */
+    /** Steps since the last firing point; reset there, whatever the scan found. */
     private int stepsSinceFiring;
 
     /**
@@ -101,18 +115,26 @@ public final class MopLauncherStage implements DecisionStage {
     /** Launches actually performed this run; the budget the cap bounds (INV-CT-12). */
     private int launchCount;
 
+    /** The activities this stage has selected this run, never eligible again (design D-B15). */
+    private final Set<String> launched = new HashSet<>();
+
     /**
      * @param cadence selection passes between firings
      * @param maxPerRun per-run launch budget; zero means unlimited
      * @param scoring {@code ape.mopScoring}: which eligible activity is chosen (design D20)
      * @param launcherDmax {@code ape.mopLauncherDmax}: the largest distance the {@code distance}
      *                     order counts; inert under {@code flag}
+     * @param routing the pipeline's per-step routing record, where a due launcher claims the step
+     * @param abandonBuffer the agent's buffer abandonment without weakening
      */
-    public MopLauncherStage(int cadence, int maxPerRun, MopScoring scoring, int launcherDmax) {
+    public MopLauncherStage(int cadence, int maxPerRun, MopScoring scoring, int launcherDmax,
+            StepRouting routing, Consumer<String> abandonBuffer) {
         this.cadence = cadence;
         this.maxPerRun = maxPerRun;
         this.scoring = scoring;
         this.launcherDmax = launcherDmax;
+        this.routing = routing;
+        this.abandonBuffer = abandonBuffer;
         this.roundRobinIndex = scoring == MopScoring.DISTANCE ? NO_SELECTION : 0;
     }
 
@@ -121,60 +143,80 @@ public final class MopLauncherStage implements DecisionStage {
         return DecisionPipeline.Candidate.MOP_LAUNCHER.stageName();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Advances the cadence counter, once per step, whether or not the pipeline reaches this
+     * stage (INV-DP-08).
+     */
+    @Override
+    public void onStepOpen(StepContext ctx) {
+        stepsSinceFiring++;
+    }
+
     @Override
     public StageResult decide(StepContext ctx) {
-        stepsSinceFiring++;
         if (!shouldFire(stepsSinceFiring, cadence, launchCount, maxPerRun)) {
             return StageResult.continueChain();
         }
         stepsSinceFiring = 0;
+        routing.claim(OWNER);
         Set<String> visited = new HashSet<>();
         for (ActivityNode an : ctx.graph().getActivityNodes()) {
             visited.add(an.activity);
         }
+        visited.addAll(launched); // launched once, never again (design D-B15)
+        StaticGuiModel model = ctx.staticModel();
         MopData data = ctx.mopData();
+        List<ComponentInfo.ActivityInfo> activities = model.activities();
         ComponentInfo candidate;
         if (scoring == MopScoring.DISTANCE) {
-            long position = selectByDistance(data.getActivities(), visited,
-                    data.getMainActivity(), data.getMopActivities(), data,
-                    ctx.mopContext().retirement(), launcherDmax, roundRobinIndex);
+            long position = selectByDistance(activities, visited, model.mainActivity(),
+                    data.getMopActivities(), data, ctx.mopContext().retirement(), launcherDmax,
+                    roundRobinIndex);
             if (position == NO_SELECTION) {
                 candidate = null;
             } else {
                 roundRobinIndex = position; // the last selection, whatever the launch result
-                candidate = data.getActivities().get(manifestIndex(position));
+                candidate = activities.get(manifestIndex(position));
             }
         } else {
-            candidate = selectTriggerCandidate(data.getActivities(), visited,
-                    data.getMainActivity(), (int) roundRobinIndex, data.getMopActivities());
+            candidate = selectTriggerCandidate(activities, visited, model.mainActivity(),
+                    (int) roundRobinIndex, data.getMopActivities());
             roundRobinIndex++;
         }
         if (candidate == null) {
+            routing.fallback(OWNER, StepRouting.FALLBACK_INELIGIBLE);
             return StageResult.continueChain();
         }
+        launched.add(candidate.className);
         launchCount++; // budget consumed only on an actual launch (INV-CT-12)
+        ctx.sink().count(RunCounter.LAUNCHES);
         Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);
-        // Package captured from MopData (never from the class name — INV-CT-04).
-        ActivityTriggerAction trigger = new ActivityTriggerAction(ctx.mopData().getPackageName(),
+        // Package captured from the static model (never from the class name — INV-CT-04).
+        ActivityTriggerAction trigger = new ActivityTriggerAction(model.packageName(),
                 candidate.className, candidate.deepLinkUri);
-        return StageResult.select(trigger, ModelAction.DecisionSource.Component.name());
+        if (ctx.actionBufferSize() > 0) {
+            abandonBuffer.accept(OWNER);
+        }
+        return StageResult.select(trigger, OWNER);
     }
 
     /**
-     * The cadence gate (pure, INV-CT-05/12).
+     * The cadence gate (pure, INV-CT-05/12): due at or past the cadence, with budget left.
      *
-     * <p>Equality against the cadence rather than {@code >=}: the counter is reset to zero at every
-     * firing point, so while firing is active it never overshoots. The budget clause reads
-     * {@code maxPerRun == 0} as unlimited.
+     * <p>{@code >=} rather than equality: the counter advances on every step, and a due step that
+     * an earlier stage takes leaves it past the cadence until the next step that reaches this stage
+     * (design D-B11). The budget clause reads {@code maxPerRun == 0} as unlimited.
      *
-     * @param stepsSinceFiring passes since the last firing point, already incremented for this step
+     * @param stepsSinceFiring steps since the last firing point, already advanced for this step
      * @param cadence passes between firings
      * @param launchesSoFar launches performed this run
      * @param maxPerRun per-run budget, zero for unlimited
      * @return whether this pass is a firing point with budget left
      */
     public static boolean shouldFire(int stepsSinceFiring, int cadence, int launchesSoFar, int maxPerRun) {
-        return stepsSinceFiring == cadence && (maxPerRun == 0 || launchesSoFar < maxPerRun);
+        return stepsSinceFiring >= cadence && (maxPerRun == 0 || launchesSoFar < maxPerRun);
     }
 
     /**
@@ -192,7 +234,7 @@ public final class MopLauncherStage implements DecisionStage {
      * (INV-CT-10). There is no non-census fallback: a null/empty
      * census, or no eligible census member, yields null. The census is the reachability-augmented
      * {@code MopData.activityHasMop} truth (INV-MOP-27), NOT the component-level
-     * {@code ComponentInfo.reachesTarget} field, which false-negatives lambda-triggered activities.
+     * {@code MopData.reachesMop} fact, which false-negatives lambda-triggered activities.
      * The caller owns the index increment.
      *
      * @param activities the arm's declared activities

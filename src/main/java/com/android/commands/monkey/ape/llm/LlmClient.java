@@ -20,7 +20,8 @@ import java.util.List;
  * would spend the probe the first ask already granted. The emission check therefore uses the
  * side-effect-free {@code isOpen()}.
  *
- * <p><b>Every parameter arrives from the plan.</b> Sampling values, the timeout and the wire
+ * <p><b>Every parameter arrives from the plan.</b> Sampling values, the timeout, the breaker's
+ * thresholds ({@code ape.llmBreakerFailures}, {@code ape.llmBreakerOpenMs}) and the wire
  * schemas are fixed at construction from {@link RunSpec.LlmParams}; nothing here reads static
  * configuration during the run. What the run was asked for is stated once by the {@code RUN_START}
  * plan echo, which is where a reader finds the values these fields hold.
@@ -54,7 +55,7 @@ public final class LlmClient {
         String promptVariant = llm.str("ape.llmPromptVariant");
         this.toolsWithTypeText = buildToolsSchema(true, promptVariant);
         this.toolsWithoutTypeText = buildToolsSchema(false, promptVariant);
-        this.breaker = new LlmCircuitBreaker();
+        this.breaker = new LlmCircuitBreaker(llm.breakerFailures(), llm.breakerOpenMs());
         this.sink = sink;
     }
 

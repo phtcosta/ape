@@ -1,0 +1,5 @@
+{"kind":"header","preset":"as_mop","scenario":"baseline","seed":5306,"fixture":"cryptoapp.apk.mop.json","capturedAt":"f588eb6194e6acc904fc7dff8dcc4d3c84a35ea9"}
+{"step":0,"actionType":"MODEL_CLICK","target":"//*[@resource-id='h2']","decisionSource":"SATA","pickChannel":"roulette_early"}
+{"step":1,"actionType":"EVENT_TRIGGER_ACTIVITY","target":"br.unb.cic.cryptoapp.generated.CryptographyActivity"}
+{"step":2,"actionType":"MODEL_CLICK","target":"//*[@resource-id='m_boost']","decisionSource":"MOP","pickChannel":"mop_coin"}
+{"step":3,"actionType":"MODEL_CLICK","target":"//*[@resource-id='m_boost']","decisionSource":"MOP","pickChannel":"mop_coin","trig":"provider:androidx.startup.InitializationProvider"}

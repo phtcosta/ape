@@ -102,8 +102,8 @@ public class MopScorer {
 
     /**
      * {@link #weigh(MopContext, State, ModelAction)} for an action of {@code activity}: the state
-     * contributes only its activity. For the MOP shortcut's ranking, which knows the activity and
-     * not the state (design D21).
+     * contributes only its activity. For the MOP coin's ranking, which knows the activity and
+     * not the state (design D-B10).
      *
      * @param mop the run's MOP context; null (no artifact) weighs 0
      */
@@ -293,7 +293,7 @@ public class MopScorer {
 
     /**
      * {@link MopData#lookup} of {@code eventType} on every node of {@link #containmentNodes}, in
-     * that order: the containment lookups the scoring pass, the shortcut, the marker and the
+     * that order: the containment lookups the scoring pass, the MOP coin, the marker and the
      * retirement trigger choose among. Each node is looked up with its own stamp and its own id.
      */
     public static List<MopData.Lookup> containmentLookups(MopData data, String activity,
@@ -323,20 +323,23 @@ public class MopScorer {
 
     /**
      * WTG-based boost: applied when the widget matches a WTG transition leading to a
-     * MOP-reachable activity (INV-WTG-02, INV-MOP-06).
+     * MOP-reachable activity (INV-WTG-02, INV-MOP-06). The edges are the static model's, the MOP
+     * test is {@code data}'s (plan P-1).
      *
-     * @param data may be null (returns 0)
+     * @param staticModel the WTG view; may be null (returns 0)
+     * @param data the MOP activity set; may be null (returns 0)
      * @param weightWtg boost for a transition into a MOP-reachable activity; 0 disables the term
      */
-    public static int scoreWtg(String activity, String shortId, MopData data, int weightWtg) {
-        if (data == null || !data.hasWtgData() || weightWtg == 0) {
+    public static int scoreWtg(String activity, String shortId, StaticGuiModel staticModel,
+            MopData data, int weightWtg) {
+        if (staticModel == null || data == null || !staticModel.hasWtgData() || weightWtg == 0) {
             return 0;
         }
         if (activity == null || shortId == null || shortId.isEmpty()) {
             return 0;
         }
-        List<MopData.WtgTransition> transitions = data.getWtgTransitions(activity);
-        for (MopData.WtgTransition t : transitions) {
+        List<StaticGuiModel.WtgTransition> transitions = staticModel.wtgTransitions(activity);
+        for (StaticGuiModel.WtgTransition t : transitions) {
             if (shortId.equals(t.widgetName) && data.activityHasMop(t.targetActivity)) {
                 return weightWtg;
             }

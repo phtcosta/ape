@@ -1,5 +1,7 @@
 package com.android.commands.monkey.ape.utils;
 
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.agent.scoring.MopWidgetPass;
 import com.android.commands.monkey.ape.agent.scoring.ScoringContext;
 import com.android.commands.monkey.ape.model.ActionType;
@@ -33,6 +35,15 @@ import static org.junit.Assert.*;
  */
 public class MopScorerDistanceTest {
 
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
+
     private static final String ACT = "com.x.MainActivity";
 
     // -------------------------------------------------------------------------
@@ -51,7 +62,7 @@ public class MopScorerDistanceTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(json);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
@@ -65,8 +76,7 @@ public class MopScorerDistanceTest {
     private static MopData cryptoapp() {
         java.net.URL url = MopScorerDistanceTest.class.getResource("/cryptoapp.apk.mop.json");
         assertNotNull("fixture not on classpath", url);
-        MopData data = MopData.load(new File(url.getFile()).getAbsolutePath(), null, null,
-                new NoopSink());
+        MopData data = StaticArtifactLoader.load(new File(url.getFile()).getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
@@ -121,7 +131,7 @@ public class MopScorerDistanceTest {
     }
 
     private static MopContext distance(MopData data, MopRetirement retirement) {
-        return new MopContext(data, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 3, 6,
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 3, 6,
                 retirement);
     }
 
@@ -129,11 +139,11 @@ public class MopScorerDistanceTest {
     private static void pass(MopContext mop, String activity, ModelAction... actions)
             throws Exception {
         ScoringContext ctx = new ScoringContext() {
+            @Override public StaticGuiModel getStaticModel() { return mop.staticModel(); }
             @Override public MopContext getMopContext() { return mop; }
             @Override public UICoverageTracker getCoverageTracker() { return new UICoverageTracker(); }
             @Override public Graph getGraph() { return null; }
             @Override public int getTimestamp() { return 1; }
-            @Override public boolean menuPickEligible(String a) { return true; }
         };
         for (ModelAction a : actions) {
             a.resetBoosts();
@@ -173,7 +183,7 @@ public class MopScorerDistanceTest {
 
     @Test
     public void theLevelMappingIsTheContextsWeights() throws Exception {
-        MopContext mop = new MopContext(artifact(""), MopScoring.DISTANCE, 500, 300, 41, 31, 23,
+        MopContext mop = new MopContext(artifact(""), StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 41, 31, 23,
                 3, 6, null);
         assertEquals(41, MopScorer.distanceWeight(mop, 0));
         assertEquals(41, MopScorer.distanceWeight(mop, 1));
@@ -305,7 +315,7 @@ public class MopScorerDistanceTest {
         assertArrayEquals(new int[] {0, 0}, MopScorer.splitTies(mop, new int[] {0, 0}));
         assertArrayEquals(new int[0], MopScorer.splitTies(mop, new int[0]));
         // A share above the floor: W = 900, next 100, n = 2 -> 450.
-        MopContext wide = new MopContext(data, MopScoring.DISTANCE, 500, 300, 900, 100, 50, 3, 6,
+        MopContext wide = new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 900, 100, 50, 3, 6,
                 null);
         assertArrayEquals(new int[] {450, 450, 50},
                 MopScorer.splitTies(wide, new int[] {900, 900, 50}));

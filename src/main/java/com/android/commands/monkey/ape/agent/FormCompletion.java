@@ -75,25 +75,15 @@ public final class FormCompletion {
     }
 
     /**
-     * The single submit candidate (INV-FORM-04), or null. The MOP-boosted target (highest
-     * {@code mopBoost > 0}) wins when present (INV-FORM-05) — it is the submit handler the run
-     * already steers toward. Otherwise a minimal heuristic: a lone enabled {@code Button} click,
-     * else a click whose visible text matches a submit word. Pure (no mutation); must run after
-     * the MOP pass so {@code mopBoost} is populated.
+     * The single submit candidate (INV-FORM-04), or null, by the minimal heuristic only
+     * (INV-FORM-05, design D-B14.10): a lone enabled {@code Button} click, else a click whose
+     * visible text matches a submit word. It reads no scorer's field — form completion is an
+     * ADDONS member, and reading a MOP scorer's would couple it to MOP — so the candidate is the
+     * same with and without {@code MOP}. Pure (no mutation).
      */
     public static ModelAction selectSubmitCandidate(State state, int timestamp) {
         if (state == null) {
             return null;
-        }
-        ModelAction mopBest = null;
-        for (ModelAction action : state.getActions()) {
-            if (action.getMopBoost() > 0
-                    && (mopBest == null || action.getMopBoost() > mopBest.getMopBoost())) {
-                mopBest = action;
-            }
-        }
-        if (mopBest != null) {
-            return mopBest;
         }
         ModelAction loneButton = null;
         int buttonCount = 0;

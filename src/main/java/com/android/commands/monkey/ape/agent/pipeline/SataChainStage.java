@@ -47,10 +47,9 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * once (design D12). The de-duplication is exactly that — no rung's predicate, log line, RNG draw or
  * provenance stamp differs from what it did inline.
  *
- * <p><b>The stamp is read after it is written.</b> {@code logActionSelected} attributes an action to
- * {@code SATA} unless the rung is one of the two that consume priority and stamp their own source at
- * the pick site, so the label this stage mirrors into its {@link StageResult} must be read after that
- * call, never before (INV-DP-04's equality clause).
+ * <p><b>The owner is the stage's, not the rung's.</b> Whatever rung answers, the step is owned by
+ * {@code sata} (design D-B7): {@code logActionSelected} logs and counts the rung and stamps the
+ * action, and the label this stage puts in its {@link StageResult} is {@link #OWNER}.
  */
 public final class SataChainStage implements DecisionStage {
 
@@ -65,6 +64,9 @@ public final class SataChainStage implements DecisionStage {
             this.event = event;
         }
     }
+
+    /** The chain's owner value, {@code dec.src}: every step SATA takes is {@code sata}. */
+    public static final String OWNER = "sata";
 
     private final List<Rung> rungs;
     private final BiConsumer<Action, SataEventType> logActionSelected;
@@ -125,7 +127,7 @@ public final class SataChainStage implements DecisionStage {
             ModelAction resolved = rung.strategy.get();
             if (resolved != null) {
                 logActionSelected.accept(resolved, rung.event);
-                return StageResult.select(resolved, resolved.getDecisionSource().name());
+                return StageResult.select(resolved, OWNER);
             }
         }
         throw new BadStateException("No available action on the current state");

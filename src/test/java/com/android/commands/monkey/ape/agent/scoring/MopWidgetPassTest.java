@@ -1,13 +1,21 @@
 package com.android.commands.monkey.ape.agent.scoring;
 
+import com.android.commands.monkey.ape.llm.PromptFixtures;
+import com.android.commands.monkey.ape.runtime.MopScoring;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import org.junit.Before;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.naming.Name;
+import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
+import com.android.commands.monkey.ape.utils.MopContext;
 import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.utils.TestMopContexts;
 
 import org.junit.Test;
@@ -16,6 +24,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 
 import static org.junit.Assert.*;
 
@@ -25,6 +34,15 @@ import static org.junit.Assert.*;
  * stamped relative reaches the action as it did through a flagged id.
  */
 public class MopWidgetPassTest {
+
+    /**
+     * {@code MopData.load} reads the MOP activity source from the plan (guidance-groups
+     * INV-GRP-06), so every case runs under one: the jar defaults, whose source is the widgets.
+     */
+    @Before
+    public void installThePlan() {
+        TestRunSpecs.install();
+    }
 
     private static final String ACT = "com.x.MainActivity";
 
@@ -39,7 +57,7 @@ public class MopWidgetPassTest {
         try (FileWriter w = new FileWriter(f)) {
             w.write(json);
         }
-        MopData data = MopData.load(f.getAbsolutePath(), null, null, new NoopSink());
+        MopData data = StaticArtifactLoader.load(f.getAbsolutePath(), null, null, new NoopSink()).mopData;
         assertNotNull(data);
         return data;
     }
@@ -61,7 +79,18 @@ public class MopWidgetPassTest {
     }
 
     private static ModelAction resolvedClick(GUITreeNode node) throws Exception {
-        ModelAction a = new ModelAction(null, ActionType.MODEL_CLICK);
+        return resolvedClick(new ModelAction(null, ActionType.MODEL_CLICK), node);
+    }
+
+    /** A resolved click on widget {@code shortId} whose target names its own ledger key. */
+    private static ModelAction resolvedClick(String shortId) throws Exception {
+        GUITreeNode node = new GUITreeNode(null);
+        node.setResourceID("com.x:id/" + shortId);
+        return resolvedClick(new ModelAction(null, new PromptFixtures.TestName("//" + shortId),
+                ActionType.MODEL_CLICK), node);
+    }
+
+    private static ModelAction resolvedClick(ModelAction a, GUITreeNode node) throws Exception {
         a.setValid(true);
         set(a, ModelAction.class, "resolvedNode", node);
         Field ts = ModelAction.class.getDeclaredField("resovledTimestamp");
@@ -109,6 +138,55 @@ public class MopWidgetPassTest {
         assertEquals(10 + 577, viaParent.getPriority());
         assertEquals(0, unflagged.getMopBoost());
         assertEquals(10, unflagged.getPriority());
+    }
+
+    /** An {@link EventSink} that keeps the last {@code mopExposure} pair in {@code into}. */
+    private static EventSink exposureSink(int[] into) {
+        return (EventSink) Proxy.newProxyInstance(EventSink.class.getClassLoader(),
+                new Class<?>[] {EventSink.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("mopExposure")) {
+                        into[0] = (Integer) args[0];
+                        into[1] = (Integer) args[1];
+                    }
+                    return null;
+                });
+    }
+
+    private static MopContext distance(MopData data) {
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 500, 400,
+                300, 3, 6, null);
+    }
+
+    /** Two widgets {@code x} and {@code y}, both at {@code d = 1} of a transitive target. */
+    private static MopData twoAtD1() throws Exception {
+        return artifact("\"x\":{\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[0,1]]}},"
+                + "\"y\":{\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[1,1]]}}", "");
+    }
+
+    /**
+     * mop-guidance "a tried key keeps its boost" (design D-B19, reverted): the pass has no ledger to
+     * read, so X and Y, both at {@code d ≤ 1}, share the split whatever was executed before.
+     */
+    @Test
+    public void aTriedKeyKeepsItsBoost() throws Exception {
+        ModelAction x = resolvedClick("x");
+        ModelAction y = resolvedClick("y");
+        x.setPriority(10);
+        y.setPriority(10);
+        ModelAction[] actions = {x, y};
+        StubScoringContext ctx = new StubScoringContext();
+        ctx.mopContext = distance(twoAtD1());
+        int[] exposure = new int[2];
+
+        new MopWidgetPass(ctx, exposureSink(exposure)).apply(state(actions), actions, ctx);
+
+        assertEquals(500, x.getMopWeight());
+        assertEquals(400, x.getMopBoost()); // max(500/2, 400)
+        assertEquals(10 + 400, x.getPriority());
+        assertEquals(500, y.getMopWeight());
+        assertEquals(400, y.getMopBoost());
+        assertEquals(10 + 400, y.getPriority());
+        assertArrayEquals(new int[] {2, 2}, exposure);
     }
 
     @Test
