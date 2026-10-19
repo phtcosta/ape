@@ -272,11 +272,20 @@ block and the default of `ape.mopCoinLedgerMaxInteractions` (1) stay (k = 2 is `
 - [x] 15.3 Update `CLAUDE.md` (P4: drop the untried-keys sentence of *Scoring modes*)
 - [x] 15.4 Ask the author before the commit; then `mvn package` + `mvn install` to the aperv worktree, record sha256 and `GIT_SHA` in `evidence.md`, and send the commit and the jar sha256 to `mini-experimento` and `aperv-tool`
 
+## 16. Budget buffer fix after review 14.3 (author decision 2026-10-19; design D-B20)
+
+Serial, one agent; it runs inside group 14, after 14.3. Only the `Budget` stage's buffer handling moves (ADDONS
+cells); BASE and the parity goldens do not.
+
+- [x] 16.1 Record review 14.3 in `evidence.md` (CR-01 verified; WR-01…WR-04 and the notes as follow-ups), D-B20 in `design.md`, and the scenarios in the `activity-budget` and `decision-pipeline` deltas
+- [x] 16.2 `StatefulAgent`: detach/restore the buffer without weakening and share `abandonBuffer`'s record; `SataAgent.budgetNavigation()` (a `StageCollaborators` method); `BudgetStage` takes only the navigation supplier and no longer calls `abandonBuffer`; `DecisionPipeline` wires it. Tests on a real `SataAgent` buffer: path found with a non-empty buffer (no weakening, path kept, `dec.buf`), path found with an empty buffer (no `dec.buf`), no path (buffer restored); `BudgetStageTest` updated; `mvn clean test` green, no golden moved
+- [ ] 16.3 Ask the author before the commit; then `mvn package` + install to the aperv worktree, record sha256 and `GIT_SHA` in `evidence.md`, and send them to `mini-experimento`, `aperv-tool`, `rep-pack-e03` and `versao`
+
 ## 14. Verification
 
 - [x] 14.1 Run `/sdd-qa-lint-fix` on `src/main/java/com/android/commands/monkey/ape`; delete the dead `Config.activityTriggerStagnationStep`/`activityTriggerMaxPerRun` (`Config.java:127-133`, readers only in `ConfigTest`; the plan owns both, P3; author 2026-10-18)
-- [ ] 14.2 Run `/sdd-verify`
-- [ ] 14.3 Invoke `/sdd-code-reviewer` via the Skill tool
+- [x] 14.2 Run `/sdd-verify`
+- [x] 14.3 Invoke `/sdd-code-reviewer` via the Skill tool
 - [ ] 14.4 Run `/sdd-docs-sync` (`CLAUDE.md`, `openspec/specs` Purpose sections). At archive, hand-sync the sections `openspec archive` does not apply (verification V57): the Purpose, Data Contracts and Invariants preambles of action-selection (`:10`), component-triggering (`:7`, `:18`), mop-guidance (`:5`, `:896-897`), parity-oracle (`:19`, `:36-43`, `:63`), run-spec (`:6`), wtg-navigation (`:28`), exploration (INV-EXPL-06, INV-EPS-02), llm-routing (`:35` and the *Error* bullet `:43`, which INV-RTR-27 replaces), ui-tree (INV-TREE-02, INV-TREE-11) and every delta's Invariants block
 - [ ] 14.5 `openspec validate isolate-guidance-groups --strict`; `/opsx:verify`
 - [ ] 14.6 Merge into `master` **only** on the author's explicit word after the mini experiment (D-A19); no push without it

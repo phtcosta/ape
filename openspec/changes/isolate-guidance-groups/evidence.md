@@ -231,3 +231,29 @@ on `2cfa8ee2` (the revert): 1458 tests / 0 failures / 0 errors / 24 skipped; no 
   (replacing `97620f4a…6000`). The shared `rvsec/rv-android` module jar is not touched.
 - Exploration behaviour is unchanged against `97620f4a` (no runtime reader was removed). Sent to
   `mini-experimento`, `aperv-tool`, `rep-pack-e03` and `versao`.
+
+**14.2 `/sdd-verify`.** [verified] `overall: pass` on `328de4d5`.
+- tests: `mvn clean` then `mvn test`, 1450 run / 0 failures / 0 errors / 24 skipped.
+- lint: skipped (checkstyle not installed; no project checkstyle configuration).
+- complexity: `null` (the skill defines no Java complexity tool).
+
+**14.3 `/sdd-code-reviewer`** (forked, over `git diff master...HEAD`, `src/main/java`; it read the decision path,
+the stages, the SATA extension points, the scoring passes, the plan and the sink in depth). Verdict: request
+changes, 1 critical, 4 warnings, 8 notes. [reported] BASE parity, telemetry purity and the no-value-abort rule hold
+on what it read.
+- **CR-01** [verified against `master` `eea2b1a9` and `6966079f`]: `BudgetStage` abandoned the buffer after the
+  trivial-activity search had refilled it, so it dropped the path it planned, weakened the preempted edge through
+  `refillBuffer`'s `clearBuffer`, and recorded `dec.buf:"budget"` / `bufAbandoned` on an empty pre-step buffer.
+  ADDONS cells only. Author: fix it (2026-10-19) → design D-B20, group 16.
+- Follow-ups, not fixed (author 2026-10-19, [reported], not re-verified):
+  - WR-01: on `RandomAgent`/`ReplayAgent` with MOP mounted, the ledger and retirement count an action that the
+    post-selection `ApeAgent.checkRestart` then replaces (no campaign cell runs these agents with MOP).
+  - WR-02: `ApeAgent.restartIsAGuard()` is `this instanceof StageCollaborators`.
+  - WR-03: `SataAgent` mounts its extension points lazily for the `Unsafe`-allocating test harnesses (fields not
+    final, P1).
+  - WR-04: the stage tests use fakes that model no buffer or ledger side effect; closed for the budget by 16.2.
+  - Notes: a blank `ape.llmUrl` aborts as `missing_dependency` (plan error, D-B1); gate values `< 0` unmount the
+    gate like 0; `ape.llmPercentageNoSubstrate` and its `Config` twin have no reader (pre-dates the change, P3);
+    `DecisionSource` mixes casing; `MopTrivialPathPick` calls back into `SataAgent.navMopTiebreakLog`;
+    `spec().has()` per tree node and `getRotation()` per step; `requireMopArm` still says "MOP arm"; a declining
+    X3/X4 rung's `dec.nav` can stay on the record.

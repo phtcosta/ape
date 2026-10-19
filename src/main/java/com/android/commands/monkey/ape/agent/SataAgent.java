@@ -40,6 +40,7 @@ import com.android.commands.monkey.ape.AndroidDevice.Task;
 import com.android.commands.monkey.ape.BaseActionFilter;
 import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.SubsequenceFilter;
+import com.android.commands.monkey.ape.agent.pipeline.BudgetStage;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
 import com.android.commands.monkey.ape.agent.sata.AbaTargetTie;
@@ -1299,6 +1300,26 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
                     ModelAction.PickChannel.SATA_OTHER, "trivial");
         }
         return null;
+    }
+
+    /**
+     * The budget's navigation (design D-B20): the trivial-activity search, run with the SATA buffer
+     * detached so that the path it plans neither weakens nor is mistaken for the buffer it preempts.
+     * No navigation puts the buffer back untouched; a navigation abandons a non-empty detached buffer
+     * ({@code dec.buf:"budget"}) and leaves the new path buffered for {@code SataChain} to follow.
+     */
+    @Override
+    public ModelAction budgetNavigation() {
+        LinkedList<StateTransition> preempted = detachBuffer();
+        ModelAction action = selectNewActionForTrivialActivity();
+        if (action == null) {
+            restoreBuffer(preempted);
+            return null;
+        }
+        if (!preempted.isEmpty()) {
+            recordAbandonment(BudgetStage.OWNER);
+        }
+        return action;
     }
 
     private ModelAction backToTrivialActivity(Set<ActivityNode> trivialActivities) {

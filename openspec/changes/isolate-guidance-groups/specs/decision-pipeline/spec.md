@@ -41,7 +41,8 @@ the same order.
   `dec.restart` SHALL name its kind, and `dec.a` SHALL name the start action that ran.
 - **INV-DP-15**: When the `Budget` stage, an LLM stage, the `MopLauncher` stage or the `MopCoin` stage selects a
   step's action while the SATA action buffer is non-empty, the buffer SHALL be cleared without calling
-  `weakenStateTransition`, and `dec.buf` SHALL name that owner. When the `Restart` stage takes the step, the new
+  `weakenStateTransition`, and `dec.buf` SHALL name that owner; for the `Budget` stage the buffer cleared is the
+  one it preempted, and the path its navigation planned stays buffered (D-B20). When the `Restart` stage takes the step, the new
   episode it starts SHALL clear the buffer, also without `weakenStateTransition` and without `dec.buf` (design
   D-B14.13). A path failure detected inside `SataChain` SHALL still weaken the planned edge, as in APE.
 
@@ -141,14 +142,21 @@ never shifts SATA's draws.
 
 ### Requirement: Buffer Abandonment by a Preempting Owner
 
-When the `Budget` stage, an LLM stage, the `MopLauncher` stage or the `MopCoin` stage returns `Select` while
+When an LLM stage, the `MopLauncher` stage or the `MopCoin` stage returns `Select` while
 `actionBufferSize() > 0`, the pipeline SHALL call `StageCollaborators.abandonBuffer(owner)` with that owner
-(`budget`, `llm`, `launcher` or `mop`) before the step ends (design D-B14.13). `abandonBuffer` SHALL clear the buffer **without**
+(`llm`, `launcher` or `mop`) before the step ends (design D-B14.13); the `Budget` stage abandons the buffer it
+preempts with owner `budget` through `budgetNavigation()`, described below (D-B20). `abandonBuffer` SHALL clear the buffer **without**
 `weakenStateTransition`, record `dec.buf=<owner>`, and add one to `RUN_END.counters.bufAbandoned`. The edge the
 buffer had planned did not fail, so the graph SHALL NOT be penalized (P-4, INV-DP-15). Inside `SataChain` a buffer
 whose next action no longer matches the screen is a real path failure, and it SHALL keep weakening as in APE
 (`StatefulAgent.clearBuffer`). The `Restart` stage does not call `abandonBuffer`: the new episode it starts clears
 the buffer, also without weakening, and the step carries no `dec.buf` (D-B14.13).
+
+The `Budget` stage's navigation fills the buffer itself, so its abandonment SHALL precede the search: the agent's
+`StageCollaborators.budgetNavigation()` detaches the buffer without weakening, runs
+`selectNewActionForTrivialActivity()`, restores the detached buffer when the search returns null, and otherwise
+records the abandonment of the detached buffer when it was non-empty, leaving the newly planned path in the buffer
+(design D-B20). The `Budget` stage SHALL NOT call `abandonBuffer` after the search.
 
 #### Scenario: LLM coin preempts a two-step path
 - **WHEN** the buffer holds two planned transitions, `u_L < p_L`, the gates admit, and the LLM returns a matched action

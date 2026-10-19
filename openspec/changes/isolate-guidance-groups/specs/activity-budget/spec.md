@@ -19,7 +19,7 @@ The activity-budget mechanism SHALL be governed by `Feature.ACTIVITY_BUDGET`, th
 
 When `Feature.ACTIVITY_BUDGET` is in the plan, `StatefulAgent` SHALL instantiate the `ActivityBudgetTracker` with `ape.activityBaseBudget` and `ape.activityBudgetPerWidget` read from the plan, and the decision pipeline SHALL mount the `Budget` guard stage as its first stage (`decision-pipeline` "Pipeline Assembly from the RunSpec"). On each step the `Budget` stage SHALL check `ActivityBudgetTracker.isBudgetExhausted()` for the current activity before every other stage. The budget is a **soft constraint** — it influences navigation but does not block exploration:
 
-1. When the budget is exhausted, try `selectNewActionForTrivialActivity()` — navigate to a different activity. A non-null result SHALL be returned as `Select`: the step is owned by `budget`, its record carries `dec.src:"budget"`, `dec.own.i:"budget"` and `dec.ch:"budget"`, and no `dec.strat`. If the SATA buffer is non-empty, the stage SHALL abandon it through `abandonBuffer("budget")` without weakening any edge, and the record SHALL carry `dec.buf:"budget"` (design D-B14.13). A step the `Budget` stage takes never reaches `Restart`, so a pending restart latch is left for the next step (D-B14.16).
+1. When the budget is exhausted, try `selectNewActionForTrivialActivity()` — navigate to a different activity. A non-null result SHALL be returned as `Select`: the step is owned by `budget`, its record carries `dec.src:"budget"`, `dec.own.i:"budget"` and `dec.ch:"budget"`, and no `dec.strat`. The search runs through the agent's `budgetNavigation()`, which detaches the SATA buffer without weakening any edge before it searches: when the search finds nothing the buffer is restored, and when it takes the step a non-empty detached buffer is abandoned, the record carries `dec.buf:"budget"` (design D-B14.13), and the newly planned path stays in the buffer (D-B20). A step the `Budget` stage takes never reaches `Restart`, so a pending restart latch is left for the next step (D-B14.16).
 2. If the budget is not exhausted, or `selectNewActionForTrivialActivity()` returns null, the stage SHALL return `Continue`, and the step falls through to the later stages and finally to the normal SATA chain.
 
 **Rationale**: Both hard fallbacks were tested and found harmful:
@@ -35,11 +35,17 @@ When `Feature.ACTIVITY_BUDGET` is not in the plan (the `base` and `mop` cells, o
 - **WHEN** the run's preset is `as` (so `Feature.ACTIVITY_BUDGET` is in the plan), `com.example.MainActivity` has a budget of 125 and 125 recorded iterations, and `selectNewActionForTrivialActivity()` returns an action toward `com.example.SettingsActivity`
 - **THEN** the `Budget` stage SHALL return `Select` with that action and the agent SHALL navigate to `com.example.SettingsActivity`
 - **AND** the step record SHALL carry `dec.src:"budget"`, `dec.ch:"budget"` and no `dec.strat`
-- **AND** if the SATA buffer held two planned transitions, it SHALL be empty after the step, the record SHALL carry `dec.buf:"budget"`, and no `weakenStateTransition` call SHALL have been made
+- **AND** if the SATA buffer held two planned transitions, none of them SHALL remain in the buffer after the step, the record SHALL carry `dec.buf:"budget"`, and no `weakenStateTransition` call SHALL have been made
+
+#### Scenario: the budget keeps the path it planned (D-B20)
+- **WHEN** the budget is exhausted and `selectNewActionForTrivialActivity()` finds a three-edge path A→B→C→D to a trivial activity, with the SATA buffer empty or not before the step
+- **THEN** the step's action SHALL be the path's first action, and after the step the buffer SHALL hold the path's edges as `refillBuffer` left them, so that `SataChain`'s buffer rung follows the path on the next steps
+- **AND** the record SHALL carry `dec.buf:"budget"` and `RUN_END.counters.bufAbandoned` SHALL be one larger exactly when the buffer was non-empty before the step
 
 #### Scenario: Budget exhausted, no trivial activity — fallthrough (flag on)
 - **WHEN** `Feature.ACTIVITY_BUDGET` is in the plan, the current activity's budget is exhausted, and `selectNewActionForTrivialActivity()` returns null
 - **THEN** the `Budget` stage SHALL return `Continue`
+- **AND** the SATA buffer SHALL be as it was before the step, with no `weakenStateTransition` call and no `dec.buf` (D-B20)
 - **AND** the step SHALL be decided by a later stage or by the normal SATA chain with all priority boosts active, and its record SHALL NOT carry `dec.src:"budget"`
 
 #### Scenario: No budget tracker or check when the flag is off

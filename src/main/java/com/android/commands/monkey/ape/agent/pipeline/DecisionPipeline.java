@@ -188,8 +188,7 @@ public final class DecisionPipeline {
         for (Candidate candidate : assembledCandidates(spec)) {
             switch (candidate) {
                 case BUDGET:
-                    stages.add(new BudgetStage(collaborators::selectNewActionForTrivialActivity,
-                            collaborators::abandonBuffer));
+                    stages.add(new BudgetStage(collaborators::budgetNavigation));
                     break;
                 case RESTART:
                     stages.add(new RestartStage(collaborators::restartDue,

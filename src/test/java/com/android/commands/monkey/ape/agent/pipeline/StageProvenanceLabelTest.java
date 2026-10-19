@@ -88,6 +88,11 @@ public class StageProvenanceLabelTest {
         }
 
         @Override
+        public ModelAction budgetNavigation() {
+            return trivial;
+        }
+
+        @Override
         public ModelAction selectNewActionFromBuffer() {
             return fromTheBuffer;
         }

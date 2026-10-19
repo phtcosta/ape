@@ -76,6 +76,11 @@ public class DecisionPipelineFromSpecTest {
         }
 
         @Override
+        public ModelAction budgetNavigation() {
+            return trivial;
+        }
+
+        @Override
         public ModelAction selectNewActionFromBuffer() {
             chainCalls++;
             return null;

@@ -38,6 +38,9 @@ public class BufferAbandonTest {
     /** The weakenStateTransition calls of the recording graph, static since no initializer runs. */
     private static final List<StateTransition> WEAKENED = new ArrayList<>();
 
+    /** The path the trivial-activity search plans, or null when it finds none (static, as above). */
+    private static List<StateTransition> PLANNED;
+
     private final List<String> sinkCalls = new ArrayList<>();
     private RecordingAgent agent;
 
@@ -50,6 +53,21 @@ public class BufferAbandonTest {
         @Override
         protected Action getStartAction(ActionType actionType) {
             return new Action(actionType);
+        }
+
+        /**
+         * The search's effect on the buffer when it finds a path, as {@code refillBuffer} has it:
+         * {@code clearBuffer} (which weakens a non-empty buffer's next edge), then the path's edges,
+         * returning its first action. The graph walk itself is not under test.
+         */
+        @Override
+        public ModelAction selectNewActionForTrivialActivity() {
+            if (PLANNED == null) {
+                return null;
+            }
+            clearBuffer();
+            buffer(this).addAll(PLANNED);
+            return PLANNED.get(0).getAction();
         }
 
         @Override
@@ -66,6 +84,7 @@ public class BufferAbandonTest {
     @Before
     public void setUp() throws Exception {
         WEAKENED.clear();
+        PLANNED = null;
         EventSink recording = (EventSink) Proxy.newProxyInstance(
                 EventSink.class.getClassLoader(), new Class<?>[] {EventSink.class},
                 (proxy, method, args) -> {
@@ -112,6 +131,26 @@ public class BufferAbandonTest {
         } catch (Exception e) {
             throw new AssertionError(e);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    static LinkedList<StateTransition> buffer(StatefulAgent agent) {
+        try {
+            Field f = StatefulAgent.class.getDeclaredField("actionBuffer");
+            f.setAccessible(true);
+            return (LinkedList<StateTransition>) f.get(agent);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** A three-edge path to a trivial activity. */
+    private static List<StateTransition> threeStepPath() {
+        List<StateTransition> path = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            path.add(transition(null, new ModelAction(null, ActionType.MODEL_CLICK), null));
+        }
+        return path;
     }
 
     /** Fills the agent's buffer with a two-step planned path. */
@@ -170,5 +209,47 @@ public class BufferAbandonTest {
         assertEquals(0, agent.actionBufferSize());
         assertTrue(WEAKENED.isEmpty());
         assertFalse(sinkCalls.contains("buf:restart"));
+    }
+
+    /**
+     * Scenario "the budget keeps the path it planned" (D-B20, review 14.3 CR-01): the preempted
+     * buffer is abandoned without weakening, and the planned path stays buffered.
+     */
+    @Test
+    public void theBudgetKeepsItsPathAndDoesNotWeakenThePreemptedOne() throws Exception {
+        twoStepPath();
+        PLANNED = threeStepPath();
+
+        ModelAction action = agent.budgetNavigation();
+
+        assertSame(PLANNED.get(0).getAction(), action);
+        assertEquals("the planned path is what the buffer holds", PLANNED, buffer(agent));
+        assertTrue("the preempted edge is not weakened (INV-DP-15)", WEAKENED.isEmpty());
+        assertEquals(java.util.Arrays.asList("buf:budget", "count:bufAbandoned"), sinkCalls);
+    }
+
+    /** An empty buffer before the step: the path is kept and nothing is recorded as abandoned. */
+    @Test
+    public void theBudgetOverAnEmptyBufferRecordsNoAbandonment() throws Exception {
+        setField(agent, StatefulAgent.class, "actionBuffer", new LinkedList<StateTransition>());
+        PLANNED = threeStepPath();
+
+        agent.budgetNavigation();
+
+        assertEquals(PLANNED, buffer(agent));
+        assertTrue(WEAKENED.isEmpty());
+        assertTrue("no dec.buf without a buffer to abandon", sinkCalls.isEmpty());
+    }
+
+    /** Scenario "Budget exhausted, no trivial activity": the buffer is as it was before the step. */
+    @Test
+    public void noNavigationRestoresTheBuffer() throws Exception {
+        LinkedList<StateTransition> before = new LinkedList<>(twoStepPath());
+
+        assertNull(agent.budgetNavigation());
+
+        assertEquals(before, buffer(agent));
+        assertTrue(WEAKENED.isEmpty());
+        assertTrue(sinkCalls.isEmpty());
     }
 }

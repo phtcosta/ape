@@ -76,6 +76,16 @@ public interface StageCollaborators {
     ModelAction selectNewActionForTrivialActivity();
 
     /**
+     * The {@code Budget} stage's navigation: {@link #selectNewActionForTrivialActivity()} run with the
+     * SATA buffer detached without weakening. A {@code null} result restores the buffer; a navigation
+     * abandons a non-empty detached buffer with owner {@code budget} and keeps the path it planned
+     * (design D-B20).
+     *
+     * @return the trivial-activity navigation action, or {@code null}
+     */
+    ModelAction budgetNavigation();
+
+    /**
      * The backward walk over the graph towards unfinished work, or {@code null} when no such path
      * exists.
      *

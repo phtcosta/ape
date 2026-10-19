@@ -15,7 +15,6 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -28,8 +27,9 @@ import com.android.commands.monkey.ape.utils.Logger;
  * <p><b>The budget decides the step when it can.</b> An exhausted activity plus a reachable trivial
  * activity ends the step here, owned by {@code budget} on the {@code budget} channel; every later
  * stage, including {@code Restart} and the LLM stages, is preempted. A non-empty SATA buffer is
- * abandoned without weakening ({@code dec.buf:"budget"}, design D-B14.13), and a pending restart
- * latch is left for the next step (D-B14.16). That is worth stating because the block reads as advisory and is not: the
+ * abandoned without weakening ({@code dec.buf:"budget"}, design D-B14.13) by the agent's
+ * {@code budgetNavigation}, which detaches it before the search refills the buffer with the planned
+ * path, so the path survives (D-B20); a pending restart latch is left for the next step (D-B14.16). That is worth stating because the block reads as advisory and is not: the
  * "advisory" half is only what happens when there is nowhere to go.
  *
  * <p><b>And it is advisory when it cannot.</b> Exhausted with no trivial activity reachable, the
@@ -51,17 +51,15 @@ public final class BudgetStage implements DecisionStage {
     public static final String OWNER = "budget";
 
     private final Supplier<ModelAction> trivialActivityAction;
-    private final Consumer<String> abandonBuffer;
 
     /**
      * @param trivialActivityAction the agent's trivial-activity navigation search, consulted only
      *        when the budget is exhausted — it walks the graph and logs what it finds, so calling it
-     *        on a step that would ignore the answer is not free
-     * @param abandonBuffer the agent's buffer abandonment without weakening
+     *        on a step that would ignore the answer is not free; it owns the buffer's abandonment
+     *        ({@code StageCollaborators.budgetNavigation}, D-B20)
      */
-    public BudgetStage(Supplier<ModelAction> trivialActivityAction, Consumer<String> abandonBuffer) {
+    public BudgetStage(Supplier<ModelAction> trivialActivityAction) {
         this.trivialActivityAction = trivialActivityAction;
-        this.abandonBuffer = abandonBuffer;
     }
 
     @Override
@@ -82,9 +80,6 @@ public final class BudgetStage implements DecisionStage {
                 ctx.newState().getActivity());
         trivial.setDecisionSource(ModelAction.DecisionSource.Budget);
         trivial.setPickChannel(ModelAction.PickChannel.BUDGET);
-        if (ctx.actionBufferSize() > 0) {
-            abandonBuffer.accept(OWNER);
-        }
         return StageResult.select(trivial, OWNER);
     }
 }

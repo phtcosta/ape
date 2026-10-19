@@ -145,6 +145,7 @@ final class PipelineFixture {
         @Override public LlmEngine llmEngine() { return llm; }
         @Override public boolean llmBreakerAllows() { return llm.allows(); }
         @Override public ModelAction selectNewActionForTrivialActivity() { return null; }
+        @Override public ModelAction budgetNavigation() { return null; }
         @Override public ModelAction selectNewActionBackToActivity() { return null; }
         @Override public ModelAction selectNewActionEarlyStageForward() { return null; }
         @Override public ModelAction selectNewActionEarlyStageBackward() { return null; }

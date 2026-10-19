@@ -632,8 +632,30 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             return;
         }
         actionBuffer.clear();
+        recordAbandonment(owner);
+    }
+
+    /** The record of an abandonment: {@code dec.buf} names the owner, and {@code bufAbandoned} counts it. */
+    protected void recordAbandonment(String owner) {
         RunContext.current().sink().bufferAbandoned(owner);
         RunContext.current().sink().count(RunCounter.BUF_ABANDONED);
+    }
+
+    /**
+     * Takes the buffer out without weakening any edge and leaves an empty one in its place, so that a
+     * search which refills the buffer cannot weaken or overwrite a path it is preempting (design D-B20).
+     *
+     * @return the detached buffer, possibly empty; give it to {@link #restoreBuffer} if the step is not taken
+     */
+    protected LinkedList<StateTransition> detachBuffer() {
+        LinkedList<StateTransition> detached = actionBuffer;
+        actionBuffer = new LinkedList<StateTransition>();
+        return detached;
+    }
+
+    /** Puts back a buffer {@link #detachBuffer} took out, replacing the empty one left in its place. */
+    protected void restoreBuffer(LinkedList<StateTransition> detached) {
+        actionBuffer = detached;
     }
 
     /**

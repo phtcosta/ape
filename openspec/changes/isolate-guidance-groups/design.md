@@ -543,6 +543,28 @@ engine runs). The breaker counts transport and parse failures only.
 - Cost, accepted: an app that never yields a screen (`FLAG_SECURE`) pays one capture attempt per LLM-admitted
   step.
 
+**D-B20 — The budget abandons the buffer it preempts, not the path it plans (author, 2026-10-19; review 14.3
+CR-01).** `BudgetStage.decide` called the trivial-activity search first and tested `actionBufferSize() > 0`
+after it [verified, `2cfa8ee2`/`6966079f`]. When the search finds a path it ends in `refillBuffer`, whose
+`clearBuffer` weakens the preempted SATA buffer's next edge and then fills the buffer with the new path. The
+`abandonBuffer("budget")` that followed therefore cleared the path the budget had just planned: every multi-hop
+budget navigation lost its tail and was re-planned on the next step (one extra X4 helper-stream draw when two or
+more paths tie), the preempted edge was weakened against INV-DP-15, and `dec.buf:"budget"` / `bufAbandoned` were
+recorded even when the buffer was empty before the step. On `master` (`eea2b1a9`, before this change) the path
+survived and the preempted edge was weakened; only the abandonment after the search is new. The stage's test
+drove a fake that never modeled `refillBuffer` (review WR-04).
+- The fix: the agent's budget navigation (`SataAgent.budgetNavigation`, a `StageCollaborators` method) detaches
+  the buffer without weakening **before** the search, runs the unchanged `selectNewActionForTrivialActivity`,
+  and then either restores the detached buffer (no navigation: the stage continues and SATA finds its path
+  intact) or, when the search took the step and the detached buffer was non-empty, records `dec.buf:"budget"` and
+  `bufAbandoned` (`abandonBuffer`'s record, P1). The planned path stays in the buffer and is followed by
+  `SataChain`'s buffer rung on the next steps, as on `master`. `BudgetStage` no longer receives `abandonBuffer`.
+- Scope: ADDONS cells only (`as`, `as_mop`, `as_llm`, `as_mop_llm`); `base` and `mop` do not mount `Budget`, so
+  BASE and the parity goldens do not move. It changes the jar.
+- Tests: a real `SataAgent`-buffer case per outcome (path found with a non-empty buffer, path found with an empty
+  buffer, no path), closing WR-04 for the budget. WR-01…WR-03 and the review's notes are recorded in
+  `evidence.md` as follow-ups, not fixed here.
+
 ## API Design
 
 ### Key contract v3.2 (wave 0; sent verbatim to the rv-android `aperv-tool` session)
