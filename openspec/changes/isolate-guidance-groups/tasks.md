@@ -270,7 +270,7 @@ block and the default of `ape.mopCoinLedgerMaxInteractions` (1) stay (k = 2 is `
 - [x] 15.1 Record `e03igg2` in `evidence.md` with `[reported]`, and the revert in `design.md` D-B19, `proposal.md` and the deltas (`mop-guidance`, `scoring-pipeline`, `event-sink`, `llm-prompt`)
 - [x] 15.2 `agent/scoring/MopWidgetPass`: split the ties on the undivided weights and stop reading the ledger, as in `a2fde6c`; `mopExposure` still counts the weighted actions. Remove `ScoringContext.getMopLedger()`, its `StatefulAgent` override, `StubScoringContext.mopLedger` and `ScoringPipelineTest.theMopLedgerIsAbsentUnlessTheContextProvidesIt` (P1). Tests: the scenario "a tried key keeps its boost" (`MopWidgetPassTest`, replacing the three D-B19 tests); `mvn clean test` green, no golden moved
 - [x] 15.3 Update `CLAUDE.md` (P4: drop the untried-keys sentence of *Scoring modes*)
-- [ ] 15.4 Ask the author before the commit; then `mvn package` + `mvn install` to the aperv worktree, record sha256 and `GIT_SHA` in `evidence.md`, and send the commit and the jar sha256 to `mini-experimento` and `aperv-tool`
+- [x] 15.4 Ask the author before the commit; then `mvn package` + `mvn install` to the aperv worktree, record sha256 and `GIT_SHA` in `evidence.md`, and send the commit and the jar sha256 to `mini-experimento` and `aperv-tool`
 
 ## 14. Verification
 

@@ -204,3 +204,10 @@ contract (`edbd173d`), closed K.5 on the amendment jar (`6332cd54`), and adds th
 Author decisions (2026-10-19): revert D-B19 (design D-B19); keep D-B17 with k = 2 as the `mop` default in
 `aperv-tool`, not in the jar; keep D-B15; D-B16 and D-B18 unchanged; validate with one campaign on the reverted
 jar against `e03igg`, no old-jar arm.
+
+**15.4 Package and install.** [verified] `mvn clean install -Drvsec_home=…/worktrees-aperv/isolate-guidance-groups`
+on `2cfa8ee2` (the revert): 1458 tests / 0 failures / 0 errors / 24 skipped; no golden or fixture moved.
+- `target/ape-rv.jar` sha256 `97620f4a534ae43c5cf6283911e8298b51b4db9bc5eddb92afe8cfbcb9116000`, `GIT_SHA 2cfa8ee`,
+  `JAR_BUILT 2026-10-19T12:53:22Z`; byte-identical copy at
+  `worktrees-aperv/isolate-guidance-groups/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar`.
+- The shared `rvsec/rv-android` module jar is not touched.
