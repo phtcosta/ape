@@ -211,3 +211,23 @@ on `2cfa8ee2` (the revert): 1458 tests / 0 failures / 0 errors / 24 skipped; no 
   `JAR_BUILT 2026-10-19T12:53:22Z`; byte-identical copy at
   `worktrees-aperv/isolate-guidance-groups/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar`.
 - The shared `rvsec/rv-android` module jar is not touched.
+
+## 14. Verification (2026-10-19)
+
+**14.1 Lint and dead Config twins.** Author's go to run group 14 now, before the new mini-experiment.
+- [verified] `/sdd-qa-lint-fix` did not run a linter: the project declares no `maven-checkstyle-plugin`, has no
+  checkstyle configuration, and checkstyle is not installed; Java has no auto-fix in the skill. No file was
+  changed by the lint step.
+- [verified] Deleted `Config.activityTriggerStagnationStep`, `Config.activityTriggerMaxPerRun` and their clamp
+  helpers `clampActivityTriggerStagnationStep` / `clampActivityTriggerMaxPerRun`. Their only readers were 8
+  `ConfigTest` cases, deleted with them. The plan keeps owning both keys (`Feature.MOP_LAUNCHER`), and
+  `RunSpec.clamp` keeps clamping them (`RunSpecResolveTest`: `0 → 50`, `-5 → 0`). The `ScenarioScript` javadoc
+  now names `spec.mop().activityTriggerStagnationStep()`.
+- [verified] `mvn clean package` on `6966079f`: 1450 tests / 0 failures / 0 errors / 24 skipped; no golden or
+  fixture moved.
+- `target/ape-rv.jar` sha256 `591a94a80eea9b77ab4d3c82e1df935118bab355c7e88d9852a4dbd9b413a9c6`, `GIT_SHA 6966079`,
+  `JAR_BUILT 2026-10-19T22:29:29Z`; byte-identical copy at
+  `worktrees-aperv/isolate-guidance-groups/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar`
+  (replacing `97620f4a…6000`). The shared `rvsec/rv-android` module jar is not touched.
+- Exploration behaviour is unchanged against `97620f4a` (no runtime reader was removed). Sent to
+  `mini-experimento`, `aperv-tool`, `rep-pack-e03` and `versao`.
