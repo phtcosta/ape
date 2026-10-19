@@ -268,3 +268,57 @@ real agent buffer); no golden or fixture moved.
   `rvsec/rv-android` module jar is not touched; where the jar goes now is the author's call.
 - Behaviour moves only in the ADDONS cells, on budget steps. Sent to `mini-experimento`, `aperv-tool`,
   `rep-pack-e03` and `versao`.
+
+**14.4 `/sdd-docs-sync`** on `080ee392`. [verified]
+- `CLAUDE.md`: 594 backtick references. Every repository path, class and `Class.member` exists, and every `ape.*`
+  key is owned in `src/main/java`. The unmatched ones are device or external paths, package names, stage names, or
+  `ape.stepTelemetryEnabled`, which is documented as gone. The test count reads 1452. No drift.
+- `openspec/specs`: no main spec or delta names `Config.activityTriggerMaxPerRun`, `clampActivityTrigger*`,
+  `getMopLedger` or `abandonBuffer("budget")`. `Config.activityTriggerStagnationStep` remains at
+  `parity-oracle:186` and `:305`. Both lines sit in requirements that the delta MODIFIES ("Per-Preset Golden
+  Decision-Sequence Capture", "Preemption-Order Golden"), so the archive replaces them.
+- No ape text cites `INV-CAN-21/22`, which `aperv-tool` renumbered to 27/28.
+- The V57 hand-sync of the Purpose, Data Contracts and Invariants preambles is an archive step and is still open.
+
+**14.5 Validate and `/opsx:verify`** on `080ee392`. `openspec validate isolate-guidance-groups --strict` is valid.
+Tasks are 169/171 done; the two open ones are 14.5 itself and 14.6 (the merge, author's word). A read-only agent
+mapped the 142 requirements of the 21 deltas. Every requirement has implementation evidence, and every REMOVED
+item is gone from `src/main/java`. D-B7, D-B8, D-B9, D-B14.10/.12/.13, D-B15–D-B18, the D-B19 revert and D-B20
+hold [reported]. Nothing is critical.
+
+Warnings, open for the author:
+- [verified] **W1.** A `Budget` step never writes `dec.nav`. `SataAgent.writeTrace` runs only from
+  `logActionSelected` (the `SataChain` path), and `decide` replaces the trace on the next step. A budget X4 tie
+  therefore draws from the helper stream with no `dec.nav` (action-selection: "SHALL carry `dec.nav`"). This
+  predates D-B20.
+- [verified] **W2.** `coinLlm`: event-sink says to count a won coin even after an earlier LLM stage spent the
+  step's call. `LlmCoinStage.decide` returns before `count(COIN_LLM)` when `llm.spent()`, and
+  `LlmGateTest#aFailedNewStateCallIsTheStepsOnlyLlmCall` asserts 0. `design.md` ("steps on which each coin was
+  won") supports the code.
+- [verified] **W3.** `Feature.WTG` is `Rule.NONZERO`, while mop-guidance says POSITIVE. A negative
+  `ape.mopWeightWtg` mounts WTG with a negative boost.
+- [reported] **W4.** Dead `Config` twins of plan-owned keys, still asserted by tests:
+  - `activityStableRestartThreshold`
+  - `activityBaseBudget`, `activityBudgetPerWidget`
+  - `dynamicEpsilon`
+  - `componentPercentage`
+  - `formCompletionEnabled`, `activityBudgetEnabled`
+  - `llmPercentage`, `llmPercentageNoSubstrate`
+
+  The llm-infrastructure delta still requires `Config.llmPercentage`, which contradicts llm-routing.
+- [verified] **W5.** `PIPELINE` carries the scoring-pass census (`ScoringPipeline.candidates()`) but no
+  stage-candidate census. decision-pipeline and event-sink require one (every candidate, with an assembled flag).
+- [reported] **W6.** Untested scenarios:
+  - `ape.llmPercentage` at 0.0 and −0.2 on an LLM plan;
+  - typed input through containment (`dec.inp:"typed"`).
+- [reported] **W7–W9 (low).**
+  - Untested: artifact loading per cell, `getScrollType`, the EARLY_STAGE submit exclusion, and MODEL_MENU.
+  - The launcher clamps in `RunSpec.clamp` are silent, while component-triggering says "logged".
+- [reported] **Suggestions S1–S10 (wording, tests).**
+  - INV-CT-18 is defined twice.
+  - Stale javadoc and spec text after D-B19.
+  - The fuzz toss is drawn after `generateEventsForAction`, not at step open.
+  - The goldens' `trig` is a string.
+  - `org.json` is in main code (`StaticArtifactLoader`), while `CLAUDE.md` says it is test-only.
+  - `CleanControlTest` gaps.
+  - No steps-per-minute measurement.
