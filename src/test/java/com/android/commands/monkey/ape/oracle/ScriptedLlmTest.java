@@ -4,7 +4,7 @@ import com.android.commands.monkey.ape.llm.LlmEngine;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
-import com.android.commands.monkey.ape.utils.Config;
+import com.android.commands.monkey.ape.runtime.KeyOwnership;
 
 import org.junit.Test;
 
@@ -140,7 +140,8 @@ public class ScriptedLlmTest {
     public void theRealPipelineNeverRuns() throws Exception {
         // Jar default: no server is configured, and none is needed — the stub replaces the
         // pipeline outright rather than short-circuiting inside it.
-        assertNull("the harness runs on jar defaults, with no LLM endpoint", Config.llmUrl);
+        assertNull("the harness runs on jar defaults, with no LLM endpoint",
+                KeyOwnership.defaultOf("ape.llmUrl"));
 
         ScenarioScript script = scriptWith(ScenarioScript.step(true, 0,
                 ScenarioScript.accept(true, false, false, ScriptedLlm.FIRST_TARGETED)));

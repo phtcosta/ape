@@ -41,6 +41,9 @@ public class BufferAbandonTest {
     /** The path the trivial-activity search plans, or null when it finds none (static, as above). */
     private static List<StateTransition> PLANNED;
 
+    /** Whether the search decided an X4 tie among its paths, as the real search records it. */
+    private static boolean TIED;
+
     private final List<String> sinkCalls = new ArrayList<>();
     private RecordingAgent agent;
 
@@ -65,6 +68,9 @@ public class BufferAbandonTest {
             if (PLANNED == null) {
                 return null;
             }
+            if (TIED) {
+                recordNav("X4", "ape", false, true);
+            }
             clearBuffer();
             buffer(this).addAll(PLANNED);
             return PLANNED.get(0).getAction();
@@ -85,11 +91,16 @@ public class BufferAbandonTest {
     public void setUp() throws Exception {
         WEAKENED.clear();
         PLANNED = null;
+        TIED = false;
         EventSink recording = (EventSink) Proxy.newProxyInstance(
                 EventSink.class.getClassLoader(), new Class<?>[] {EventSink.class},
                 (proxy, method, args) -> {
                     if (method.getName().equals("bufferAbandoned")) {
                         sinkCalls.add("buf:" + args[0]);
+                    } else if (method.getName().equals("nav")) {
+                        sinkCalls.add("nav:" + args[0] + ":" + args[1]);
+                    } else if (method.getName().equals("strategy")) {
+                        sinkCalls.add("strat:" + args[0]);
                     } else if (method.getName().equals("count")) {
                         sinkCalls.add("count:" + ((RunCounter) args[0]).wire());
                     }
@@ -251,5 +262,20 @@ public class BufferAbandonTest {
         assertEquals(before, buffer(agent));
         assertTrue(WEAKENED.isEmpty());
         assertTrue(sinkCalls.isEmpty());
+    }
+
+    /**
+     * D-B21: a budget step whose search decided an X4 tie carries that tie's {@code dec.nav} and
+     * nothing else of the SATA trace.
+     */
+    @Test
+    public void aBudgetStepWritesTheNavOfItsTieAndNoStrategy() throws Exception {
+        setField(agent, StatefulAgent.class, "actionBuffer", new LinkedList<StateTransition>());
+        PLANNED = threeStepPath();
+        TIED = true;
+
+        agent.budgetNavigation();
+
+        assertEquals(java.util.Collections.singletonList("nav:X4:ape"), sinkCalls);
     }
 }

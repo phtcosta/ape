@@ -145,8 +145,9 @@ The first line of a run's output is a level-0 `RUN_START` JSON record (`RunSpecE
 
 Behavior is organised in five groups. **BASE** is the APE algorithm plus the declared keyless bug fixes, and has no
 key. The other four switch independently, each by one boolean plan key, and every member `Feature` declares its group
-as a dependency, so a member whose group is off is simply absent from the plan (stating its activation key explicitly
-aborts with `missing_dependency`):
+as a dependency, so a member whose group is off is simply absent from the plan (stating its activation key ON
+explicitly aborts with `missing_dependency`; stating it OFF — the neutral value, or any value its rule reads as off,
+such as `<= 0` for a weight — is inert, D-B22):
 
 | Group | Key | Members (activation key) | Data |
 |---|---|---|---|
@@ -241,7 +242,7 @@ launcher's result), plus the boosts `mop`, `mopf`, `wtg`, `navf`, `cov`, `menu`,
 members `mopx` (weighted actions, tried or not, and the total), `mopd`, `mops`, `hnd` (the stamped handler
 class behind the weight, written iff `mops` is `s`), `ret`. `RUN_END.counters` carries the routing counters
 `launches`, `gateMinActions`, `gateBreaker`, `guardBacks`, `bufAbandoned`, `restarts`, `coinLlm`, `coinMop`,
-`nullRelaunches` (written in every cell, `0` without the launcher), and the LLM block's `screenshot_failed`. `PIPELINE` lists the mounted stages by the names above. Every new
+`nullRelaunches` (written in every cell, `0` without the launcher), and the LLM block's `screenshot_failed`. `PIPELINE` lists the mounted stages by the names above (`stages`), every candidate stage with whether it was assembled (`stageCandidates`, D-B23) and the scoring-pass census (`candidates`). Every new
 computation is pure: no RNG draw, no `resolveAction`, no cache effect. Two neutrality gates guard it:
 `SinkNeutralityTest` (one case per cell) and `RngNeutralityTest`; `CleanControlTest` asserts that a cell
 without MOP has every MOP field absent or `0`.
@@ -276,15 +277,14 @@ externally supplied replay log through it.
 
 ### Central Configuration
 
-`ape/utils/Config.java` defines the configuration flags loaded from `ape.properties` that the plan does not own. Key flags:
-- `doFuzzing` / `fuzzingRate` — enables random fuzzing at 2% rate per step (enabled by default)
-- `evolveModel` / `actionRefinementFirst` — controls model refinement behavior
+`ape/utils/Config.java` holds only the fields that `src/main` reads (`actionRefinementFirst`, `maxStatesPerActivity` / `maxGUITreesPerState`, `defaultGUIThrottle`, the naming and tree flags, …). Every other key is read through the plan, `RunContext.current().spec()`, with its default in `KeyOwnership`; a plan-read key has no `Config` field (design D-B24, which deleted 46 dead twins). The keys below are plan keys unless they name a `Config` field:
+- `ape.doFuzzing` / `ape.fuzzingRate` — random fuzzing at 2% rate per step (`FUZZING`, enabled by default)
+- `ape.evolveModel` / `actionRefinementFirst` — model refinement behavior
 - `maxStatesPerActivity` / `maxGUITreesPerState` — state space limits
-- `takeScreenshot` / `saveGUITreeToXmlEveryStep` — debug output
-- `takeScreenshotForEveryStep` / `saveGUITreeToXmlEveryStep` — per-step PNG/XML artifacts; **both default `false`** for throughput (INV-EXPL-17). The aperv-tool deployment pulls neither artifact and the LLM path uses its own on-demand `ScreenshotCapture`; re-enable for local debugging with `ape.takeScreenshotForEveryStep=true` / `ape.saveGUITreeToXmlEveryStep=true` in `ape.properties`
+- `ape.takeScreenshotForEveryStep` / `ape.saveGUITreeToXmlEveryStep` — per-step PNG/XML artifacts; **both default `false`** for throughput (INV-EXPL-17). The aperv-tool deployment pulls neither artifact and the LLM path uses its own on-demand `ScreenshotCapture`; re-enable for local debugging with `ape.takeScreenshotForEveryStep=true` / `ape.saveGUITreeToXmlEveryStep=true` in `ape.properties`
 - `defaultGUIThrottle` — delay between actions
 - `ape.staticDataPath` (plan-owned, `STATIC_DATA`) — path to the compact artifact on device, `/data/local/tmp/mop-artifact.json` as aperv-tool pushes it (absent = STATIC and MOP off). The jar reads only **format 2** (`formatVersion: 2`, generator `aperv-derive/2`, rv-android gh122): format 1 and the full static-analysis JSON are rejected (`version-mismatch`). Format 2 adds `targets` (the producer's target count), per-widget `dist` pairs `[i, d]`, per-activity `activityDist` and a `handlers` table keyed by binary class name. The derive's cut (D15 as amended 2026-10-09, owned by gh122's `DIST_K`): a widget's and a handler's lists keep every target at `d ≤ 3`, `activityDist` the K = 3 nearest; the loader reads any length; `MOP_DATA` reports `targets`, `handlers` and `droppedPairs`. An artifact with `targets: 0` loads and runs without distance data
-- `mopWeightDirect` / `mopWeightTransitive` — `flag`-mode MOP weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost). They reach scoring through the run's `MopContext` (`utils/MopContext`, built from the loaded `MopData`, the `StaticGuiModel` and `spec().mop()`), not through `ScoringParams`
+- `ape.mopWeightDirect` / `ape.mopWeightTransitive` — `flag`-mode MOP weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost). They reach scoring through the run's `MopContext` (`utils/MopContext`, built from the loaded `MopData`, the `StaticGuiModel` and `spec().mop()`), not through `ScoringParams`
 - **Handler stamp and lookup** (llm-coordinate-single-base Part B, D16–D17): `GUITreeBuilder.fillNode` copies the gh121 extras `rvsec.click`/`rvsec.longClick` (an APK instrumented with `--instrumentation-variant dexlib2 --stamp-handlers`) into `GUITreeNode.getHandlerClick()/getHandlerLongClick()`. Every MOP reader goes through `MopData.lookup(activity, node, event)`: a stamp naming a class listed in `handlers` wins (source `STAMP`, even when it reaches nothing), else the id key (source `ID`), else `NONE`. Through the id key a **click** on a widget whose `mop` map has no `click` key reads the widget's *click aggregate* (`MopData.Widget.clickAggregate()`, built at load by `mergeByMinimum` over every event but `longclick`, `itemlongclick`, `implicitcreatecontextmenu`, `scroll`); an explicit `click` key, `none` included, blocks it, every other event reads its own pairs, and a stamp never reads it (D17 as amended 2026-10-09). Flags keep the INV-MOP-14 aggregate fallback; containment walks the node, two ancestors and two levels of descendants (`MopScorer.containmentNodes`). Widget metadata for the prompt and typed input comes from `StaticGuiModel.widget(activity, shortId)`, not from `MopData`
 - **Scoring modes** (`ape.mopScoring`, D18): `flag` (default) is the E6 mark; `distance` weighs an action by its nearest unretired target (`mopWeightD1..3` = 500/400/300 for d ≤ 1 / 2 / 3, 0 beyond), splits ties at the state's best level as `max(W/n, W_next)` into `mopBoost`, and keeps the undivided `ModelAction.mopWeight` for the MOP coin, the prompt marker and retirement. In both modes every weighted action is boosted, whether or not its key was already executed: the scoring passes do not read the ledger (D-B19 was reverted after `e03igg2`)
 - **Retirement** (D19, `distance` only): the first execution (per activity, per `xpath|ActionType`) of an action with a positive weight counts the targets of its weight's lookup that lie at `d*`, its smallest unretired distance (D19 as amended 2026-10-09), taken at selection (`StatefulAgent.moveForward`) and applied once the action survives `checkRestart`; a target retires at `ape.mopRetireAfter` (3) and stops weighting, marking and ordering the launcher. `ape.mopRetireAfter <= 0` is accepted: every target reads as retired and the run explores unguided
@@ -318,7 +318,7 @@ The keys the selected mode does not read (`mopWeightDirect`/`Transitive` under `
 
 ## Notes
 
-- Unit + integration test suite: `mvn test` (1452 tests, 24 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
+- Unit + integration test suite: `mvn test` (1453 tests, 24 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
 - Known issue: `OutOfMemoryError` is possible on long runs, because every `State` keeps its `GUITree`s in `treeHistory` and the `Graph` keeps every `State` — the heap grows with the number of distinct states a run reaches. That is the only retention by design. The `GUITreeBuilder` naming caches and a `ModelAction`'s resolved references are cleared when their tree is released, and the diagnostic action history holds primitive snapshots plus a single depth-1 recovery point, whose tree a live state owns anyway. Nothing bounds or evicts `Graph`, `treeHistory` or the naming structures: such a bound changes exploration behavior, so it waits on a heap profile by retention root. `OutOfMemoryError` is not caught — the process dies and the supervisor marks the task FAILED and retries it
 - Pre-compiled `ape.jar` is included in repo for convenience

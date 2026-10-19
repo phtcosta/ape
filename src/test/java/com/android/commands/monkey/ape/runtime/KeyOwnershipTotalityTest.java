@@ -264,7 +264,7 @@ public class KeyOwnershipTotalityTest {
                 "ape.saveVisGraph", "ape.saveStates", "ape.enableXPathAction",
                 "ape.mopWeightActivity", "ape.agentType", "ape.replayLog",
                 "ape.llmBoundaryBottomPct", "ape.mopDataPath", "ape.leastVisitedPriorityTiebreak",
-                "ape.mopTargetPickCap"));
+                "ape.mopTargetPickCap", "ape.llmPercentageNoSubstrate"));
         assertEquals(expected, KeyOwnership.retiredKeys());
         for (String key : expected) {
             String reason = KeyOwnership.retiredReason(key);

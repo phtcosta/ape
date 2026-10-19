@@ -322,3 +322,45 @@ Warnings, open for the author:
   - `org.json` is in main code (`StaticArtifactLoader`), while `CLAUDE.md` says it is test-only.
   - `CleanControlTest` gaps.
   - No steps-per-minute measurement.
+
+## 17. Verify 14.5 follow-ups (2026-10-19; design D-B21–D-B25)
+
+The author opened group 17 with W1, W3, W5 and W4, plus the spec fix for W2.
+
+**Scope of W4.** [verified] I counted 46 public `Config` fields that `src/main/java` never reads, neither
+qualified nor through `import static`. All 46 keys are owned by the plan. A scratch worktree with the 46 deleted
+compiled `src/main` with 0 errors. No code reflects over `Config`, and `RunSpec` reads the properties files itself
+(`Monkey.java:940-981`). The author: delete everything unused, and retire `ape.llmPercentageNoSubstrate`.
+`Config.printConfigurations` (`ApeAgent:556`, a `[APE]` log dump) no longer lists the deleted defaults. That
+changes diagnostic text only.
+
+**D-B22 generalised.** [verified] Switching `WTG` to POSITIVE alone made a negative weight abort: the inert rule
+accepted an absent feature's key only at its neutral value. The author decided that a value the activation rule
+reads as off is inert and does not abort. This applies to every POSITIVE feature (`RunSpec.applyInertRule`,
+`Feature.readsAsOff`).
+
+**17.1–17.5 results.** [verified]
+- Tests: `mvn clean test` gives 1453 tests / 0 failures / 0 errors / 24 skipped.
+  - added: `StageCensusTest` (1), `BufferAbandonTest` (D-B21, 1), `RunSpecResolveTest` (2 WTG cases and
+    `aValueItsRuleReadsAsOffIsInert`), and one `ConfigTest` retired-key test;
+  - removed: 5 `ConfigTest` cases on the retired key and its clamp.
+- Fixtures: no decision golden moved. Only `cells/as_llm.run_start.json` (`digest` bef607f8e6cabcc1 →
+  6eacfa54458fe39e) and `cells/as_mop_llm.run_start.json` (70f54d8586ba2774 → de56d42a05f52b1c) moved. Their
+  echoed `params` are identical. The digest covers the resolved plan, and the retired key's default left it.
+- Specs: `openspec validate --strict` is valid.
+  - New MODIFIED requirements: exploration "Per-Step Debug Artifact Defaults", llm-routing "Coordinate-to-ModelAction
+    Mapping", ui-coverage "Coverage Boost in Action Scoring — Per-Action" and "Config Flag for Coverage Boost".
+  - New REMOVED requirement: llm-routing "Config — llmPercentageNoSubstrate seam".
+  - The deltas still name a deleted field only to prohibit or to recall it ("No site SHALL read …", "formerly …").
+- Archive hand-sync (V57, in addition to 14.4's list): main-spec preamble citations of deleted fields remain at
+  - component-triggering `:7`, `:18`, `:36`;
+  - exploration `:1068-1069`;
+  - llm-infrastructure `:17-22`;
+  - llm-routing `:7`, `:9`, `:11`, `:49`, `:56-57`;
+  - mop-guidance `:876`;
+  - parity-oracle `:57`;
+  - wtg-navigation `:49`.
+- Base cell: no decision moves. `PIPELINE` gains `stageCandidates` in every cell (telemetry only).
+- Caveat: a properties file that states `ape.llmPercentageNoSubstrate` now aborts with `retired_key` in any cell.
+  [inferred] No current `aperv-tool` cell sends it: `tool.py:255` only maps a name, and the only `-1` occurrences
+  are in `docs/gh95-migration-record`.

@@ -358,12 +358,15 @@ public interface EventSink {
      * {@code RUN_START.params}, and the passes do not evaluate them in a uniform order, so a
      * "first failing conjunct" would encode source order rather than cause.
      *
-     * @param stages the static list of candidate stage names — never a constructed disabled-stage
-     *        object, which the decision-pipeline capability forbids (INV-DP-03)
+     * @param stages the names of the assembled decision stages, in the fixed candidate order
      * @param candidates every candidate pass in declaration order, mapped to whether it was
      *        constructed
+     * @param stageCandidates every candidate decision stage in the fixed order, mapped to whether
+     *        it was assembled — a static list of names, never a constructed disabled-stage object,
+     *        which the decision-pipeline capability forbids (INV-DP-03, design D-B23)
      */
-    void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates);
+    void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates,
+            Map<String, Boolean> stageCandidates);
 
     /** Records the model the server actually served, at most once per run. */
     void llmAck(String serverModel);

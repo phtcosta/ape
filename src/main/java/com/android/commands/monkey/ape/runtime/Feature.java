@@ -48,8 +48,8 @@ import java.util.Set;
  * for a gate, {@code 0} for a weight), for a sentinel key it is the sentinel, and for every other
  * sub-parameter it is the jar default — the value at which stating the key is indistinguishable
  * from omitting it. You may state OFF for a mechanism that does not exist; you may not state ON.
- * This is what lets every current arm keep pushing {@code ape.llmPercentageNoSubstrate=-1} on a
- * run with no LLM.
+ * An activation value that the feature's own rule reads as off ({@code <= 0} for a POSITIVE
+ * weight) states OFF too (design D-B22).
  *
  * <p><b>Purity is structural.</b> There is no kill-switch. A feature absent from the plan has no
  * constructed mechanism, so a sub-parameter of it parameterizes nothing and needs no exemption
@@ -125,7 +125,7 @@ public enum Feature {
     // --- MOP members: each requires MOP. -----------------------------------------------------
 
     /** WTG-reach boost on actions whose transition targets a MOP-reachable activity. */
-    WTG("ape.mopWeightWtg", Rule.NONZERO, "0"),
+    WTG("ape.mopWeightWtg", Rule.POSITIVE, "0"),
     /** OPTIONSMENU-gateway boost. Needs both the MOP targets and the menu action to boost. */
     MENU_GATEWAY("ape.mopWeightOpenMenu", Rule.POSITIVE, "0"),
     /** MOP-conditioned frontier boost. */
@@ -153,9 +153,7 @@ public enum Feature {
         /** The key parses as {@code true}. */
         TRUE,
         /** The key's number is strictly greater than zero. */
-        POSITIVE,
-        /** The key's number is anything other than zero. */
-        NONZERO
+        POSITIVE
     }
 
     private final String activationKey;
@@ -226,10 +224,6 @@ public enum Feature {
         LLM.own("ape.llmGateMinActions", "3");
         LLM.own("ape.llmBreakerFailures", "3");
         LLM.own("ape.llmBreakerOpenMs", "60000");
-
-        // The -1 sentinel means "no override"; it is the value every baseline arm pushes on a run
-        // with no LLM, and the reason the inert rule exists at all.
-        LLM_COIN.own("ape.llmPercentageNoSubstrate", "-1");
 
         STATIC.dependsOn(STATIC_DATA);
         MOP.dependsOn(STATIC_DATA);
@@ -303,6 +297,11 @@ public enum Feature {
         return neutralValues.get(key);
     }
 
+    /** Whether this feature's activation rule reads {@code raw}, as its activation key's value, as off. */
+    public boolean readsAsOff(String raw) {
+        return !isActive(Collections.singletonMap(activationKey, raw));
+    }
+
     /** Whether this feature's activation key says it is on, given the effective values. */
     public boolean isActive(Map<String, String> effective) {
         String raw = effective.get(activationKey);
@@ -313,8 +312,6 @@ public enum Feature {
                 return raw != null && Boolean.parseBoolean(raw.trim());
             case POSITIVE:
                 return raw != null && toNumber(raw) > 0.0d;
-            case NONZERO:
-                return raw != null && toNumber(raw) != 0.0d;
             default:
                 return false;
         }

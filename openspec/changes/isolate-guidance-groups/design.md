@@ -565,6 +565,61 @@ drove a fake that never modeled `refillBuffer` (review WR-04).
   buffer, no path), closing WR-04 for the budget. WR-01…WR-03 and the review's notes are recorded in
   `evidence.md` as follow-ups, not fixed here.
 
+**D-B21 — A budget step writes the `dec.nav` of its X4 choice (author, 2026-10-19; verify 14.5 W1).** The X4
+trivial-path pick records its `nav` in the step's `SataTrace`. Only `logActionSelected`, on the `SataChain`
+path, handed the trace to the sink, and `decide` replaces the trace on the next step. A `Budget` step whose search
+tied two or more paths therefore drew from the helper stream with no `dec.nav` [verified, `1ef8e99f`]. This
+contradicts action-selection ("whenever an extension point is consulted with two or more candidates, the step's
+record SHALL carry `dec.nav`") and predates D-B20. `SataAgent.budgetNavigation` hands the trace's `nav`, and only
+its `nav`, to the sink when it returns an action. A budget step still carries no `dec.strat` (activity-budget),
+even though the search's `chose(…, "trivial")` stamps one in the trace. The change is pure telemetry: no draw
+and no decision moves.
+
+**D-B22 — `WTG` activates on a positive weight (author, 2026-10-19; verify 14.5 W3).** `Feature.WTG` used
+`Rule.NONZERO`, the only feature that did, while mop-guidance specifies POSITIVE. A negative
+`ape.mopWeightWtg` mounted WTG with a negative boost on a MOP plan, and aborted with `MISSING_DEPENDENCY` on a
+plan without MOP. Under POSITIVE a value `<= 0` leaves WTG out of the plan, with no abort, as for every other
+weight feature. `Rule.NONZERO` has no other user and is deleted (P3). The cells state 200, so no preset, digest
+or golden moves.
+- The inert rule (INV-RUN-05) accepted an absent feature's key only at its neutral value, so a `<= 0` weight
+  aborted with `MISSING_DEPENDENCY` for every POSITIVE feature (`ape.backMenuPickCap=-1` included, against the
+  spec's "`<= 0` = no counter"). Author (2026-10-19): a value that the feature's own activation rule reads as off
+  states OFF as much as the neutral value does. It is inert, listed in `RUN_START.inert`, and does not abort
+  (`RunSpec.applyInertRule`, `Feature.readsAsOff`). This only removes aborts. A stated ON value for an absent
+  mechanism still aborts.
+
+**D-B23 — `PIPELINE` carries the stage census (author, 2026-10-19; verify 14.5 W5).** decision-pipeline and
+event-sink require "the full fixed candidate order with, for each, whether it was assembled". The record carried
+the stage names as assembled (`stages`) and the scoring-pass census (`candidates`), but no stage census. It gains
+`stageCandidates`: every `DecisionPipeline.Candidate`, in the fixed order, as `{name, enabled}`. This is the shape
+of the pass census, and `candidates` keeps its meaning (additive, so `aperv-tool`'s `trace_ndjson` reads the
+record verbatim). The list is a static declaration taken from the plan, not constructed stage objects
+(INV-DP-03).
+
+**D-B24 — `Config` keeps only fields that `src/main` reads (author, 2026-10-19; verify 14.5 W4).** 46 public
+`Config` fields had no reader in `src/main/java`, qualified or through `import static`. Their keys are all owned
+by the plan (`KeyOwnership`), so the plan reads them. [verified] A scratch copy with all 46 deleted compiles
+`src/main` with no error, and no code reflects over `Config`. They are deleted, with the clamp helper that only
+`llmPercentageNoSubstrate` used. The tests that asserted them now assert the plan
+(`RunContext.current().spec()`, `KeyOwnership.defaultOf`), or are deleted when the plan side is already covered.
+`KeyOwnershipTotalityTest.declaredDefaultsMatchTheJarsOwnDefaults` keeps checking the fields that remain. The
+plan's own defaults stay pinned by the cell goldens and the `cells/*.run_start.json` digests.
+- `ape.llmPercentageNoSubstrate` is retired with them. It is the plan key behind one of the twins, and it never
+  had a consumer: the substrate predicate it was waiting for was never derived. It moves to `KeyOwnership`'s
+  retired keys, with that reason. A properties file that states it aborts with `retired_key` (an abort on the
+  key's name, like every retired key, not on a value). `aperv-tool` is told to drop its `tool.py` mapping.
+- Specs: the deltas stop naming the deleted fields. Four main-spec requirements that no delta touched cite them,
+  and each gains a MODIFIED delta: exploration "Per-Step Debug Artifact Defaults", llm-routing
+  "Coordinate-to-ModelAction Mapping", and ui-coverage "Coverage Boost in Action Scoring — Per-Action" and
+  "Config Flag for Coverage Boost". The llm-routing seam requirement is REMOVED. The preamble citations join the
+  V57 archive hand-sync.
+
+**D-B25 — `coinLlm` counts the steps on which the LLM coin was won and consulted (author, 2026-10-19; verify
+14.5 W2).** event-sink said to count a won coin "including a step on which an earlier LLM stage already made the
+step's one call". `LlmCoinStage` does not draw when the call is spent: it returns before the count, and
+`LlmGateTest` asserts 0. This design already reads "steps on which each coin was won" (Data Flow). The spec
+follows the code. `coinLlm` counts the steps that reach `LlmCoin` with the step's call unspent and `u_L < p_L`.
+
 ## API Design
 
 ### Key contract v3.2 (wave 0; sent verbatim to the rv-android `aperv-tool` session)

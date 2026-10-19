@@ -330,35 +330,6 @@ The dead-pair outcome feedback SHALL continue to flow from the join-buffer site 
 
 ---
 
-### Requirement: Config — llmPercentageNoSubstrate seam
-
-`ape.llmPercentageNoSubstrate` (double) SHALL be a plan key, resolved by `RunSpec` with default `-1`, and not a `Config` field. The value `-1` is a sentinel meaning "inherit `p_L`" — it does NOT mean a routing percentage of −1. In the run-spec `Feature` model the key is a sub-parameter owned by the `LLM` feature family with declared neutral value `-1`: every current baseline arm pushes `-1` explicitly (including non-LLM arms), which resolution accepts as an inert key (INV-RUN-05 of `run-spec`); an explicit value `>= 0` on a plan without the `LLM` feature aborts resolution as a missing dependency.
-
-- The `-1` sentinel SHALL be exempt from the `[0.0, 1.0]` clamp applied to `p_L` (INV-RTR-08): clamping would collapse the sentinel to `0.0`. When the configured value is `-1`, it SHALL pass through unclamped, and any other negative value SHALL resolve to the sentinel.
-- When the configured value is `>= 0` (on an LLM plan), it SHALL be clamped to `[0.0, 1.0]` at resolution exactly like `p_L`.
-
-This capability still has NO consumer of `ape.llmPercentageNoSubstrate`. The `LlmCoin` stage, its coin `u_L < p_L` (`u_L` drawn from `StepRng.llmCoin` at step open), the routing predicates and all telemetry SHALL be unchanged by it; the coin SHALL continue to use the plan's `p_L` unconditionally. The seam exists so round-2 adaptive routing (F′) can, without a protocol change, read `isWidgetlessSubstrate()` at load and substitute this percentage for widgetless apps.
-
-- **INV-RTR-09**: `ape.llmPercentageNoSubstrate` SHALL have no effect on any routing decision; it SHALL be resolved and exposed only. Its `-1` default SHALL pass through the clamp unchanged; a configured value `>= 0` SHALL be clamped to `[0.0, 1.0]`.
-
-#### Scenario: default sentinel not clamped
-- **WHEN** `ape.properties` does not set `ape.llmPercentageNoSubstrate`
-- **THEN** the resolved plan's value SHALL equal `-1` (not clamped to `0.0`)
-
-#### Scenario: configured value clamped
-- **WHEN** an LLM arm's `ape.properties` sets `ape.llmPercentageNoSubstrate=1.5`
-- **THEN** the resolved plan's value SHALL be `1.0`
-
-#### Scenario: no routing behaviour change
-- **WHEN** `ape.llmPercentageNoSubstrate=0.7` on an LLM arm with `ape.llmPercentage=0.02` and an app is widgetless
-- **THEN** the `LlmCoin` stage SHALL still hold exactly when `u_L < 0.02`; the no-substrate value SHALL NOT be consumed
-
-#### Scenario: explicit sentinel on a non-LLM arm is inert, not an error
-- **WHEN** a non-LLM arm's `ape.properties` contains `ape.llmPercentageNoSubstrate=-1` (as every current baseline arm does) and no `ape.llmUrl`
-- **THEN** resolution SHALL succeed and the key SHALL be listed as `inert` in the `RUN_START` echo
-
----
-
 ### Requirement: LLM Telemetry Logging
 
 `LlmRouter` SHALL record structured per-attempt telemetry as `llm[]` sub-events on the current step's `StepRecord` (event-sink capability) and aggregate counters reported in `RUN_END`.
@@ -520,3 +491,126 @@ Each gate refusal adds one to `RUN_END.counters.gateMinActions` or `gateBreaker`
 - **THEN** `LlmStagnation` and `LlmCoin` SHALL return `Continue` without calling the LLM, and the step SHALL go to the next non-LLM stage of the pipeline (`ComponentTrigger`, then `SataChain`)
 - **AND** the `s:31` record's `llm` array SHALL hold exactly one entry, the completed attempt with `result:"error"` and `cause:"timeout"`
 - **AND** `dec.own` SHALL be `{"i":"llm","trg":"new_state","uL":0.12,"fb":"error"}` and `dec.src` SHALL be `"sata"`
+
+---
+
+### Requirement: Coordinate-to-ModelAction Mapping
+
+`LlmRouter.mapToModelAction(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions, State state, int deviceWidth, int deviceHeight)` SHALL map LLM output coordinates to a `ModelAction` for the current state, returning a matched widget action, a synthesized off-tree `LlmTapAction`, or null.
+
+**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * ape.llmBoundaryTopPct` (default `0.035`: the 63 px status bar of the campaign AVD over its 1794 px display, and any degenerate `(0,0)` emission), `mapToModelAction` SHALL return null and log the boundary reject. This prevents the LLM from tapping system UI, and no off-tree tap is synthesized for these coordinates. `deviceHeight` is the display height `ScreenshotStep.deviceDimensions` returned (INV-RTR-21), which on Android excludes the navigation bar, and `normalize` clamps every answer to `[0, deviceHeight − 1]`. There is therefore no lower band: the bottom of the display is app content (bottom navigation, footer buttons, snackbar actions), and an answer that points outside the image is refused before it is mapped ("Action Selection Pipeline" step 8, `CoordinateMapper.inAnswerSpace`). The top fraction is configuration-exposed (J1b) for devices of another density (INV-RTR-22). The former `ape.llmBoundaryBottomPct` was a fraction written for a 1920-high screen whose bottom 6 % was the navigation bar; on the display it rejected y ∈ (1686, 1794), and it is retired.
+
+**ActionType filter (both matching passes)**: the tool the model called SHALL constrain the `ActionType` of the matched action, in the containment pass AND the Euclidean fallback:
+- `"click"` SHALL match only `MODEL_CLICK` actions (measured defect this closes: a `click` answer executed CLICK only 80.9% of the time — the rest matched long-clicks, scrolls, or other types sharing the widget's bounds);
+- `"long_click"` SHALL prefer `MODEL_LONG_CLICK`; when no `MODEL_LONG_CLICK` matches, `MODEL_CLICK` on the same coordinates MAY be returned as fallback (unchanged);
+- `"type_text"` SHALL consider only actions targeting input-capable widgets (EditText, SearchView, AutoCompleteTextView) (unchanged).
+
+**Special action types**:
+- If `actionType` equals `"back"`, the state's `backAction` SHALL be returned directly without coordinate matching.
+- If `actionType` equals `"type_text"` and a match is found, the caller SHALL call `action.getResolvedNode().setInputText(text)` to inject the LLM-provided text into APE's existing input event generation pipeline.
+
+**fixTextEdit (input-widget click conversion)**: when `actionType` is `"click"` or `"long_click"` and the matched widget (containment or snap) is input-capable (EditText, SearchView, AutoCompleteTextView), `mapToModelAction` SHALL NOT return the bare click. It SHALL convert the decision into a text-entry action on that widget: the target comes from the LLM coordinate (the *where*), and the text is generated by APE's existing typed-input generation path — the same generator a SATA-selected input action uses (the *what*); no second LLM call is made. This removes the bare click on input widgets from the LLM's effective action space (banning by subtraction — the mechanism that outperforms prompt instruction), attacking the measured `type_text≈0` collapse. EditText is the widget class with the model's best grounding (93.1%), so the *where* is trustworthy; only the *what* was missing. The input-capable set used here is the same one that exempts these widgets from the dead-pair ban ("Deterministic Dead-Pair Ban") — a decision that resolves to an input widget is transformed rather than refused, and is never withdrawn from the action space by repetition.
+
+**Bounds containment (primary matching strategy)**: For each action passing the ActionType filter where `action.requireTarget() == true` AND `action.isValid() == true` AND `action.getResolvedNode() != null`, check if `(pixelX, pixelY)` falls within the node's `getBoundsInScreen()` rectangle. If exactly one action's bounds contain the point, return that action. If multiple actions' bounds contain the point, return the one with the smallest area (most specific widget).
+
+**Edge-based distance (fallback matching)**: If no action's bounds contain the point, compute the **point-to-rectangle distance** from `(pixelX, pixelY)` to each candidate's resolved bounds: `dx = max(bounds.left − pixelX, 0, pixelX − bounds.right)`, `dy = max(bounds.top − pixelY, 0, pixelY − bounds.bottom)`, `dist = hypot(dx, dy)` (zero when the point is inside). Return the action with the minimum distance if that distance is within the proportional tolerance `max(ape.llmSnapTolerancePx, min(nodeWidth, nodeHeight) / 2)` pixels (floor default `50`, configuration-exposed per J1b; read from the plan, `spec().llm().integer("ape.llmSnapTolerancePx")`, with no `Config` field, design D-B24). This replaces centre-distance, whose geometry punished elongated widgets: on a 1080×150 bar, only points within ~75 px of the **centre** could snap, leaving ~450 px of the bar's own edge unsnappable — a tap 20 px outside a wide widget failed while being visually on target. The `ape.llmSnapTolerancePx` default is unchanged; raising it (to ~150) is an rv-android configuration decision gated on the dead-pair ban.
+
+**Off-tree coordinate tap (dynamic element)**: If no action's bounds contain the point AND no action is within edge-distance tolerance AND `actionType` is `"click"` or `"long_click"`, `mapToModelAction` SHALL return `new LlmTapAction(state, pixelX, pixelY, "long_click".equals(actionType))` — a targetless `MODEL_LLM_TAP` action carrying the LLM coordinate. Because the answer-space check, the clamp in `normalize` and the boundary reject run first, a coordinate reaching this point is inside the display and non-degenerate. For any other `actionType` (e.g. `type_text`), `mapToModelAction` SHALL return null. This is the mechanism by which APE acts on elements invisible to UIAutomator (game canvas, custom view, Compose-without-semantics).
+
+#### Scenario: LLM says "back"
+
+- **WHEN** `mapToModelAction(0, 0, "back", null, actions)` is called
+- **THEN** `state.getBackAction()` SHALL be returned
+- **AND** no coordinate matching SHALL be performed
+
+#### Scenario: click answer only matches MODEL_CLICK
+
+- **WHEN** `mapToModelAction(200, 230, "click", null, actions)` is called
+- **AND** the only action whose bounds contain the point is a `MODEL_LONG_CLICK`
+- **THEN** that action SHALL NOT be returned by the containment pass
+- **AND** matching SHALL proceed to the edge-distance fallback over `MODEL_CLICK` candidates (or off-tree synthesis)
+
+#### Scenario: Click coordinates inside button bounds
+
+- **WHEN** `mapToModelAction(200, 230, "click", null, actions)` is called
+- **AND** MODEL_CLICK action A has resolved node bounds `[100, 200, 300, 250]` (contains point)
+- **AND** MODEL_CLICK action B has resolved node bounds `[0, 0, 480, 800]` (also contains point, but larger)
+- **THEN** action A SHALL be returned (smallest area containing the point)
+
+#### Scenario: edge snap on an elongated bar
+
+- **WHEN** `mapToModelAction(540, 180, "click", null, actions)` is called
+- **AND** a MODEL_CLICK bar has bounds `[0, 200, 1080, 350]`, whose centre is `(540, 275)` — the point is 20 px above the bar's top edge but 95 px from its centre
+- **THEN** the point-to-rectangle distance SHALL be 20 (dx=0, dy=20)
+- **AND** with tolerance `max(50, 75) = 75` the bar SHALL be snapped and returned
+- **AND** the retired centre-distance rule would have rejected it (95 > 75), which is the regression this locks
+
+#### Scenario: click on an EditText becomes text entry
+
+- **WHEN** `mapToModelAction(225, 325, "click", null, actions)` is called
+- **AND** the containing widget is an EditText
+- **THEN** the bare click SHALL NOT be returned
+- **AND** the decision SHALL become a text-entry action on that EditText whose text comes from APE's typed-input generation path
+
+#### Scenario: type_text targets EditText
+
+- **WHEN** `mapToModelAction(225, 325, "type_text", "user@example.com", actions)` is called
+- **AND** action C is an EditText at bounds `[50, 300, 400, 350]` (contains point)
+- **THEN** action C SHALL be returned
+- **AND** the caller SHALL call `action.getResolvedNode().setInputText("user@example.com")`
+
+#### Scenario: long_click prefers MODEL_LONG_CLICK
+
+- **WHEN** `mapToModelAction(200, 230, "long_click", null, actions)` is called
+- **AND** the same widget offers MODEL_LONG_CLICK and MODEL_CLICK actions containing the point
+- **THEN** the MODEL_LONG_CLICK action SHALL be returned
+
+#### Scenario: Off-tree click builds an LlmTapAction
+
+- **WHEN** `mapToModelAction(600, 900, "click", null, actions, state, 1080, 1794)` is called
+- **AND** no MODEL_CLICK action contains the point and none is within edge-distance tolerance
+- **THEN** `mapToModelAction` SHALL return a new `LlmTapAction` of type `MODEL_LLM_TAP` with `pixelX=600`, `pixelY=900`, `longClick=false`
+
+#### Scenario: Off-tree type_text stays no_match
+
+- **WHEN** `mapToModelAction(600, 900, "type_text", "hello", actions, state, 1080, 1794)` is called
+- **AND** no input-capable widget contains or is near the point
+- **THEN** `mapToModelAction` SHALL return null (no off-tree tap is synthesized for text input)
+
+#### Scenario: Boundary reject — status bar
+
+- **WHEN** `mapToModelAction(540, 40, "click", null, actions, state, 1080, 1794)` is called
+- **AND** `pixelY (40) < deviceHeight * ape.llmBoundaryTopPct (62.79 at the 0.035 default)`
+- **THEN** `mapToModelAction` SHALL return null
+- **AND** no `LlmTapAction` SHALL be constructed
+
+#### Scenario: toolbar below the status bar is not rejected
+
+- **WHEN** `mapToModelAction(540, 80, "click", null, actions, state, 1080, 1794)` is called
+- **AND** a MODEL_CLICK toolbar action has bounds `[0,63][1080,210]`
+- **THEN** the boundary check SHALL pass (80 ≥ 62.79)
+- **AND** the toolbar action SHALL be returned
+
+#### Scenario: Boundary reject — navigation bar
+
+- **WHEN** `mapToModelAction(135, 1720, "click", null, actions, state, 1080, 1794)` is called
+- **AND** a MODEL_CLICK bottom-navigation item has bounds `[0,1647][270,1794]`
+- **THEN** no boundary reject SHALL occur: the navigation bar lies below the 1794 px display, outside every pixel `normalize` can produce, so there is no lower band to reject it with
+- **AND** the bottom-navigation item SHALL be returned (under the retired `0.94` band, `1720 > 1686.36` was rejected)
+
+#### Scenario: Band configurable without rebuild
+
+- **WHEN** `ape.properties` contains `ape.llmBoundaryTopPct=0.05`
+- **THEN** a `pixelY=80` click on a 1080x1794 device SHALL be rejected (80 < 89.7) without any code change
+
+## REMOVED Requirements
+
+### Requirement: Config — llmPercentageNoSubstrate seam
+
+**Reason**: The key never had a consumer. The widgetless-substrate predicate it waited for (F′) was never derived, so
+`Config.llmPercentageNoSubstrate` and the plan key `ape.llmPercentageNoSubstrate` were dead (design D-B24).
+INV-RTR-09 goes with it.
+
+**Migration**: `ape.llmPercentageNoSubstrate` is a retired key (`run-spec` "Typed, Total, Fail-Fast Resolution"):
+stating it aborts with `retired_key`, so a harness stops pushing it. The LLM coin uses `ape.llmPercentage`
+(`p_L`) only, as it always did.

@@ -43,23 +43,31 @@ public class RunSpecResolveTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    public void theNoSubstrateSentinelIsInertOnAPlanWithNoLlm() {
-        // Every current baseline arm pushes this key on runs that have no LLM at all. Accepting it
-        // at its sentinel — and only at its sentinel — is what lets the harness keep doing that.
-        RunSpec spec = resolve(entries("ape.llmPercentageNoSubstrate", "-1"));
+    public void anOffValueIsInertOnAPlanWithNoLlm() {
+        // A harness may state OFF for a mechanism the plan does not have: p_L = 0 on a run with no
+        // LLM at all is accepted, and parameterizes nothing.
+        RunSpec spec = resolve(entries("ape.llmPercentage", "0"));
         assertFalse(spec.has(Feature.LLM));
         assertNull(spec.llm());
-        assertTrue(spec.inertKeys().contains("ape.llmPercentageNoSubstrate"));
+        assertTrue(spec.inertKeys().contains("ape.llmPercentage"));
         assertFalse("an inert key parameterizes nothing, so it is not a plan value",
-                spec.effectiveValues().containsKey("ape.llmPercentageNoSubstrate"));
+                spec.effectiveValues().containsKey("ape.llmPercentage"));
+    }
+
+    /** D-B22: a value the activation rule reads as off is OFF too, so it is inert, not an abort. */
+    @Test
+    public void aValueItsRuleReadsAsOffIsInert() {
+        RunSpec spec = resolve(entries("ape.backMenuPickCap", "-1"));
+        assertFalse(spec.has(Feature.BACK_MENU_CAP));
+        assertTrue(spec.inertKeys().contains("ape.backMenuPickCap"));
     }
 
     @Test
     public void aNonNeutralValueForAnAbsentFeatureAborts() {
         // You may state OFF for a mechanism that does not exist; you may not state ON.
-        RunSpecException failure = abort(entries("ape.llmPercentageNoSubstrate", "0.5"));
+        RunSpecException failure = abort(entries("ape.llmPercentage", "0.5"));
         assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
-        assertEquals("ape.llmPercentageNoSubstrate", failure.getKey());
+        assertEquals("ape.llmPercentage", failure.getKey());
     }
 
 
@@ -248,6 +256,24 @@ public class RunSpecResolveTest {
         assertEquals("150", spec.effectiveValues().get("ape.mopWeightWtg"));
         assertEquals("the preset's other weights survive the override",
                 "200", spec.effectiveValues().get("ape.mopFrontierWeight"));
+    }
+
+    /** D-B22: WTG activates on a positive weight; a negative one leaves it out, with no abort. */
+    @Test
+    public void aNegativeWtgWeightLeavesWtgOutOfTheMopPlan() {
+        RunSpec spec = resolve(entries(
+                "ape.preset", Presets.MOP,
+                "ape.staticDataPath", MOP_PATH,
+                "ape.mopWeightWtg", "-5"));
+        assertTrue(spec.has(Feature.MOP));
+        assertFalse(spec.has(Feature.WTG));
+    }
+
+    /** D-B22: on a plan without MOP a negative WTG weight is not an activation, so it does not abort. */
+    @Test
+    public void aNegativeWtgWeightWithoutMopDoesNotAbort() {
+        RunSpec spec = resolve(entries("ape.mopWeightWtg", "-5"));
+        assertFalse(spec.has(Feature.WTG));
     }
 
     @Test

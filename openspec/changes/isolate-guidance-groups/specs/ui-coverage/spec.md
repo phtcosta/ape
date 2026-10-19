@@ -61,3 +61,65 @@ The dump SHALL be read-only: it SHALL NOT register widgets, record interactions,
 #### Scenario: Dump does not alter counts
 - **WHEN** the dump runs at teardown
 - **THEN** `getTotalElements()` and `getTotalInteractions()` SHALL return the same values immediately before and immediately after the dump
+
+---
+
+### Requirement: Coverage Boost in Action Scoring — Per-Action
+
+`StatefulAgent.adjustActionsByGUITree()` SHALL include a coverage boost pass after the WTG scoring pass. For each valid, target-requiring, resolved action, the boost SHALL be computed per-action based on whether the specific widget has been tested anywhere in the current Activity:
+
+```
+widgetId = UICoverageTracker.widgetId(action)
+interacted = _coverageTracker.hasActivityInteraction(newState.getActivity(), widgetId)
+stateVisits = newState.getVisitedCount()
+if (!interacted) {
+    boost = coverageBoostWeight / (1 + stateVisits / 5)
+} else {
+    boost = 0
+}
+action.setPriority(action.getPriority() + boost)
+```
+
+This ensures widgets untested anywhere in the Activity receive the boost while widgets already tested — in this abstract state or any sibling fragment of the same Activity — receive zero. The differential therefore survives NamingFactory refinement: a fragment split does not re-arm the boost for already-exercised widgets.
+
+#### Scenario: Untested widget in new state receives full boost
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=0, `ape.coverageBoostWeight`=100
+- **THEN** boost = 100 / (1 + 0/5) = 100
+
+#### Scenario: Widget tested in a sibling fragment receives no boost
+- **WHEN** widget X was interacted with in fragment S1 of `MainActivity`, and the agent now scores actions in fragment S2 of `MainActivity` where X is registered but locally untested
+- **THEN** X's boost in S2 SHALL be 0
+
+#### Scenario: Untested widget in visited state receives decayed boost
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=10, `ape.coverageBoostWeight`=100
+- **THEN** boost = 100 / (1 + 10/5) = 100 / 3 = 33
+
+#### Scenario: Untested widget in heavily visited state receives minimal boost
+- **WHEN** widget is not interacted anywhere in the Activity (`hasActivityInteraction`=false), state visitedCount=25, `ape.coverageBoostWeight`=100
+- **THEN** boost = 100 / (1 + 25/5) = 100 / 6 = 16
+
+#### Scenario: Tested widget receives no boost regardless of state visits
+- **WHEN** widget has been interacted somewhere in the Activity (`hasActivityInteraction`=true)
+- **THEN** boost = 0 (regardless of stateVisits)
+
+**Rationale**: Without decay, the coverage boost traps the agent in complex states with many widgets (e.g., SettingsActivity with 27 widgets). E2E testing on 20 APKs showed simplenotes regressing -12.56pp because the agent spent all time in SettingsActivity exploring color pickers instead of visiting other activities. The decay formula `weight / (1 + stateVisits / 5)` provides full boost on first visit and diminishes to ~16% after 25 visits, allowing the agent to explore elsewhere. The decay is deliberately kept state-scoped while the novelty test is activity-scoped: decay protects against dwelling, novelty must survive fragmentation.
+
+#### Scenario: Coverage boost disabled
+- **WHEN** the plan's `ape.coverageBoostWeight` is 0 (so `COVERAGE_BOOST` is absent and `ScoringParams.coverageBoostWeight()` is 0)
+- **THEN** no coverage boost SHALL be applied to any action
+
+### Requirement: Config Flag for Coverage Boost
+
+The coverage boost SHALL be the plan key `ape.coverageBoostWeight`, the activation key of the ADDONS member `COVERAGE_BOOST` (POSITIVE, neutral `0`), read through the plan (`spec().exploration().coverageBoostWeight()`, injected into `CoveragePass` through `ScoringParams`). `Config` has no field for it (design D-B24).
+
+| Key | Owner | Type | Jar default | Description |
+|-----|-------|------|-------------|-------------|
+| `ape.coverageBoostWeight` | `COVERAGE_BOOST` (ADDONS) | int | 100 | Priority boost for untested widgets (`<= 0` = feature absent) |
+
+#### Scenario: Config flag loaded
+- **WHEN** `ape.properties` contains `ape.coverageBoostWeight=150`
+- **THEN** on a plan with `ADDONS` the resolved `coverageBoostWeight()` SHALL be 150
+
+#### Scenario: Default value
+- **WHEN** `ape.coverageBoostWeight` is not set in properties
+- **THEN** `KeyOwnership.defaultOf("ape.coverageBoostWeight")` SHALL be `100`, and the ADDONS block states `100`

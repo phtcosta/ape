@@ -6,10 +6,8 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 /**
- * Unit tests for Config flag declarations.
- *
- * Verifies that default values are correct for all gh9-exploration-refactor flags
- * and the changed activityStableRestartThreshold default.
+ * The jar defaults of the exploration keys. A key the plan reads has no {@code Config} field
+ * (design D-B24), so its default is asserted where it is declared, {@code KeyOwnership}.
  *
  * Tests run on the JVM only; no Android device required.
  */
@@ -20,7 +18,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testActivityStableRestartThreshold_defaultIs200() {
-        assertEquals(200, Config.activityStableRestartThreshold);
+        assertEquals("200", KeyOwnership.defaultOf("ape.activityStableRestartThreshold"));
     }
 
     // ---------------------------------------------------------------------------
@@ -28,7 +26,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testCoverageBoostWeight_defaultIs100() {
-        assertEquals(100, Config.coverageBoostWeight);
+        assertEquals("100", KeyOwnership.defaultOf("ape.coverageBoostWeight"));
     }
 
     // ---------------------------------------------------------------------------
@@ -36,7 +34,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testActivityBaseBudget_defaultIs50() {
-        assertEquals(50, Config.activityBaseBudget);
+        assertEquals("50", KeyOwnership.defaultOf("ape.activityBaseBudget"));
     }
 
     // ---------------------------------------------------------------------------
@@ -44,7 +42,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testActivityBudgetPerWidget_defaultIs5() {
-        assertEquals(5, Config.activityBudgetPerWidget);
+        assertEquals("5", KeyOwnership.defaultOf("ape.activityBudgetPerWidget"));
     }
 
     // ---------------------------------------------------------------------------
@@ -52,7 +50,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testMopWeightWtg_defaultIs200() {
-        assertEquals(200, Config.mopWeightWtg);
+        assertEquals("200", KeyOwnership.defaultOf("ape.mopWeightWtg"));
     }
 
     // ---------------------------------------------------------------------------
@@ -60,7 +58,7 @@ public class ConfigTest {
     // ---------------------------------------------------------------------------
     @Test
     public void testDynamicEpsilon_defaultIsTrue() {
-        assertTrue(Config.dynamicEpsilon);
+        assertEquals("true", KeyOwnership.defaultOf("ape.dynamicEpsilon"));
     }
 
     // ---------------------------------------------------------------------------
@@ -88,17 +86,12 @@ public class ConfigTest {
     }
 
     // ---------------------------------------------------------------------------
-    // gh15 A-3: componentPercentage default decoupled from mopDataPath (INV-CT-01).
-    // The default is a literal 0.0 (triggering disabled) regardless of mopDataPath;
-    // triggering is enabled only by an explicit ape.componentPercentage. The
-    // "default 0.0 even when mopDataPath is set" path is not unit-testable here
-    // (the field is static final, captured at class load with mopDataPath null in
-    // the JVM env) — it is asserted by the on-device gate: a sata_mop run emits no
-    // "[APE-RV] Triggering" without an explicit ape.componentPercentage.
+    // gh15 A-3: componentPercentage's jar default is 0.0 (triggering disabled);
+    // the STATIC block states 0.03 (INV-CT-01).
     // ---------------------------------------------------------------------------
     @Test
     public void testComponentPercentage_defaultIsZero() {
-        assertEquals(0.0, Config.componentPercentage, 1e-9);
+        assertEquals(0.0, Double.parseDouble(KeyOwnership.defaultOf("ape.componentPercentage")), 1e-9);
     }
 
     @Test
@@ -115,33 +108,26 @@ public class ConfigTest {
     }
 
     // ---------------------------------------------------------------------------
-    // gh15 A-6: llmPercentage clamped to [0,1] at load (INV-RTR-08).
-    // Only the in-range default (0.02) is asserted on the field here: the field is
-    // static final, captured once at class load, so the out-of-range cases
-    // (1.5 -> 1.0, -0.2 -> 0.0) cannot be re-evaluated in the same JVM. The clamp
-    // expression (Math.max(0.0, Math.min(1.0, ...))) guarantees those bounds.
+    // gh15 A-6: llmPercentage's jar default; RunSpec clamps it to [0,1] (INV-RTR-08,
+    // RunSpecResolveTest).
     // ---------------------------------------------------------------------------
     @Test
     public void testLlmPercentage_defaultInRangeUnchanged() {
-        assertEquals(0.02, Config.llmPercentage, 1e-9);
+        assertEquals(0.02, Double.parseDouble(KeyOwnership.defaultOf("ape.llmPercentage")), 1e-9);
     }
 
     // ---------------------------------------------------------------------------
-    // exploration-effectiveness 1.1: per-step debug artifacts now default false
-    // for throughput (INV-EXPL-17). Both flags are `static final`, captured at
-    // class load, so the override direction (an ape.properties key flipping them
-    // back to true) cannot be re-evaluated in the same JVM — override is
-    // config-driven via Config.getBoolean at load time (same limitation noted for
-    // the gh15 static-final flags above). We assert the shipped defaults here.
+    // exploration-effectiveness 1.1: per-step debug artifacts default false for
+    // throughput (INV-EXPL-17).
     // ---------------------------------------------------------------------------
     @Test
     public void testTakeScreenshotForEveryStep_defaultIsFalse() {
-        assertFalse(Config.takeScreenshotForEveryStep);
+        assertEquals("false", KeyOwnership.defaultOf("ape.takeScreenshotForEveryStep"));
     }
 
     @Test
     public void testSaveGUITreeToXmlEveryStep_defaultIsFalse() {
-        assertFalse(Config.saveGUITreeToXmlEveryStep);
+        assertEquals("false", KeyOwnership.defaultOf("ape.saveGUITreeToXmlEveryStep"));
     }
 
     // ---------------------------------------------------------------------------
@@ -162,58 +148,32 @@ public class ConfigTest {
     }
 
     // ---------------------------------------------------------------------------
-    // mop-reach-strategies 1.4: llmPercentageNoSubstrate — F′ LLM-routing override
-    // used when the substrate is widgetless. Default -1 sentinel = "no override"
-    // (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt
-    // from the [0,1] clamp; >=0 values are clamped like llmPercentage. The field is
-    // static final (default asserted here); the clamp seam is tested below.
+    // isolate-guidance-groups D-B24: ape.llmPercentageNoSubstrate never had a
+    // consumer and is retired; stating it aborts with retired_key.
     // ---------------------------------------------------------------------------
     @Test
-    public void testLlmPercentageNoSubstrate_defaultIsMinusOneSentinel() {
-        assertEquals(-1.0, Config.llmPercentageNoSubstrate, 1e-9);
-    }
-
-    @Test
-    public void testClampLlmPercentageNoSubstrate_sentinelStaysMinusOne() {
-        assertEquals(-1.0, Config.clampLlmPercentageNoSubstrate(-1.0), 1e-9);
-    }
-
-    @Test
-    public void testClampLlmPercentageNoSubstrate_anyNegativeCollapsesToSentinel() {
-        // a real negative (not the -1 sentinel) is meaningless as a probability;
-        // it collapses to the -1 "no override" sentinel (INV-RTR-09).
-        assertEquals(-1.0, Config.clampLlmPercentageNoSubstrate(-0.2), 1e-9);
-    }
-
-    @Test
-    public void testClampLlmPercentageNoSubstrate_aboveOneClampsToOne() {
-        assertEquals(1.0, Config.clampLlmPercentageNoSubstrate(1.5), 1e-9);
-    }
-
-    @Test
-    public void testClampLlmPercentageNoSubstrate_inRangeUnchanged() {
-        assertEquals(0.5, Config.clampLlmPercentageNoSubstrate(0.5), 1e-9);
+    public void testLlmPercentageNoSubstrate_isRetired() {
+        assertTrue(KeyOwnership.isRetired("ape.llmPercentageNoSubstrate"));
     }
 
     // ---------------------------------------------------------------------------
     // llm-native-toolcall-repair J1b/J1c: four LLM knobs exposed as config keys
     // with defaults reproducing the previously hard-coded values bit-for-bit. No
-    // clamping (researcher-facing, like llmTimeoutMs/llmTopK). The B1 arm runs all
-    // four at defaults so the experimental contrast isolates the J1a parser fix.
+    // clamping (researcher-facing, like llmTimeoutMs/llmTopK).
     // ---------------------------------------------------------------------------
     @Test
     public void testLlmMaxTokens_defaultIs1024() {
-        assertEquals(1024, Config.llmMaxTokens);
+        assertEquals("1024", KeyOwnership.defaultOf("ape.llmMaxTokens"));
     }
 
     @Test
     public void testLlmSnapTolerancePx_defaultIs50() {
-        assertEquals(50, Config.llmSnapTolerancePx);
+        assertEquals("50", KeyOwnership.defaultOf("ape.llmSnapTolerancePx"));
     }
 
     @Test
     public void testLlmBoundaryTopPct_defaultIs0_035() {
         // The campaign AVD's 63 px status bar over its 1794 px display (llm-routing INV-RTR-22)
-        assertEquals(0.035, Config.llmBoundaryTopPct, 1e-9);
+        assertEquals(0.035, Double.parseDouble(KeyOwnership.defaultOf("ape.llmBoundaryTopPct")), 1e-9);
     }
 }

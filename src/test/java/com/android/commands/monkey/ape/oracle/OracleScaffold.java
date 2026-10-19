@@ -86,7 +86,7 @@ import java.util.Set;
  *   <tr><td>{@code timestamp}</td><td>ApeAgent</td><td>{@code getTimestamp()}, form-completion probes</td></tr>
  *   <tr><td>{@code model}</td><td>StatefulAgent</td><td>{@code getGraph()} — the global-action scan, the launcher's visited set, path search</td></tr>
  *   <tr><td>{@code _mopContext}</td><td>StatefulAgent</td><td>preset axis; launcher and component-trigger gates</td></tr>
- * *   <tr><td>{@code _coverageTracker}</td><td>StatefulAgent</td><td>{@code computeDynamicEpsilon()} ({@code Config.dynamicEpsilon} defaults true)</td></tr>
+ * *   <tr><td>{@code _coverageTracker}</td><td>StatefulAgent</td><td>{@code computeDynamicEpsilon()} ({@code DYNAMIC_EPSILON}, an ADDONS member)</td></tr>
  *   <tr><td>{@code _budgetTracker}</td><td>StatefulAgent</td><td>the BUDGET stage; built iff {@code ACTIVITY_BUDGET} is mounted (an ADDONS member), as the constructor builds it, and null otherwise, when no BUDGET stage is assembled</td></tr>
  *   <tr><td>{@code scoringContext}, {@code scoringPipeline}</td><td>StatefulAgent</td><td>not read by the ladder itself; wired because the profile mirrors the constructor</td></tr>
  *   <tr><td>{@code actionBuffer}</td><td>StatefulAgent</td><td>{@code actionBufferSize()} in all three LLM preconditions, {@code selectNewActionFromBuffer()}</td></tr>
@@ -94,7 +94,7 @@ import java.util.Set;
  *   <tr><td>{@code actionDiffer}</td><td>SataAgent</td><td>{@code getGreedyActions} → the EARLY_STAGE rungs</td></tr>
  *   <tr><td>{@code backMenuPicks}</td><td>SataAgent</td><td>the back/menu pick cap in EPSILON_GREEDY and the capped filter</td></tr>
  *   <tr><td>{@code actionCounters} (int[])</td><td>SataAgent</td><td>{@code logEvent} on every selected rung; {@code printCounters()} in the logging preamble</td></tr>
- *   <tr><td>{@code epsilon}</td><td>SataAgent</td><td>{@code computeDynamicEpsilon()} floor; set to {@code Config.defaultEpsilon}, the value the production constructor passes</td></tr>
+ *   <tr><td>{@code epsilon}</td><td>SataAgent</td><td>{@code computeDynamicEpsilon()} floor; set to the plan's {@code ape.defaultEpsilon}, the value the production constructor passes</td></tr>
  *   <tr><td>{@code backToActivity}</td><td>SataAgent</td><td>null keeps {@code selectNewActionBackToActivity()} out of {@code AndroidDevice} (see the boundary below)</td></tr>
  *   <tr><td>{@code _isNewState}, {@code graphStableCounter}</td><td>StatefulAgent</td><td>the LLM stages' agent-side arguments; the driver rewrites them per step</td></tr>
  *   <tr><td>{@code decisionPipeline}</td><td>SataAgent</td><td>the run's assembled policy, built by {@code DecisionPipeline.fromSpec} from the preset's plan; the stages own their own episode state, which starts armed</td></tr>
@@ -216,7 +216,7 @@ import java.util.Set;
  *   <li><b>6.1-b — the budget block's trivial-action return is outside the boundary; its gate is
  *       not.</b> With the exhaustion declared the block is entered, and what it calls next —
  *       {@code selectNewActionForTrivialActivity()} — needs more than
- *       {@code Config.trivialActivityRankThreshold} = 3 activity nodes and then searches a path
+ *       the plan's {@code ape.trivialActivityRankThreshold} = 3 activity nodes and then searches a path
  *       over graph <b>edges</b>, of which this harness has none by design ({@link OracleDriver}'s
  *       ledger). {@code ape.doBackToTrivialActivity} is false by default, so the fallback never
  *       reaches {@code AndroidDevice.getFocusedStack()} either: the call simply returns null and the
@@ -599,7 +599,7 @@ public final class OracleScaffold {
         setField(agent, "_coverageTracker", coverageTracker);
         // As the constructor: a tracker iff ACTIVITY_BUDGET, the BUDGET stage's only reader.
         setField(agent, "_budgetTracker",
-                spec.has(Feature.ACTIVITY_BUDGET) ? budgetTracker(script) : null);
+                spec.has(Feature.ACTIVITY_BUDGET) ? budgetTracker(script, spec) : null);
         ScoringContext scoringContext = new ScoringContext() {
             @Override public StaticGuiModel getStaticModel() { return staticModel; }
             @Override public MopContext getMopContext() { return mopContext; }
@@ -628,7 +628,7 @@ public final class OracleScaffold {
         setField(agent, "_isNewState", false);
         setField(agent, "graphStableCounter", 0);
         setField(agent, "backToActivity", null);
-        setField(agent, "epsilon", Config.defaultEpsilon);
+        setField(agent, "epsilon", spec.exploration().defaultEpsilon());
         // A restart never falls due: its start action leaves the JVM (getStartAction reads the
         // device through ape), so the RESTART guard is assembled but never selects (the boundary
         // below). Unsafe left the threshold at 0, which would make a periodic restart due at once.
@@ -728,9 +728,10 @@ public final class OracleScaffold {
      * readable scenario has steps. Iterating until {@code isBudgetExhausted} answers true reaches
      * exactly the count that production would have, rather than a number written down here.
      */
-    private static ActivityBudgetTracker budgetTracker(ScenarioScript script) {
+    private static ActivityBudgetTracker budgetTracker(ScenarioScript script, RunSpec spec) {
         ActivityBudgetTracker tracker = new ActivityBudgetTracker(
-                Config.activityBaseBudget, Config.activityBudgetPerWidget);
+                spec.exploration().integer("ape.activityBaseBudget"),
+                spec.exploration().integer("ape.activityBudgetPerWidget"));
         for (String activity : script.getExhaustedActivities()) {
             tracker.registerActivity(activity, targetedActionCount(script, activity));
             while (!tracker.isBudgetExhausted(activity)) {

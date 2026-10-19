@@ -793,11 +793,11 @@ The WTG-MOP term SHALL be computed by `WtgPass`, a MOP scorer of the scoring pip
 
 ### Requirement: Config Flag for WTG Weight
 
-The WTG navigation weight SHALL be the plan key `ape.mopWeightWtg` (int, jar default `200`), the activation key of the MOP member feature `WTG` (POSITIVE, neutral `0`, depends on `MOP`). It is read through the resolved plan and reaches `WtgPass` injected through `ScoringParams`; no scorer SHALL read it from `Config` (`scoring-pipeline` INV-ARCH-11). A value of `0` leaves `WTG` out of the plan, so `WtgPass` is not constructed. An explicit non-zero value on a plan without `MOP` aborts resolution with `MISSING_DEPENDENCY` (`run-spec`). The MOP block of the cell presets states `ape.mopWeightWtg=200` (`guidance-groups`).
+The WTG navigation weight SHALL be the plan key `ape.mopWeightWtg` (int, jar default `200`), the activation key of the MOP member feature `WTG` (POSITIVE, neutral `0`, depends on `MOP`). It is read through the resolved plan and reaches `WtgPass` injected through `ScoringParams`; no scorer SHALL read it from `Config` (`scoring-pipeline` INV-ARCH-11). A value `<= 0` leaves `WTG` out of the plan, with no abort, on a plan with or without `MOP`, so `WtgPass` is not constructed and no negative boost is ever applied (design D-B22). An explicit positive value on a plan without `MOP` aborts resolution with `MISSING_DEPENDENCY` (`run-spec`). The MOP block of the cell presets states `ape.mopWeightWtg=200` (`guidance-groups`).
 
 | Key | Owner | Type | Default | Description |
 |-----|-------|------|---------|-------------|
-| `ape.mopWeightWtg` | `WTG` (MOP) | int | 200 | WTG navigation boost (0 = feature absent) |
+| `ape.mopWeightWtg` | `WTG` (MOP) | int | 200 | WTG navigation boost (`<= 0` = feature absent) |
 
 #### Scenario: Default WTG weight
 - **WHEN** a plan with `MOP` does not state `ape.mopWeightWtg`
@@ -807,6 +807,8 @@ The WTG navigation weight SHALL be the plan key `ape.mopWeightWtg` (int, jar def
 - **WHEN** a plan with `MOP` states `ape.mopWeightWtg=0`
 - **THEN** `WTG` SHALL be absent from the plan's `features` and `WtgPass` SHALL NOT be constructed
 - **AND** no action SHALL carry a `wtgBoost`, and no step record a `dec.wtg`
+- **AND WHEN** the plan states `ape.mopWeightWtg=-100` instead, with or without `MOP`
+- **THEN** `WTG` SHALL likewise be absent, resolution SHALL NOT abort, and no negative `wtgBoost` SHALL be applied (design D-B22)
 
 ### Requirement: MopScorer — OPTIONSMENU-Aware Menu Boost
 

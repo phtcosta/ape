@@ -2,7 +2,6 @@ package com.android.commands.monkey.ape.oracle;
 
 import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunSpec;
-import com.android.commands.monkey.ape.utils.Config;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -50,20 +49,25 @@ final class LadderConfigGuard {
         // The BUDGET stage: assembled iff the ADDONS member is mounted, with the budget arithmetic a
         // scenario's declared exhaustion has to reach (design D2).
         assertEquals(cell + " ape.activityBudgetEnabled", addons, spec.has(Feature.ACTIVITY_BUDGET));
-        assertEquals("ape.activityBaseBudget", 50, Config.activityBaseBudget);
-        assertEquals("ape.activityBudgetPerWidget", 5, Config.activityBudgetPerWidget);
+        if (spec.has(Feature.ACTIVITY_BUDGET)) {
+            assertEquals("ape.activityBaseBudget", 50,
+                    spec.exploration().integer("ape.activityBaseBudget"));
+            assertEquals("ape.activityBudgetPerWidget", 5,
+                    spec.exploration().integer("ape.activityBudgetPerWidget"));
+        }
         // The trivial-activity rung: at this threshold a scenario's handful of activity nodes
         // yields an empty set, which is what keeps the rung a fall-through (finding 6.1-b).
-        assertEquals("ape.trivialActivityRankThreshold", 3, Config.trivialActivityRankThreshold);
-        assertFalse("ape.doBackToTrivialActivity", Config.doBackToTrivialActivity);
+        assertEquals("ape.trivialActivityRankThreshold", 3,
+                spec.exploration().trivialActivityRankThreshold());
+        assertFalse("ape.doBackToTrivialActivity", spec.exploration().doBackToTrivialActivity());
         // The SATA chain's own reads: the action set a state carries, how EARLY_STAGE decides what
         // is still worth visiting, and the epsilon-greedy rung's cap and coin.
         assertEquals(cell + " ape.modelMenuEnabled", addons, spec.has(Feature.MODEL_MENU));
-        assertTrue("ape.useActionDiffer", Config.useActionDiffer);
+        assertTrue("ape.useActionDiffer", spec.exploration().useActionDiffer());
         assertEquals(cell + " ape.backMenuPickCap", addons ? 3 : 0,
                 spec.exploration().backMenuPickCap());
         assertEquals(cell + " ape.dynamicEpsilon", addons, spec.exploration().dynamicEpsilon());
-        assertEquals("ape.defaultEpsilon", 0.05, Config.defaultEpsilon, 0.0);
+        assertEquals("ape.defaultEpsilon", 0.05, spec.exploration().defaultEpsilon(), 0.0);
         if (spec.exploration().dynamicEpsilon()) {
             assertEquals("ape.minEpsilon", 0.02, spec.exploration().minEpsilon(), 0.0);
             assertEquals("ape.maxEpsilon", 0.15, spec.exploration().maxEpsilon(), 0.0);

@@ -149,7 +149,8 @@ public final class NoopSink implements EventSink {
     }
 
     @Override
-    public void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates) {
+    public void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates,
+            Map<String, Boolean> stageCandidates) {
     }
 
     @Override

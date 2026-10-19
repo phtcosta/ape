@@ -281,6 +281,35 @@ cells); BASE and the parity goldens do not.
 - [x] 16.2 `StatefulAgent`: detach/restore the buffer without weakening and share `abandonBuffer`'s record; `SataAgent.budgetNavigation()` (a `StageCollaborators` method); `BudgetStage` takes only the navigation supplier and no longer calls `abandonBuffer`; `DecisionPipeline` wires it. Tests on a real `SataAgent` buffer: path found with a non-empty buffer (no weakening, path kept, `dec.buf`), path found with an empty buffer (no `dec.buf`), no path (buffer restored); `BudgetStageTest` updated; `mvn clean test` green, no golden moved
 - [x] 16.3 Ask the author before the commit; then `mvn package` + install to the aperv worktree, record sha256 and `GIT_SHA` in `evidence.md`, and send them to `mini-experimento`, `aperv-tool`, `rep-pack-e03` and `versao`
 
+## 17. Verify 14.5 follow-ups (author decisions 2026-10-19; design D-B21…D-B25)
+
+Runs inside group 14, after 14.5. BASE behaviour does not move. The jar changes in its telemetry (D-B21,
+D-B23), in WTG's activation on a negative weight (D-B22), and in the retired key (D-B24).
+
+- [x] 17.1 Record D-B21…D-B25 in `design.md`. Update the deltas:
+  - `action-selection`/`activity-budget`: a budget step's `dec.nav`.
+  - `event-sink`/`decision-pipeline`: `PIPELINE.stageCandidates`, and `coinLlm` per D-B25.
+  - `mop-guidance`: WTG POSITIVE, a negative weight leaves it out.
+  - D-B24: no delta names a deleted `Config` field. MODIFIED exploration "Per-Step Debug Artifact Defaults",
+    llm-routing "Coordinate-to-ModelAction Mapping", ui-coverage "Coverage Boost in Action Scoring — Per-Action"
+    and "Config Flag for Coverage Boost". REMOVED llm-routing "Config — llmPercentageNoSubstrate seam". The
+    llm-infrastructure scenarios assert the plan. The run-spec retired-key table and its scenario follow.
+  - Add the preamble citations to the 14.4 hand-sync list.
+- [x] 17.2 D-B21: `SataAgent.budgetNavigation` writes the trace's `nav` when it returns an action. Test: a
+  budget step that ties two paths carries `dec.nav` X4 and no `dec.strat`.
+- [x] 17.3 D-B22: `Feature.WTG` uses `Rule.POSITIVE`; delete `Rule.NONZERO`. Test: `ape.mopWeightWtg=-5` leaves
+  WTG out, on a MOP plan and on a plan without MOP, with no abort.
+- [x] 17.4 D-B23: `EventSink.pipeline` gains the stage census, which `NdjsonSink` writes as `stageCandidates`.
+  Tests: one cell's `PIPELINE` lists all nine candidates in order, with `enabled` matching `stages`.
+- [x] 17.5 D-B24: delete the 46 dead `Config` fields and `clampLlmPercentageNoSubstrate`. Retire
+  `ape.llmPercentageNoSubstrate` (`KeyOwnership`, `Feature`, `RunSpec.clamp`). Move `ConfigTest`,
+  `LadderConfigGuard`, `OracleScaffold`, `DynamicEpsilonTest` and `ScriptedLlmTest` to the plan. Update
+  `CLAUDE.md` *Central Configuration* and the test count.
+- [ ] 17.6 `mvn clean test` green with no golden moved, except the digests that D-B24's retired key moves (to be
+  recorded). `openspec validate --strict`. Ask the author before the commit, then package, record sha256 and
+  `GIT_SHA`, and send them to `mini-experimento`, `aperv-tool` (with the `tool.py` mapping to drop),
+  `rep-pack-e03` and `versao`.
+
 ## 14. Verification
 
 - [x] 14.1 Run `/sdd-qa-lint-fix` on `src/main/java/com/android/commands/monkey/ape`; delete the dead `Config.activityTriggerStagnationStep`/`activityTriggerMaxPerRun` (`Config.java:127-133`, readers only in `ConfigTest`; the plan owns both, P3; author 2026-10-18)

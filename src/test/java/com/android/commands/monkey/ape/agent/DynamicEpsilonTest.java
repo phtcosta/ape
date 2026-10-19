@@ -4,7 +4,6 @@ import com.android.commands.monkey.ape.runtime.KeyOwnership;
 import static org.junit.Assert.*;
 import org.junit.Test;
 
-import com.android.commands.monkey.ape.utils.Config;
 
 /**
  * Tests for the dynamic epsilon formula used by SataAgent.computeDynamicEpsilon().
@@ -49,16 +48,16 @@ public class DynamicEpsilonTest {
     // INV-EPS-02: when dynamicEpsilon=false, use fixed defaultEpsilon
     @Test
     public void testINV_EPS_02_dynamicDisabled_usesDefault() {
-        // When dynamicEpsilon is false, SataAgent.computeDynamicEpsilon() returns this.epsilon
-        // which is Config.defaultEpsilon (0.05). We verify the default here.
-        assertEquals(0.05, Config.defaultEpsilon, 1e-6);
+        // When dynamicEpsilon is false, SataAgent.computeDynamicEpsilon() returns this.epsilon,
+        // which is the plan's ape.defaultEpsilon (0.05). We verify the default here.
+        assertEquals("0.05", KeyOwnership.defaultOf("ape.defaultEpsilon"));
     }
 
     // INV-EPS-03: when tracker is null, fall back to defaultEpsilon
     // (tested implicitly: computeDynamicEpsilon checks tracker == null)
     @Test
     public void testINV_EPS_03_configDefaults() {
-        assertTrue(Config.dynamicEpsilon);
+        assertEquals("true", KeyOwnership.defaultOf("ape.dynamicEpsilon"));
         assertEquals("0.15", KeyOwnership.defaultOf("ape.maxEpsilon"));
         assertEquals("0.02", KeyOwnership.defaultOf("ape.minEpsilon"));
     }

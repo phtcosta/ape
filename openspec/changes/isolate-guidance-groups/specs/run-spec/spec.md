@@ -18,7 +18,9 @@ MOP and LLM. The run-spec capability changes in five places.
    `ape.llmBreakerFailures`, `ape.llmBreakerOpenMs`) are new. `COMPONENT_TRIGGER` moves from `MOP` to `STATIC` with its key
    `ape.componentPercentage` (D-B13). `ape.mopDataPath`,
    `ape.leastVisitedPriorityTiebreak` and `ape.mopTargetPickCap` are retired, each with the reason that names what
-   replaced it.
+   replaced it. `ape.llmPercentageNoSubstrate` is retired with the reason that it never had a consumer (design D-B24).
+   `WTG` activates on a positive weight, like every other weight feature, and an activation value that the
+   feature's own rule reads as off states OFF as the neutral value does (D-B22).
 3. **Six cell presets** replace `aperv`, `mop`, `llm` and `llm_mop`: `base`, `mop`, `as`, `as_mop`, `as_llm`,
    `as_mop_llm`. Each is the union of the blocks of its groups (`guidance-groups`).
 4. **`StaticParams`**, a parameter record for the data root, beside `MopParams` and `LlmParams`.
@@ -50,6 +52,10 @@ MOP and LLM. The run-spec capability changes in five places.
   the effective value echoed in `params` and hashed in the digest. Coverage: `RunSpecResolveTest`.
 - **INV-RUN-04** (amended): the plan `digest` SHALL exclude, besides seed, runId, the corpus basis and the preset
   name, the harness variant name `ape.variant` (INV-RUN-10). The rest of INV-RUN-04 is unchanged.
+- **INV-RUN-05** (amended): a sub-parameter key explicitly present for an inactive feature SHALL be accepted at its
+  declared neutral value, and, when it is that feature's activation key, also at any value the feature's activation
+  rule reads as off (`<= 0` for a POSITIVE feature); either is recorded as `inert` in the echo, and any other value
+  SHALL abort per INV-RUN-02 (design D-B22). The rest of INV-RUN-05 is unchanged. Coverage: `RunSpecResolveTest`.
 - **INV-RUN-08** (amended): All run-scoped randomness SHALL derive from the run seed owned by `RunContext` (seeded
   from `-s`). Besides the agent and helper streams, the only further streams SHALL be the four `StepRng` streams,
   each a `Random` seeded with `seed ^ k` for a fixed constant `k` per stream: `llmCoin`, `mopCoin`, `componentCoin`
@@ -133,6 +139,7 @@ Dependency validation SHALL distinguish explicit input from defaults: an **expli
 | `ape.fuzzInputTyped` | `TYPED_FUZZ` (TRUE) | bool | `true` | `false` | |
 | `ape.componentPercentage` | `COMPONENT_TRIGGER` (POSITIVE) | double | `0.0` | `0` | formerly owned under `MOP`; the STATIC block sets `0.03` (D-B13) |
 | `ape.llmPercentage` | `LLM_COIN` (POSITIVE) | double | `0.02` | `0` | `p_L`, clamped to `[0,1]` |
+| `ape.mopWeightWtg` | `WTG` (POSITIVE) | int | `200` | `0` | a value `<= 0` leaves `WTG` out of the plan, with no abort, on a plan with or without `MOP` (design D-B22); no feature uses a non-zero rule (`Rule.NONZERO` does not exist) |
 
 The other keys of the former addon features keep their names and owners; those features gain the `ADDONS` dependency. The MOP family keeps its keys and gains no other dependency than `MOP` (and `MODEL_MENU` for `MENU_GATEWAY`); `COMPONENT_TRIGGER` leaves it for `STATIC`, with its keys unchanged.
 
@@ -164,10 +171,19 @@ The other keys of the former addon features keep their names and owners; those f
 
 #### Scenario: neutral inert sub-parameter accepted, non-neutral aborts
 
-- **WHEN** a properties file without `ape.llm` contains `ape.llmPercentageNoSubstrate=-1` (the neutral sentinel)
+- **WHEN** a properties file without `ape.llm` contains `ape.llmGateMinActions=3` (the key's neutral value)
 - **THEN** resolution SHALL succeed, the key SHALL appear in the echo's `inert` list, and `LlmParams` SHALL be null
 - **AND WHEN** the same file instead contains `ape.llmOnNewState=true` with no `ape.llm`
 - **THEN** resolution SHALL abort with a missing-dependency diagnostic naming `LLM`
+- **AND WHEN** the same file instead contains `ape.llmPercentageNoSubstrate=-1`, the former neutral sentinel that every baseline arm used to push
+- **THEN** resolution SHALL abort with `reason=retired_key key=ape.llmPercentageNoSubstrate` (design D-B24): the key is no longer an inert sub-parameter but a retired key, whatever its value
+
+#### Scenario: a negative WTG weight leaves WTG out without aborting
+
+- **WHEN** a plan with `MOP` states `ape.mopWeightWtg=-50`
+- **THEN** resolution SHALL succeed with `WTG` absent from `features`, and `WtgPass` SHALL NOT be constructed
+- **AND WHEN** a plan without `MOP` states `ape.mopWeightWtg=-50`
+- **THEN** resolution SHALL succeed with `WTG` absent, and SHALL NOT abort with `missing_dependency`, because a non-positive value does not activate the feature (design D-B22)
 
 #### Scenario: the six MOP scoring keys resolve to their defaults
 
@@ -279,11 +295,12 @@ This case is not a compatibility affordance and does not depend on any particula
 
 1. **Unknown key**: an `ape.*` key in a properties file that no owner declares.
 2. **Foreign key**: any non-`ape.` key in a properties file.
-3. **Retired key** (dedicated message naming the replacement): `ape.apePureMode` (purity is structural — owner decision D3), `ape.modelFile`, `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.saveStates` (persistence protocol removed), `ape.enableXPathAction` (injection channel removed), `ape.mopWeightActivity` (dead key), `ape.llmBoundaryBottomPct` (on the display base the jar maps answers in, the navigation bar is outside every reachable pixel, so the band only rejected app content — `llm-coordinate-single-base`), `ape.agentType` and `ape.replayLog` when present in a **file** (CLI-only values — closes the `/sdcard` agent-swap hole), and the three keys retired by `isolate-guidance-groups`:
+3. **Retired key** (dedicated message naming the replacement): `ape.apePureMode` (purity is structural — owner decision D3), `ape.modelFile`, `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.saveStates` (persistence protocol removed), `ape.enableXPathAction` (injection channel removed), `ape.mopWeightActivity` (dead key), `ape.llmBoundaryBottomPct` (on the display base the jar maps answers in, the navigation bar is outside every reachable pixel, so the band only rejected app content — `llm-coordinate-single-base`), `ape.agentType` and `ape.replayLog` when present in a **file** (CLI-only values — closes the `/sdcard` agent-swap hole), and the four keys retired by `isolate-guidance-groups`:
    - `ape.mopDataPath` — "renamed ape.staticDataPath: the artifact feeds STATIC and MOP (isolate-guidance-groups)";
    - `ape.leastVisitedPriorityTiebreak` — "replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers";
-   - `ape.mopTargetPickCap` — "replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of picks per activity and widget (default 1)".
-4. **Invalid type**: a non-numeric value for a numeric key; a boolean key whose value is not literally `true`/`false` (case-insensitive); a value of `ape.mopScoring` other than exactly `flag` or `distance` (the one string key with a closed value set; the diagnostic names the valid set — `llm-coordinate-single-base`, design D18). Documented value-semantics clamps (cadence `<= 0`, launch cap `< 0`, `ape.mopCoinLedgerMaxInteractions < 1`, the percentage clamps of `ape.llmPercentage`, `ape.mopCoinPercentage` and `ape.componentPercentage` to `[0,1]`, `-1` sentinel) remain clamps, not aborts (INV-RUN-11).
+   - `ape.mopTargetPickCap` — "replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of picks per activity and widget (default 1)";
+   - `ape.llmPercentageNoSubstrate` — "it never had a consumer: the widgetless-substrate predicate it waited for was never derived" (design D-B24). The abort is on the key's name, like every retired key, not on its value.
+4. **Invalid type**: a non-numeric value for a numeric key; a boolean key whose value is not literally `true`/`false` (case-insensitive); a value of `ape.mopScoring` other than exactly `flag` or `distance` (the one string key with a closed value set; the diagnostic names the valid set — `llm-coordinate-single-base`, design D18). Documented value-semantics clamps (cadence `<= 0`, launch cap `< 0`, `ape.mopCoinLedgerMaxInteractions < 1`, the percentage clamps of `ape.llmPercentage`, `ape.mopCoinPercentage` and `ape.componentPercentage` to `[0,1]`) remain clamps, not aborts (INV-RUN-11).
 5. **Missing dependency / invalid combination**: per the Feature Model requirement — including a group key stated `true` whose data root or URL is missing (`ape.static`/`ape.mop` without `ape.staticDataPath`, `ape.llm` without `ape.llmUrl`); plus `--ape replay` without `--ape-replay`.
 6. **Unknown `--ape` value**: any value outside `{sata, random, replay}` — including `bfs`, `dfs`, and `ape` — aborts with a diagnostic naming the valid set. The silent `SataAgent` fallback SHALL NOT exist.
 
@@ -343,6 +360,8 @@ This case is not a compatibility affordance and does not depend on any particula
 - **THEN** the process SHALL abort with `reason=retired_key key=ape.leastVisitedPriorityTiebreak` and a detail naming the scorer-sum tie (X1/R2)
 - **AND WHEN** it contains `ape.mopTargetPickCap=3` instead
 - **THEN** the process SHALL abort with `reason=retired_key key=ape.mopTargetPickCap` and a detail naming `ape.mopCoinLedgerMaxInteractions`
+- **AND WHEN** it contains `ape.llmPercentageNoSubstrate=0.5` instead
+- **THEN** the process SHALL abort with `reason=retired_key key=ape.llmPercentageNoSubstrate` and a detail stating that the key had no consumer
 
 #### Scenario: an out-of-range dose is clamped, not rejected
 

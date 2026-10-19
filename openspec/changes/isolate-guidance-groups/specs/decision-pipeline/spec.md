@@ -248,7 +248,7 @@ for what it owns:
 
 Assembly SHALL happen exactly once per run and SHALL emit one `[APE-ARCH] stages=[...]` line listing the assembled stages' `name()` values in order (INV-DP-01). Every parameter a stage reads SHALL be injected at assembly from the `RunSpec` (INV-DP-12); a stage SHALL NOT read static `Config` in `decide()`.
 
-**The echo SHALL also name the candidate stages, as a static list.** Beside the assembled stages, assembly SHALL emit the full fixed candidate order with, for each, whether it was assembled — carried by the stage-4 `PIPELINE` record as `stages` and `candidates`. On the stage side this costs nothing beyond the list itself and needs no reason field: a stage is absent exactly when its gating feature is absent from the plan (INV-DP-03), which `RUN_START.features` already states. The list SHALL be a static declaration of names — never a constructed no-op stage object to enumerate, which INV-DP-03 forbids and which this requirement must not be read as reintroducing.
+**The echo SHALL also name the candidate stages, as a static list.** Beside the assembled stages, assembly SHALL emit the full fixed candidate order with, for each, whether it was assembled — carried by the stage-4 `PIPELINE` record as `stages` (the assembled names, in order) and `stageCandidates` (every candidate stage of the fixed order, each as `{name, enabled}`; design D-B23). The record's `candidates` member stays the scoring-pass census of `scoring-pipeline`; the stage census does not reuse it. On the stage side this costs nothing beyond the list itself and needs no reason field: a stage is absent exactly when its gating feature is absent from the plan (INV-DP-03), which `RUN_START.features` already states. The list SHALL be a static declaration of names — never a constructed no-op stage object to enumerate, which INV-DP-03 forbids and which this requirement must not be read as reintroducing.
 
 It matters on the *pass* side, and that is where the evidence is. The scoring passes become absent for a reason nothing in the plan reveals — `WtgPass`, `NavFrontierPass` and `MopFrontierPass` each gate on run-time data (`StaticGuiModel.hasWtgData()`) — and over the decisive campaign the whole family is never constructed in 25 of the 40 applications. Making the stage census static and the pass census data-bearing is the distinction; the pass half is specified in the scoring-pipeline capability.
 
@@ -273,6 +273,12 @@ presets" is kept. Its body now covers the six cell presets that replaced those f
 - **WHEN** the plan carries no LLM, no MOP and no component-trigger feature, with the activity budget on (the `as` cell with `ape.componentPercentage=0`)
 - **THEN** the pipeline SHALL be `[Budget, Restart, SataChain]`
 - **AND** no LLM unit, launcher counter, MOP coin, coin stream or trigger machinery SHALL exist in the run (feature absent = stage absent, structurally)
+
+#### Scenario: the stage census names the stages that were not assembled
+- **WHEN** the `mop` cell assembles `[Restart, MopLauncher, MopCoin, SataChain]`
+- **THEN** the `PIPELINE` record's `stageCandidates` SHALL carry all nine candidates in the fixed order, with `enabled:true` on exactly `Restart`, `MopLauncher`, `MopCoin` and `SataChain` and `enabled:false` on `Budget`, `LlmNewState`, `LlmStagnation`, `LlmCoin` and `ComponentTrigger`
+- **AND** its `stages` SHALL be `[Restart, MopLauncher, MopCoin, SataChain]`
+- **AND** no stage object SHALL have been constructed for a candidate with `enabled:false`
 
 #### Scenario: stage order is not configurable
 - **WHEN** any plan is resolved, with any overrides

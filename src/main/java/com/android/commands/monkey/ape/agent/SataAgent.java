@@ -371,7 +371,8 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
     }
 
     /** Records {@code dec.nav}: an extension point decided between two or more candidates. */
-    private void recordNav(String point, String variant, boolean alt, boolean drew) {
+    // Package-private so that BufferAbandonTest can stand in for the search's X4 record (D-B21).
+    void recordNav(String point, String variant, boolean alt, boolean drew) {
         SataTrace t = trace();
         t.navPoint = point;
         t.navVariant = variant;
@@ -1318,6 +1319,12 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         }
         if (!preempted.isEmpty()) {
             recordAbandonment(BudgetStage.OWNER);
+        }
+        // The X4 tie the search may have decided is the budget step's only SATA telemetry: its
+        // dec.nav, without the dec.strat the search's chose() stamps in the trace (design D-B21).
+        SataTrace t = trace();
+        if (t.navPoint != null) {
+            RunContext.current().sink().nav(t.navPoint, t.navVariant, t.navAlt, t.navDrew);
         }
         return action;
     }

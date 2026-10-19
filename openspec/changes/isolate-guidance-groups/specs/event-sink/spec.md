@@ -240,7 +240,7 @@ That substitution is the point of the requirement, so it is stated rather than l
 
 A separate boolean `has_wtg_data` SHALL NOT be emitted: `hasWtgData()` is exactly `wtgEdges > 0`, and a second field would be a second place the same truth is written.
 
-**`PIPELINE` — assembly provenance including what was *not* assembled.** The record SHALL carry `passes` (the enabled scoring passes, in pipeline order, exactly what the `[APE-ARCH]` line reports) and, beside it, `candidates`: every one of the seven candidate passes — `MopWidgetPass`, `MenuGatewayPass`, `WtgPass`, `NavFrontierPass`, `MopFrontierPass`, `CoveragePass`, `FormCompletionPass` (`scoring-pipeline`) — with `{name, enabled}`. It SHALL also carry `stages` and the stage `candidates` of the decision pipeline, the fixed order `Budget`, `Restart`, `LlmNewState`, `LlmStagnation`, `LlmCoin`, `MopLauncher`, `ComponentTrigger`, `MopCoin`, `SataChain` (`decision-pipeline`). The stage side SHALL be a static declaration of candidate stage names, not constructed objects — a feature absent from the plan has no stage (decision-pipeline INV-DP-03), and the census SHALL NOT reintroduce a disabled-stage object to enumerate.
+**`PIPELINE` — assembly provenance including what was *not* assembled.** The record SHALL carry `passes` (the enabled scoring passes, in pipeline order, exactly what the `[APE-ARCH]` line reports) and, beside it, `candidates`: every one of the seven candidate passes — `MopWidgetPass`, `MenuGatewayPass`, `WtgPass`, `NavFrontierPass`, `MopFrontierPass`, `CoveragePass`, `FormCompletionPass` (`scoring-pipeline`) — with `{name, enabled}`. It SHALL also carry the decision pipeline's side (`decision-pipeline`, design D-B23): `stages`, the names of the stages as assembled, in pipeline order; and `stageCandidates`, every one of the nine candidate stages in the fixed order `Budget`, `Restart`, `LlmNewState`, `LlmStagnation`, `LlmCoin`, `MopLauncher`, `ComponentTrigger`, `MopCoin`, `SataChain`, each as `{name, enabled}` — the shape of the pass census. `candidates` SHALL keep its meaning, the scoring-pass census; the stage census is the separate, additive member `stageCandidates`, so a reader of `candidates` is unaffected. The stage side SHALL be a static declaration of candidate stage names, not constructed objects — a feature absent from the plan has no stage (decision-pipeline INV-DP-03), and the census SHALL NOT reintroduce a disabled-stage object to enumerate.
 
 A `reason` field on the pass entries SHALL NOT be emitted. Each gate is the member feature (`RUN_START.features`) and, for the WTG family, `hasWtgData()` (`MOP_DATA.wtgEdges`), so every conjunct is already recoverable from the same trace, and a reason field would encode the order in which each constructor happens to evaluate its conjuncts rather than the cause.
 
@@ -264,6 +264,13 @@ The census is what makes the pass list readable as a data-dependent outcome inst
 - **WHEN** the application has 7 click edges and the `as_mop` cell sets `ape.mopFrontierWeight=0`
 - **THEN** `MOP_DATA.wtgEdges` SHALL be `7`, `PIPELINE.candidates` SHALL carry `MopFrontierPass` with `enabled:false`, and `RUN_START.features` SHALL lack `MOP_FRONTIER`
 - **AND** the three facts together SHALL identify the cause without any `reason` field on the record
+
+#### Scenario: the stage census lists every candidate stage
+
+- **WHEN** a run of the `as` cell assembles its decision pipeline (no `LLM`, no `MOP`)
+- **THEN** the `PIPELINE` record's `stageCandidates` SHALL list, in this order, `Budget`, `Restart`, `LlmNewState`, `LlmStagnation`, `LlmCoin`, `MopLauncher`, `ComponentTrigger`, `MopCoin`, `SataChain`, each with `{name, enabled}`, with `enabled:false` on `LlmNewState`, `LlmStagnation`, `LlmCoin`, `MopLauncher` and `MopCoin`
+- **AND** `stages` SHALL list exactly the names whose `stageCandidates` entry is `enabled:true`, in the same order
+- **AND** `candidates` SHALL still be the seven-entry scoring-pass census
 
 #### Scenario: Server model acknowledged once
 
@@ -294,7 +301,7 @@ The routing counters:
 - `guardBacks`: BACK events injected by the foreign-activity guard and the tree-package guard. A guard BACK is not a step and has no step record, so this counter is its only trace.
 - `bufAbandoned`: steps on which a preempting owner abandoned a non-empty SATA buffer (`dec.buf` present).
 - `restarts`: steps taken by the RESTART guard (`dec.src:"restart"`).
-- `coinLlm`: steps that reached `LlmCoin` with `u_L < p_L` (no guard and no LLM trigger stage took the step), whatever the outcome — including a step on which an earlier LLM stage already made the step's one call and `LlmCoin` returned `Continue` without calling (`llm-routing` "Declared LLM Fallback").
+- `coinLlm`: steps that reached `LlmCoin` with the step's one LLM call unspent and `u_L < p_L` (no guard and no LLM trigger stage took the step), whatever the outcome (design D-B25). A step on which an earlier LLM stage already spent the step's one call SHALL NOT be counted: `LlmCoin` returns `Continue` on it without consulting the coin (`llm-routing` "Declared LLM Fallback").
 - `coinMop`: steps on which the MOP coin was won (eligible and `uM < p_M`).
 - `nullRelaunches`: null-tree recoveries that stopped the package under test and restarted its main activity (`component-triggering` "Launcher-Owned Null-Tree Recovery", design D-B16). A recovery is not a step and has no step record, so this counter is its only trace.
 
@@ -329,8 +336,14 @@ The attempt ordinal is deliberately **not** a field. The jar does not know it is
 
 #### Scenario: coin counters match the step records
 
-- **WHEN** an `as_mop_llm` run with `p_L = 0.9` writes 1,000 step records, 612 of which were taken by no guard and by no LLM trigger stage and carry `dec.own.uL` below `0.9`, and 140 of which carry `dec.src:"mop"`
+- **WHEN** an `as_mop_llm` run with `p_L = 0.9` writes 1,000 step records, 612 of which were taken by no guard and by no LLM trigger stage, reached `LlmCoin` with the step's LLM call unspent and carry `dec.own.uL` below `0.9`, and 140 of which carry `dec.src:"mop"`
 - **THEN** `RUN_END.counters.coinLlm` SHALL be `612` and `coinMop` SHALL be `140`
+
+#### Scenario: a step whose call was already spent does not count as a coin win
+
+- **WHEN** on an `as_llm` step `LlmNewState` makes the step's one LLM call, the call yields no action, and the step reaches `LlmCoin` with `u_L < p_L`
+- **THEN** `LlmCoin` SHALL return `Continue` without consulting the coin
+- **AND** `RUN_END.counters.coinLlm` SHALL NOT count that step
 
 ### Requirement: Telemetry Neutrality
 

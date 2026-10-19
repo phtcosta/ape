@@ -612,7 +612,8 @@ public final class NdjsonSink implements EventSink {
     }
 
     @Override
-    public void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates) {
+    public void pipeline(List<String> stages, List<String> passes, Map<String, Boolean> candidates,
+            Map<String, Boolean> stageCandidates) {
         if (disabled) {
             return;
         }
@@ -621,20 +622,26 @@ public final class NdjsonSink implements EventSink {
             sideBuf.name("type").value("PIPELINE");
             names(sideBuf, "stages", stages);
             names(sideBuf, "passes", passes);
-            sideBuf.name("candidates").beginArray();
-            if (candidates != null) {
-                for (Map.Entry<String, Boolean> candidate : candidates.entrySet()) {
-                    sideBuf.beginObject()
-                            .name("name").value(candidate.getKey())
-                            .name("enabled").value(Boolean.TRUE.equals(candidate.getValue()))
-                            .endObject();
-                }
-            }
-            sideBuf.endArray();
+            census(sideBuf, "candidates", candidates);
+            census(sideBuf, "stageCandidates", stageCandidates);
             write(sideBuf.endObject().toLine());
         } catch (Throwable failure) {
             latch("pipeline", failure);
         }
+    }
+
+    /** A census member: {@code [{name, enabled}, ...]} in the map's order, empty when absent. */
+    private static void census(Json.Buf out, String member, Map<String, Boolean> census) {
+        out.name(member).beginArray();
+        if (census != null) {
+            for (Map.Entry<String, Boolean> candidate : census.entrySet()) {
+                out.beginObject()
+                        .name("name").value(candidate.getKey())
+                        .name("enabled").value(Boolean.TRUE.equals(candidate.getValue()))
+                        .endObject();
+            }
+        }
+        out.endArray();
     }
 
     @Override

@@ -474,3 +474,23 @@ The interpolation bounds are the parameter keys of `DYNAMIC_EPSILON`, read throu
 - **THEN** `DYNAMIC_EPSILON` SHALL be in the plan's `features`, and `egreedy()` SHALL interpolate between `ape.minEpsilon = 0.02` and `ape.maxEpsilon = 0.15`
 - **AND WHEN** it sets neither `ape.addons` nor `ape.dynamicEpsilon`
 - **THEN** `DYNAMIC_EPSILON` SHALL be absent and `egreedy()` SHALL use the fixed `defaultEpsilon` (`0.05`)
+
+---
+
+### Requirement: Per-Step Debug Artifact Defaults
+
+`ape.takeScreenshotForEveryStep` and `ape.saveGUITreeToXmlEveryStep` SHALL default to `false`. Both are plan keys read through `RunContext.current().spec().exploration()` (`takeScreenshotForEveryStep()`, `saveGUITreeToXmlEveryStep()`), with their defaults in `KeyOwnership`; `Config` has no field for either (design D-B24). Both are debug aids: the experiment pipeline consumes neither (coverage comes from logcat, the trace from stdout; the aperv-tool pulls no per-step PNG/XML), and the LLM path captures its own screenshots on demand via `ScreenshotCapture`, independent of these flags. Per-step PNG + XML writes are pure I/O overhead on the exploration loop (estimated 20-40% of step throughput on an emulator). Debug runs re-enable either flag via `ape.properties`.
+
+#### Scenario: defaults are off
+- **WHEN** `ape.properties` contains neither key
+- **THEN** the resolved plan's `takeScreenshotForEveryStep()` SHALL be `false`
+- **AND** its `saveGUITreeToXmlEveryStep()` SHALL be `false`
+- **AND** no per-step PNG or XML SHALL be written
+
+#### Scenario: debug re-enable
+- **WHEN** `ape.properties` contains `ape.saveGUITreeToXmlEveryStep=true`
+- **THEN** a `step-N.xml` SHALL be written each step, as before
+
+#### Scenario: LLM screenshots unaffected
+- **WHEN** `ape.takeScreenshotForEveryStep=false` and the LLM routes a step
+- **THEN** `ScreenshotCapture` SHALL still capture its on-demand screenshot for the prompt

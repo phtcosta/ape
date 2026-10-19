@@ -124,7 +124,7 @@ public class RunSpecAbortTest {
                 "ape.mopFrontierWeight", "0",
                 "ape.frontierBoostWeight", "0",
                 "ape.activityTriggerEnabled", "false",
-                "ape.llmPercentageNoSubstrate", "-1");
+                "ape.llmPercentage", "0");
     }
 
     /** A complete MOP arm: substrate, the four live weights, and the baseline flags stated on. */
@@ -151,7 +151,7 @@ public class RunSpecAbortTest {
                 "ape.mopFrontierWeight", "0",
                 "ape.frontierBoostWeight", "0",
                 "ape.activityTriggerEnabled", "false",
-                "ape.llmPercentageNoSubstrate", "-1");
+                "ape.llmPercentage", "0");
     }
 
     @Test

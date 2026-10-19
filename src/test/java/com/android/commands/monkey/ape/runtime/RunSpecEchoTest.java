@@ -295,15 +295,15 @@ public class RunSpecEchoTest {
 
     @Test
     public void inertListsTheKeysAcceptedForAMechanismThePlanDoesNotHave() throws Exception {
-        // Every baseline arm pushes this key on a run with no LLM at all. It is recorded as
+        // p_L = 0 states OFF on a run with no LLM at all. It is recorded as
         // accepted-and-doing-nothing, and it is not a plan value, so it is not in params.
-        JSONObject json = record(resolve(entries("ape.llmPercentageNoSubstrate", "-1")));
+        JSONObject json = record(resolve(entries("ape.llmPercentage", "0")));
 
         JSONArray inert = json.getJSONArray("inert");
         assertEquals(1, inert.length());
-        assertEquals("ape.llmPercentageNoSubstrate", inert.getString(0));
+        assertEquals("ape.llmPercentage", inert.getString(0));
         assertFalse("an inert key parameterizes nothing, so it is not a parameter",
-                json.getJSONObject("params").has("ape.llmPercentageNoSubstrate"));
+                json.getJSONObject("params").has("ape.llmPercentage"));
         // The feature it belongs to is not in the plan — which is the whole reason it is inert.
         // (The plan is not featureless: a bare run carries every feature whose activation key
         // defaults on, which is why this asserts an absence rather than an empty list.)

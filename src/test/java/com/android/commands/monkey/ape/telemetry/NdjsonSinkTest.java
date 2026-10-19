@@ -669,8 +669,12 @@ public class NdjsonSinkTest {
         candidates.put("MopWidgetPass", Boolean.TRUE);
         candidates.put("WtgPass", Boolean.FALSE);
         candidates.put("FrontierPass", Boolean.FALSE);
+        Map<String, Boolean> stageCandidates = new LinkedHashMap<String, Boolean>();
+        stageCandidates.put("Budget", Boolean.FALSE);
+        stageCandidates.put("LlmStage", Boolean.TRUE);
+        stageCandidates.put("SataStage", Boolean.TRUE);
         sink.pipeline(Arrays.asList("LlmStage", "SataStage"), Arrays.asList("MopWidgetPass"),
-                candidates);
+                candidates, stageCandidates);
 
         JSONObject record = records().get(0);
         assertEquals("PIPELINE", record.getString("type"));
@@ -685,6 +689,11 @@ public class NdjsonSinkTest {
                 .getBoolean("enabled"));
         assertFalse("a reason would encode the order the constructor evaluates its conjuncts",
                 census.getJSONObject(1).has("reason"));
+        JSONArray stageCensus = record.getJSONArray("stageCandidates");
+        assertEquals("every candidate stage, assembled or not (D-B23)", 3, stageCensus.length());
+        assertEquals("Budget", stageCensus.getJSONObject(0).getString("name"));
+        assertFalse(stageCensus.getJSONObject(0).getBoolean("enabled"));
+        assertTrue(stageCensus.getJSONObject(2).getBoolean("enabled"));
     }
 
     @Test
@@ -963,7 +972,8 @@ public class NdjsonSinkTest {
         noop.flushPendingStep();
         noop.mopData("loaded", null, 2, "sha256:ab", "com.foo", 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0);
-        noop.pipeline(Arrays.asList("a"), Arrays.asList("b"), new LinkedHashMap<String, Boolean>());
+        noop.pipeline(Arrays.asList("a"), Arrays.asList("b"), new LinkedHashMap<String, Boolean>(),
+                new LinkedHashMap<String, Boolean>());
         noop.llmAck("qwen3-vl-8b");
         noop.runEnd("timeout", null, 0, 0, new RunCounters());
 

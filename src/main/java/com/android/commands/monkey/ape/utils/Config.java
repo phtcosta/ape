@@ -33,25 +33,9 @@ public class Config {
     }
 
     /**
-     * Readonly
+     * Readonly. A field is here only while {@code src/main} reads it; a key the code reads through
+     * the plan ({@code RunContext.current().spec()}) has no field here (design D-B24).
      */
-    public static final boolean takeScreenshot = Config.getBoolean("ape.takeScreenshot", true);
-    public static final boolean takeScreenshotForNewState = Config.getBoolean("ape.takeScreenshotForNewState", false);
-    public static final boolean takeScreenshotForEveryStep = Config.getBoolean("ape.takeScreenshotForEveryStep", false);
-    public static final boolean saveGUITreeToXmlEveryStep = Config.getBoolean("ape.saveGUITreeToXmlEveryStep", false);
-
-    public static final int throttleForUnvisitedAction = Config.getInteger("ape.throttleForUnvisitedAction", 200);
-    public static final int throttleForActivityTransition = Config.getInteger("ape.throttleForActivityTransition", 500);
-    public static final int baseThrottle = Config.getInteger("ape.baseThrottle", 0);
-    public static final int maxThrottle = Config.getInteger("ape.maxThrottle", 5000);
-    public static final int graphStableRestartThreshold = Config.getInteger("ape.graphStableRestartThreshold", 100);
-    public static final int activityStableRestartThreshold = Config.getInteger("ape.activityStableRestartThreshold", 200);
-    public static final int stateStableRestartThreshold = Config.getInteger("ape.stateStableRestartThreshold", 50);
-    public static final int maxExtraPriorityAliasedActions = Config.getInteger("ape.maxExtraPriorityAliasedActions", 5);
-
-    public static final boolean evolveModel = Config.getBoolean("ape.evolveModel", true);
-    public static final int fuzzingActivityVisitThreshold = Config.getInteger("ape.fuzzingActivityVisitThreshold", 10);
-
     public static final int restartThresholdMax = Config.getInteger("ape.restartThresholdMax", 300);
     public static final int restartThresholdMin = Config.getInteger("ape.restartThresholdMin", 100);
     public static final double inputRate = Config.getDouble("ape.inputRate", 0.8D);
@@ -72,14 +56,6 @@ public class Config {
     public static final boolean patchGUITree = Config.getBoolean("ape.patchGUITree", true);
     public static final boolean computeImageText = Config.getBoolean("ape.computeImageText", true);
 
-    public static final double defaultEpsilon = Config.getDouble("ape.defaultEpsilon", 0.05D); // 0.05D;
-
-    public static final boolean fillTransitionsByHistory = Config.getBoolean("ape.fillTransitionsByHistory", true); // true;
-    public static final boolean fallbackToGraphTransition = Config.getBoolean("ape.fallbackToGraphTransition", true);
-    public static final int trivialActivityRankThreshold = Config.getInteger("ape.trivialActivityRankThreshold", 3);
-    public static final boolean useActionDiffer = Config.getBoolean("ape.useActionDiffer", true);
-    public static final boolean doBackToTrivialActivity = Config.getBoolean("ape.doBackToTrivialActivity", false);
-
     public static final int flushImagesThreshold = Config.getInteger("ape.flushImagesThreshold", 10);
     public static final int imageWriterCount = Config.getInteger("ape.imageWriterCount", 3);
     public static final long defaultGUIThrottle = Config.getLong("ape.defaultGUIThrottle", 200L);
@@ -97,7 +73,6 @@ public class Config {
     public static final boolean useAncestorNamer = Config.getBoolean("ape.useAncestorNamer", true);
 
     public static final int truncateTextLength = Config.getInteger("ape.truncateTextLength", 8);
-    public static final int maxStringPieceLength = Config.getInteger("ape.maxStringPieceLength", 32);
     public static final int maxStringListSize = Config.getInteger("ape.maxStringListSize", 2000);
     public static final double randomFormattedStringProp = Config.getDouble("ape.randomFormattedStringProp", 0.5);
 
@@ -112,86 +87,10 @@ public class Config {
 
     public static final boolean usePatchNamer = Config.getBoolean("ape.usePatchNamer", true);
 
-    // MOP scoring weights — configurable via ape.properties.
-    // Controls how strongly MOP reachability boosts action priority relative to SATA base (~32-50).
-    // Defaults chosen so MOP strongly dominates exploration toward monitored operations.
-    public static final int mopWeightDirect = Config.getInteger("ape.mopWeightDirect", 500);
-    public static final int mopWeightTransitive = Config.getInteger("ape.mopWeightTransitive", 300);
-
-    // mop-fairtest: back-menu-pick-cap — bounds discretionary MODEL_BACK/MODEL_MENU picks per
-    // (activity, type) across NamingFactory-minted sibling states. <= 0 = unlimited (restores the
-    // pre-cap behavior). Navigation-essential BACK sites (backToActivity/backtrack/handleNullAction)
-    // are never capped; only the discretionary EARLY_STAGE + epsilon-greedy picks (INV-SEL-NAV-01..05).
-    public static final int backMenuPickCap = Config.getInteger("ape.backMenuPickCap", 3);
-
-    // LLM integration — configurable via ape.properties.
-    // llmUrl=null disables LLM calls entirely (safe default when no LLM server is present).
-    public static final String llmUrl = Config.get("ape.llmUrl");
-    public static final boolean llmOnNewState = Config.getBoolean("ape.llmOnNewState", true);
-    public static final boolean llmOnStagnation = Config.getBoolean("ape.llmOnStagnation", true);
-    public static final String llmModel = Config.get("ape.llmModel", "default");
-    public static final double llmTemperature = Config.getDouble("ape.llmTemperature", 0.3);
-    public static final double llmTopP = Config.getDouble("ape.llmTopP", 0.6);
-    public static final int llmTopK = Config.getInteger("ape.llmTopK", 50);
-    public static final int llmTimeoutMs = Config.getInteger("ape.llmTimeoutMs", 15000);
-    // Clamped to [0,1]: a value > 1 would make the probabilistic LLM hook always fire
-    // (random.nextDouble() < 1.5 is always true); a negative value is meaningless.
-    public static final double llmPercentage =
-            Math.max(0.0, Math.min(1.0, Config.getDouble("ape.llmPercentage", 0.02)));
-    public static final String llmPromptVariant = Config.get("ape.llmPromptVariant", "ape_current");
-    // mop-reach-strategies F′ (INV-RTR-09): LLM random-routing probability to use when the current
-    // screen is a widgetless substrate — a UI (Compose, canvas) where static analysis found no
-    // addressable widget, so widget-level MOP guidance has nothing to bind to. Default -1 sentinel =
-    // "no override" (fall back to llmPercentage). Unlike llmPercentage, the -1 sentinel is exempt
-    // from the [0,1] clamp; a >=0 value is clamped to [0,1]; any real negative collapses to the
-    // sentinel. Seam only — no consumer yet, and the predicate a consumer would need does not exist
-    // either: the on-device test used to read the parsed windows[], which the artifact does not
-    // carry. Wiring it means deriving the fact host-side first.
-    public static final double llmPercentageNoSubstrate =
-            clampLlmPercentageNoSubstrate(Config.getDouble("ape.llmPercentageNoSubstrate", -1.0));
-    // llm-native-toolcall-repair J1b/J1c: previously hard-coded LLM values exposed as config keys. No
-    // clamping (researcher-facing knobs, like llmTimeoutMs/llmTopK). Exposure exists only so a future
-    // probe needs no jar rebuild. Three keys remain:
-    //   llmMaxTokens       — max_tokens for the chat request; not causal for truncation (tokens_out ≈ 25).
-    //                        Default reproduces the prior hard-coded value.
-    //   llmSnapTolerancePx — floor of the euclidean snap tolerance max(floor, min(w,h)/2) in mapToModelAction.
-    //                        Default reproduces the prior hard-coded value.
-    //   llmBoundaryTopPct  — the status-bar boundary reject band as a fraction of the display height
-    //                        (llm-routing INV-RTR-22): 0.035 is the campaign AVD's 63 px status bar over
-    //                        its 1794 px display. There is no bottom band (KeyOwnership.RETIRED): the
-    //                        display excludes the navigation bar.
-    // These fields are not read at runtime: the effective default is KeyOwnership's, through
-    // KeyOwnership.defaultOf, and KeyOwnershipTotalityTest keeps the two equal.
-    public static final int llmMaxTokens = Config.getInteger("ape.llmMaxTokens", 1024);
-    public static final int llmSnapTolerancePx = Config.getInteger("ape.llmSnapTolerancePx", 50);
-    public static final double llmBoundaryTopPct = Config.getDouble("ape.llmBoundaryTopPct", 0.035);
-
-    // gh9-exploration-refactor: UI coverage, activity budget, WTG, dynamic epsilon, heuristic input.
-    public static final int coverageBoostWeight = Config.getInteger("ape.coverageBoostWeight", 100);
     // gh15 A-4: max live per-state entries in UICoverageTracker before eviction.
     // Evicted entries are folded into the per-Activity rollup, so coverage is not
     // lost — this only bounds memory (INV-COV-05).
     public static final int coverageMaxStates = Config.getInteger("ape.coverageMaxStates", 2000);
-    public static final int activityBaseBudget = Config.getInteger("ape.activityBaseBudget", 50);
-    public static final int activityBudgetPerWidget = Config.getInteger("ape.activityBudgetPerWidget", 5);
-    public static final int mopWeightWtg = Config.getInteger("ape.mopWeightWtg", 200);
-    public static final boolean dynamicEpsilon = Config.getBoolean("ape.dynamicEpsilon", true);
-
-    // gh11: component triggering (broadcasts, services, activities, content providers)
-    // Probability per step of triggering a component (0.0 = disabled, 0.05 = 5%).
-    // Default 0.0 (disabled) regardless of ape.staticDataPath: triggering is enabled only by an
-    // explicit ape.componentPercentage, keeping the MOP scorer and component triggering
-    // independent experiment variables (INV-CT-01).
-    public static final double componentPercentage = Config.getDouble("ape.componentPercentage", 0.0);
-
-    // rv-scoring-pipeline: parity flags (INV-ARCH-07). Each gates a previously-flagless fork behavior
-    // so an "APE-pure" arm is expressible. Every default preserves current aperv behavior — with none
-    // of these keys set, selection is identical to pre-change aperv. An APE-baseline arm is expressed
-    // by stating each RV flag at its off value; purity is structural, not a switch (owner decision D3).
-    // gate: FormCompletionPass + the deterministic-fill branch in ApeAgent.checkInput()
-    public static final boolean formCompletionEnabled = Config.getBoolean("ape.formCompletionEnabled", true);
-    // gate: ActivityBudgetTracker instantiation + the budget check in SataAgent.selectNewActionNonnull()
-    public static final boolean activityBudgetEnabled = Config.getBoolean("ape.activityBudgetEnabled", true);
 
     private static void loadConfiguration(String fileName) {
         File configFile = new File(fileName);
@@ -203,16 +102,6 @@ public class Config {
                 throw new RuntimeException("Fail to load the configuration file at " + configFile);
             }
         }
-    }
-
-    // mop-reach-strategies 1.4 (INV-RTR-09): clamp for llmPercentageNoSubstrate. The -1 sentinel means
-    // "no override"; any real negative collapses to it; a >=0 value is clamped to [0,1] like llmPercentage.
-    // Extracted so ConfigTest can exercise the clamp despite the frozen static-final field.
-    static double clampLlmPercentageNoSubstrate(double raw) {
-        if (raw < 0.0) {
-            return -1.0;
-        }
-        return Math.min(1.0, raw);
     }
 
     public static Object set(String key, String value) {

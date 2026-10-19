@@ -142,7 +142,7 @@ the `BreakerGate` is not mounted (`llm-routing` "Declared LLM Gates"): the break
 
 ### Requirement: LLM Configuration Keys
 
-`Config.java` SHALL declare the following `public static final` fields for LLM configuration, loaded from `ape.properties` at class-loading time:
+The following LLM configuration keys SHALL be plan keys, owned by the `LLM` feature family in `KeyOwnership` (`ape.llmPercentage` by its member `LLM_COIN`), resolved by `RunSpec` from `ape.properties` and the preset, and read through `RunContext.current().spec().llm()` (`url()`, `model()`, `promptVariant()`, and the typed getters `dbl`/`integer`/`bool` on the key for the others). `Config` SHALL declare no field for any of them: their former `Config` twins had no reader and are deleted (design D-B24), and their defaults are those of `KeyOwnership.defaultOf`:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -159,8 +159,8 @@ the `BreakerGate` is not mounted (`llm-routing` "Declared LLM Gates"): the break
 | `ape.llmSnapTolerancePx` | int | `50` | Floor of the euclidean snap tolerance `max(floor, min(w,h)/2)` in `mapToModelAction` (J1b; lever analyzed and discarded — default not swept) |
 | `ape.llmBoundaryTopPct` | double | `0.035` | Status-bar boundary reject band as a fraction of the display height, the `deviceHeight` of the decision (J1b; `0.035` = the campaign AVD's 63 px status bar over its 1794 px display, so a degenerate `(0,0)` is still rejected; set it for a device of another density) |
 
-Three further keys are owned by the plan's `LLM` feature and read through `spec().llm()`, not through `Config`
-(design D-B8):
+Three further keys are owned by the plan's `LLM` feature and read through `spec().llm()`, likewise with no `Config`
+field (design D-B8):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -190,13 +190,13 @@ When the plan does not carry `LLM`, all LLM features SHALL be disabled and no LL
 #### Scenario: LLM disabled by default
 
 - **WHEN** `ape.properties` sets neither `ape.llm` nor `ape.llmUrl`
-- **THEN** `Config.llmUrl` SHALL be `null` and the plan SHALL carry no `LLM` feature
+- **THEN** the resolved plan SHALL carry no `LLM` feature, `RunContext.current().spec().llm()` SHALL be null, and `KeyOwnership.defaultOf("ape.llmUrl")` SHALL be `null`
 - **AND** no `SglangClient`, `LlmRouter`, or other LLM objects SHALL be created
 
 #### Scenario: LLM enabled with URL
 
 - **WHEN** `ape.properties` contains `ape.llm=true` and `ape.llmUrl=http://10.0.2.2:30000/v1`
-- **THEN** `Config.llmUrl` SHALL equal `"http://10.0.2.2:30000/v1"`
+- **THEN** `RunContext.current().spec().llm().url()` SHALL equal `"http://10.0.2.2:30000/v1"`
 - **AND** the run SHALL construct its LLM units with the configured URL
 
 #### Scenario: Individual modes toggled
@@ -207,39 +207,39 @@ When the plan does not carry `LLM`, all LLM features SHALL be disabled and no LL
 
 #### Scenario: Custom sampling parameters
 
-- **WHEN** `ape.properties` contains `ape.llmTopP=0.9` and `ape.llmTopK=100`
-- **THEN** `Config.llmTopP` SHALL equal `0.9`
-- **AND** `Config.llmTopK` SHALL equal `100`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl=http://10.0.2.2:30000/v1`, `ape.llmTopP=0.9` and `ape.llmTopK=100`
+- **THEN** the resolved plan's `spec().llm().dbl("ape.llmTopP")` SHALL equal `0.9`
+- **AND** `spec().llm().integer("ape.llmTopK")` SHALL equal `100`
 - **AND** `SglangClient` SHALL use these values in the request body
 
 #### Scenario: Default 2% random routing
 
-- **WHEN** `ape.properties` does not contain `ape.llmPercentage`
-- **THEN** `Config.llmPercentage` SHALL be `0.02`
+- **WHEN** `ape.properties` contains `ape.llm=true` and `ape.llmUrl`, no `ape.preset`, and no `ape.llmPercentage`
+- **THEN** the resolved plan's `spec().llm().dbl("ape.llmPercentage")` SHALL be `0.02`, the value of `KeyOwnership.defaultOf("ape.llmPercentage")`
 - **AND** the coin SHALL hold on approximately 2 % of the steps that reach the `LlmCoin` stage
 
 #### Scenario: Random routing disabled
 
-- **WHEN** `ape.properties` contains `ape.llmPercentage=0.0`
-- **THEN** `Config.llmPercentage` SHALL be `0.0`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl` and `ape.llmPercentage=0.0`
+- **THEN** the resolved plan's `ape.llmPercentage` SHALL be `0.0` and `LLM_COIN` SHALL be absent from its `features`
 - **AND** no `LlmCoin` stage SHALL be assembled, while `u_L` is still drawn each step (`decision-pipeline` INV-DP-13)
 
 #### Scenario: High percentage for experiments
 
-- **WHEN** `ape.properties` contains `ape.llmPercentage=0.7`
-- **THEN** `Config.llmPercentage` SHALL be `0.7`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl` and `ape.llmPercentage=0.7`
+- **THEN** the resolved plan's `spec().llm().dbl("ape.llmPercentage")` SHALL be `0.7`, the `p_L` injected into the `LlmCoin` stage
 
 #### Scenario: J1b/J1c defaults reproduce the hard-coded values
 
-- **WHEN** `ape.properties` contains none of the three J1b/J1c keys
-- **THEN** `Config.llmMaxTokens` SHALL be `1024`, `Config.llmSnapTolerancePx` SHALL be `50`, and `Config.llmBoundaryTopPct` SHALL be `0.035`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl`, no `ape.preset` and none of the three J1b/J1c keys
+- **THEN** the resolved plan SHALL carry `ape.llmMaxTokens=1024`, `ape.llmSnapTolerancePx=50` and `ape.llmBoundaryTopPct=0.035` (`spec().llm().integer(…)`/`dbl(…)`), the values of `KeyOwnership.defaultOf` for the three keys
 - **AND** request `max_tokens` and the euclidean tolerance SHALL be identical to the pre-J1 hard-coded constants
 - **AND** the boundary reject SHALL NOT reproduce the hard-coded `0.05`/`0.94`: it SHALL be the status-bar band of `llm-routing` INV-RTR-22, with no lower band (`llm-coordinate-single-base`)
 
 #### Scenario: J1b/J1c keys configurable without rebuild
 
-- **WHEN** `ape.properties` contains `ape.llmMaxTokens=2048` and `ape.llmSnapTolerancePx=80`
-- **THEN** `Config.llmMaxTokens` SHALL be `2048` and `Config.llmSnapTolerancePx` SHALL be `80`
+- **WHEN** `ape.properties` contains `ape.llm=true`, `ape.llmUrl`, `ape.llmMaxTokens=2048` and `ape.llmSnapTolerancePx=80`
+- **THEN** the resolved plan's `spec().llm().integer("ape.llmMaxTokens")` SHALL be `2048` and `spec().llm().integer("ape.llmSnapTolerancePx")` SHALL be `80`
 - **AND** the values SHALL flow into the request body / euclidean tolerance without any code change
 
 #### Scenario: New keys classified in the apePureMode registry

@@ -23,8 +23,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -259,7 +261,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         // candidate. Without the census, "the arm turned the frontier family off" and "this
         // application's data could not support it" are the same three missing names.
         RunContext.current().sink().pipeline(stageNames(spec), scoringPipeline.passNames(),
-                scoringPipeline.candidates());
+                scoringPipeline.candidates(), stageCensus(spec));
+    }
+
+    /** Every candidate decision stage in the fixed order, mapped to whether this plan assembles it (D-B23). */
+    static Map<String, Boolean> stageCensus(RunSpec spec) {
+        List<DecisionPipeline.Candidate> assembled = DecisionPipeline.assembledCandidates(spec);
+        Map<String, Boolean> census = new LinkedHashMap<>();
+        for (DecisionPipeline.Candidate candidate : DecisionPipeline.Candidate.values()) {
+            census.put(candidate.stageName(), assembled.contains(candidate));
+        }
+        return census;
     }
 
     /** The names of the decision stages this plan assembles, in the fixed candidate order. */

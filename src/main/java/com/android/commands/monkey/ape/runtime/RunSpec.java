@@ -285,11 +285,6 @@ public final class RunSpec {
             double value = (Double) ValueType.DOUBLE.parse(key, raw);
             return Double.toString(Math.max(0.0d, Math.min(1.0d, value)));
         }
-        if ("ape.llmPercentageNoSubstrate".equals(key)) {
-            double value = (Double) ValueType.DOUBLE.parse(key, raw);
-            // The -1 sentinel means "no override"; any real negative collapses to it.
-            return Double.toString(value < 0.0d ? -1.0d : Math.min(1.0d, value));
-        }
         return raw;
     }
 
@@ -365,7 +360,10 @@ public final class RunSpec {
                 throw new RunSpecException(RunSpecException.Reason.MISSING_DEPENDENCY, key,
                         owner + " is not in the plan and " + key + " has no neutral value");
             }
-            if (!spec.type().sameValue(key, effective.get(key), neutral)) {
+            // An activation value its own rule reads as off (<= 0 for a POSITIVE feature) states OFF
+            // as much as the neutral value does, so it is inert too (design D-B22): no abort on it.
+            boolean statesOff = key.equals(owner.activationKey()) && owner.readsAsOff(effective.get(key));
+            if (!statesOff && !spec.type().sameValue(key, effective.get(key), neutral)) {
                 throw new RunSpecException(RunSpecException.Reason.MISSING_DEPENDENCY, key,
                         owner + " is not in the plan, so " + key + " is accepted only at its "
                                 + "neutral value " + neutral + "; you may state OFF for an absent "

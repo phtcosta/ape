@@ -245,7 +245,6 @@ public final class KeyOwnership {
         feature(Feature.LLM_NEW_STATE, "ape.llmOnNewState", ValueType.BOOLEAN, "true");
         feature(Feature.LLM_STAGNATION, "ape.llmOnStagnation", ValueType.BOOLEAN, "true");
         feature(Feature.LLM_COIN, "ape.llmPercentage", ValueType.DOUBLE, "0.02");
-        feature(Feature.LLM_COIN, "ape.llmPercentageNoSubstrate", ValueType.DOUBLE, "-1.0");
 
         feature(Feature.MODEL_MENU, "ape.modelMenuEnabled", ValueType.BOOLEAN, "true");
         feature(Feature.FORM_COMPLETION, "ape.formCompletionEnabled", ValueType.BOOLEAN, "true");
@@ -324,6 +323,9 @@ public final class KeyOwnership {
         RETIRED.put("ape.mopTargetPickCap",
                 "replaced by ape.mopCoinLedgerMaxInteractions, the MOP coin's budget of picks per "
                         + "activity and widget (default 1).");
+        RETIRED.put("ape.llmPercentageNoSubstrate",
+                "it never had a consumer: the widgetless-substrate predicate it waited for was never "
+                        + "derived (isolate-guidance-groups D-B24).");
     }
 
     private KeyOwnership() {

@@ -56,6 +56,8 @@ The defaults reproduce upstream APE including RNG consumption, so a cell without
 
 Whenever an extension point is consulted with two or more candidates, the step's record SHALL carry `dec.nav` (`event-sink`) as `{"x":"X1"|"X3"|"X4", "c":"ape"|"mop", "alt":0|1, "drew":0|1}`: `x` the point; `c` the mounted strategy (`ape` for X1 in every cell); `drew` is `1` when the point consumed a draw. `alt` is `1` if and only if the MOP variant decided by its own rule: for X3, `MopAbaTargetTie` replaced the incumbent; for X4, `MopTrivialPathPick` chose the path by the strictly largest density, without a draw. Otherwise `alt` is `0`: X1 always writes `alt:0` with `c:"ape"`, whatever the scorer sum did (its effect is in `dec.cfc`), and in a cell without `MOP` every `dec.nav` carries `alt:0`. A point consulted with a single candidate writes no `dec.nav`; in particular a single path at X4 still calls `randomPick` once (INV-SEL-11) but records no `dec.nav`. A tie resolved inside a step whose action comes from a later strategy (an ABA probe that is not taken) MAY be overwritten by the last tie of the same step; at most one `dec.nav` member exists per record. The computation of `dec.nav` SHALL be pure.
 
+The rule holds whatever owner takes the step. X4 is also consulted by the `Budget` guard, whose `selectNewActionForTrivialActivity()` search runs through `SataAgent.budgetNavigation()`: when that search ties two or more paths and the guard returns the action, the step's record SHALL carry the X4 `dec.nav` of that choice, handed from the step's trace to the sink with nothing else of the trace (design D-B21). A budget step SHALL still carry no `dec.strat`, although the search stamps one in the trace (`activity-budget`). Handing the `nav` over is pure telemetry: no draw and no decision moves.
+
 #### Scenario: X3 default never replaces on a tie
 - **WHEN** a cell without `MOP` runs the ABA scan and two greedy targets of the same activity both have visit count 4, the incumbent found first
 - **THEN** the incumbent SHALL stay the target and no draw SHALL be consumed
@@ -78,6 +80,12 @@ Whenever an extension point is consulted with two or more candidates, the step's
 - **THEN** the second path SHALL be chosen, no draw SHALL be consumed, and the record SHALL carry `dec.nav:{"x":"X4","c":"mop","alt":1,"drew":0}`
 - **AND WHEN** the densities are 1, 1, 1
 - **THEN** `randomPick` SHALL choose and the record SHALL carry `dec.nav:{"x":"X4","c":"mop","alt":0,"drew":1}`
+
+#### Scenario: a budget step records its X4 tie
+- **WHEN** in the `as` cell the `Budget` guard takes a step and its trivial-activity search found two shortest paths, chosen by `randomPick`
+- **THEN** the record SHALL carry `dec.src:"budget"`, `dec.ch:"budget"` and `dec.nav:{"x":"X4","c":"ape","alt":0,"drew":1}`
+- **AND** it SHALL carry no `dec.strat`
+- **AND** the helper-stream draws and the chosen action SHALL be those of the same step without the `dec.nav` hand-off
 
 #### Scenario: the base cell reproduces upstream at the three points
 - **WHEN** the `base` cell and upstream APE `8f51b99c` run the same parity fixture with the same seed through an ABA scan, a least-visited tie and a trivial-activity path choice
