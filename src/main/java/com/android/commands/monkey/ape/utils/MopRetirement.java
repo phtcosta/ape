@@ -16,8 +16,8 @@ import java.util.Arrays;
  * the distance behind its weight, {@code d*} (design D19 as amended 2026-10-09). The count is taken
  * and applied at once in {@code StatefulAgent.moveForward}, through the run's
  * {@code MopInteractionLedger}, when this is the first interaction of the action's widget in its
- * activity: the restart is a guard stage before selection, so no selected action is replaced
- * afterwards. Counters never decrease, so a retired target stays retired for the rest of the run. A
+ * activity. An action that a post-selection restart replaces never reaches {@code moveForward}, so it
+ * counts nothing. Counters never decrease, so a retired target stays retired for the rest of the run. A
  * target whose counter is at least {@code ape.mopRetireAfter} is retired: it no longer counts toward
  * an action's distance, the prompt marker or the launcher order.
  */

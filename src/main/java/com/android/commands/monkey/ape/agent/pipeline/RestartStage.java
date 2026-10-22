@@ -25,12 +25,13 @@ import com.android.commands.monkey.ape.model.ModelAction;
  * The restart guard: the run's one restart decision, taken before any LLM, MOP or SATA stage
  * (decision-pipeline "Restart Guard Stage", design D-B7, INV-DP-14).
  *
- * <p>Mounted iff {@code ape.checkRestart} (BASE, design D-B14.12), second after {@code Budget}. When
+ * <p>Mounted iff {@code ape.checkRestart} and {@code APE_FIXES}, second after {@code Budget}. When
  * {@code StageCollaborators.restartDue()} holds — the stability flag of step 2, or the periodic
  * threshold passed with the previous step's selection not disabling it — the stage selects the
  * start action {@code restartAction()} yields, owned by {@code restart} on the {@code restart}
- * channel. So no restart replaces an action after selection, and {@code dec.a} names the start
- * action that ran.
+ * channel. With the stage mounted no restart replaces an action after selection, and
+ * {@code dec.a} names the start action that ran. Without it the agent restarts after selection,
+ * as APE does ({@code ApeAgent.checkRestart}).
  *
  * <p>Everything about the restart itself is the agent's: reading and clearing the
  * {@code disableRestart} latch, the kind ({@code dec.restart}), the threshold redraw and the kind

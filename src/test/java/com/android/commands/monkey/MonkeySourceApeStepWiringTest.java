@@ -15,7 +15,8 @@ import static org.junit.Assert.assertTrue;
  * The three per-step wirings of {@code MonkeySourceApe.generateEvents} that isolate-guidance-groups
  * adds: every guard BACK increments {@code RUN_END.counters.guardBacks} (event-sink), the step's
  * record receives {@code dec.rot} (llm-infrastructure INV-LLM-14), and the fuzz toss draws from
- * {@code StepRng}'s own stream on every step (exploration, decision-pipeline INV-DP-13).
+ * {@code StepRng}'s own stream on every step with {@code APE_FIXES} (decision-pipeline INV-DP-13)
+ * and from the helper stream, only when fuzzing is on, without it.
  *
  * <p>Asserted over the source because {@code MonkeySourceApe} cannot be class-loaded off-device
  * (its {@code UiAutomation} field pulls in {@code android.app.IUiAutomationConnection}, absent from
@@ -52,14 +53,15 @@ public class MonkeySourceApeStepWiringTest {
     }
 
     @Test
-    public void theFuzzTossDrawsFromItsOwnStreamOnEveryStep() throws IOException {
-        String body = generateEventsBody();
+    public void theFuzzTossFollowsApeFixes() throws IOException {
+        String body = generateEventsBody().replaceAll("\\s+", " ");
         assertEquals(1, count(body, "stepRng().fuzzToss("));
-        assertFalse("no helper-stream draw is made for fuzzing", body.contains("RandomHelper"));
-        int toss = body.indexOf("stepRng().fuzzToss(");
-        int gate = body.indexOf("spec.has(Feature.FUZZING)");
-        assertTrue("the toss is drawn before, and independently of, the FUZZING gate",
-                toss >= 0 && gate > toss);
+        assertEquals(1, count(body, "RandomHelper.toss("));
+        assertTrue("with APE_FIXES the own stream is drawn first, every step; without it APE's "
+                + "helper-stream toss is drawn only when fuzzing is on: " + body,
+                body.contains("boolean fuzz = spec.has(Feature.APE_FIXES)"
+                        + " ? RunContext.current().stepRng().fuzzToss(rate) && spec.has(Feature.FUZZING)"
+                        + " : spec.has(Feature.FUZZING) && RandomHelper.toss(rate);"));
     }
 
     /** The body of {@code generateEvents()}, comments removed, brace-matched from its signature. */

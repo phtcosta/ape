@@ -168,12 +168,56 @@ final class StepRecord {
         this.handler = handler;
     }
 
+    /**
+     * Records a non-model decision. When the step already holds a decision, this one replaces it:
+     * a post-selection restart replaced the selected action, so the replaced decision's priority,
+     * scorer and MOP members, its selection members ({@code cfc}, {@code draw}, {@code nav},
+     * {@code strat}, {@code bmc}, {@code buf}) and its routing claim ({@code own.trg}, {@code g},
+     * {@code fb}) are dropped, and {@code own.i} becomes this decision's owner. The step-open coin
+     * draws, the LLM attempts, the component trigger and {@code dec.restart} stay.
+     */
     void decisionNonModel(String action, String decisionSource, String pickChannel) {
+        if (hasDecision) {
+            dropReplacedDecision(decisionSource);
+        }
         this.hasDecision = true;
         this.modelAction = false;
         this.action = action;
         this.decisionSource = decisionSource;
         this.pickChannel = pickChannel;
+    }
+
+    private void dropReplacedDecision(String owner) {
+        priority = 0;
+        mop = 0;
+        mopFrontier = 0;
+        wtg = 0;
+        navFrontier = 0;
+        coverage = 0;
+        menu = 0;
+        form = 0;
+        patched = EventSink.ABSENT;
+        mopExposureWeighted = EventSink.ABSENT;
+        mopExposureTotal = EventSink.ABSENT;
+        mopDistance = EventSink.ABSENT;
+        mopSource = null;
+        handler = null;
+        retired = null;
+        ownIntended = owner;
+        ownTrigger = null;
+        ownGate = null;
+        ownFallback = null;
+        cfcScorers.clear();
+        cfcChanged.clear();
+        drawIndex = EventSink.ABSENT;
+        drawTotal = EventSink.ABSENT;
+        navPoint = null;
+        navVariant = null;
+        navAlt = false;
+        navDrew = false;
+        backMenuCapped = 0;
+        strategy = null;
+        bufferOwner = null;
     }
 
     void mopExposure(int weighted, int total) {

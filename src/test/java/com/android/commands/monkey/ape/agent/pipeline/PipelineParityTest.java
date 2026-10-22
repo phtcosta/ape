@@ -71,13 +71,15 @@ public class PipelineParityTest {
 
     @Test
     public void base() {
-        assertCell(Presets.BASE, "Restart", "SataChain");
+        // No Restart: its gate APE_FIXES is an ADDONS member.
+        assertCell(Presets.BASE, "SataChain");
     }
 
     @Test
     public void mop() {
-        // No Budget: ACTIVITY_BUDGET is an ADDONS member. No ComponentTrigger: it is STATIC's.
-        assertCell(Presets.MOP, "Restart", "MopLauncher", "MopCoin", "SataChain");
+        // No Budget or Restart: ACTIVITY_BUDGET and APE_FIXES are ADDONS members. No
+        // ComponentTrigger: it is STATIC's.
+        assertCell(Presets.MOP, "MopLauncher", "MopCoin", "SataChain");
     }
 
     @Test

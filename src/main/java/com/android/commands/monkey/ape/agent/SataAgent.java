@@ -267,6 +267,12 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         super.startNewEpisode();
     }
 
+    /** Whether this agent's pipeline assembled the RESTART stage, which the plan decides. */
+    @Override
+    protected boolean restartStageMounted() {
+        return decisionPipeline.stageNames().contains(DecisionPipeline.Candidate.RESTART.stageName());
+    }
+
     protected boolean isEntryState(State state) {
         return this.getGraph().isEntryState(state);
     }

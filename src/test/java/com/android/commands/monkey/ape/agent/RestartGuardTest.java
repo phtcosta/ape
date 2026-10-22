@@ -1,6 +1,6 @@
 package com.android.commands.monkey.ape.agent;
 
-import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
@@ -24,9 +24,10 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 /**
- * decision-pipeline "Restart Guard Stage" (design D-B7, D-B14.12, D-B14.16, task 8.9.2), agent
- * half: when {@code restartDue()} holds and what {@code restartAction()} does. The stage that
- * calls them is the pipeline's; here the agent is {@code Unsafe}-allocated and driven directly.
+ * decision-pipeline "Restart Guard Stage" (design D-B7, D-B14.12, D-B14.16), agent half: when
+ * {@code restartDue()} holds and what {@code restartAction()} does. The stage that calls them is
+ * the pipeline's, which assembles it iff {@code ape.checkRestart} and {@code APE_FIXES}; here the
+ * agent is {@code Unsafe}-allocated and driven directly.
  */
 public class RestartGuardTest {
 
@@ -152,12 +153,17 @@ public class RestartGuardTest {
         agent.restartAction();
     }
 
-    /** Scenario "no restart replaces a selected action": only the pipeline agent has the guard. */
+    /** The agent asks its assembled pipeline whether the RESTART stage takes the restart. */
     @Test
-    public void onlyThePipelineAgentRestartsThroughTheGuard() {
-        assertTrue(StageCollaborators.class.isAssignableFrom(SataAgent.class));
-        assertFalse(StageCollaborators.class.isAssignableFrom(RandomAgent.class));
-        assertFalse(StageCollaborators.class.isAssignableFrom(ReplayAgent.class));
+    public void theRestartStageIsMountedIffThePipelineAssembledIt() throws Exception {
+        set(SataAgent.class, "decisionPipeline", DecisionPipeline.fromSpec(
+                TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false"), agent));
+        assertTrue(agent.restartStageMounted());
+
+        set(SataAgent.class, "decisionPipeline",
+                DecisionPipeline.fromSpec(TestRunSpecs.spec(), agent));
+        assertFalse("without APE_FIXES the restart is applied after selection",
+                agent.restartStageMounted());
     }
 
     /** A restart step's record names the restart owner and channel (dec.src, dec.ch). */

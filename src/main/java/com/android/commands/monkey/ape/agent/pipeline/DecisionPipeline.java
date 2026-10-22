@@ -66,16 +66,17 @@ public final class DecisionPipeline {
      * <p>Each condition names the leaf feature only. {@code LLM_NEW_STATE} cannot be in a plan whose
      * {@code LLM} is absent and {@code MOP_LAUNCHER} cannot be in one without {@code MOP} —
      * {@link Feature} declares those dependencies and plan resolution enforces them, so repeating the
-     * root here would be a second guard for a fact the plan already guarantees. The one candidate
-     * gated by a BASE key rather than a feature is {@code RESTART} ({@code ape.checkRestart}, design
-     * D-B14.12).
+     * root here would be a second guard for a fact the plan already guarantees. {@code RESTART} is
+     * gated by {@code APE_FIXES} and also needs the exploration key {@code ape.checkRestart}; a plan
+     * without it has no stage, and the agent restarts after selection instead.
      */
     public enum Candidate {
 
         /** The activity-budget guard: navigates away from an exhausted activity, or passes. */
         BUDGET("Budget", Feature.ACTIVITY_BUDGET),
         /** The restart guard: selects the restart action when a restart is due. */
-        RESTART("Restart", null, spec -> spec.exploration().checkRestart()),
+        RESTART("Restart", Feature.APE_FIXES,
+                spec -> spec.exploration().checkRestart() && spec.has(Feature.APE_FIXES)),
         /** LLM routing on entering a new state. */
         LLM_NEW_STATE("LlmNewState", Feature.LLM_NEW_STATE),
         /** LLM routing at the stagnation midpoint, once per episode. */
@@ -112,7 +113,7 @@ public final class DecisionPipeline {
 
         /**
          * The feature whose presence assembles this candidate, or {@code null} for the terminal
-         * stage, which every plan carries, and for {@code RESTART}, which a BASE key mounts.
+         * stage, which every plan carries.
          */
         public Feature gate() {
             return gate;

@@ -364,16 +364,23 @@ public class MonkeySourceApe implements MonkeyEventSource {
     }
 
     protected void generateClickEventAt(Rect nodeRect, long waitTime, ClickPoint clickPoint) {
-        // Node actions validate against the app window's root-node visible bounds (status quo,
-        // INV-EXPL-19). MODEL_LLM_TAP overrides this via the explicit-bounds overload below.
-        generateClickEventAt(nodeRect, waitTime, clickPoint, getVisibleBounds(nodeRect));
+        // Node actions validate against the app window's root-node visible bounds (INV-EXPL-19).
+        // Without APE_FIXES a node off the visible screen is clicked at the display bounds, as in
+        // APE; with it the explicit-bounds overload drops the action. MODEL_LLM_TAP calls that
+        // overload directly.
+        Rect bounds = getVisibleBounds(nodeRect);
+        if (bounds == null && !RunContext.current().spec().has(Feature.APE_FIXES)) {
+            Logger.wprintln("Error to fetch bounds.");
+            bounds = AndroidDevice.getDisplayBounds();
+        }
+        generateClickEventAt(nodeRect, waitTime, clickPoint, bounds);
     }
 
     protected void generateClickEventAt(Rect nodeRect, long waitTime, ClickPoint clickPoint, Rect bounds) {
         if (bounds == null) {
-            // INV-EXPL-19: the node's bounds do not intersect the visible screen. Drop the
-            // action rather than substituting the display bounds and clicking its centre
-            // (that delivered an unrelated click the model credited to this action).
+            // INV-EXPL-19: the target does not intersect the visible screen. The action is
+            // dropped: a click at the display bounds would be an unrelated click the model
+            // credits to this action.
             Logger.wformat("[APE-RV] off-screen action dropped: %s", nodeRect);
             return;
         }
@@ -891,11 +898,15 @@ public class MonkeySourceApe implements MonkeyEventSource {
             action = Action.NOP;
         }
         generateEventsForAction(action);
-        // The fuzz toss draws from its own stream on every step, fuzzing on or off, so enabling
-        // fuzzing or changing its rate never shifts another draw (exploration, INV-DP-13).
+        // With APE_FIXES the fuzz toss draws from its own stream on every step, fuzzing on or off,
+        // so enabling fuzzing or changing its rate never shifts another draw (INV-DP-13). Without
+        // it the toss is APE's: drawn on the helper stream, only when fuzzing is on.
         RunSpec spec = RunContext.current().spec();
-        boolean fuzzToss = RunContext.current().stepRng().fuzzToss(spec.exploration().fuzzingRate());
-        if (spec.has(Feature.FUZZING) && fuzzToss) {
+        double rate = spec.exploration().fuzzingRate();
+        boolean fuzz = spec.has(Feature.APE_FIXES)
+                ? RunContext.current().stepRng().fuzzToss(rate) && spec.has(Feature.FUZZING)
+                : spec.has(Feature.FUZZING) && RandomHelper.toss(rate);
+        if (fuzz) {
             if (mAgent.canFuzzing()) {
                 Action fuzzingAction = mAgent.generateFuzzingAction();
                 generateEventsForAction(fuzzingAction);
@@ -1321,9 +1332,11 @@ public class MonkeySourceApe implements MonkeyEventSource {
             return;
         }
         if (this.waitForActivity) {
-            // INV-EXPL-15: bound the wait. If the expected package never foregrounds, this branch
-            // would otherwise throttle 100ms forever and wedge the run; relaunch after 100 cycles.
-            if (++this.waitForActivityCycles > 100) {
+            // INV-EXPL-15: with APE_FIXES the wait is bounded. If the expected package never
+            // foregrounds, this branch would otherwise throttle 100ms forever and wedge the run;
+            // relaunch after 100 cycles. Without it the wait is APE's, unbounded.
+            if (RunContext.current().spec().has(Feature.APE_FIXES)
+                    && ++this.waitForActivityCycles > 100) {
                 Logger.iprintln("[APE-RV] waitForActivity exceeded 100 cycles, relaunching");
                 this.waitForActivity = false;
                 this.waitForActivityFromClean = false;
