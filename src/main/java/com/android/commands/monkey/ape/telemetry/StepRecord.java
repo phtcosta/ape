@@ -168,23 +168,25 @@ final class StepRecord {
         this.handler = handler;
     }
 
-    /**
-     * Records a non-model decision. When the step already holds a decision, this one replaces it:
-     * a post-selection restart replaced the selected action, so the replaced decision's priority,
-     * scorer and MOP members, its selection members ({@code cfc}, {@code draw}, {@code nav},
-     * {@code strat}, {@code bmc}, {@code buf}) and its routing claim ({@code own.trg}, {@code g},
-     * {@code fb}) are dropped, and {@code own.i} becomes this decision's owner. The step-open coin
-     * draws, the LLM attempts, the component trigger and {@code dec.restart} stay.
-     */
     void decisionNonModel(String action, String decisionSource, String pickChannel) {
-        if (hasDecision) {
-            dropReplacedDecision(decisionSource);
-        }
         this.hasDecision = true;
         this.modelAction = false;
         this.action = action;
         this.decisionSource = decisionSource;
         this.pickChannel = pickChannel;
+    }
+
+    /**
+     * Replaces the step's decision with a non-model one: a post-selection restart replaced the
+     * selected action. The replaced decision's priority, scorer and MOP members, its selection
+     * members ({@code cfc}, {@code draw}, {@code nav}, {@code strat}, {@code bmc}, {@code buf}) and
+     * its routing claim ({@code own.trg}, {@code g}, {@code fb}) are dropped, and {@code own.i}
+     * becomes this decision's owner. The step-open coin draws, the LLM attempts, the component
+     * trigger and {@code dec.restart} stay.
+     */
+    void decisionReplaced(String action, String decisionSource, String pickChannel) {
+        dropReplacedDecision(decisionSource);
+        decisionNonModel(action, decisionSource, pickChannel);
     }
 
     private void dropReplacedDecision(String owner) {

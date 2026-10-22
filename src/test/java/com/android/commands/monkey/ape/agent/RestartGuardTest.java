@@ -153,17 +153,18 @@ public class RestartGuardTest {
         agent.restartAction();
     }
 
-    /** The agent asks its assembled pipeline whether the RESTART stage takes the restart. */
+    /**
+     * The pipeline the plan assembles says whether the RESTART stage takes the restart; the agent
+     * reads that answer once, at construction.
+     */
     @Test
     public void theRestartStageIsMountedIffThePipelineAssembledIt() throws Exception {
-        set(SataAgent.class, "decisionPipeline", DecisionPipeline.fromSpec(
-                TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false"), agent));
-        assertTrue(agent.restartStageMounted());
-
-        set(SataAgent.class, "decisionPipeline",
-                DecisionPipeline.fromSpec(TestRunSpecs.spec(), agent));
+        assertTrue(DecisionPipeline.fromSpec(
+                TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false"), agent)
+                .mounts(DecisionPipeline.Candidate.RESTART));
         assertFalse("without APE_FIXES the restart is applied after selection",
-                agent.restartStageMounted());
+                DecisionPipeline.fromSpec(TestRunSpecs.spec(), agent)
+                        .mounts(DecisionPipeline.Candidate.RESTART));
     }
 
     /** A restart step's record names the restart owner and channel (dec.src, dec.ch). */

@@ -123,6 +123,13 @@ public interface EventSink {
     void decisionNonModel(String action, String decisionSource, String pickChannel);
 
     /**
+     * Replaces the step's recorded decision with a non-model one: a post-selection restart replaced
+     * the selected action after its decision was recorded (decision-pipeline "Post-Selection
+     * Restart Record"). No member of the replaced decision remains on the record.
+     */
+    void decisionReplaced(String action, String decisionSource, String pickChannel);
+
+    /**
      * Records how many of the screen's actions carry a positive MOP weight, tried or not (design
      * D-B19), and how many were eligible for MOP steering — the denominator without which "the MOP scorer fired on 0.4 % of decisions" cannot
      * be split into "the mechanism had no opportunity" and "it had one and lost the roulette".

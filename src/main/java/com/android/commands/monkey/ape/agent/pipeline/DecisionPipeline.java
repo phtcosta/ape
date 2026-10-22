@@ -350,6 +350,18 @@ public final class DecisionPipeline {
         }
     }
 
+    /**
+     * Forwards the kept selection of the step to every stage, once and in roster order.
+     *
+     * @param ctx the step whose selection is kept
+     * @param action the action {@link #decide} selected, which the agent executes
+     */
+    public void onSelectionKept(StepContext ctx, Action action) {
+        for (DecisionStage stage : stages) {
+            stage.onSelectionKept(ctx, action);
+        }
+    }
+
     /** The assembled stages, in order. */
     public List<DecisionStage> stages() {
         return stages;
@@ -362,6 +374,21 @@ public final class DecisionPipeline {
             names.add(stage.name());
         }
         return Collections.unmodifiableList(names);
+    }
+
+    /**
+     * Whether this pipeline assembled {@code candidate}'s stage.
+     *
+     * @param candidate the candidate stage
+     * @return whether a stage of that name is in the roster
+     */
+    public boolean mounts(Candidate candidate) {
+        for (DecisionStage stage : stages) {
+            if (stage.name().equals(candidate.stageName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Number of assembled stages. */

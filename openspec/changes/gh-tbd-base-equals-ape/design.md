@@ -143,13 +143,21 @@ today's `ApeAgent.restartAction` body (kind, `lastRestartStep`, threshold redraw
 implements as `actionBuffer.clear(); return startRestart();` — the buffer drop without weakening belongs to the
 stage path only.
 
-After a replacement, `StatefulAgent` rewrites the step's decision as a restart decision:
-`sink().decisionNonModel(start.toString(), DecisionSource.RESTART.owner(), PickChannel.RESTART.getLabel())`, and
-clears `lastDecisionAction`, so the record describes the restart that ran, as a stage-selected restart step does,
-and closes the way a non-model decision closes. A post-selection restart replaces the action of any owner (SATA,
-MOP coin, launcher, LLM); LLM attempts already made stay in the record's `llm[]`. If `NdjsonSink.decisionNonModel`
-after `decision` in the same step leaves fields of the replaced decision, `NdjsonSink` is changed so the second
-call replaces the first.
+After a replacement, `StatefulAgent` rewrites the step's decision as a restart decision through
+`sink().decisionReplaced(start.toString(), DecisionSource.RESTART.owner(), PickChannel.RESTART.getLabel())`, the
+one sink call that drops a recorded decision (`StepRecord.decisionReplaced`), and clears `lastDecisionAction`, so the
+record describes the restart that ran, as a stage-selected restart step does (`own` = `{i:"restart"}` plus the coin
+draws), and closes the way a non-model decision closes. A post-selection restart replaces the action of any owner
+(SATA, MOP coin, launcher, LLM); LLM attempts already made stay in the record's `llm[]`.
+
+The `BadStateException` retry of `updateStateWrapper` does not check restart, as in APE: `ApeAgent.badStateRetry`
+is set for the retry's `updateStateInternal` and `checkRestart` returns the action unchanged while it is set.
+
+A launch the `MopLauncher` selected is committed — the activity added to `launched`, `launchCount` and `LAUNCHES`
+counted — only when the agent keeps the action (`DecisionStage.onSelectionKept`, forwarded by `DecisionPipeline`
+and called by `StatefulAgent` after `checkRestart` keeps the selection), so a launch a post-selection restart
+replaces leaves its activity eligible (Pedro, 2026-10-22, WR-02 option b). On the stage path every selection is
+kept.
 
 **D7 — Item 10.** The substitution belongs to the node-action path, which is APE's code:
 `MonkeySourceApe.generateClickEventAt(Rect nodeRect, long, ClickPoint)` computes `getVisibleBounds(nodeRect)` and,
@@ -230,7 +238,7 @@ Member off: step → guards → … → `SataChain` → `markVisited(action)` �
 - [The post-selection path has no oracle coverage: `OracleDriver` enters below `updateStateWrapper`] → a dedicated
   unit test drives `updateStateInternal` with the stage unmounted.
 - [Items 10 and 11 live in `MonkeySourceApe`, which does not load off-device] → covered by the device smoke.
-- [`decisionNonModel` after `decision` in one step] → D6 makes the second call replace the first; tested.
+- [A replaced decision left fields behind] → `decisionReplaced` drops them; only the restart replacement calls it; tested.
 - [New-state capture shifts SATA's `mRandom` draws in every aperv cell] → symmetric with the `ape` arm under the
   same setting; reported by the paper.
 - [Consumers compare `RUN_START`] → every cell's `digest` changes (the new-state default is a base default and the

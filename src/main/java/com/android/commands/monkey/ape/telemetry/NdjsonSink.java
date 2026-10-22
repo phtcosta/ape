@@ -269,6 +269,18 @@ public final class NdjsonSink implements EventSink {
     }
 
     @Override
+    public void decisionReplaced(String action, String decisionSource, String pickChannel) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.decisionReplaced(action, decisionSource, pickChannel);
+        } catch (Throwable failure) {
+            latch("decisionReplaced", failure);
+        }
+    }
+
+    @Override
     public void mopExposure(int weighted, int total) {
         if (disabled || !pending.isOpen()) {
             return;

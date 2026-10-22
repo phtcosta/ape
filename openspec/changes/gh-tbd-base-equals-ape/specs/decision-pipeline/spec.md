@@ -49,7 +49,7 @@ replaced action MAY come from any owner.
 ### Requirement: Post-Selection Restart Decision
 
 `ApeAgent.checkRestart(origin)` SHALL return `origin` when the `Restart` stage is mounted, when `ape.checkRestart`
-is `false`, or when `restartDue()` is false. Otherwise it SHALL return the start action of
+is `false`, on the step's `BadStateException` retry, or when `restartDue()` is false. Otherwise it SHALL return the start action of
 `ApeAgent.startRestart()`, which lowers the stability flag, sets `lastRestartStep`, redraws a `periodic`
 threshold, starts a new episode, writes `dec.restart`, counts one `restarts`, and tosses the start action's kind on
 the helper stream.
@@ -84,10 +84,38 @@ iteration and LLM action history SHALL NOT record the replaced action.
 - **AND** `checkRestart` SHALL return a start action of kind `periodic`, `moveForward` and `recordActionHistory` SHALL NOT run for the selected action, and the trace SHALL be reset
 - **AND** the new episode SHALL clear the buffer through `clearBuffer`, weakening the planned edge, with no `dec.buf`
 
+### Requirement: Post-Selection Restart on the BadStateException Retry
+
+The post-selection restart SHALL run only on the step's first `updateStateInternal`. On the
+`BadStateException` retry of `ApeAgent.updateStateWrapper`, `checkRestart` SHALL return the retry's selected
+action unchanged, as APE's retry, which has no `checkRestart`, does. The `badStateRetry` flag marks the retry: set
+before it, cleared at step start, read only by `checkRestart`. On the stage path the retry runs `Restart` again.
+
+#### Scenario: the BadStateException retry does not restart
+- **WHEN** in the `mop` cell step 41 opens with `nextRestartThreshold` `40` and no restart since step 0, the step's first state build throws `BadStateException`, and the retry's SATA selection does not call `disableRestart()`
+- **THEN** `checkRestart` SHALL return the retry's selected action, no `restarts` SHALL be counted and `lastRestartStep` SHALL stay `0`
+- **AND** the kept action SHALL be recorded and advance the trace through `moveForward`
+- **AND WHEN** step 42 opens and its first `updateStateInternal` selects an action
+- **THEN** `checkRestart` SHALL replace it by a start action of kind `periodic`
+
+### Requirement: Post-Selection Restart Launch Commit
+
+A replaced launch of the `MopLauncher` stage SHALL commit nothing: its activity SHALL NOT enter the stage's
+launched set, the launch budget SHALL NOT be consumed, and `RUN_END.counters.launches` SHALL NOT count it. The
+stage commits a launch in `onSelectionKept`, which runs only for a kept action (`component-triggering`
+"Cadence-Based MOP Activity Launch"). The cadence reset and the round-robin cursor move at the firing, as for a
+kept launch.
+
+#### Scenario: a replaced launch frees its activity
+- **WHEN** in the `mop` cell the `MopLauncher` stage selects `com.x.Target` on a step on which a periodic restart is due
+- **THEN** `checkRestart` SHALL replace the launch by a start action, `com.x.Target` SHALL stay eligible, the launch budget SHALL be unchanged and `launches` SHALL NOT be counted
+- **AND WHEN** on a later step on which no restart is due the stage selects `com.x.Target` and the action is kept
+- **THEN** `com.x.Target` SHALL enter the launched set and `launches` SHALL count one
+
 ### Requirement: Post-Selection Restart Record
 
 After a replacement, `StatefulAgent` SHALL write
-`sink().decisionNonModel(start.toString(), DecisionSource.RESTART.owner(), PickChannel.RESTART.getLabel())` and
+`sink().decisionReplaced(start.toString(), DecisionSource.RESTART.owner(), PickChannel.RESTART.getLabel())` and
 clear `lastDecisionAction`, so the record is the one a step the `Restart` stage takes writes (`event-sink`
 "StepRecord Schema"). LLM attempts made on the step before the replacement SHALL stay in `llm[]`.
 
@@ -191,7 +219,11 @@ Episode-scoped decision state SHALL live inside its owning stage (INV-DP-07):
 
 The `MopLauncher` cadence counter is advanced only by the stage's own `onStepOpen` hook, once per step
 (INV-DP-08). The agent SHALL forward each visited `StateTransition` to every assembled stage's
-`onStateTransition(edge)` hook exactly once, after its own stability-counter bookkeeping. `LlmStagnation` SHALL
+`onStateTransition(edge)` hook exactly once, after its own stability-counter bookkeeping. The agent SHALL forward
+the step's selected action to every assembled stage's `onSelectionKept(ctx, action)` hook once, after
+`checkRestart`, when no post-selection restart replaced it; `MopLauncher` commits its launch there (the launched
+set, the launch budget and `launches`), so a replaced launch commits nothing ("Post-Selection Restart Model
+Effect"). `LlmStagnation` SHALL
 re-arm its flag on `NEW_ACTION`/`NEW_ACTION_TARGET` edges, the same event that resets `graphStableCounter`.
 
 `graphStableCounter` itself SHALL remain shared exploration state owned by the agent and `RunContext`, because the

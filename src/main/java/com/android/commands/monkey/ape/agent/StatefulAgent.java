@@ -1015,6 +1015,8 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
         Action action = checkRestart(selected);
         if (action != selected) {
             recordRestartReplacement(action);
+        } else {
+            onSelectionKept(selected);
         }
         if (action == selected && action.isModelAction()) {
             recordActionHistory((ModelAction) action);
@@ -1029,6 +1031,15 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
+     * The step's selected action is kept: no post-selection restart replaced it. The base agent
+     * has nothing to commit.
+     *
+     * @param action the selected action, which this step executes
+     */
+    protected void onSelectionKept(Action action) {
+    }
+
+    /**
      * Rewrites the step's decision as the restart that replaced the selected action after
      * selection: the record is the one a step the RESTART stage takes writes, and it closes as a
      * non-model record closes, so no outcome is attributed to the replaced action.
@@ -1036,7 +1047,7 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * @param start the start action of {@link #startRestart}
      */
     private void recordRestartReplacement(Action start) {
-        RunContext.current().sink().decisionNonModel(start.toString(),
+        RunContext.current().sink().decisionReplaced(start.toString(),
                 ModelAction.DecisionSource.RESTART.owner(),
                 ModelAction.PickChannel.RESTART.getLabel());
         lastDecisionAction = null;

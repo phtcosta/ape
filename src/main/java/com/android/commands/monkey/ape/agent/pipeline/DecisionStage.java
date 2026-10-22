@@ -15,6 +15,7 @@
  */
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.StateTransition;
 
 /**
@@ -79,5 +80,16 @@ public interface DecisionStage {
      * @param ctx the step that opened
      */
     default void onStepOpen(StepContext ctx) {
+    }
+
+    /**
+     * The step's selected action is kept: no post-selection restart replaced it, and the agent
+     * executes it. Called once per step, after selection, on every step whose selection is kept.
+     * Default no-op, like {@link #onStateTransition}.
+     *
+     * @param ctx the step whose selection is kept
+     * @param action the action the pipeline selected and the agent executes
+     */
+    default void onSelectionKept(StepContext ctx, Action action) {
     }
 }

@@ -29,6 +29,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -158,13 +159,15 @@ public class RunContextTest {
         // do not draw one sequence.
         RunContext.initialize(spec(entries(), 777L), 777L);
         java.util.Random monkey = new java.util.Random(777L);
+        assertNotEquals("the first draws differ",
+                monkey.nextInt(1 << 20), RandomHelper.nextInt(1 << 20));
         int same = 0;
         for (int i = 0; i < 16; i++) {
             if (RandomHelper.nextInt(1 << 20) == monkey.nextInt(1 << 20)) {
                 same++;
             }
         }
-        assertTrue(same < 16);
+        assertTrue("two streams over 2^20 values agree at most once in 16 draws", same <= 1);
     }
 
     @Test

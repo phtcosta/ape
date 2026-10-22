@@ -1,9 +1,13 @@
 package com.android.commands.monkey.ape.agent;
 
+import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
+import com.android.commands.monkey.ape.agent.pipeline.DecisionStage;
+import com.android.commands.monkey.ape.agent.pipeline.MopLauncherStage;
 import com.android.commands.monkey.ape.llm.PromptFixtures.TestName;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
+import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.model.Graph;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
@@ -33,8 +37,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.Assert.*;
 
@@ -56,6 +62,7 @@ public class PostSelectionRestartTest {
     private ByteArrayOutputStream captured;
     private NdjsonSink ndjson;
     private int restartCounts;
+    private int launchCounts;
     private ScriptedAgent agent;
     private RecordingGraph graph;
     private UICoverageTracker tracker;
@@ -86,7 +93,11 @@ public class PostSelectionRestartTest {
     static class ScriptedAgent extends SataAgent {
         State scriptedState;
         ModelAction pick;
+        /** The step's selection when it is not {@link #pick}: a launch of the MOP launcher. */
+        Action nonModelPick;
         boolean disableDuringSelection;
+        /** How many state builds throw {@code BadStateException} before one succeeds. */
+        int badStates;
         Graph graph;
         int historyCalls;
 
@@ -100,6 +111,10 @@ public class PostSelectionRestartTest {
 
         @Override
         protected State buildAndValidateNewState(ComponentName topComp, AccessibilityNodeInfo info) {
+            if (badStates > 0) {
+                badStates--;
+                throw new BadStateException("scripted bad state");
+            }
             newState = scriptedState;
             return newState;
         }
@@ -145,7 +160,13 @@ public class PostSelectionRestartTest {
             if (disableDuringSelection) {
                 disableRestart();
             }
-            return pick;
+            return nonModelPick != null ? nonModelPick : pick;
+        }
+
+        /** The root the retry builds from; the scripted state build does not read it. */
+        @Override
+        protected AccessibilityNodeInfo retrieveWindowNode(BadStateException e) {
+            return null;
         }
 
         @Override
@@ -196,6 +217,9 @@ public class PostSelectionRestartTest {
                     if (method.getName().equals("count") && args[0] == RunCounter.RESTARTS) {
                         restartCounts++;
                     }
+                    if (method.getName().equals("count") && args[0] == RunCounter.LAUNCHES) {
+                        launchCounts++;
+                    }
                     try {
                         return method.invoke(ndjson, args);
                     } catch (InvocationTargetException e) {
@@ -213,7 +237,10 @@ public class PostSelectionRestartTest {
         set("_coverageTracker", tracker);
         set("_mopLedger", ledger);
         set("_actionHistory", new ArrayList<Object>());
-        set("decisionPipeline", DecisionPipeline.fromSpec(spec, agent));
+        DecisionPipeline pipeline = DecisionPipeline.fromSpec(spec, agent);
+        set("decisionPipeline", pipeline);
+        set("restartStageMounted", pipeline.mounts(DecisionPipeline.Candidate.RESTART));
+        set("activityNames", new HashSet<String>());
         set("nextRestartThreshold", 40);
         agent.scriptedState = state(ACT);
         GUITreeNode node = new GUITreeNode(null);
@@ -354,6 +381,71 @@ public class PostSelectionRestartTest {
 
         assertSame(agent.pick, agent.step(40));
         assertEquals(0, restartCounts);
+    }
+
+    /**
+     * Scenario "the BadStateException retry does not restart": the step's first state build fails,
+     * the retry selects with a periodic restart due, and the retry keeps its selection, as APE's
+     * does. The restart stays due, and the next step's first attempt takes it.
+     */
+    @Test
+    public void theBadStateRetryDoesNotRestart() throws Exception {
+        install(TestRunSpecs.mopSpec());
+        agent.badStates = 1;
+        agent.timestamp = 40; // the step opens as 41, past the periodic threshold
+
+        Action executed = agent.updateState(null, null);
+
+        assertSame("the retry keeps the selected action", agent.pick, executed);
+        assertEquals(0, restartCounts);
+        assertEquals(0, get("lastRestartStep"));
+        assertSame("the kept action reaches moveForward", agent.pick, get("currentAction"));
+        assertEquals(1, agent.historyCalls);
+
+        Action next = agent.updateState(null, null);
+
+        assertTrue("the next step restarts", next.getType() == ActionType.EVENT_RESTART
+                || next.getType() == ActionType.EVENT_CLEAN_RESTART);
+        assertEquals(1, restartCounts);
+        assertEquals(42, get("lastRestartStep"));
+    }
+
+    /**
+     * Scenario "a replaced launch frees its activity": in a plan without {@code APE_FIXES} a
+     * post-selection restart replaces the launcher's selection, so the activity is not launched,
+     * stays eligible and spends no budget; the same launch kept on a later step commits.
+     */
+    @Test
+    public void aReplacedLaunchLeavesItsActivityEligible() throws Exception {
+        install(TestRunSpecs.mopSpec());
+        MopLauncherStage launcher = null;
+        for (DecisionStage stage : ((DecisionPipeline) get("decisionPipeline")).stages()) {
+            if (stage instanceof MopLauncherStage) {
+                launcher = (MopLauncherStage) stage;
+            }
+        }
+        assertNotNull("the mop plan mounts the launcher", launcher);
+        ActivityTriggerAction launch = new ActivityTriggerAction("com.x", "com.x.Target", null);
+        agent.nonModelPick = launch;
+
+        setOn(launcher, MopLauncherStage.class, "selection", launch); // what its decide selected
+        assertNotSame("a due restart replaces the launch", launch, agent.step(41));
+        assertEquals(1, restartCounts);
+        assertEquals("no launch is counted", 0, launchCounts);
+        assertEquals(0, field(MopLauncherStage.class, "launchCount").get(launcher));
+        assertFalse("the activity stays eligible", launchedSet(launcher).contains("com.x.Target"));
+
+        setOn(launcher, MopLauncherStage.class, "selection", launch);
+        assertSame("no restart is due right after one", launch, agent.step(42));
+        assertEquals(1, launchCounts);
+        assertEquals(1, field(MopLauncherStage.class, "launchCount").get(launcher));
+        assertTrue("a kept launch is never eligible again (D-B15)",
+                launchedSet(launcher).contains("com.x.Target"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Set<String> launchedSet(MopLauncherStage launcher) throws Exception {
+        return (Set<String>) field(MopLauncherStage.class, "launched").get(launcher);
     }
 
     /** Scenario "startRestart without a due restart fails". */

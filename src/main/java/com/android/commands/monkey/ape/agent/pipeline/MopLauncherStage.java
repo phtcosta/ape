@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActivityNode;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
 import com.android.commands.monkey.ape.runtime.MopScoring;
@@ -50,8 +51,13 @@ import com.android.commands.monkey.ape.utils.StaticGuiModel;
  * past the cadence with launch budget left, and it fires on the first due step the pipeline reaches
  * it, which means no guard and no LLM took that step. A due launcher claims the step
  * ({@code dec.own.i:"launcher"}); when it finds no eligible activity the step falls through with
- * {@code dec.own.fb:"ineligible"}. A launch counts {@code launches} and abandons a non-empty
- * buffer without weakening ({@code dec.buf:"launcher"}).
+ * {@code dec.own.fb:"ineligible"}. A selected launch abandons a non-empty buffer without
+ * weakening ({@code dec.buf:"launcher"}).
+ *
+ * <p><b>A launch is committed when the agent keeps it</b> ({@link #onSelectionKept}): the
+ * activity joins the launched set, the budget is consumed and {@code launches} is counted. A
+ * selection that a post-selection restart replaces is not executed and commits nothing, so its
+ * activity stays eligible and the budget is unspent.
  *
  * <p><b>Two providers.</b> The activity list, the main activity and the package come from
  * {@link StaticGuiModel} ({@link StepContext#staticModel()}); the MOP census and the
@@ -68,9 +74,9 @@ import com.android.commands.monkey.ape.utils.StaticGuiModel;
  * both modes, and neither reads the launch result (INV-CT-14).
  *
  * <p><b>Each activity is launched at most once per run</b> (design D-B15). The walks see every
- * activity the stage has selected as visited, so one whose launch did not open it (a cold launch
- * that crashes without its extras) leaves the eligible set as one that opened does. The set is
- * filled from the stage's own selection, never from the launch result.
+ * activity whose launch the agent kept as visited, so one whose launch did not open it (a cold
+ * launch that crashes without its extras) leaves the eligible set as one that opened does. The set
+ * is filled from the stage's own kept selections, never from the launch result.
  */
 public final class MopLauncherStage implements DecisionStage {
 
@@ -115,8 +121,11 @@ public final class MopLauncherStage implements DecisionStage {
     /** Launches actually performed this run; the budget the cap bounds (INV-CT-12). */
     private int launchCount;
 
-    /** The activities this stage has selected this run, never eligible again (design D-B15). */
+    /** The activities whose launch the agent kept this run, never eligible again (design D-B15). */
     private final Set<String> launched = new HashSet<>();
+
+    /** This step's launch, until the agent keeps it; null when the step selected none. */
+    private ActivityTriggerAction selection;
 
     /**
      * @param cadence selection passes between firings
@@ -152,6 +161,24 @@ public final class MopLauncherStage implements DecisionStage {
     @Override
     public void onStepOpen(StepContext ctx) {
         stepsSinceFiring++;
+        selection = null;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Commits this step's launch when it is the kept action: the activity is never eligible
+     * again (design D-B15), the budget is consumed (INV-CT-12) and {@code launches} is counted.
+     */
+    @Override
+    public void onSelectionKept(StepContext ctx, Action action) {
+        if (selection == null || action != selection) {
+            return;
+        }
+        launched.add(selection.getClassName());
+        launchCount++;
+        ctx.sink().count(RunCounter.LAUNCHES);
+        selection = null;
     }
 
     @Override
@@ -189,17 +216,14 @@ public final class MopLauncherStage implements DecisionStage {
             routing.fallback(OWNER, StepRouting.FALLBACK_INELIGIBLE);
             return StageResult.continueChain();
         }
-        launched.add(candidate.className);
-        launchCount++; // budget consumed only on an actual launch (INV-CT-12)
-        ctx.sink().count(RunCounter.LAUNCHES);
         Logger.iformat("[APE-RV] Triggering activity: %s", candidate.className);
         // Package captured from the static model (never from the class name — INV-CT-04).
-        ActivityTriggerAction trigger = new ActivityTriggerAction(model.packageName(),
-                candidate.className, candidate.deepLinkUri);
+        selection = new ActivityTriggerAction(model.packageName(), candidate.className,
+                candidate.deepLinkUri);
         if (ctx.actionBufferSize() > 0) {
             abandonBuffer.accept(OWNER);
         }
-        return StageResult.select(trigger, OWNER);
+        return StageResult.select(selection, OWNER);
     }
 
     /**

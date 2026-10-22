@@ -125,6 +125,11 @@ public abstract class ApeAgent implements Agent {
     private int lastRestartStep;
     boolean newActivityStarting;
     private boolean disableRestart;
+    /**
+     * Whether this step's {@code updateStateInternal} is the {@code BadStateException} retry, which
+     * {@link #checkRestart} never restarts; cleared at step start.
+     */
+    private boolean badStateRetry;
     boolean start;
 
     private final long beginMillis;
@@ -335,13 +340,15 @@ public abstract class ApeAgent implements Agent {
      * The post-selection restart, APE's: called once per step after selection, it replaces the
      * selected action with a start action when {@link #restartDue} holds. It returns {@code origin}
      * unchanged when the RESTART stage is mounted, which takes the restart before selection
-     * instead, or when {@code ape.checkRestart} is off.
+     * instead, when {@code ape.checkRestart} is off, or on the {@code BadStateException} retry of
+     * the step, which APE runs without a restart check.
      *
      * @param origin the action this step selected
      * @return {@code origin}, or the start action of {@link #startRestart}
      */
     protected Action checkRestart(Action origin) {
-        if (restartStageMounted() || !RunContext.current().spec().exploration().checkRestart()) {
+        if (restartStageMounted() || badStateRetry
+                || !RunContext.current().spec().exploration().checkRestart()) {
             return origin;
         }
         if (restartDue()) {
@@ -469,6 +476,7 @@ public abstract class ApeAgent implements Agent {
             printMemoryUsage();
             try {
                 disableFuzzing = false;
+                badStateRetry = false;
                 if (!restartStageMounted()) {
                     // The post-selection restart reads the latch this step's selection sets; the
                     // RESTART stage reads the one the previous step left.
@@ -477,11 +485,8 @@ public abstract class ApeAgent implements Agent {
                 return checkInput(checkFuzzing(updateStateInternal(topComp, info)));
             } catch (BadStateException e) {
                 Logger.wprintln("Bad state, retrieve the Window node.");
-                info = ape.getRootInActiveWindowSlow();
-                if (info == null) {
-                    Logger.wprintln("Fail to retrieve the Window node.");
-                    throw e;
-                }
+                info = retrieveWindowNode(e);
+                badStateRetry = true;
                 return updateStateInternal(topComp, info);
             }
         } catch (BadStateException e) {
@@ -507,6 +512,22 @@ public abstract class ApeAgent implements Agent {
             Logger.format(">>>>>>>> %s end step [%d]", getLoggerName(), timestamp);
         }
 
+    }
+
+    /**
+     * The active window's root for the {@code BadStateException} retry, fetched after waiting for
+     * the device to be idle.
+     *
+     * @param e the bad state the step's first attempt raised, rethrown when there is no root
+     * @return the root, never null
+     */
+    protected AccessibilityNodeInfo retrieveWindowNode(BadStateException e) {
+        AccessibilityNodeInfo info = ape.getRootInActiveWindowSlow();
+        if (info == null) {
+            Logger.wprintln("Fail to retrieve the Window node.");
+            throw e;
+        }
+        return info;
     }
 
     public abstract void onBadState(int lastBadStateCount, int badStateCounter);
