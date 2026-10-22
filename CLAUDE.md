@@ -143,15 +143,21 @@ The first line of a run's output is a level-0 `RUN_START` JSON record (`RunSpecE
 
 ### Behavior groups and cells (`runtime/Feature`, `runtime/Presets`)
 
-Behavior is organised in five groups. **BASE** is the APE algorithm plus the declared keyless bug fixes, and has no
-key. The other four switch independently, each by one boolean plan key, and every member `Feature` declares its group
+Behavior is organised in five groups. **BASE** is the APE algorithm of `8f51b99c` and has no key; what it carries
+over APE in every cell is the WebView prune that empties the DOM, the bounds-safe `GUITree.contains`, the rebuild that
+does not double-count edges, the empty `StringCache` guard, the seeded RNG (`RandomHelper` on `seed ^ K`, apart from
+`Monkey.mRandom`), the telemetry and the action-history memory; per-step PNG/XML stay off and the new-state capture
+is on. The fork's corrections of APE's own behaviour are the ADDONS member `APE_FIXES` (`ape.apeFixes`): the per-state
+GUI-tree cap, activity visits not recounted during a rebuild, the namelet membership test, the restart decided before
+selection, the off-screen action dropped, the bounded foreground wait, the fuzzing pinch and the fuzz toss on its own
+stream. Without it (`base`, `mop`) each of these points runs APE's code. The other four switch independently, each by one boolean plan key, and every member `Feature` declares its group
 as a dependency, so a member whose group is off is simply absent from the plan (stating its activation key ON
 explicitly aborts with `missing_dependency`; stating it OFF — the neutral value, or any value its rule reads as off,
 such as `<= 0` for a weight — is inert, D-B22):
 
 | Group | Key | Members (activation key) | Data |
 |---|---|---|---|
-| ADDONS | `ape.addons` | `MODEL_MENU`, `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART` | none |
+| ADDONS | `ape.addons` | `MODEL_MENU`, `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART`, `APE_FIXES` | none |
 | STATIC | `ape.static` | `NAV_FRONTIER` (`ape.frontierBoostWeight`), `TYPED_FUZZ` (`ape.fuzzInputTyped`), `COMPONENT_TRIGGER` (`ape.componentPercentage`) | `StaticGuiModel` |
 | MOP | `ape.mop` | `WTG` (`ape.mopWeightWtg`), `MENU_GATEWAY` (`ape.mopWeightOpenMenu`, also needs `MODEL_MENU`), `MOP_FRONTIER`, `MOP_LAUNCHER` (`ape.activityTriggerEnabled`), `MOP_ACTIVITY_SOURCE`, `MOP_COIN` (`ape.mopCoinPercentage`) | `MopData` + `StaticGuiModel` |
 | LLM | `ape.llm` | `LLM_NEW_STATE`, `LLM_STAGNATION`, `LLM_COIN` (`ape.llmPercentage`); needs `ape.llmUrl` | — |
@@ -173,6 +179,10 @@ on a cell, never a seventh preset. Any other preset name aborts with `unknown_pr
 **The step is a fixed sequence of owners** (`agent/pipeline/DecisionPipeline`, stage names as `PIPELINE` writes
 them): the foreign/tree guards and the model update, then `Budget`, `Restart`, `LlmNewState`, `LlmStagnation`,
 `LlmCoin`, `MopLauncher`, `ComponentTrigger` (a side effect that does not decide), `MopCoin`, `SataChain` (terminal).
+`Restart` is mounted iff `ape.checkRestart` and `APE_FIXES`; without it the agent restarts after selection, as APE
+does (`ApeAgent.checkRestart`): the selected action, of any owner, is marked visited, the new episode weakens the
+planned edge, the fork's bookkeeping (MOP ledger, retirement, coverage, LLM history) does not count it, and the step
+record names the restart (`dec.src`/`dec.ch` `restart`).
 At most one LLM call is made per step. The LLM coin draws `u_L` and admits the call through the declared gates
 `MinActionsGate` (`ape.llmGateMinActions`, 3; 0 unmounts it) and `BreakerGate` (`ape.llmBreakerFailures`,
 `ape.llmBreakerOpenMs`); it wins over a non-empty SATA buffer, which is abandoned without `weakenStateTransition`
@@ -184,8 +194,9 @@ counter advances every step and launches on the first step that reaches the MOP/
 activity at most once per run (D-B15: a launched activity reads as visited, whether or not it opened). With
 `MOP_LAUNCHER` in the plan, the null-tree recovery (more than 10 null roots) relaunches the app under test —
 `onActivityStopped`, `restartPackage(getMainApp(), …)`, and `NOP` instead of `ACTIVATE` on that step (D-B16);
-without it, upstream's `stopTopActivity()` path. The LLM coin, MOP coin, component coin and fuzz toss each draw from their own stream
-(`agent/StepRng`, `new Random(seed ^ K)`), so mounting or re-dosing one never shifts SATA's draws.
+without it, upstream's `stopTopActivity()` path. The LLM coin, MOP coin, component coin and (with `APE_FIXES`) the fuzz toss each draw from their own
+stream (`agent/StepRng`, `new Random(seed ^ K)`), so mounting or re-dosing one never shifts SATA's draws. Without
+`APE_FIXES` the fuzz toss is APE's `RandomHelper.toss(fuzzingRate)`, drawn only when fuzzing is on.
 
 **Scorers are additive and independent** (rule R1): each `agent/scoring/*Pass` writes its own field and never reads
 the current priority — `CoveragePass`, `FormCompletionPass` (ADDONS), `NavFrontierPass` (STATIC, `navf`), `WtgPass`,
@@ -281,7 +292,7 @@ externally supplied replay log through it.
 - `ape.doFuzzing` / `ape.fuzzingRate` — random fuzzing at 2% rate per step (`FUZZING`, enabled by default)
 - `ape.evolveModel` / `actionRefinementFirst` — model refinement behavior
 - `maxStatesPerActivity` / `maxGUITreesPerState` — state space limits
-- `ape.takeScreenshotForEveryStep` / `ape.saveGUITreeToXmlEveryStep` — per-step PNG/XML artifacts; **both default `false`** for throughput (INV-EXPL-17). The aperv-tool deployment pulls neither artifact and the LLM path uses its own on-demand `ScreenshotCapture`; re-enable for local debugging with `ape.takeScreenshotForEveryStep=true` / `ape.saveGUITreeToXmlEveryStep=true` in `ape.properties`
+- `ape.takeScreenshotForEveryStep` / `ape.saveGUITreeToXmlEveryStep` — per-step PNG/XML artifacts; **both default `false`** for throughput (INV-EXPL-17). `ape.takeScreenshotForNewState` defaults to **`true`**: one PNG per new abstract state on `/sdcard` (its writer pick draws `mRandom`, as in APE). The aperv-tool deployment pulls neither artifact and the LLM path uses its own on-demand `ScreenshotCapture`; re-enable for local debugging with `ape.takeScreenshotForEveryStep=true` / `ape.saveGUITreeToXmlEveryStep=true` in `ape.properties`
 - `defaultGUIThrottle` — delay between actions
 - `ape.staticDataPath` (plan-owned, `STATIC_DATA`) — path to the compact artifact on device, `/data/local/tmp/mop-artifact.json` as aperv-tool pushes it (absent = STATIC and MOP off). The jar reads only **format 2** (`formatVersion: 2`, generator `aperv-derive/2`, rv-android gh122): format 1 and the full static-analysis JSON are rejected (`version-mismatch`). Format 2 adds `targets` (the producer's target count), per-widget `dist` pairs `[i, d]`, per-activity `activityDist` and a `handlers` table keyed by binary class name. The derive's cut (D15 as amended 2026-10-09, owned by gh122's `DIST_K`): a widget's and a handler's lists keep every target at `d ≤ 3`, `activityDist` the K = 3 nearest; the loader reads any length; `MOP_DATA` reports `targets`, `handlers` and `droppedPairs`. An artifact with `targets: 0` loads and runs without distance data
 - `ape.mopWeightDirect` / `ape.mopWeightTransitive` — `flag`-mode MOP weights (defaults: 500/300), configurable via `ape.properties` (the former `mopWeightActivity` fallback was removed by mop-discriminative-boost). They reach scoring through the run's `MopContext` (`utils/MopContext`, built from the loaded `MopData`, the `StaticGuiModel` and `spec().mop()`), not through `ScoringParams`
@@ -318,7 +329,8 @@ The keys the selected mode does not read (`mopWeightDirect`/`Transitive` under `
 
 ## Notes
 
-- Unit + integration test suite: `mvn test` (1453 tests, 24 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
+- Unit + integration test suite: `mvn test` (1473 tests, 28 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`, 4 `Assume` in `ApeFuzzerPinchGateTest` without Android stubs). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
+- Building from a git worktree: git-commit-id stamps the main repository's HEAD, so pass `-Dmaven.gitcommitid.skip=true -Dgit.commit.id.abbrev=$(git rev-parse --short=7 HEAD) -Dgit.build.time=$(date -u +%Y-%m-%dT%H:%M:%SZ)` to `mvn package`
 - Known issue: `OutOfMemoryError` is possible on long runs, because every `State` keeps its `GUITree`s in `treeHistory` and the `Graph` keeps every `State` — the heap grows with the number of distinct states a run reaches. That is the only retention by design. The `GUITreeBuilder` naming caches and a `ModelAction`'s resolved references are cleared when their tree is released, and the diagnostic action history holds primitive snapshots plus a single depth-1 recovery point, whose tree a live state owns anyway. Nothing bounds or evicts `Graph`, `treeHistory` or the naming structures: such a bound changes exploration behavior, so it waits on a heap profile by retention root. `OutOfMemoryError` is not caught — the process dies and the supervisor marks the task FAILED and retries it
 - Pre-compiled `ape.jar` is included in repo for convenience
