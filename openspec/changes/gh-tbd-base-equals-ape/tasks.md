@@ -59,9 +59,9 @@
 - [x] 6.3 Item 13: `ape/runtime/RunContext.java` seeds `RandomHelper.seed(seed ^ RANDOM_HELPER)` (design D11), comment to current state; `RunContextTest` case: `RandomHelper` and `new Random(seed)` produce different first draws for the same seed
 - [x] 6.4 Regenerate the goldens deliberately (`-Dape.oracle.regenerate=true`, INV-ORA-04), `mvn clean test` green; commit 6.3–6.4 by path
 - [x] 6.5 Update `CLAUDE.md` (groups table: ADDONS members; *Behavior groups and cells*: what BASE carries; restart text; test count) and the `Feature.java`/`guidance-groups` cross-references that 1.1 did not cover
-- [ ] 6.6 `mvn package`; smoke on the RVSec AVD per CLAUDE.md "Standalone testing": one short `base` run and one `as` run on cryptoapp; check `RUN_START` (features, `ape.apeFixes`), no `clearChildren DOM prune aborted` line, `PIPELINE` stages (no `Restart` in `base`), `dec.src=restart` records in `base` if a restart occurs, new-state PNGs on `/sdcard`
+- [x] 6.6 `mvn package`; smoke on the RVSec AVD per CLAUDE.md "Standalone testing": one short `base` run and one `as` run on cryptoapp; check `RUN_START` (features, `ape.apeFixes`), no `clearChildren DOM prune aborted` line, `PIPELINE` stages (no `Restart` in `base`), `dec.src=restart` records in `base` if a restart occurs, new-state PNGs on `/sdcard`
 - [x] 6.7 Run `/sdd-qa-lint-fix src/main/java/com/android/commands/monkey`
-- [ ] 6.8 Run `/sdd-verify src/main/java/com/android/commands/monkey`
+- [x] 6.8 Run `/sdd-verify src/main/java/com/android/commands/monkey`
 - [x] 6.9 Invoke `/sdd-code-reviewer` via Skill tool
 - [ ] 6.10 Run `openspec validate gh-tbd-base-equals-ape --strict`; report worktree, branch and SHAs to mini-experimento
 - [x] 6.12 Before archive (Pedro, 2026-10-22; not in the campaign jar `9789e669`): the `BadStateException` retry in `ApeAgent.updateStateWrapper` SHALL NOT check restart, as in APE — the post-selection restart runs only on the step's first `updateStateInternal`; test it in `PostSelectionRestartTest`
