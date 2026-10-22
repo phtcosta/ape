@@ -104,3 +104,78 @@ The MOP coin reads `belowBudget` for eligibility, against `ape.mopCoinLedgerMaxI
 - **WHEN** in the `mop` cell SATA selects a `MODEL_CLICK` on widget `/a/b` in activity `A` whose key the ledger does not hold, and a post-selection restart replaces it by a start action
 - **THEN** `tried("A", "/a/b|MODEL_CLICK")` SHALL still be false after the step
 - **AND** the action on `/a/b` SHALL remain eligible for the MOP coin in `A` at the default `ape.mopCoinLedgerMaxInteractions=1`
+
+### Requirement: MOP Coin Decider
+
+`MopCoinStage` (feature `MOP_COIN`, a MOP member activated by `ape.mopCoinPercentage`, POSITIVE, neutral `0`, jar default `1.0`, clamped to `[0,1]` at resolution — no abort on a value) SHALL be the MOP group's decider. It sits in the decision pipeline after `MOP_LAUNCHER` and `COMPONENT_TRIGGER` and before `SATA_CHAIN` (`decision-pipeline`), so with the LLM mounted it decides only the steps the LLM leaves — the `1 − p_L` steps and the steps a gate, an error or a decline returns — and with the LLM off it is the first decider after the guards and the launcher (the component trigger is a side effect, not a decider; plan D-A10). A step makes at most one LLM call (design decision A3): once an LLM stage has called, the later LLM stages return `Continue` without calling, so the MOP coin is reached after at most one call.
+
+**Eligibility.** The stage is eligible on a step when the new state's `getActions()` holds at least one action that is valid, enabled and target-requiring, and that meets the three conditions of design D-B10:
+
+1. its undivided weight `ModelAction.getMopWeight()` is positive — under `distance`, the weight of an unretired target ("MopScorer — Priority Boost", "Target Retirement"); under `flag`, the direct/transitive mark;
+2. `MopInteractionLedger.count(activity, xpath|ActionType)` is below `ape.mopCoinLedgerMaxInteractions` (default 1, so `tried` is false; "MopInteractionLedger — Executions per Activity and Key", design D-B17);
+3. when `FORM_COMPLETION` is in the plan, it is not the submit candidate the form-completion context excludes (INV-FORM-06).
+
+Visit count is not a condition: an action visited in the abstract state but never tried in the activity is eligible, and one tried in another state of the same activity is not, at the default k = 1 (with k > 1, until its key counts k executions).
+
+**The coin.** The stage reads `u_M`, drawn at step open from the MOP coin's own stream (`StepRng.mopCoin()`, `decision-pipeline`, P-3). When the step is eligible and `u_M < p_M`, the stage SHALL select; otherwise it continues to the SATA chain. With `p_M = 1.0` the stage selects on every eligible step it reaches.
+
+**Ranking.** Among the eligible actions, the stage SHALL take, each key consulted only to break a tie on the keys before it:
+
+1. the largest `mopWeight` (undivided: the tie split of `distance` is not read, so three actions at `d ≤ 1` split to 400 each do not tie with one at `d = 2`);
+2. under `ape.mopScoring=distance` only, the larger number of distinct unretired targets within `d + 1` over the pairs of the same lookup that produced the weight, `d` being the distance behind that weight;
+3. the first in `State.getActions()` order.
+
+Priority SHALL NOT be a key, so no ADDONS or STATIC scorer can steer the coin (rule R1, `scoring-pipeline`).
+
+**Record.** A step the coin takes SHALL carry `dec.src:"mop"`, the coin's draw as `dec.own.uM`, and the lookup fields of the chosen action (`dec.mopd`, `dec.mops`, `dec.hnd`). The stage commits its pick when the agent keeps it (`onSelectionKept`, `decision-pipeline` "Episode-State Ownership and Reset"): then, when the SATA buffer is non-empty, it abandons it without weakening and the record carries `dec.buf:"mop"` (`action-selection` "Buffer Abandonment Without Weakening"), and `RUN_END.counters.coinMop` counts the step. A pick that a post-selection restart replaces (a plan without `APE_FIXES`, such as the `mop` cell) counts no `coinMop` and leaves the buffer to the restart's new episode, which weakens the planned edge as in APE (`decision-pipeline` "Buffer Abandonment by a Preempting Owner"). On the stage path every pick is kept. `dec.own.uM` is written on every step while `MOP` is mounted (`event-sink`).
+
+#### Scenario: eligible step taken at the default dose
+- **WHEN** the `mop` cell runs under `distance` with `p_M = 1.0`, the state of activity `A` holds X (`mopWeight=500`, untried in `A`) and Y (`mopWeight=0`), and no earlier stage took the step
+- **THEN** the stage SHALL select X, and the record SHALL carry `dec.src:"mop"`
+
+#### Scenario: a pick replaced by a post-selection restart is not counted
+- **WHEN** in the `mop` cell the stage selects X with a planned transition in the SATA buffer, and a periodic restart then replaces X after selection
+- **THEN** `coinMop` SHALL NOT count the step, the record SHALL carry no `dec.buf`, and the restart's new episode SHALL weaken the planned edge
+
+#### Scenario: largest weight wins, priority ignored
+- **WHEN** two eligible actions carry `mopWeight` 400 (priority 900, raised by `coverageBoost`) and 500 (priority 532)
+- **THEN** the stage SHALL select the `mopWeight=500` action
+
+#### Scenario: target count breaks a weight tie under distance
+- **WHEN** `ape.mopScoring=distance` and two eligible actions both carry `mopWeight=400` from a nearest unretired target at `d = 2`, X's lookup with unretired targets at distances `[2, 3, 3]` and Y's at `[2, 5]`, Y first in `getActions()`
+- **THEN** the stage SHALL select X
+
+#### Scenario: equal on every key, the first in action order wins
+- **WHEN** `ape.mopScoring=flag` and two eligible actions both carry `mopWeight=500`, X before Y in `getActions()`
+- **THEN** the stage SHALL select X
+
+#### Scenario: an action tried in the activity is not eligible
+- **WHEN** at the default `ape.mopCoinLedgerMaxInteractions=1` the only action with `mopWeight > 0` targets widget W, whose key `xpath|MODEL_CLICK` the ledger holds for activity `A` from an execution in another state of `A`
+- **THEN** the step SHALL NOT be eligible and SHALL continue to the SATA chain, with no `dec.src:"mop"`
+
+#### Scenario: an unvisited-but-tried action and a visited-but-untried action
+- **WHEN** at the default `ape.mopCoinLedgerMaxInteractions=1` action X is unvisited in the current abstract state but its key is in the ledger for the activity, and action Y has `visitedCount=2` in this state but its key is not in the ledger (both `mopWeight=300`)
+- **THEN** only Y SHALL be eligible
+
+#### Scenario: excluded submit is skipped when form completion is mounted
+- **WHEN** the `as_mop` cell runs, the only eligible-by-weight action is the form submit, and the form-completion context holds
+- **THEN** the step SHALL NOT be eligible
+- **AND WHEN** the `mop` cell (no `FORM_COMPLETION`) meets the same screen
+- **THEN** the submit SHALL be eligible and taken
+
+#### Scenario: the coin loses
+- **WHEN** `ape.mopCoinPercentage=0.4`, the step is eligible and `u_M = 0.7`
+- **THEN** the stage SHALL continue to the SATA chain, the record SHALL carry `dec.src:"sata"` and `dec.own.uM:0.7`
+
+#### Scenario: a zero dose does not mount the stage and shifts no draw
+- **WHEN** `ape.mopCoinPercentage=0` in a cell with `MOP`
+- **THEN** `MOP_COIN` SHALL be absent from the plan's `features` and `MopCoinStage` SHALL NOT be mounted
+- **AND** the sequence of SATA's choices SHALL equal that of the same cell with `p_M = 1.0` on every step where the coin would not have been eligible, because `u_M` is drawn from its own stream (`RngNeutralityTest`)
+
+#### Scenario: the LLM coin comes first
+- **WHEN** the `as_mop_llm` cell runs with `p_L = 0.9`, the step is eligible for the MOP coin, `u_L = 0.95` and `u_M = 0.1`
+- **THEN** the LLM coin SHALL lose, the MOP coin SHALL take the step, and the record SHALL carry `dec.src:"mop"`
+- **AND WHEN** `u_L = 0.3` and the LLM call returns a usable action
+- **THEN** the LLM SHALL take the step and the MOP coin SHALL NOT be reached
+- **AND WHEN** `u_L = 0.3`, the new-state stage has already called the model on the step and its answer was declined
+- **THEN** the LLM coin SHALL return `Continue` without a second call, and the MOP coin SHALL take the step with `u_M = 0.1`

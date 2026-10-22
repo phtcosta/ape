@@ -101,14 +101,13 @@ before it, cleared at step start, read only by `checkRestart`. On the stage path
 ### Requirement: Post-Selection Restart Launch Commit
 
 A replaced launch of the `MopLauncher` stage SHALL commit nothing: its activity SHALL NOT enter the stage's
-launched set, the launch budget SHALL NOT be consumed, and `RUN_END.counters.launches` SHALL NOT count it. The
-stage commits a launch in `onSelectionKept`, which runs only for a kept action (`component-triggering`
-"Cadence-Based MOP Activity Launch"). The cadence reset and the round-robin cursor move at the firing, as for a
-kept launch.
+launched set, the launch budget SHALL NOT be consumed, `launches` SHALL NOT count it, and the buffer SHALL NOT be
+abandoned. A replaced `MopCoin` pick SHALL NOT count `coinMop` or abandon the buffer. Both stages commit in
+`onSelectionKept`, which runs only for a kept action. The cadence reset and the cursor move at the firing.
 
 #### Scenario: a replaced launch frees its activity
 - **WHEN** in the `mop` cell the `MopLauncher` stage selects `com.x.Target` on a step on which a periodic restart is due
-- **THEN** `checkRestart` SHALL replace the launch by a start action, `com.x.Target` SHALL stay eligible, the launch budget SHALL be unchanged and `launches` SHALL NOT be counted
+- **THEN** `checkRestart` SHALL replace the launch by a start action, `com.x.Target` SHALL stay eligible, the launch budget SHALL be unchanged, `launches` SHALL NOT be counted and the buffer SHALL NOT be abandoned
 - **AND WHEN** on a later step on which no restart is due the stage selects `com.x.Target` and the action is kept
 - **THEN** `com.x.Target` SHALL enter the launched set and `launches` SHALL count one
 
@@ -222,7 +221,8 @@ The `MopLauncher` cadence counter is advanced only by the stage's own `onStepOpe
 `onStateTransition(edge)` hook exactly once, after its own stability-counter bookkeeping. The agent SHALL forward
 the step's selected action to every assembled stage's `onSelectionKept(ctx, action)` hook once, after
 `checkRestart`, when no post-selection restart replaced it; `MopLauncher` commits its launch there (the launched
-set, the launch budget and `launches`), so a replaced launch commits nothing ("Post-Selection Restart Model
+set, the launch budget, `launches` and the buffer abandonment) and `MopCoin` its pick (`coinMop` and the buffer
+abandonment), so a replaced selection commits nothing ("Post-Selection Restart Model
 Effect"). `LlmStagnation` SHALL
 re-arm its flag on `NEW_ACTION`/`NEW_ACTION_TARGET` edges, the same event that resets `graphStableCounter`.
 
@@ -333,6 +333,47 @@ and `dec.a` SHALL name the start action that ran.
 - **THEN** no `Restart` stage SHALL be assembled, `ApeAgent.checkRestart` SHALL return every selected action unchanged, and no restart SHALL run on any step
 - **AND WHEN** the plan sets `ape.checkRestart=true` and the agent is `RandomAgent` or `ReplayAgent`
 - **THEN** no pipeline exists, `restartStageMounted()` SHALL return `false`, and the restart SHALL be applied after selection
+
+### Requirement: Buffer Abandonment by a Preempting Owner
+
+When an LLM stage, the `MopLauncher` stage or the `MopCoin` stage selects while `actionBufferSize() > 0`, the
+selecting stage SHALL itself call the agent's `abandonBuffer(owner)` — injected at assembly as
+`StageCollaborators::abandonBuffer` — with its owner (`llm`, `launcher` or `mop`) (design D-B14.13): the LLM
+stages through `LlmCall.select`, before returning `Select`; the launcher and the MOP coin in their
+`onSelectionKept`, once the agent keeps their selection ("Episode-State Ownership and Reset"). A launcher or
+MOP-coin selection that a post-selection restart replaces SHALL NOT abandon the buffer: the restart's new episode
+clears it through `clearBuffer` and weakens the planned edge, as in APE ("Post-Selection Restart Model Effect").
+`DecisionPipeline.decide` does not call it. The `Budget` stage abandons the buffer it preempts with owner `budget`
+through `budgetNavigation()`, described below (D-B20). `abandonBuffer` SHALL clear the buffer **without**
+`weakenStateTransition`, record `dec.buf=<owner>`, and add one to `RUN_END.counters.bufAbandoned`. The edge the
+buffer had planned did not fail, so the graph SHALL NOT be penalized (P-4, INV-DP-15). Inside `SataChain` a buffer
+whose next action no longer matches the screen is a real path failure, and it SHALL keep weakening as in APE
+(`StatefulAgent.clearBuffer`). The `Restart` stage does not call `abandonBuffer`: `StatefulAgent.restartAction()`
+empties the buffer before the new episode starts, also without weakening, and the step carries no `dec.buf`
+(D-B14.13).
+
+The `Budget` stage's navigation fills the buffer itself, so its abandonment SHALL precede the search: the agent's
+`StageCollaborators.budgetNavigation()` detaches the buffer without weakening, runs
+`selectNewActionForTrivialActivity()`, restores the detached buffer when the search returns null, and otherwise
+records the abandonment of the detached buffer when it was non-empty, leaving the newly planned path in the buffer
+(design D-B20). The `Budget` stage SHALL NOT call `abandonBuffer` after the search.
+
+#### Scenario: LLM coin preempts a two-step path
+- **WHEN** the buffer holds two planned transitions, `u_L < p_L`, the gates admit, and the LLM returns a matched action
+- **THEN** the step's action SHALL be the LLM's, the buffer SHALL be empty after the step, and no `weakenStateTransition` call SHALL have been made
+- **AND** the step record SHALL carry `dec.buf="llm"`
+
+#### Scenario: a MOP-coin pick replaced by a restart leaves the buffer
+- **WHEN** in the `mop` cell the buffer holds a planned transition, the `MopCoin` stage selects an action, and a periodic restart then replaces it after selection
+- **THEN** `abandonBuffer` SHALL NOT be called, the step record SHALL carry no `dec.buf`, and `bufAbandoned` and `coinMop` SHALL NOT count the step
+- **AND** the restart's new episode SHALL weaken the planned edge
+- **AND WHEN** on a later step the coin's pick is kept with a non-empty buffer
+- **THEN** the buffer SHALL be abandoned without weakening, with `dec.buf="mop"`, and `coinMop` and `bufAbandoned` SHALL count the step
+
+#### Scenario: a failed path still weakens
+- **WHEN** no preempting owner takes the step and the `SataChain` buffer rung finds that the buffered action's source state is not the current state
+- **THEN** the planned edge SHALL be weakened and the buffer cleared, as in APE
+- **AND** no `dec.buf` SHALL be written
 
 ### Requirement: Per-Step Own Random Streams
 

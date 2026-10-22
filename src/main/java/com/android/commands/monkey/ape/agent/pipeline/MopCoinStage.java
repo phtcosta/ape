@@ -20,6 +20,7 @@ import java.util.function.Supplier;
 
 import com.android.commands.monkey.ape.agent.FormCompletion;
 import com.android.commands.monkey.ape.agent.MopInteractionLedger;
+import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.runtime.MopScoring;
@@ -54,8 +55,10 @@ import com.android.commands.monkey.ape.utils.UICoverageTracker;
  * within {@code d + 1} of the weight's lookup; then the first in {@code State.getActions()} order.
  * Priority is not a key, so no ADDONS or STATIC scorer can steer the coin (R1).
  *
- * <p>A step the coin takes is owned by {@code mop} on the {@code mop_coin} channel, counts
- * {@code coinMop}, and abandons a non-empty buffer without weakening ({@code dec.buf:"mop"}). Its
+ * <p>A step the coin takes is owned by {@code mop} on the {@code mop_coin} channel. When the agent
+ * keeps the pick ({@link #onSelectionKept}) it counts {@code coinMop} and abandons a non-empty
+ * buffer without weakening ({@code dec.buf:"mop"}); a pick that a post-selection restart replaces
+ * does neither, and leaves the buffer to the restart's new episode. Its
  * {@code dec.mopd}/{@code dec.mops}/{@code dec.hnd} ride the decision record from the action's
  * lookup fields.
  */
@@ -69,6 +72,9 @@ public final class MopCoinStage implements DecisionStage {
     private final StepRouting routing;
     private final Supplier<MopInteractionLedger> ledger;
     private final Consumer<String> abandonBuffer;
+
+    /** This step's pick, until the agent keeps it; null when the step selected none. */
+    private ModelAction selection;
 
     /**
      * @param percentage {@code p_M}, the plan's clamped dose; positive, since a zero dose assembles
@@ -94,6 +100,29 @@ public final class MopCoinStage implements DecisionStage {
     }
 
     @Override
+    public void onStepOpen(StepContext ctx) {
+        selection = null;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Commits this step's pick when it is the kept action: counts {@code coinMop} and abandons a
+     * non-empty buffer without weakening ({@code dec.buf:"mop"}).
+     */
+    @Override
+    public void onSelectionKept(StepContext ctx, Action action) {
+        if (selection == null || action != selection) {
+            return;
+        }
+        ctx.sink().count(RunCounter.COIN_MOP);
+        if (ctx.actionBufferSize() > 0) {
+            abandonBuffer.accept(OWNER);
+        }
+        selection = null;
+    }
+
+    @Override
     public StageResult decide(StepContext ctx) {
         if (!(routing.uM() < percentage)) {
             return StageResult.continueChain();
@@ -110,10 +139,7 @@ public final class MopCoinStage implements DecisionStage {
         routing.claim(OWNER);
         pick.setDecisionSource(ModelAction.DecisionSource.MOP);
         pick.setPickChannel(ModelAction.PickChannel.MOP_COIN);
-        ctx.sink().count(RunCounter.COIN_MOP);
-        if (ctx.actionBufferSize() > 0) {
-            abandonBuffer.accept(OWNER);
-        }
+        selection = pick;
         return StageResult.select(pick, OWNER);
     }
 

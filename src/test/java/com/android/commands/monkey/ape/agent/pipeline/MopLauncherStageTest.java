@@ -276,18 +276,21 @@ public class MopLauncherStageTest {
                 StageResult.Kind.CONTINUE, stage.decide(more).kind());
     }
 
-    /** A launch the agent does not keep commits nothing: the activity and the budget stay. */
+    /** A launch the agent does not keep commits nothing: the activity, budget and buffer stay. */
     @Test
     public void testAReplacedLaunchCommitsNothing() throws Exception {
         Launcher stage = launcher(1, 1, MopScoring.FLAG, 6);
         FakeStepContext ctx = stepOver(censusOf("com.example.app.A"));
+        ctx.actionBufferSize = 2;
 
         assertEquals("com.example.app.A", launchedClass(stage.decideReplaced(ctx)));
         assertEquals(0, ctx.recorder.count(RunCounter.LAUNCHES));
+        assertTrue("the buffer is left to the restart", stage.abandoned.isEmpty());
 
         assertEquals("the activity is still eligible and the budget unspent",
                 "com.example.app.A", launchedClass(stage.decide(ctx)));
         assertEquals(1, ctx.recorder.count(RunCounter.LAUNCHES));
+        assertEquals(Collections.singletonList("launcher"), stage.abandoned);
         FakeStepContext more = stepOver(censusOf("com.example.app.B"));
         assertEquals("the kept launch spent the budget",
                 StageResult.Kind.CONTINUE, stage.decide(more).kind());

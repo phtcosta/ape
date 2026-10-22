@@ -3,6 +3,7 @@ package com.android.commands.monkey.ape.agent;
 import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionPipeline;
 import com.android.commands.monkey.ape.agent.pipeline.DecisionStage;
+import com.android.commands.monkey.ape.agent.pipeline.MopCoinStage;
 import com.android.commands.monkey.ape.agent.pipeline.MopLauncherStage;
 import com.android.commands.monkey.ape.llm.PromptFixtures.TestName;
 import com.android.commands.monkey.ape.model.Action;
@@ -63,6 +64,8 @@ public class PostSelectionRestartTest {
     private NdjsonSink ndjson;
     private int restartCounts;
     private int launchCounts;
+    private int coinMopCounts;
+    private int bufAbandonedCounts;
     private ScriptedAgent agent;
     private RecordingGraph graph;
     private UICoverageTracker tracker;
@@ -96,6 +99,8 @@ public class PostSelectionRestartTest {
         /** The step's selection when it is not {@link #pick}: a launch of the MOP launcher. */
         Action nonModelPick;
         boolean disableDuringSelection;
+        /** Whether the selection writes nothing to the sink, leaving the record to the stages. */
+        boolean silentSelection;
         /** How many state builds throw {@code BadStateException} before one succeeds. */
         int badStates;
         Graph graph;
@@ -150,6 +155,9 @@ public class PostSelectionRestartTest {
 
         @Override
         protected Action selectNewActionNonnull() {
+            if (silentSelection) {
+                return nonModelPick != null ? nonModelPick : pick;
+            }
             // What the pipeline and SATA write on the way to a decision.
             RunContext.current().sink().owner("mop", "new_state", Double.NaN, 0.2, "minActions",
                     "gate");
@@ -219,6 +227,12 @@ public class PostSelectionRestartTest {
                     }
                     if (method.getName().equals("count") && args[0] == RunCounter.LAUNCHES) {
                         launchCounts++;
+                    }
+                    if (method.getName().equals("count") && args[0] == RunCounter.COIN_MOP) {
+                        coinMopCounts++;
+                    }
+                    if (method.getName().equals("count") && args[0] == RunCounter.BUF_ABANDONED) {
+                        bufAbandonedCounts++;
                     }
                     try {
                         return method.invoke(ndjson, args);
@@ -441,6 +455,42 @@ public class PostSelectionRestartTest {
         assertEquals(1, field(MopLauncherStage.class, "launchCount").get(launcher));
         assertTrue("a kept launch is never eligible again (D-B15)",
                 launchedSet(launcher).contains("com.x.Target"));
+    }
+
+    /**
+     * Scenario "a replaced MOP-coin pick leaves the buffer to the restart": the coin's pick is
+     * replaced by a periodic restart, so it counts no {@code coinMop} and abandons nothing, and the
+     * new episode weakens the planned edge; the same pick kept on a later step counts
+     * {@code coinMop} and abandons the buffer without weakening.
+     */
+    @Test
+    public void aReplacedCoinPickLeavesTheBufferToTheRestart() throws Exception {
+        install(TestRunSpecs.mopSpec());
+        agent.silentSelection = true;
+        MopCoinStage coin = null;
+        for (DecisionStage stage : ((DecisionPipeline) get("decisionPipeline")).stages()) {
+            if (stage instanceof MopCoinStage) {
+                coin = (MopCoinStage) stage;
+            }
+        }
+        assertNotNull("the mop plan mounts the coin", coin);
+        ModelAction planned = plannedTransition();
+
+        setOn(coin, MopCoinStage.class, "selection", agent.pick); // what its decide selected
+        assertNotSame("a due restart replaces the pick", agent.pick, agent.step(41));
+        assertEquals("no coinMop is counted", 0, coinMopCounts);
+        assertEquals("the buffer is not abandoned", 0, bufAbandonedCounts);
+        assertFalse("no dec.buf", closedRecord().getJSONObject("dec").has("buf"));
+        assertEquals("the new episode weakens the planned edge", 1, graph.weakened.size());
+        assertSame(planned, graph.weakened.get(0));
+
+        plannedTransition();
+        setOn(coin, MopCoinStage.class, "selection", agent.pick);
+        assertSame("no restart is due right after one", agent.pick, agent.step(42));
+        assertEquals(1, coinMopCounts);
+        assertEquals("the kept pick abandons the buffer", 1, bufAbandonedCounts);
+        assertEquals(0, agent.actionBufferSize());
+        assertEquals("abandonment does not weaken", 1, graph.weakened.size());
     }
 
     @SuppressWarnings("unchecked")

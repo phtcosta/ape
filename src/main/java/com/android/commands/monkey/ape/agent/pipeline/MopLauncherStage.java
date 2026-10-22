@@ -51,13 +51,13 @@ import com.android.commands.monkey.ape.utils.StaticGuiModel;
  * past the cadence with launch budget left, and it fires on the first due step the pipeline reaches
  * it, which means no guard and no LLM took that step. A due launcher claims the step
  * ({@code dec.own.i:"launcher"}); when it finds no eligible activity the step falls through with
- * {@code dec.own.fb:"ineligible"}. A selected launch abandons a non-empty buffer without
- * weakening ({@code dec.buf:"launcher"}).
+ * {@code dec.own.fb:"ineligible"}.
  *
  * <p><b>A launch is committed when the agent keeps it</b> ({@link #onSelectionKept}): the
- * activity joins the launched set, the budget is consumed and {@code launches} is counted. A
- * selection that a post-selection restart replaces is not executed and commits nothing, so its
- * activity stays eligible and the budget is unspent.
+ * activity joins the launched set, the budget is consumed, {@code launches} is counted and a
+ * non-empty buffer is abandoned without weakening ({@code dec.buf:"launcher"}). A selection that a
+ * post-selection restart replaces is not executed and commits nothing, so its activity stays
+ * eligible, the budget is unspent and the buffer is left to the restart's new episode.
  *
  * <p><b>Two providers.</b> The activity list, the main activity and the package come from
  * {@link StaticGuiModel} ({@link StepContext#staticModel()}); the MOP census and the
@@ -168,7 +168,8 @@ public final class MopLauncherStage implements DecisionStage {
      * {@inheritDoc}
      *
      * <p>Commits this step's launch when it is the kept action: the activity is never eligible
-     * again (design D-B15), the budget is consumed (INV-CT-12) and {@code launches} is counted.
+     * again (design D-B15), the budget is consumed (INV-CT-12), {@code launches} is counted and a
+     * non-empty buffer is abandoned without weakening ({@code dec.buf:"launcher"}).
      */
     @Override
     public void onSelectionKept(StepContext ctx, Action action) {
@@ -178,6 +179,9 @@ public final class MopLauncherStage implements DecisionStage {
         launched.add(selection.getClassName());
         launchCount++;
         ctx.sink().count(RunCounter.LAUNCHES);
+        if (ctx.actionBufferSize() > 0) {
+            abandonBuffer.accept(OWNER);
+        }
         selection = null;
     }
 
@@ -220,9 +224,6 @@ public final class MopLauncherStage implements DecisionStage {
         // Package captured from the static model (never from the class name — INV-CT-04).
         selection = new ActivityTriggerAction(model.packageName(), candidate.className,
                 candidate.deepLinkUri);
-        if (ctx.actionBufferSize() > 0) {
-            abandonBuffer.accept(OWNER);
-        }
         return StageResult.select(selection, OWNER);
     }
 
