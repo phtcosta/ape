@@ -53,6 +53,10 @@ public final class NoopSink implements EventSink {
     }
 
     @Override
+    public void decisionReplaced(String action, String decisionSource, String pickChannel) {
+    }
+
+    @Override
     public void mopExposure(int weighted, int total) {
     }
 
@@ -107,6 +111,10 @@ public final class NoopSink implements EventSink {
 
     @Override
     public void componentTrigger(String kind, String className) {
+    }
+
+    @Override
+    public void fuzzing(int step, List<String> kinds) {
     }
 
     @Override

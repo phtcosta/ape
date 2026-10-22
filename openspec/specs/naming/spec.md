@@ -79,7 +79,7 @@ sequenceDiagram
 - `ape.evolveModel: boolean` (default `true`) — plan key (`KeyOwnership` base key, read through `spec().exploration().evolveModel()`); permits refinement, gated in `StatefulAgent` (see Purpose)
 - `ape.actionRefinementFirst: boolean` (default `true`, `Config` field) — when `true`, action refinement is attempted before state refinement
 - `ape.maxStatesPerActivity: int` (default `10`) — upper bound on abstract states per activity before refinement is suppressed
-- `ape.maxGUITreesPerState: int` (default `20`) — upper bound on stored GUITrees per state before refinement is suppressed
+- `ape.maxGUITreesPerState: int` (default `20`) — with `APE_FIXES` in the plan, upper bound on stored GUITrees per state before refinement is suppressed; without it, the guard tests the activity's state count (`an.getStates().size()`), as APE does, and does not fire while `maxStatesPerActivity <= maxGUITreesPerState` ("Per-State GUITree Cap Enforcement")
 - `ape.useAncestorNamer: boolean` (default `true`) — includes `AncestorNamer` variants in the lattice, making full-path discrimination available
 - `ape.activityManagerType: String` (default `"state"`) — selects the `NamingManager` implementation: `"activity"` selects `ActivityNamingManager` (one `Naming` per activity); any other value (including the default `"state"`) selects `StateNamingManager` (one `Naming` per state). `MonolithicNamingManager` is only used when constructed explicitly (e.g., in replay scenarios).
 
@@ -119,8 +119,8 @@ sequenceDiagram
 - **INV-NAME-10**: `NamingManager.version` MUST be incremented exactly once per call to `updateNaming(GUITree, Naming)`. The exploration loop MAY use this version counter to determine whether model state counts are still valid without recomputing.
 - **INV-NAME-11**: `Namer.refinesTo(other)` MUST return `true` if and only if `this.getNamerTypes().containsAll(other.getNamerTypes())`. In particular, `namer.refinesTo(namer)` MUST return `true` (reflexivity), and if `a.refinesTo(b)` and `b.refinesTo(c)`, then `a.refinesTo(c)` MUST hold (transitivity).
 - **INV-NAME-12**: For any two `GUITree`s `t1` and `t2` that differ only in widget properties not covered by `N`'s `Namelet` set (i.e., no `NamerType` in any `Namelet`'s `Namer` reads those properties), `N.naming(t1)` and `N.naming(t2)` MUST produce equal `StateKey` values. Abstraction MUST ignore irrelevant properties.
-- **INV-NAME-13**: Every `binarySearch` not-found test in `ape.naming` SHALL use `index < 0`; no code path SHALL index an array or list with a negative binary-search result.
-- **INV-NAME-14**: No refinement-guard condition SHALL compare a quantity different from the one its threshold names and its log message reports.
+- **INV-NAME-13**: With `APE_FIXES` in the plan, every `binarySearch` not-found test in `ape.naming` SHALL use `index < 0` (membership `index >= 0`); without it, `Naming.containsNamelet` SHALL reproduce upstream APE's test (absent iff the result equals `-1`). In every cell no code path SHALL index an array or list with a negative binary-search result.
+- **INV-NAME-14**: With `APE_FIXES` in the plan, no refinement-guard condition SHALL compare a quantity different from the one its threshold names and its log message reports. Without it, the two `maxGUITreesPerState` guards of `NamingFactory` compare `an.getStates().size()` while their log line reports `state.getGUITrees().size()`, as upstream APE does; they are the one declared exception.
 
 ---
 
@@ -334,28 +334,54 @@ The per-`Naming` cache of `NamingResult` values (`Naming.treeToNamingResult`) MU
 
 ### Requirement: Namelet Binary-Search Not-Found Contract
 
-`Naming.select()` locates a `Namelet` in the sorted namelet array via `Collections.binarySearch`. A negative return value SHALL be treated as "absent" regardless of its magnitude: `binarySearch` returns `-(insertionPoint) - 1`, so a missing element whose insertion point is not 0 yields a value below `-1`. The not-found test SHALL be `index < 0`, never `index == -1`. (Previously the `== -1` test let a missing namelet with insertion point ≠ 0 pass as "present", selecting a namelet whose refinement chain does not apply — a silently wrong abstraction, not a crash.)
+`Naming.select()` locates a `Namelet` in the sorted namelet array through `Naming.containsNamelet(sorted, n)`, which calls `Collections.binarySearch(sorted, n, comparator)`. `binarySearch` returns `-(insertionPoint) - 1` for a missing element, so a missing element whose insertion point is not 0 yields a value below `-1`. The membership test depends on `Feature.APE_FIXES`, read through `RunContext.current().spec().has(Feature.APE_FIXES)`, at this single site:
+
+- With the member (the four ADDONS cells), a negative return value SHALL be treated as "absent" regardless of its magnitude: `containsNamelet` SHALL return `binarySearch(...) >= 0`.
+- Without the member (`base`, `mop`), `containsNamelet` SHALL return `binarySearch(...) != -1`, which is upstream APE's `== -1 → break` test written as a membership test: only a result of exactly `-1` reads as absent, so a missing namelet whose insertion point is greater than 0 reads as present.
+
+In both cases the result is used only as a boolean; no namelet is read at the returned index. `Naming.containsNamelet` is the only `binarySearch` site in `ape.naming`. INV-NAME-13 is scoped by the member: with `APE_FIXES` in the plan, every `binarySearch` not-found test in `ape.naming` SHALL use `index < 0` (membership `index >= 0`); without it, `containsNamelet` SHALL reproduce upstream APE's test (absent iff the result equals `-1`); in every cell no code path SHALL index an array or list with a negative binary-search result.
 
 #### Scenario: absent namelet with non-zero insertion point
-- **WHEN** `Naming.select()` searches for a namelet that is absent and whose insertion point in the sorted array is greater than 0 (binarySearch returns ≤ -2)
+- **WHEN** `Naming.select()` searches for a namelet that is absent and whose insertion point in the sorted array is greater than 0 (binarySearch returns ≤ -2), with `APE_FIXES` in the plan (the `as` cell)
 - **THEN** the namelet SHALL be treated as absent
 - **AND** no namelet SHALL be selected from the negative index
 
 #### Scenario: present namelet unchanged
-- **WHEN** the namelet exists in the array (binarySearch returns ≥ 0)
-- **THEN** selection behavior SHALL be identical to the previous implementation
+- **WHEN** the namelet exists in the array (binarySearch returns ≥ 0), in any of the six cells
+- **THEN** `containsNamelet` SHALL return `true`
+- **AND** `Naming.select()` SHALL continue to the namelet's parent
+
+#### Scenario: absent namelet with non-zero insertion point reads as present without the member
+- **WHEN** `Naming.select()` searches for a namelet that is absent with insertion point 2 (binarySearch returns -3), with `APE_FIXES` absent (the `base` or `mop` cell)
+- **THEN** `containsNamelet` SHALL return `true`, as upstream APE's `== -1` test does
+- **AND** `Naming.select()` SHALL continue to the namelet's parent instead of breaking
+
+#### Scenario: absent namelet at insertion point 0 reads as absent in every cell
+- **WHEN** `Naming.select()` searches for a namelet that is absent with insertion point 0 (binarySearch returns -1)
+- **THEN** `containsNamelet` SHALL return `false` with and without `APE_FIXES`
 
 ---
 
 ### Requirement: Per-State GUITree Cap Enforcement
 
-The refinement guards in `NamingFactory` that implement the `ape.maxGUITreesPerState` contract (declared in this capability's Data Contracts, default 20) SHALL test the state's own GUITree count (`state.getGUITrees().size() > maxGUITreesPerState`). Both guard sites previously tested `an.getStates().size()` — a copy-paste of the `maxStatesPerActivity` check on the preceding line — so the per-state GUITree cap never engaged: the condition was unreachable (any activity exceeding it had already returned on the previous check), states accumulated GUITrees without bound (a known OOM contributor), and the guards' own log messages ("Already too many GUI trees", printing `state.getGUITrees().size()`) described a check that was not being made.
+The two refinement guards in `NamingFactory` that implement the `ape.maxGUITreesPerState` contract (declared in this capability's Data Contracts, default 20) — one on the non-determinism resolution path, one on the state-abstraction path, each directly after the `maxStatesPerActivity` check — SHALL choose the tested count by `Feature.APE_FIXES`, read through `RunContext.current().spec().has(Feature.APE_FIXES)`:
+
+- With the member (the four ADDONS cells), the guard SHALL test the state's own GUITree count: `state.getGUITrees().size() > maxGUITreesPerState`.
+- Without the member (`base`, `mop`), the guard SHALL test upstream APE's count: `an.getStates().size() > maxGUITreesPerState`, where `an` is the state's `ActivityNode`, obtained at each site the way upstream APE obtains it there. Any activity whose state count exceeds `maxGUITreesPerState` has already returned on the preceding `maxStatesPerActivity` check whenever `maxStatesPerActivity <= maxGUITreesPerState` (the defaults 10 and 20), so in `base` and `mop` the per-state GUITree cap does not fire and states accumulate GUITrees as in upstream APE.
+
+The threshold, the early return and the log line are the same in both cases: the guard logs `Already too many GUI trees %d in the state %s.` with `state.getGUITrees().size()`, as upstream APE does. INV-NAME-14 is scoped by the member: with `APE_FIXES` in the plan, no refinement-guard condition SHALL compare a quantity different from the one its threshold names and its log message reports; without it, these two guards compare `an.getStates().size()` while their log line reports `state.getGUITrees().size()`, as upstream APE does, and they are the one declared exception. The Data Contracts entry `ape.maxGUITreesPerState` describes the cap with the member.
 
 #### Scenario: over-cap state suppresses refinement
-- **WHEN** a state holds 21 GUITrees with `ape.maxGUITreesPerState=20`
+- **WHEN** a state holds 21 GUITrees with `ape.maxGUITreesPerState=20`, its activity holds 3 states, and `APE_FIXES` is in the plan (the `as_mop` cell)
 - **THEN** the refinement guard SHALL fire (refinement suppressed for that state)
 - **AND** the log line SHALL report the state's GUITree count
 
 #### Scenario: under-cap state refines normally
-- **WHEN** a state holds 5 GUITrees and its activity is under `maxStatesPerActivity`
-- **THEN** refinement SHALL proceed as before
+- **WHEN** a state holds 5 GUITrees and its activity is under `maxStatesPerActivity`, in any of the six cells
+- **THEN** neither guard SHALL fire
+- **AND** refinement SHALL proceed
+
+#### Scenario: over-cap state is not capped without the member
+- **WHEN** a state holds 21 GUITrees with `ape.maxGUITreesPerState=20`, its activity holds 3 states, and `APE_FIXES` is absent (the `base` or `mop` cell)
+- **THEN** the guard SHALL test `an.getStates().size()` (3 > 20 is false) and SHALL NOT fire
+- **AND** refinement SHALL proceed for that state, at both `NamingFactory` guard sites

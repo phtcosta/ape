@@ -66,16 +66,17 @@ public final class DecisionPipeline {
      * <p>Each condition names the leaf feature only. {@code LLM_NEW_STATE} cannot be in a plan whose
      * {@code LLM} is absent and {@code MOP_LAUNCHER} cannot be in one without {@code MOP} —
      * {@link Feature} declares those dependencies and plan resolution enforces them, so repeating the
-     * root here would be a second guard for a fact the plan already guarantees. The one candidate
-     * gated by a BASE key rather than a feature is {@code RESTART} ({@code ape.checkRestart}, design
-     * D-B14.12).
+     * root here would be a second guard for a fact the plan already guarantees. {@code RESTART} is
+     * gated by {@code APE_FIXES} and also needs the exploration key {@code ape.checkRestart}; a plan
+     * without it has no stage, and the agent restarts after selection instead.
      */
     public enum Candidate {
 
         /** The activity-budget guard: navigates away from an exhausted activity, or passes. */
         BUDGET("Budget", Feature.ACTIVITY_BUDGET),
         /** The restart guard: selects the restart action when a restart is due. */
-        RESTART("Restart", null, spec -> spec.exploration().checkRestart()),
+        RESTART("Restart", Feature.APE_FIXES,
+                spec -> spec.exploration().checkRestart() && spec.has(Feature.APE_FIXES)),
         /** LLM routing on entering a new state. */
         LLM_NEW_STATE("LlmNewState", Feature.LLM_NEW_STATE),
         /** LLM routing at the stagnation midpoint, once per episode. */
@@ -112,7 +113,7 @@ public final class DecisionPipeline {
 
         /**
          * The feature whose presence assembles this candidate, or {@code null} for the terminal
-         * stage, which every plan carries, and for {@code RESTART}, which a BASE key mounts.
+         * stage, which every plan carries.
          */
         public Feature gate() {
             return gate;
@@ -349,6 +350,18 @@ public final class DecisionPipeline {
         }
     }
 
+    /**
+     * Forwards the kept selection of the step to every stage, once and in roster order.
+     *
+     * @param ctx the step whose selection is kept
+     * @param action the action {@link #decide} selected, which the agent executes
+     */
+    public void onSelectionKept(StepContext ctx, Action action) {
+        for (DecisionStage stage : stages) {
+            stage.onSelectionKept(ctx, action);
+        }
+    }
+
     /** The assembled stages, in order. */
     public List<DecisionStage> stages() {
         return stages;
@@ -361,6 +374,21 @@ public final class DecisionPipeline {
             names.add(stage.name());
         }
         return Collections.unmodifiableList(names);
+    }
+
+    /**
+     * Whether this pipeline assembled {@code candidate}'s stage.
+     *
+     * @param candidate the candidate stage
+     * @return whether a stage of that name is in the roster
+     */
+    public boolean mounts(Candidate candidate) {
+        for (DecisionStage stage : stages) {
+            if (stage.name().equals(candidate.stageName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Number of assembled stages. */

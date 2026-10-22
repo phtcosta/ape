@@ -76,9 +76,15 @@ public class OracleSataAgent extends SataAgent {
         recordComponentTrigger(target);
     }
 
-    /** The compiled entry point into the protected selection ladder. */
+    /**
+     * The compiled entry point into the protected selection ladder. The selection is kept, as
+     * {@code updateStateInternal} keeps it when no post-selection restart replaces it, so the
+     * stages commit what they selected (the launcher's launch).
+     */
     Action ladder() {
-        return selectNewActionNonnull();
+        Action action = selectNewActionNonnull();
+        onSelectionKept(action);
+        return action;
     }
 
     /**

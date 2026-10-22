@@ -269,6 +269,18 @@ public final class NdjsonSink implements EventSink {
     }
 
     @Override
+    public void decisionReplaced(String action, String decisionSource, String pickChannel) {
+        if (disabled || !pending.isOpen()) {
+            return;
+        }
+        try {
+            pending.decisionReplaced(action, decisionSource, pickChannel);
+        } catch (Throwable failure) {
+            latch("decisionReplaced", failure);
+        }
+    }
+
+    @Override
     public void mopExposure(int weighted, int total) {
         if (disabled || !pending.isOpen()) {
             return;
@@ -439,6 +451,18 @@ public final class NdjsonSink implements EventSink {
             pending.componentTrigger(kind, className);
         } catch (Throwable failure) {
             latch("componentTrigger", failure);
+        }
+    }
+
+    @Override
+    public void fuzzing(int step, List<String> kinds) {
+        if (disabled || !pending.isOpen() || pending.step() != step) {
+            return;
+        }
+        try {
+            pending.fuzzing(kinds);
+        } catch (Throwable failure) {
+            latch("fuzzing", failure);
         }
     }
 

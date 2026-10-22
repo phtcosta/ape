@@ -21,7 +21,7 @@ import static org.junit.Assert.assertEquals;
 public class StageCensusTest {
 
     @Test
-    public void theBaseCellListsEveryCandidateAndAssemblesOnlyRestartAndSata() {
+    public void theBaseCellListsEveryCandidateAndAssemblesOnlySata() {
         RunSpec spec = TestRunSpecs.spec("ape.preset", Presets.BASE);
         Map<String, Boolean> census = StatefulAgent.stageCensus(spec);
 
@@ -38,8 +38,9 @@ public class StageCensusTest {
                 assembled.add(entry.getKey());
             }
         }
+        // No Restart: its gate APE_FIXES is an ADDONS member, so base restarts after selection.
         assertEquals("enabled agrees with the assembled stages", Arrays.asList(
-                DecisionPipeline.Candidate.RESTART.stageName(),
                 DecisionPipeline.Candidate.SATA_CHAIN.stageName()), assembled);
+        assertEquals(Boolean.FALSE, census.get(DecisionPipeline.Candidate.RESTART.stageName()));
     }
 }

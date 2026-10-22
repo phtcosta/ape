@@ -44,6 +44,8 @@ import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
 import com.android.commands.monkey.ape.model.StateKey;
 import com.android.commands.monkey.ape.model.StateTransition;
+import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -263,6 +265,18 @@ public class NamingFactory implements Serializable {
         return newModel;
     }
 
+    /**
+     * The {@code ape.maxGUITreesPerState} guard of both refinement sites. With
+     * {@link Feature#APE_FIXES} it compares the state's own GUITree count; without it, APE's
+     * count, the number of states of the state's activity {@code an}.
+     */
+    static boolean tooManyGUITrees(State state, ActivityNode an) {
+        int count = RunContext.current().spec().has(Feature.APE_FIXES)
+                ? state.getGUITrees().size()
+                : an.getStates().size();
+        return count > maxGUITreesPerState;
+    }
+
     List<RefinementResult> refine(Model model, StateTransition st1, StateTransition st2, List<GUITreeTransition> tts1,
             List<GUITreeTransition> tts2) {
         long begin = SystemClock.elapsedRealtimeNanos();
@@ -277,7 +291,7 @@ public class NamingFactory implements Serializable {
                 Logger.iformat("Already too many states %d in the activity %s.", an.getStates().size(), state.getActivity());
                 return Collections.emptyList();
             }
-            if (state.getGUITrees().size() > maxGUITreesPerState) {
+            if (tooManyGUITrees(state, an)) {
                 Logger.iformat("Already too many GUI trees %d in the state %s.", state.getGUITrees().size(), state);
                 return Collections.emptyList();
             }
@@ -1177,7 +1191,7 @@ public class NamingFactory implements Serializable {
             Logger.iformat("Already too many states %d in the activity %s.", an.getStates().size(), state.getActivity());
             return model;
         }
-        if (state.getGUITrees().size() > maxGUITreesPerState) {
+        if (tooManyGUITrees(state, an)) {
             Logger.iformat("Already too many GUI trees %d in the state %s.", state.getGUITrees().size(), state);
             return model;
         }

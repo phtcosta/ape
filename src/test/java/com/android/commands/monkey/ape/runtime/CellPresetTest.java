@@ -31,7 +31,7 @@ public class CellPresetTest {
             Feature.MODEL_MENU, Feature.FORM_COMPLETION, Feature.TREE_ENHANCEMENTS,
             Feature.ACTIVITY_BUDGET, Feature.DYNAMIC_EPSILON, Feature.HEURISTIC_INPUT,
             Feature.FOREIGN_ACTIVITY_GUARD, Feature.TREE_PACKAGE_GUARD, Feature.COVERAGE_BOOST,
-            Feature.BACK_MENU_CAP, Feature.ACTIVITY_STABLE_RESTART, Feature.STATIC_DATA,
+            Feature.BACK_MENU_CAP, Feature.ACTIVITY_STABLE_RESTART, Feature.APE_FIXES, Feature.STATIC_DATA,
             Feature.STATIC, Feature.NAV_FRONTIER, Feature.TYPED_FUZZ, Feature.COMPONENT_TRIGGER);
 
     private static final Set<Feature> LLM = EnumSet.of(Feature.LLM, Feature.LLM_NEW_STATE,

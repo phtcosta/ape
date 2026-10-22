@@ -71,6 +71,10 @@ public final class StepRng {
      * The next fuzz toss: whether this step fuzzes, at probability {@code rate}. Draws on every
      * call, whatever the rate, so the stream's position counts steps rather than fuzzing steps.
      *
+     * <p>The stream serves the toss only on a plan with {@code APE_FIXES}. Without it the toss in
+     * {@code MonkeySourceApe} is {@code RandomHelper.toss(rate)}, drawn only when fuzzing is on, and
+     * this stream is not read.
+     *
      * @param rate the fuzzing probability
      */
     public boolean fuzzToss(double rate) {

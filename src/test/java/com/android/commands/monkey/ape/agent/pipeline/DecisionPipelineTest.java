@@ -12,6 +12,7 @@ import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.StateTransition;
+import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.runtime.TestRunSpecs;
 
@@ -246,8 +247,9 @@ public class DecisionPipelineTest {
 
     @Test
     public void aPlanWithNoMopAndNoLlmAssemblesTheMinimalPipeline() {
-        // With ADDONS the activity budget is on by its jar default, and the restart guard follows
-        // ape.checkRestart (BASE, default true), so the minimal roster is three stages.
+        // With ADDONS the activity budget and APE_FIXES are on by their jar defaults, and the
+        // restart guard also needs ape.checkRestart (default true), so the minimal roster is three
+        // stages.
         RunSpec aperv = TestRunSpecs.spec("ape.addons", "true");
 
         assertEquals(
@@ -267,13 +269,23 @@ public class DecisionPipelineTest {
     }
 
     @Test
-    public void theRestartGuardFollowsCheckRestart() {
-        // Design D-B14.12: RESTART is mounted iff ape.checkRestart, a BASE key and no feature.
-        RunSpec noRestart = TestRunSpecs.spec("ape.checkRestart", "false");
-
-        assertEquals(null, DecisionPipeline.Candidate.RESTART.gate());
-        assertEquals(Arrays.asList(DecisionPipeline.Candidate.SATA_CHAIN),
-                DecisionPipeline.assembledCandidates(noRestart));
+    public void theRestartGuardFollowsCheckRestartAndApeFixes() {
+        // RESTART is mounted iff ape.checkRestart and APE_FIXES (an ADDONS member).
+        assertEquals(Feature.APE_FIXES, DecisionPipeline.Candidate.RESTART.gate());
+        List<DecisionPipeline.Candidate> sataOnly =
+                Arrays.asList(DecisionPipeline.Candidate.SATA_CHAIN);
+        assertEquals("no ADDONS, no APE_FIXES", sataOnly,
+                DecisionPipeline.assembledCandidates(TestRunSpecs.spec()));
+        assertEquals("APE_FIXES stated off", sataOnly, DecisionPipeline.assembledCandidates(
+                TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false",
+                        "ape.apeFixes", "false")));
+        assertEquals("ape.checkRestart off", sataOnly, DecisionPipeline.assembledCandidates(
+                TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false",
+                        "ape.checkRestart", "false")));
+        assertEquals(Arrays.asList(DecisionPipeline.Candidate.RESTART,
+                        DecisionPipeline.Candidate.SATA_CHAIN),
+                DecisionPipeline.assembledCandidates(TestRunSpecs.spec("ape.addons", "true",
+                        "ape.activityBudgetEnabled", "false")));
     }
 
     @Test

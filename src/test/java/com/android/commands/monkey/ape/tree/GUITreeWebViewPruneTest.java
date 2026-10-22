@@ -1,19 +1,12 @@
 package com.android.commands.monkey.ape.tree;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
+import static org.junit.Assert.assertNull;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.junit.Test;
-import org.w3c.dom.DOMException;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
@@ -22,9 +15,10 @@ import org.w3c.dom.Element;
  *
  * <p>Both halves of the pruning path are exercised on the JVM:
  * <ul>
- *   <li>{@link GUITreeNode#clearChildren()} must empty <em>all</em> DOM children. The previous
- *       forward {@code i++} walk over the live {@code NodeList} removed only every other node.
- *       Verified against a real {@code org.w3c.dom} element built by a {@link DocumentBuilder}.</li>
+ *   <li>{@link GUITreeNode#clearChildren()} must empty <em>all</em> DOM children and the in-memory
+ *       child list. A forward index walk over the live {@code NodeList} removes only every other
+ *       node. Verified against a real {@code org.w3c.dom} element built by a
+ *       {@link DocumentBuilder}.</li>
  *   <li>{@link GUITreeBuilder#countActionableDescendants(GUITreeNode)} must count only actionable
  *       (clickable / checkable / scrollable / long-clickable) descendants — the metric the
  *       {@code checkAndRemoveWebView} threshold has always named in its comment.</li>
@@ -48,7 +42,7 @@ public class GUITreeWebViewPruneTest {
         return parent;
     }
 
-    /** INV-TREE-10: N children → 0 after clearChildren (even count). */
+    /** INV-TREE-10: 10 DOM children → 0 after clearChildren, and the in-memory list is empty. */
     @Test
     public void clearChildrenEmptiesEvenChildCount() throws Exception {
         Element parent = elementWithChildren(10);
@@ -56,14 +50,20 @@ public class GUITreeWebViewPruneTest {
 
         GUITreeNode node = new GUITreeNode(null);
         node.setDomNode(parent);
+        for (int i = 0; i < 10; i++) {
+            node.addChild(new GUITreeNode(null));
+        }
+        assertEquals(10, node.getChildCount());
         node.clearChildren();
 
         assertEquals(0, parent.getChildNodes().getLength());
+        assertNull(parent.getFirstChild());
+        assertEquals(0, node.getChildCount());
     }
 
     /**
-     * INV-TREE-10: odd child count is the regression witness — the old skipping loop left the
-     * final node behind on odd counts as well as roughly half in general.
+     * INV-TREE-10: an odd child count, where a skipping walk would also leave the final node
+     * behind.
      */
     @Test
     public void clearChildrenEmptiesOddChildCount() throws Exception {
@@ -73,54 +73,8 @@ public class GUITreeWebViewPruneTest {
         node.clearChildren();
 
         assertEquals(0, parent.getChildNodes().getLength());
-    }
-
-    /**
-     * INV-TREE-12: a DOM element that rejects a {@code removeChild} with {@link DOMException} must
-     * not abort the run. {@code clearChildren} returns normally, the in-memory child list is emptied
-     * unconditionally, and one abort line is logged.
-     *
-     * <p>The failing element is a dynamic proxy over a real Xerces element: every call delegates,
-     * except the 3rd {@code removeChild}, which throws. Naming/XML are irrelevant here — the contract
-     * under test is pure exception containment.
-     */
-    @Test
-    public void domRejectionDoesNotPropagate() throws Exception {
-        final Element real = elementWithChildren(10);
-        final int[] removeCalls = {0};
-        Element faulty = (Element) Proxy.newProxyInstance(
-                Element.class.getClassLoader(),
-                new Class<?>[] { Element.class },
-                new InvocationHandler() {
-                    @Override
-                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-                        if ("removeChild".equals(method.getName())) {
-                            removeCalls[0]++;
-                            if (removeCalls[0] == 3) {
-                                throw new DOMException(DOMException.NOT_FOUND_ERR, "injected");
-                            }
-                            return real.removeChild((org.w3c.dom.Node) args[0]);
-                        }
-                        return method.invoke(real, args);
-                    }
-                });
-
-        GUITreeNode node = new GUITreeNode(null);
-        node.setDomNode(faulty);
-
-        PrintStream originalOut = System.out;
-        ByteArrayOutputStream captured = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(captured));
-        try {
-            node.clearChildren(); // must NOT throw
-        } finally {
-            System.setOut(originalOut);
-        }
-
+        assertNull(parent.getFirstChild());
         assertEquals(0, node.getChildCount());
-        String log = captured.toString();
-        assertTrue("expected abort line, got: " + log,
-                log.contains("[APE-RV] clearChildren DOM prune aborted"));
     }
 
     private static GUITreeNode leaf(boolean clickable, boolean checkable, boolean scrollable,

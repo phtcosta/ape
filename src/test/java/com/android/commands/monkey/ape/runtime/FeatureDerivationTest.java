@@ -38,7 +38,7 @@ public class FeatureDerivationTest {
             Feature.MODEL_MENU, Feature.FORM_COMPLETION, Feature.TREE_ENHANCEMENTS,
             Feature.ACTIVITY_BUDGET, Feature.DYNAMIC_EPSILON, Feature.HEURISTIC_INPUT,
             Feature.FOREIGN_ACTIVITY_GUARD, Feature.TREE_PACKAGE_GUARD, Feature.COVERAGE_BOOST,
-            Feature.BACK_MENU_CAP, Feature.ACTIVITY_STABLE_RESTART);
+            Feature.BACK_MENU_CAP, Feature.ACTIVITY_STABLE_RESTART, Feature.APE_FIXES);
 
     private static RunSpec resolve(Map<String, String> entries) {
         return RunSpec.resolve(entries, RunSpec.CliValues.of("sata", 42L, null));
@@ -73,7 +73,7 @@ public class FeatureDerivationTest {
                         Feature.DYNAMIC_EPSILON, Feature.HEURISTIC_INPUT,
                         Feature.FOREIGN_ACTIVITY_GUARD, Feature.TREE_PACKAGE_GUARD,
                         Feature.COVERAGE_BOOST, Feature.BACK_MENU_CAP,
-                        Feature.ACTIVITY_STABLE_RESTART},
+                        Feature.ACTIVITY_STABLE_RESTART, Feature.APE_FIXES},
                 {Feature.STATIC, Feature.NAV_FRONTIER, Feature.TYPED_FUZZ,
                         Feature.COMPONENT_TRIGGER},
                 {Feature.MOP, Feature.WTG, Feature.MENU_GATEWAY, Feature.MOP_FRONTIER,

@@ -109,6 +109,8 @@ final class StepRecord {
     private String bufferOwner;
     private String triggerKind;
     private String triggerClass;
+    /** {@code dec.fz}: the kinds of the queued fuzz events; null when the step did not fuzz. */
+    private String[] fuzzKinds;
 
     // LLM sub-events, and the dumps staged for the next one.
     private final List<LlmEvent> llm = new ArrayList<LlmEvent>();
@@ -174,6 +176,52 @@ final class StepRecord {
         this.action = action;
         this.decisionSource = decisionSource;
         this.pickChannel = pickChannel;
+    }
+
+    /**
+     * Replaces the step's decision with a non-model one: a post-selection restart replaced the
+     * selected action. The replaced decision's priority, scorer and MOP members, its selection
+     * members ({@code cfc}, {@code draw}, {@code nav}, {@code strat}, {@code bmc}, {@code buf}) and
+     * its routing claim ({@code own.trg}, {@code g}, {@code fb}) are dropped, and {@code own.i}
+     * becomes this decision's owner. The step-open coin draws, the LLM attempts, the component
+     * trigger and {@code dec.restart} stay.
+     */
+    void decisionReplaced(String action, String decisionSource, String pickChannel) {
+        dropReplacedDecision(decisionSource);
+        decisionNonModel(action, decisionSource, pickChannel);
+    }
+
+    private void dropReplacedDecision(String owner) {
+        priority = 0;
+        mop = 0;
+        mopFrontier = 0;
+        wtg = 0;
+        navFrontier = 0;
+        coverage = 0;
+        menu = 0;
+        form = 0;
+        patched = EventSink.ABSENT;
+        mopExposureWeighted = EventSink.ABSENT;
+        mopExposureTotal = EventSink.ABSENT;
+        mopDistance = EventSink.ABSENT;
+        mopSource = null;
+        handler = null;
+        retired = null;
+        ownIntended = owner;
+        ownTrigger = null;
+        ownGate = null;
+        ownFallback = null;
+        cfcScorers.clear();
+        cfcChanged.clear();
+        drawIndex = EventSink.ABSENT;
+        drawTotal = EventSink.ABSENT;
+        navPoint = null;
+        navVariant = null;
+        navAlt = false;
+        navDrew = false;
+        backMenuCapped = 0;
+        strategy = null;
+        bufferOwner = null;
     }
 
     void mopExposure(int weighted, int total) {
@@ -294,6 +342,10 @@ final class StepRecord {
     void componentTrigger(String kind, String className) {
         this.triggerKind = kind;
         this.triggerClass = className;
+    }
+
+    void fuzzing(List<String> kinds) {
+        this.fuzzKinds = kinds.toArray(new String[0]);
     }
 
     void componentLaunch(int result, String error) {
@@ -494,6 +546,14 @@ final class StepRecord {
                     .name("c").value(triggerClass)
                     .endObject();
         }
+        if (fuzzKinds != null) {
+            // Present whenever the step fuzzed: `[]` says the toss fired and queued no event.
+            buf.name("fz").beginArray();
+            for (String kind : fuzzKinds) {
+                buf.value(kind);
+            }
+            buf.endArray();
+        }
     }
 
     private static void optionalName(Json.Buf buf, String name, String value) {
@@ -559,6 +619,7 @@ final class StepRecord {
         bufferOwner = null;
         triggerKind = null;
         triggerClass = null;
+        fuzzKinds = null;
         llmCount = 0;
         stagedSystem = null;
         stagedUser = null;

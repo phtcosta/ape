@@ -176,7 +176,7 @@ public final class KeyOwnership {
         base("ape.swipeDuration", ValueType.LONG, "200");
         base("ape.takeScreenshot", ValueType.BOOLEAN, "true");
         base("ape.takeScreenshotForEveryStep", ValueType.BOOLEAN, "false");
-        base("ape.takeScreenshotForNewState", ValueType.BOOLEAN, "false");
+        base("ape.takeScreenshotForNewState", ValueType.BOOLEAN, "true");
         base("ape.throttleForActivityTransition", ValueType.INT, "500");
         base("ape.throttleForUnvisitedAction", ValueType.INT, "200");
         base("ape.trivialActivityRankThreshold", ValueType.INT, "3");
@@ -267,6 +267,7 @@ public final class KeyOwnership {
 
         feature(Feature.BACK_MENU_CAP, "ape.backMenuPickCap", ValueType.INT, "3");
         feature(Feature.ACTIVITY_STABLE_RESTART, "ape.activityStableRestartThreshold", ValueType.INT, "200");
+        feature(Feature.APE_FIXES, "ape.apeFixes", ValueType.BOOLEAN, "true");
 
         feature(Feature.FUZZING, "ape.doFuzzing", ValueType.BOOLEAN, "true");
         feature(Feature.FUZZING, "ape.fuzzingRate", ValueType.DOUBLE, "0.02");

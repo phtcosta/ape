@@ -103,8 +103,10 @@ public class MopLauncherStageTest {
 
     /**
      * The stage under test with the pipeline's step open around it: each {@link #decide} opens a
-     * step on the routing, broadcasts {@code onStepOpen}, and then asks the stage — the path every
-     * step that reaches the launcher takes. {@link #skip} is a step an earlier stage took.
+     * step on the routing, broadcasts {@code onStepOpen}, asks the stage and keeps its selection,
+     * as the agent does when no post-selection restart replaces it — the path every step that
+     * reaches the launcher takes. {@link #decideReplaced} is the same step with the selection
+     * replaced; {@link #skip} is a step an earlier stage took.
      */
     private static final class Launcher {
 
@@ -122,6 +124,14 @@ public class MopLauncherStageTest {
         }
 
         StageResult decide(FakeStepContext ctx) {
+            StageResult result = decideReplaced(ctx);
+            if (result.kind() == StageResult.Kind.SELECT) {
+                stage.onSelectionKept(ctx, result.action());
+            }
+            return result;
+        }
+
+        StageResult decideReplaced(FakeStepContext ctx) {
             routing.open(Double.NaN, 0.5, Double.NaN);
             stage.onStepOpen(ctx);
             return stage.decide(ctx);
@@ -263,6 +273,26 @@ public class MopLauncherStageTest {
         // And now it is spent.
         FakeStepContext more = stepOver(censusOf("com.example.app.B"));
         assertEquals("the cap bounds launches, not firings",
+                StageResult.Kind.CONTINUE, stage.decide(more).kind());
+    }
+
+    /** A launch the agent does not keep commits nothing: the activity, budget and buffer stay. */
+    @Test
+    public void testAReplacedLaunchCommitsNothing() throws Exception {
+        Launcher stage = launcher(1, 1, MopScoring.FLAG, 6);
+        FakeStepContext ctx = stepOver(censusOf("com.example.app.A"));
+        ctx.actionBufferSize = 2;
+
+        assertEquals("com.example.app.A", launchedClass(stage.decideReplaced(ctx)));
+        assertEquals(0, ctx.recorder.count(RunCounter.LAUNCHES));
+        assertTrue("the buffer is left to the restart", stage.abandoned.isEmpty());
+
+        assertEquals("the activity is still eligible and the budget unspent",
+                "com.example.app.A", launchedClass(stage.decide(ctx)));
+        assertEquals(1, ctx.recorder.count(RunCounter.LAUNCHES));
+        assertEquals(Collections.singletonList("launcher"), stage.abandoned);
+        FakeStepContext more = stepOver(censusOf("com.example.app.B"));
+        assertEquals("the kept launch spent the budget",
                 StageResult.Kind.CONTINUE, stage.decide(more).kind());
     }
 

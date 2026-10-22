@@ -35,6 +35,8 @@ import com.android.commands.monkey.ape.Subsequence;
 import com.android.commands.monkey.ape.SubsequenceFilter;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.Naming;
+import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeAction;
 import com.android.commands.monkey.ape.tree.GUITreeTransition;
@@ -306,11 +308,13 @@ public class Graph implements Serializable {
     }
 
     /**
-     * INV-MODEL-11 (task 2.2): while {@link Model#rebuild()} replays the removed transitions,
-     * suppress {@link ActivityNode} re-marking. An activity's visit count is invariant under
-     * state re-abstraction and is preserved across {@code ActivityNode.removeState}, so it is
-     * already complete before replay; re-marking the (partial) replayed sources would double-count
-     * activities that also have non-replayed transitions, breaking rebuild idempotency.
+     * Marks the graph as replaying the removed transitions of {@link Model#rebuild()}. With
+     * {@link Feature#APE_FIXES} the replay does not re-mark {@link ActivityNode}s: an activity's
+     * visit count is invariant under state re-abstraction and is preserved across
+     * {@code ActivityNode.removeState}, so it is already complete before replay, and re-marking
+     * the replayed sources would double-count activities that also have non-replayed transitions.
+     * Without the member each replayed {@link #markVisited(State, int)} counts the activity, as
+     * APE does.
      */
     void setRebuilding(boolean rebuilding) {
         this.rebuilding = rebuilding;
@@ -613,7 +617,7 @@ public class Graph implements Serializable {
 
     public void markVisited(State node, int timestamp) {
         node.visitedAt(timestamp);
-        if (!rebuilding) {
+        if (!(rebuilding && RunContext.current().spec().has(Feature.APE_FIXES))) {
             markVisited(node.getActivity(), timestamp);
         }
     }

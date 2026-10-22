@@ -5,7 +5,10 @@ APE-RV's behaviour is organised in five groups, and a run's plan says which of t
 APE algorithm (SATA, Naming, the model) plus a declared list of bug fixes. **ADDONS** are the fork's own
 improvements, identified A–N in plan `docs/plans/20261017_isolamento_grupos_aperv.md` §2.2: the BACK/MENU cap, the
 `MODEL_MENU` action, the coverage pass, form completion, dynamic epsilon, the activity budget, the activity-stable
-restart, the tree enhancements, heuristic input and the two safety guards. **STATIC** holds the consumers of the
+restart, the tree enhancements, heuristic input, the two safety guards, and `APE_FIXES`, the fork's corrections of
+APE's own behaviour (the per-state GUI-tree cap, activity visits during a rebuild, the namelet membership test, the
+restart guard before selection, the off-screen drop, the bounded foreground wait, and the pinch emission with the
+fuzz toss's own stream). **STATIC** holds the consumers of the
 static GUI model that the static analysis produces: the navigation frontier over the WTG, input typed from the
 analysed `inputType`/`hint`, widget metadata in the LLM prompt, and component triggering over the manifest's
 receivers, services and providers (design D-B13). **MOP** holds the consumers of the
@@ -35,10 +38,13 @@ reads only `StaticGuiModel`; MOP reads both. The wire format is format 2; each c
 an optional reduced `data` member (D-B13), and an artifact without it loads.
 
 The experiment is run on six cell presets, each the union of the blocks of the groups it contains: `base`, `mop`,
-`as`, `as_mop`, `as_llm`, `as_mop_llm` (plan §6.2). The block values reproduce E6 (design D-B3). The `base` cell is
-not byte-for-byte the upstream APE: it carries the keyless bug fixes listed in plan §2.2 and the structural changes
-of the group isolation (the `StepRng` streams, the restart guard, the pipeline order). That difference is declared here and is checked by an A/A against `ape.jar` (plan §6.4), outside
-this capability.
+`as`, `as_mop`, `as_llm`, `as_mop_llm` (plan §6.2). The block values reproduce E6 (design D-B3). The `base` cell runs
+the APE algorithm of the upstream `ape.jar` (`8f51b99c`) at every point the e03igg4 audit lists, except the keyless
+fixes and defaults that BASE carries in every cell ("Declared Consequences of the Cell Composition"), and it is not
+claimed equal to `8f51b99c` byte for byte. The restart guard before selection and the fuzz toss drawn from its own
+stream are `APE_FIXES` corrections, present only in the cells that mount ADDONS; `base` and `mop` apply
+`checkRestart` after selection and draw the fuzz toss from `RandomHelper`, as APE does. That difference is declared
+here and is checked by an A/A against `ape.jar` (plan §6.4), outside this capability.
 
 ## Data Contracts
 
@@ -135,10 +141,15 @@ Every member SHALL declare its group as a dependency:
 | Group | Members |
 |---|---|
 | BASE | `FUZZING` (a root, not a group member: BASE has no group feature; INV-GRP-01) |
-| ADDONS | `MODEL_MENU`, `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART` |
+| ADDONS | `MODEL_MENU`, `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART`, `APE_FIXES` |
 | STATIC | `NAV_FRONTIER`, `TYPED_FUZZ`, `COMPONENT_TRIGGER` |
 | MOP | `WTG`, `MENU_GATEWAY` (also requires `MODEL_MENU`), `MOP_FRONTIER`, `MOP_LAUNCHER`, `MOP_ACTIVITY_SOURCE`, `MOP_COIN` |
 | LLM | `LLM_NEW_STATE`, `LLM_STAGNATION`, `LLM_COIN` |
+
+`APE_FIXES` (activation `ape.apeFixes=true`, jar default `true`) SHALL hold the fork's corrections of APE's own
+behaviour at the points listed in "Declared Consequences of the Cell Composition", as distinct from the other ADDONS
+members, which add mechanisms. Each of those points SHALL have exactly one decision point, which reads
+`spec.has(Feature.APE_FIXES)`.
 
 A member whose group is off SHALL be absent from the plan without an abort when its activation key holds the jar
 default. It SHALL abort with `MISSING_DEPENDENCY` when its activation key is stated explicitly (the existing
@@ -153,8 +164,8 @@ The addon "least-visited priority tie-break" (G) SHALL NOT exist as a feature. T
 - **WHEN** a properties file sets `ape.staticDataPath=/data/local/tmp/mop-artifact.json` and no group key
 - **THEN** resolution SHALL succeed with `features` equal to `[FUZZING, STATIC_DATA]`
 - **AND** `TYPED_FUZZ` (jar default `ape.fuzzInputTyped=true`), `NAV_FRONTIER` (jar default
-  `ape.frontierBoostWeight=200`) and `MOP_LAUNCHER` (formerly `ACTIVITY_TRIGGER`; jar default
-  `ape.activityTriggerEnabled=true`) SHALL be
+  `ape.frontierBoostWeight=200`), `MOP_LAUNCHER` (formerly `ACTIVITY_TRIGGER`; jar default
+  `ape.activityTriggerEnabled=true`) and `APE_FIXES` (jar default `ape.apeFixes=true`) SHALL be
   absent, with no abort
 - **AND** the artifact SHALL NOT be loaded, no `MOP_DATA` record SHALL be written, and `ape.staticDataPath` SHALL be
   listed in `RUN_START.inert` (design D-B14.20)
@@ -164,6 +175,10 @@ The addon "least-visited priority tie-break" (G) SHALL NOT exist as a feature. T
 - **WHEN** a properties file sets `ape.modelMenuEnabled=true` and does not set `ape.addons`
 - **THEN** resolution SHALL abort with `[APE-RUNSPEC-ABORT] reason=missing_dependency key=ape.modelMenuEnabled`
   and a detail naming `ADDONS`
+- **AND WHEN** a properties file sets `ape.apeFixes=true` and does not set `ape.addons`
+- **THEN** resolution SHALL abort with `reason=missing_dependency key=ape.apeFixes` and a detail naming `ADDONS`
+- **AND WHEN** it sets `ape.apeFixes=false` and does not set `ape.addons`
+- **THEN** resolution SHALL succeed with `APE_FIXES` absent and `ape.apeFixes` listed in `RUN_START.inert`
 
 #### Scenario: STATIC and MOP switch independently over the same JSON
 
@@ -225,7 +240,7 @@ its groups (INV-GRP-04). Explicit keys override the vector, as for any preset.
 
 | Block | Keys |
 |---|---|
-| ADDONS | `ape.addons=true`, `ape.backMenuPickCap=3`, `ape.foreignActivityGuard=true`, `ape.treePackageGuard=true`, `ape.dynamicEpsilon=true`, `ape.heuristicInput=true`, `ape.formCompletionEnabled=true`, `ape.modelMenuEnabled=true`, `ape.treeEnhancementsEnabled=true`, `ape.activityBudgetEnabled=true`, `ape.activityStableRestartThreshold=200`, `ape.coverageBoostWeight=100` |
+| ADDONS | `ape.addons=true`, `ape.backMenuPickCap=3`, `ape.foreignActivityGuard=true`, `ape.treePackageGuard=true`, `ape.dynamicEpsilon=true`, `ape.heuristicInput=true`, `ape.formCompletionEnabled=true`, `ape.modelMenuEnabled=true`, `ape.treeEnhancementsEnabled=true`, `ape.activityBudgetEnabled=true`, `ape.activityStableRestartThreshold=200`, `ape.coverageBoostWeight=100`, `ape.apeFixes=true` |
 | STATIC | `ape.static=true`, `ape.frontierBoostWeight=200`, `ape.fuzzInputTyped=true`, `ape.componentPercentage=0.03` |
 | MOP | `ape.mop=true`, `ape.mopScoring=distance`, `ape.mopWeightWtg=200`, `ape.mopFrontierWeight=200`, `ape.activityTriggerEnabled=true`, `ape.mopActivitySourceComponents=true`, `ape.mopCoinPercentage=1.0` |
 | LLM | `ape.llm=true`, `ape.llmOnNewState=true`, `ape.llmOnStagnation=true`, `ape.llmPercentage=0.9`, `ape.llmPromptVariant=v13`, `ape.llmTemperature=0`, `ape.llmTopP=1.0`, `ape.llmTopK=-1`, `ape.llmSnapTolerancePx=150`, `ape.llmModel=Qwen/Qwen3-VL-4B-Instruct-FP8`, `ape.llmTimeoutMs=15000` |
@@ -239,7 +254,8 @@ its groups (INV-GRP-04). Explicit keys override the vector, as for any preset.
 | `as_llm` | ✓ | ✓ | – | ✓ | `ape.staticDataPath`, `ape.llmUrl`, `ape.variant` |
 | `as_mop_llm` | ✓ | ✓ | ✓ | ✓ | `ape.staticDataPath`, `ape.llmUrl`, `ape.variant` |
 
-The ADDONS block is the former `aperv` preset; the STATIC block is the frontier at 200, typed input and component triggering at 0.03 (D-B13); the MOP
+The ADDONS block is the former `aperv` preset plus `ape.apeFixes=true`, which it states as it states the other addon
+keys; the STATIC block is the frontier at 200, typed input and component triggering at 0.03 (D-B13); the MOP
 block is E6 arm 3's MOP configuration (`mopd_on_llm_off`) plus `p_M = 1.0`; the LLM block is E6 arm 4's sampling
 configuration (`mopd_on_llm_90`) with `p_L = 0.9`. The doses `ape.llmPercentage`, `ape.mopCoinPercentage` and
 `ape.componentPercentage` MAY be overridden per variant by explicit keys.
@@ -250,7 +266,7 @@ The resolved `features` per cell SHALL be:
 |---|---|
 | `base` | `FUZZING` |
 | `mop` | `FUZZING`, `STATIC_DATA`, `MOP`, `WTG`, `MOP_FRONTIER`, `MOP_LAUNCHER`, `MOP_ACTIVITY_SOURCE`, `MOP_COIN` |
-| `as` | `FUZZING`, `ADDONS`, the nine former addon features, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART`, `STATIC_DATA`, `STATIC`, `NAV_FRONTIER`, `TYPED_FUZZ`, `COMPONENT_TRIGGER` |
+| `as` | `FUZZING`, `ADDONS`, the nine former addon features, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART`, `APE_FIXES`, `STATIC_DATA`, `STATIC`, `NAV_FRONTIER`, `TYPED_FUZZ`, `COMPONENT_TRIGGER` |
 | `as_mop` | the `as` features, the `mop` MOP features, and `MENU_GATEWAY` |
 | `as_llm` | the `as` features, and `LLM`, `LLM_NEW_STATE`, `LLM_STAGNATION`, `LLM_COIN` |
 | `as_mop_llm` | the `as_mop` features and the four LLM features |
@@ -269,7 +285,8 @@ The exact `RUN_START` of each cell SHALL be committed as a test fixture,
 - **WHEN** a properties file contains `ape.preset=as_mop_llm`,
   `ape.staticDataPath=/data/local/tmp/mop-artifact.json`, `ape.llmUrl=http://10.0.2.2:30000/v1` and
   `ape.variant=as_mop_llm`
-- **THEN** `features` SHALL contain `ADDONS`, `STATIC`, `MOP`, `LLM`, `MENU_GATEWAY`, `MOP_COIN` and `LLM_COIN`
+- **THEN** `features` SHALL contain `ADDONS`, `APE_FIXES`, `STATIC`, `MOP`, `LLM`, `MENU_GATEWAY`, `MOP_COIN` and
+  `LLM_COIN`
 - **AND** the effective `ape.llmPercentage` SHALL be `0.9` and the effective `ape.mopCoinPercentage` `1.0`
 
 #### Scenario: a dose overridden per variant
@@ -282,6 +299,8 @@ The exact `RUN_START` of each cell SHALL be committed as a test fixture,
 - **WHEN** `CellPresetTest` resolves each of the six cells with the harness keys of its row
 - **THEN** the emitted `RUN_START`, with `run_id`, `t0`, `seed`, `build` and `props_digest` masked, SHALL equal
   `src/test/resources/cells/<cell>.run_start.json`
+- **AND** the fixtures of `as`, `as_mop`, `as_llm` and `as_mop_llm` SHALL name `APE_FIXES` in `features` and carry
+  `ape.apeFixes:true` in `params`, and the fixtures of `base` and `mop` SHALL name neither
 
 ### Requirement: Declared Consequences of the Cell Composition
 
@@ -293,24 +312,40 @@ does not state `ape.mopWeightOpenMenu` (design D-B14.1), because a preset key co
 `mop` cell with `MISSING_DEPENDENCY`. Its jar default, 250, activates `MENU_GATEWAY` where `MODEL_MENU` is present
 and is left out silently where it is not. In `as_mop` and `as_mop_llm` the gateway is present.
 
-Second, the `base` cell SHALL NOT be claimed equal to the upstream `ape.jar` (`8f51b99c`) byte for byte. It differs
-by the keyless bug fixes recorded in plan §2.2:
+Second, the `base` cell SHALL run the APE algorithm of the upstream `ape.jar` (`8f51b99c`) at every point the e03igg4
+audit (rv-android `docs/20261021_e03igg4_investigacao.md` §7.4–7.5, item numbers below are its numbers) lists,
+except the points declared here. It SHALL NOT be claimed equal to `8f51b99c` byte for byte. In every cell, BASE
+carries, with no key:
 
-- `Graph.rebuildHistory` no longer double-increments;
-- binary searches test `< 0`;
-- the `maxGUITreesPerState` guard takes effect;
-- `clearChildren` removes every child;
-- an action outside the screen is discarded;
-- `waitForActivity` gives up after about 10 s;
-- the fuzzing pinch and zoom events are emitted;
+- the `produce`/`consume` logs and the end-of-run writes are not produced (item 2);
+- `Graph.rebuildHistory` does not double-increment (item 5);
+- `GUITree.contains` tests `< 0` (item 7);
+- `GUITreeNode.clearChildren` removes every child with the first-child loop, with no exception path (item 8,
+  `ui-tree`);
 - an empty `StringCache` is handled;
-- the RNG is seeded instead of `ThreadLocalRandom`.
+- the RNG is seeded instead of `ThreadLocalRandom`, and `RandomHelper` is seeded with `seed ^ RANDOM_HELPER`,
+  separate from `Monkey.mRandom`, which is seeded with the run seed (item 13, `run-spec` "Run Identity and Seed");
+- the per-step telemetry of `event-sink` (item 14);
+- the action-history memory bound (item 15);
+- per-step PNG and XML artifacts are off (item 1, the one declared exception to APE's defaults), and new-state
+  capture is on (`ape.takeScreenshotForNewState` jar default `true`, `exploration`).
 
-It also differs by the structural changes of this change that act in every cell: restart is a guard before
-selection (`decision-pipeline`), the fuzz toss is drawn from its own seeded stream, and form completion's
-deterministic fill and submit exclusion (addon F) are governed by `ape.formCompletionEnabled` and are therefore off
-in `base`. The SATA extension points X1, X3 and X4 SHALL take the APE default in `base`, including their RNG
-consumption (`action-selection`). `RUN_START.build` identifies the jar, and the equivalence with upstream is
+At the points below, `base` and `mop`, whose plans do not contain `APE_FIXES`, SHALL run APE's code, and every cell
+that mounts ADDONS, in which `APE_FIXES` is present at its default `true`, SHALL run the fork's correction:
+
+| Item | Without `APE_FIXES` (APE) | With `APE_FIXES` |
+|---|---|---|
+| 3 | the `maxGUITreesPerState` guard of both `NamingFactory` sites tests `an.getStates().size()` | it tests `state.getGUITrees().size()` (`naming`) |
+| 4 | an activity visit is counted again during a model rebuild | it is not counted (`Graph.markVisited`, `model`) |
+| 6 | `Naming.containsNamelet` tests `binarySearch(...) != -1` | it tests `binarySearch(...) >= 0` (`naming`) |
+| 9 | the pipeline does not mount `Restart`; `ApeAgent` applies `checkRestart` after selection, SATA marks the replaced action visited and the restart's new episode weakens the planned edge | the `Restart` stage selects the restart before any other stage (`decision-pipeline`) |
+| 10 | a target without visible bounds is clicked at the screen centre, the display bounds substituting for them | the action is dropped (`exploration` INV-EXPL-19) |
+| 11 | the foreground wait is unbounded | it is bounded at 100 cycles and followed by a relaunch (`exploration` INV-EXPL-15) |
+| 12 | the pinch/zoom event is built but not appended; the fuzz toss is `RandomHelper.toss(fuzzingRate)`, drawn only when `FUZZING` is in the plan | the pinch is appended; the fuzz toss is drawn from `StepRng`'s own stream every step (`decision-pipeline` INV-DP-13) |
+
+Form completion's deterministic fill and submit exclusion (addon F) are governed by `ape.formCompletionEnabled` and
+are therefore off in `base`. The SATA extension points X1, X3 and X4 SHALL take the APE default in `base`, including
+their RNG consumption (`action-selection`). `RUN_START.build` identifies the jar, and the equivalence with upstream is
 checked by an A/A on a subset of APKs (plan §6.4).
 
 #### Scenario: the mop cell has no menu gateway and does not abort
@@ -330,7 +365,23 @@ checked by an A/A on a subset of APKs (plan §6.4).
 - **WHEN** the `base` cell runs
 - **THEN** no ADDONS member SHALL be constructed (no `MODEL_MENU` action in `State.getActions()`, no BACK/MENU cap,
   no form fill)
-- **AND** `RUN_START.features` SHALL be `[FUZZING]` and `RUN_START.build` SHALL name the APE-RV build
+- **AND** `RUN_START.features` SHALL be `[FUZZING]`, without `APE_FIXES`, and `RUN_START.build` SHALL name the
+  APE-RV build
+- **AND** `PIPELINE.stages` SHALL NOT contain `Restart`, and a due restart SHALL be applied by `ApeAgent.checkRestart`
+  after selection
+- **AND** a fuzz toss SHALL draw from `RandomHelper` and from no `StepRng` stream
+
+#### Scenario: the ADDONS cells run the fork's corrections
+
+- **WHEN** the `as`, `as_mop`, `as_llm` or `as_mop_llm` cell resolves with `ape.checkRestart` at its default
+- **THEN** `features` SHALL contain `APE_FIXES`
+- **AND** `PIPELINE.stages` SHALL contain `Restart`, and the fuzz toss SHALL draw from `StepRng`'s fuzz stream
+
+#### Scenario: an ADDONS cell without the corrections
+
+- **WHEN** a properties file contains `ape.preset=as`, the artifact path and `ape.apeFixes=false`
+- **THEN** resolution SHALL succeed with every other ADDONS member present and `APE_FIXES` absent
+- **AND** items 3, 4, 6, 9, 10, 11 and 12 SHALL run APE's code, as in `base`
 
 ### Requirement: Addon Read Sites Read the Plan
 
@@ -346,8 +397,9 @@ their switches:
 | `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD` | `MonkeySourceApe.generateEvents` | `spec.has(...)` of each |
 | `MOP_ACTIVITY_SOURCE` | `StaticArtifactLoader.load` | `spec.has(Feature.MOP_ACTIVITY_SOURCE)` |
 | `FORM_COMPLETION` | `StatefulAgent.inFormCompletionContext` (read by `ApeAgent.checkInput`), `SataAgent.mountExtensionPoints` (the submit exclusion), `ScoringParams.fromSpec` (`FormCompletionPass`) and the `MopCoin` stage's assembly in `DecisionPipeline.fromSpec` | `spec.has(Feature.FORM_COMPLETION)` |
+| `APE_FIXES` | both `maxGUITreesPerState` guards of `NamingFactory` (item 3), `Graph.markVisited(State, int)` (item 4), `Naming.containsNamelet` (item 6), the `Restart` candidate of `DecisionPipeline` (item 9), `MonkeySourceApe.generateClickEventAt` (item 10), `MonkeySourceApe.checkAppActivity` (item 11), the fuzz toss in `MonkeySourceApe` and `ApeFuzzer.generatePinchOrZoomEvent` (item 12) | `spec.has(Feature.APE_FIXES)` |
 | `FUZZING` (BASE) | `MonkeySourceApe.generateEvents` | `spec.has(Feature.FUZZING)` and its `ape.fuzzingRate` parameter |
-| restart wrapping (BASE) | `ApeAgent.checkRestart` and the `Restart` candidate of `DecisionPipeline` | the `ExplorationParams` value of `ape.checkRestart` |
+| restart wrapping (BASE) | `ApeAgent.checkRestart` and the `Restart` candidate of `DecisionPipeline` | the `ExplorationParams` value of `ape.checkRestart`; the candidate is assembled iff `ape.checkRestart` and `spec.has(Feature.APE_FIXES)` |
 | `BACK_MENU_CAP` | the BACK/MENU cap in `SataAgent` | its parameter, `exploration().backMenuPickCap()` (`0` when the feature is absent) |
 | `ACTIVITY_STABLE_RESTART` | the activity-stability restart check (`StatefulAgent`) | its parameter, `exploration().activityStableRestartThreshold()`; absent ⇒ threshold `Integer.MAX_VALUE` |
 
@@ -371,11 +423,11 @@ behave as upstream APE does for that mechanism. The absent
 - **WHEN** `GroupReadSiteTest` inspects `Config` and the plan
 - **THEN** `Config` SHALL declare no field named `modelMenuEnabled`, `treeEnhancementsEnabled`, `heuristicInput`,
   `foreignActivityGuard`, `treePackageGuard`, `mopActivitySourceComponents`, `doFuzzing`, `fuzzingRate`,
-  `checkRestart`, `minEpsilon`, `maxEpsilon`, `mopDataPath`, `mopTargetPickCap`, `leastVisitedPriorityTiebreak` or
-  `frontierBoostWeight`
-- **AND** under the `base` cell every ADDONS member the table names SHALL be absent from the plan, the BACK/MENU
-  cap SHALL read `0` and the activity-stable threshold `Integer.MAX_VALUE`, while `FUZZING` and `ape.checkRestart`
-  keep their BASE defaults
+  `checkRestart`, `minEpsilon`, `maxEpsilon`, `mopDataPath`, `mopTargetPickCap`, `leastVisitedPriorityTiebreak`,
+  `frontierBoostWeight` or `apeFixes`
+- **AND** under the `base` cell every ADDONS member the table names, `APE_FIXES` included, SHALL be absent from the
+  plan, the BACK/MENU cap SHALL read `0` and the activity-stable threshold `Integer.MAX_VALUE`, while `FUZZING` and
+  `ape.checkRestart` keep their BASE defaults
 
 ### Requirement: Component Triggering as a STATIC Member
 

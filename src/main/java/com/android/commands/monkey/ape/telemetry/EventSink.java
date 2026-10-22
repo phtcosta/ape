@@ -123,6 +123,13 @@ public interface EventSink {
     void decisionNonModel(String action, String decisionSource, String pickChannel);
 
     /**
+     * Replaces the step's recorded decision with a non-model one: a post-selection restart replaced
+     * the selected action after its decision was recorded (decision-pipeline "Post-Selection
+     * Restart Record"). No member of the replaced decision remains on the record.
+     */
+    void decisionReplaced(String action, String decisionSource, String pickChannel);
+
+    /**
      * Records how many of the screen's actions carry a positive MOP weight, tried or not (design
      * D-B19), and how many were eligible for MOP steering — the denominator without which "the MOP scorer fired on 0.4 % of decisions" cannot
      * be split into "the mechanism had no opportunity" and "it had one and lost the roulette".
@@ -250,6 +257,16 @@ public interface EventSink {
      * @param className the component's class name
      */
     void componentTrigger(String kind, String className);
+
+    /**
+     * {@code dec.fz}: the kinds of the gesture events the step's fuzz action queued, in order
+     * ({@code ApeEvents.fuzzKind}). Written into the open record only when it is the record of
+     * {@code step}, so a step that opened no record of its own writes nothing.
+     *
+     * @param step the step that fuzzed
+     * @param kinds the queued events' kinds, possibly empty
+     */
+    void fuzzing(int step, List<String> kinds);
 
     /** Adds one to a {@code RUN_END.counters} member of isolate-guidance-groups. */
     void count(RunCounter counter);

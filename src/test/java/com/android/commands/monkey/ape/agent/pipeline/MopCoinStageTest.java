@@ -17,6 +17,7 @@ import com.android.commands.monkey.ape.utils.UICoverageTracker;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 /**
  * The MOP coin (task 7.9.3; mop-guidance "MOP Coin Decider", design D-B10, D-B17): eligibility
@@ -53,8 +54,19 @@ public class MopCoinStageTest {
                     abandoned::add);
         }
 
+        /** A step the coin decides, whose pick the agent keeps, as it does with no restart due. */
         StageResult decide(FakeStepContext ctx, double uM) {
+            StageResult result = decideReplaced(ctx, uM);
+            if (result.kind() == StageResult.Kind.SELECT) {
+                stage.onSelectionKept(ctx, result.action());
+            }
+            return result;
+        }
+
+        /** The same step, with the pick replaced by a post-selection restart. */
+        StageResult decideReplaced(FakeStepContext ctx, double uM) {
             routing.open(Double.NaN, uM, Double.NaN);
+            stage.onStepOpen(ctx);
             return stage.decide(ctx);
         }
     }
@@ -205,5 +217,18 @@ public class MopCoinStageTest {
         coin.decide(ctx, 0.0);
 
         assertEquals(Collections.singletonList("mop"), coin.abandoned);
+    }
+
+    /** A pick the agent does not keep counts no {@code coinMop} and leaves the buffer. */
+    @Test
+    public void aReplacedPickCountsNothingAndLeavesTheBuffer() throws Exception {
+        Coin coin = new Coin(1.0, false);
+        FakeStepContext ctx = stepOn(stateOf(target("/x", 500)));
+        ctx.actionBufferSize = 2;
+
+        assertEquals(StageResult.Kind.SELECT, coin.decideReplaced(ctx, 0.0).kind());
+
+        assertEquals(0, ctx.recorder.count(RunCounter.COIN_MOP));
+        assertTrue(coin.abandoned.isEmpty());
     }
 }

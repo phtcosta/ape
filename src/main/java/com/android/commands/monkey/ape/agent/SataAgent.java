@@ -218,6 +218,9 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
      */
     private final DecisionPipeline decisionPipeline;
 
+    /** Whether {@link #decisionPipeline} assembled the RESTART stage, which the plan decides. */
+    private final boolean restartStageMounted;
+
     /**
      * X1, the least-visited tie (action-selection, design D-B12). It has one strategy in every
      * cell, rule R2, and holds no state, so it is not mounted per plan.
@@ -260,11 +263,23 @@ public class SataAgent extends StatefulAgent implements StageCollaborators {
         // what makes the spec read above possible at all. The context owns the LLM units instead,
         // which have no agent in them.
         this.decisionPipeline = DecisionPipeline.fromSpec(spec, this);
+        this.restartStageMounted = decisionPipeline.mounts(DecisionPipeline.Candidate.RESTART);
     }
 
     @Override
     public void startNewEpisode() {
         super.startNewEpisode();
+    }
+
+    @Override
+    protected boolean restartStageMounted() {
+        return restartStageMounted;
+    }
+
+    /** Forwards the kept selection to the stages, where the launcher commits its launch. */
+    @Override
+    protected void onSelectionKept(Action action) {
+        decisionPipeline.onSelectionKept(this, action);
     }
 
     protected boolean isEntryState(State state) {

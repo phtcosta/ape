@@ -38,7 +38,6 @@ import com.android.commands.monkey.ape.runtime.Feature;
 import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.BadStateException;
 import com.android.commands.monkey.ape.StopTestingException;
-import com.android.commands.monkey.ape.agent.pipeline.StageCollaborators;
 import com.android.commands.monkey.ape.events.ApeEvent;
 import com.android.commands.monkey.ape.events.ApeFuzzer;
 import com.android.commands.monkey.ape.llm.ApePromptBuilder;
@@ -120,12 +119,17 @@ public abstract class ApeAgent implements Agent {
     private boolean restart;
     /** The stability check that raised {@link #restart}: {@code graph}, {@code state} or {@code activity}. */
     private String restartKind;
-    /** The kind {@link #restartDue} found due on this step, for {@link #restartAction}; null when none. */
+    /** The kind {@link #restartDue} found due on this step, for {@link #startRestart}; null when none. */
     private String dueRestartKind;
     private int nextRestartThreshold;
     private int lastRestartStep;
     boolean newActivityStarting;
     private boolean disableRestart;
+    /**
+     * Whether this step's {@code updateStateInternal} is the {@code BadStateException} retry, which
+     * {@link #checkRestart} never restarts; cleared at step start.
+     */
+    private boolean badStateRetry;
     boolean start;
 
     private final long beginMillis;
@@ -325,45 +329,42 @@ public abstract class ApeAgent implements Agent {
     }
 
     /**
-     * The post-selection restart of an agent without a decision pipeline ({@code RandomAgent},
-     * {@code ReplayAgent}; design D-B14.12): replaces the selected action with a start action when
-     * the stability flag is up, or when the periodic threshold passed and this step's selection did
-     * not disable the restart. An agent with a pipeline restarts through the RESTART guard instead
-     * ({@link #restartDue}, {@link #restartAction}).
+     * Whether this agent's decision pipeline assembled the RESTART stage, which then takes the
+     * restart before selection. The base agent has no pipeline.
+     */
+    protected boolean restartStageMounted() {
+        return false;
+    }
+
+    /**
+     * The post-selection restart, APE's: called once per step after selection, it replaces the
+     * selected action with a start action when {@link #restartDue} holds. It returns {@code origin}
+     * unchanged when the RESTART stage is mounted, which takes the restart before selection
+     * instead, when {@code ape.checkRestart} is off, or on the {@code BadStateException} retry of
+     * the step, which APE runs without a restart check.
+     *
+     * @param origin the action this step selected
+     * @return {@code origin}, or the start action of {@link #startRestart}
      */
     protected Action checkRestart(Action origin) {
-        if (!RunContext.current().spec().exploration().checkRestart()) {
+        if (restartStageMounted() || badStateRetry
+                || !RunContext.current().spec().exploration().checkRestart()) {
             return origin;
         }
-        if (restart) {
-            restart = false;
-            restartKind = null;
-            lastRestartStep = getTimestamp();
-            this.startNewEpisode();
-            return getStartAction(nextRestartAction());
-        }
-        if (disableRestart) {
-            return origin;
-        }
-        int contSteps = getTimestamp() - lastRestartStep;
-        if (contSteps > nextRestartThreshold) {
-            lastRestartStep = getTimestamp();
-            updateRestartThreshold();
-            this.startNewEpisode();
-            return getStartAction(nextRestartAction());
+        if (restartDue()) {
+            return startRestart();
         }
         return origin;
     }
 
     /**
-     * Whether the RESTART guard takes this step (decision-pipeline "Restart Guard Stage", design
-     * D-B7): the stability flag that step 2 raised is up, or the steps since the last restart
-     * exceed the periodic threshold and the <em>previous</em> step's selection did not call
-     * {@link #disableRestart()}. The guard runs before selection, so the latch it reads is the one
-     * the previous selection left; this call reads it and clears it (design D-B14.16), which is
-     * why a step that an earlier guard (Budget) takes leaves the latch for the next step.
-     *
-     * <p>Called once per step by the RESTART stage, which is mounted iff {@code ape.checkRestart}.
+     * Whether a restart is due on this step: the stability flag of step 2 is up, or the steps since
+     * the last restart exceed the periodic threshold and the {@code disableRestart} latch is not
+     * set. This call reads the latch and clears it. With the RESTART stage mounted it runs before
+     * selection, so the latch it reads is the one the previous step's selection left, and a step
+     * that an earlier guard (Budget) takes leaves the latch for the next step. Without the stage it
+     * runs after selection, from {@link #checkRestart}, and the latch was cleared at step start, so
+     * it reads the one this step's selection set.
      *
      * @return whether a restart is due
      */
@@ -390,10 +391,10 @@ public abstract class ApeAgent implements Agent {
      * @return the start action, never null
      * @throws IllegalStateException when no restart is due on this step
      */
-    public Action restartAction() {
+    public Action startRestart() {
         String kind = dueRestartKind;
         if (kind == null) {
-            throw new IllegalStateException("restartAction without a due restart");
+            throw new IllegalStateException("startRestart without a due restart");
         }
         dueRestartKind = null;
         restart = false;
@@ -406,14 +407,6 @@ public abstract class ApeAgent implements Agent {
         RunContext.current().sink().restart(kind);
         RunContext.current().sink().count(RunCounter.RESTARTS);
         return getStartAction(nextRestartAction());
-    }
-
-    /**
-     * Whether this agent restarts through the RESTART guard of a decision pipeline rather than
-     * after selection. The agent with a pipeline is the one that implements its collaborators.
-     */
-    private boolean restartIsAGuard() {
-        return this instanceof StageCollaborators;
     }
 
     protected void updateRestartThreshold() {
@@ -483,20 +476,17 @@ public abstract class ApeAgent implements Agent {
             printMemoryUsage();
             try {
                 disableFuzzing = false;
-                if (restartIsAGuard()) {
-                    // The RESTART guard reads and clears the latch the previous step left
-                    // (INV-DP-14): no restart replaces the action selected here.
-                    return checkInput(checkFuzzing(updateStateInternal(topComp, info)));
+                badStateRetry = false;
+                if (!restartStageMounted()) {
+                    // The post-selection restart reads the latch this step's selection sets; the
+                    // RESTART stage reads the one the previous step left.
+                    disableRestart = false;
                 }
-                disableRestart = false;
-                return checkInput(checkFuzzing(checkRestart(updateStateInternal(topComp, info))));
+                return checkInput(checkFuzzing(updateStateInternal(topComp, info)));
             } catch (BadStateException e) {
                 Logger.wprintln("Bad state, retrieve the Window node.");
-                info = ape.getRootInActiveWindowSlow();
-                if (info == null) {
-                    Logger.wprintln("Fail to retrieve the Window node.");
-                    throw e;
-                }
+                info = retrieveWindowNode(e);
+                badStateRetry = true;
                 return updateStateInternal(topComp, info);
             }
         } catch (BadStateException e) {
@@ -522,6 +512,22 @@ public abstract class ApeAgent implements Agent {
             Logger.format(">>>>>>>> %s end step [%d]", getLoggerName(), timestamp);
         }
 
+    }
+
+    /**
+     * The active window's root for the {@code BadStateException} retry, fetched after waiting for
+     * the device to be idle.
+     *
+     * @param e the bad state the step's first attempt raised, rethrown when there is no root
+     * @return the root, never null
+     */
+    protected AccessibilityNodeInfo retrieveWindowNode(BadStateException e) {
+        AccessibilityNodeInfo info = ape.getRootInActiveWindowSlow();
+        if (info == null) {
+            Logger.wprintln("Fail to retrieve the Window node.");
+            throw e;
+        }
+        return info;
     }
 
     public abstract void onBadState(int lastBadStateCount, int badStateCounter);

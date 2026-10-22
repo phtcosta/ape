@@ -38,7 +38,8 @@ public class PresetsTest {
             "ape.treeEnhancementsEnabled", "true",
             "ape.activityBudgetEnabled", "true",
             "ape.activityStableRestartThreshold", "200",
-            "ape.coverageBoostWeight", "100");
+            "ape.coverageBoostWeight", "100",
+            "ape.apeFixes", "true");
 
     private static final Map<String, String> STATIC_BLOCK = vector(
             "ape.static", "true",

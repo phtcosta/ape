@@ -29,6 +29,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -150,6 +151,23 @@ public class RunContextTest {
         assertEquals(drawn[0], RandomHelper.nextInt(1000));
         assertEquals(drawn[1], RandomHelper.nextInt(1000));
         assertEquals(drawn[2], RandomHelper.nextInt(1000));
+    }
+
+    @Test
+    public void theHelperStreamIsNotMonkeysStream() {
+        // Monkey builds mRandom as new Random(seed); the helper is seeded with seed ^ K, so the two
+        // do not draw one sequence.
+        RunContext.initialize(spec(entries(), 777L), 777L);
+        java.util.Random monkey = new java.util.Random(777L);
+        assertNotEquals("the first draws differ",
+                monkey.nextInt(1 << 20), RandomHelper.nextInt(1 << 20));
+        int same = 0;
+        for (int i = 0; i < 16; i++) {
+            if (RandomHelper.nextInt(1 << 20) == monkey.nextInt(1 << 20)) {
+                same++;
+            }
+        }
+        assertTrue("two streams over 2^20 values agree at most once in 16 draws", same <= 1);
     }
 
     @Test

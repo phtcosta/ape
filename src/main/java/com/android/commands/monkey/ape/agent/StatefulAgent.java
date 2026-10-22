@@ -671,14 +671,15 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
     }
 
     /**
-     * The restart action of the RESTART guard (see {@link ApeAgent#restartAction}). The new episode
-     * clears a non-empty buffer without weakening and without {@code dec.buf} (design D-B14.13), so
-     * the buffer is dropped here, before the episode reset whose {@link #clearBuffer} would weaken.
+     * The restart action of the RESTART stage (see {@link ApeAgent#startRestart}). On the stage
+     * path the new episode clears a non-empty buffer without weakening and without {@code dec.buf}
+     * (design D-B14.13), so the buffer is dropped here, before the episode reset whose
+     * {@link #clearBuffer} would weaken. The post-selection restart calls {@link #startRestart}
+     * directly and weakens the planned edge, as APE does.
      */
-    @Override
     public Action restartAction() {
         actionBuffer.clear();
-        return super.restartAction();
+        return startRestart();
     }
 
     /**
@@ -1007,9 +1008,17 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             _budgetTracker.registerActivity(activity, widgetCount);
         }
 
-        Action action = resolveNewAction();
-        if (action.isModelAction()) {
-            getGraph().markVisited((ModelAction) action, getTimestamp());
+        Action selected = resolveNewAction();
+        if (selected.isModelAction()) {
+            getGraph().markVisited((ModelAction) selected, getTimestamp());
+        }
+        Action action = checkRestart(selected);
+        if (action != selected) {
+            recordRestartReplacement(action);
+        } else {
+            onSelectionKept(selected);
+        }
+        if (action == selected && action.isModelAction()) {
             recordActionHistory((ModelAction) action);
             moveForward();
         } else {
@@ -1019,6 +1028,29 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
             return Action.NOP;
         }
         return action; // newAction are moved to currentAction in moveForward
+    }
+
+    /**
+     * The step's selected action is kept: no post-selection restart replaced it. The base agent
+     * has nothing to commit.
+     *
+     * @param action the selected action, which this step executes
+     */
+    protected void onSelectionKept(Action action) {
+    }
+
+    /**
+     * Rewrites the step's decision as the restart that replaced the selected action after
+     * selection: the record is the one a step the RESTART stage takes writes, and it closes as a
+     * non-model record closes, so no outcome is attributed to the replaced action.
+     *
+     * @param start the start action of {@link #startRestart}
+     */
+    private void recordRestartReplacement(Action start) {
+        RunContext.current().sink().decisionReplaced(start.toString(),
+                ModelAction.DecisionSource.RESTART.owner(),
+                ModelAction.PickChannel.RESTART.getLabel());
+        lastDecisionAction = null;
     }
 
     public void notifyActionConsumed() {
@@ -1742,10 +1774,11 @@ public abstract class StatefulAgent extends ApeAgent implements GraphListener, S
      * action's weight's lookup — the one {@link MopScorer#weigh} gave the action its weight from,
      * the containment lookup holding its smallest unretired distance — so what gives an action its
      * weight is what retires. Nothing is counted when the weight before the tie split is 0 or under
-     * {@code flag}, where the context carries no retirement. The count applies here, at selection:
-     * the restart is a guard stage before selection, so no selected action is replaced afterwards.
-     * Targets that retire reach the open step record through {@link EventSink#mopRetired}
-     * ({@code dec.ret}, design D23), because the decision call has already run.
+     * {@code flag}, where the context carries no retirement. The count applies here, once the
+     * selected action is kept: an action that a post-selection restart replaces never reaches
+     * {@link #moveForward}, and the RESTART stage restarts before selection. Targets that retire
+     * reach the open step record through {@link EventSink#mopRetired} ({@code dec.ret}, design
+     * D23), because the decision call has already run.
      */
     private void recordMopInteraction(State state, ModelAction action) {
         if (_mopLedger == null || !action.requireTarget() || action.getResolvedNode() == null) {

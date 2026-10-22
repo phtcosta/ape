@@ -277,7 +277,9 @@ public class DecisionPipelineFromSpecTest {
     public void theRestartStageIsWiredToTheAgentsRestart() throws Exception {
         FakeCollaborators agent = new FakeCollaborators(null, action());
         agent.restartDue = true;
-        DecisionPipeline pipeline = assemble(TestRunSpecs.spec(), agent);
+        // The Restart stage needs APE_FIXES, an ADDONS member; the budget is left out of the way.
+        DecisionPipeline pipeline = assemble(
+                TestRunSpecs.spec("ape.addons", "true", "ape.activityBudgetEnabled", "false"), agent);
 
         Action decided = pipeline.decide(new FakeContext(stateOn(ACTIVITY), exhausted()));
 
