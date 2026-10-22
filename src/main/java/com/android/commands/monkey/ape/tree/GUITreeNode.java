@@ -19,16 +19,13 @@ import java.io.Serializable;
 import java.util.ArrayDeque;
 import java.util.Iterator;
 
-import org.w3c.dom.DOMException;
 import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
 
 import com.android.commands.monkey.ape.NodeVisitor;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.naming.Name;
 import com.android.commands.monkey.ape.naming.NameManager;
 import com.android.commands.monkey.ape.naming.Namelet;
-import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.StringCache;
 
 import android.graphics.Bitmap;
@@ -635,25 +632,17 @@ public class GUITreeNode implements Serializable {
     }
 
     public void clearChildren() {
-        // In-memory prune is unconditional. The DOM prune is best-effort: on device the Harmony
-        // DOM can reject a removeChild with DOMException on large WebView subtrees, and that must
-        // degrade to a logged partial prune, never abort the run (INV-TREE-12). Naming walks the
-        // DOM, so a residual child on the rejecting node re-enters naming as an under-pruned
-        // WebView — the same state handled below ape.ignoreWebViewThreshold.
+        // The in-memory prune comes first and does not depend on the DOM. The DOM prune removes the
+        // element's current first child until there is none. Iterating getChildNodes() by index does
+        // not work on both DOMs: on the JVM DOM the NodeList is live, so removing item(i) shifts the
+        // remaining children down and a forward walk skips every other one; on the Android DOM it is
+        // a copy, so removing item(0) repeatedly names a node that is no longer a child.
+        // getFirstChild() always names a current child, so the loop empties the element on both.
         this.childCount = 0;
         this.children = null;
         if (this.domNode != null) {
-            // NodeList is live: removing item(i) shifts the remaining nodes down, so a forward i++
-            // walk skips every other child (INV-TREE-10). Always remove the first child until the
-            // DOM element is empty. The catch sits OUTSIDE the loop: catching inside would re-fetch
-            // the same failing child every iteration and spin forever.
-            try {
-                NodeList childNodes = this.domNode.getChildNodes();
-                while (childNodes.getLength() > 0) {
-                    this.domNode.removeChild(childNodes.item(0));
-                }
-            } catch (DOMException e) {
-                Logger.wformat("[APE-RV] clearChildren DOM prune aborted: %s", e.getMessage());
+            while (this.domNode.getFirstChild() != null) {
+                this.domNode.removeChild(this.domNode.getFirstChild());
             }
         }
     }
