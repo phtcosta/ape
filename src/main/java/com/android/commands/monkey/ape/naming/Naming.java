@@ -40,6 +40,8 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
+import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.tree.GUITree;
 import com.android.commands.monkey.ape.tree.GUITreeBuilder;
 import com.android.commands.monkey.ape.tree.GUITreeNode;
@@ -419,15 +421,17 @@ public class Naming implements Serializable {
     }
 
     /**
-     * INV-NAME-13: membership test over a list already sorted by {@link #comparator}. Guards the
-     * {@code Collections.binarySearch} result with {@code >= 0}: binarySearch returns
-     * {@code -(insertionPoint) - 1} for an absent namelet, which is {@code <= -2} whenever it sorts
-     * after the first element. The old {@code == -1} test misclassified those as present, so an
-     * ancestor outside the set was treated as included. Extracted so it is JVM-testable without a
-     * full {@link Naming} instance ({@code comparator} is static and depends only on depth/exprStr).
+     * INV-NAME-13: membership test over a list already sorted by {@link #comparator}.
+     * {@code Collections.binarySearch} returns {@code -(insertionPoint) - 1} for an absent namelet,
+     * which is {@code <= -2} whenever it sorts after the first element. With
+     * {@link Feature#APE_FIXES} every negative result reads as absent ({@code >= 0}); without it
+     * only {@code -1} does ({@code != -1}, APE's test), so an absent namelet with a non-zero
+     * insertion point reads as present. Static so it is JVM-testable without a {@link Naming}
+     * instance ({@code comparator} is static and depends only on depth/exprStr).
      */
     static boolean containsNamelet(List<Namelet> sorted, Namelet n) {
-        return Collections.binarySearch(sorted, n, comparator) >= 0;
+        int index = Collections.binarySearch(sorted, n, comparator);
+        return RunContext.current().spec().has(Feature.APE_FIXES) ? index >= 0 : index != -1;
     }
 
     private Namelet select(List<Namelet> namelets) {

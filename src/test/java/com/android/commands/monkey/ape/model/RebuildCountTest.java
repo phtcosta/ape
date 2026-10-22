@@ -5,22 +5,31 @@ import static org.junit.Assert.*;
 import java.lang.reflect.Field;
 import java.util.Map;
 
+import org.junit.After;
 import org.junit.Test;
 
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+
 /**
- * INV-MODEL-11 (task 2.3): {@code Model.rebuild()} must be count-preserving for activity (and edge)
- * counters. The full rebuild path constructs {@code GUITree}/{@code Naming} graphs that need the
- * Android runtime, so this exercises the exact code the fix changed — {@link Graph#markVisited(State)}
- * gated by {@link Graph#setRebuilding(boolean)} — which is where the activity double-count occurred.
+ * INV-MODEL-11: activity and state counters across {@code Model.rebuild()}'s replay. The full
+ * rebuild path constructs {@code GUITree}/{@code Naming} graphs that need the Android runtime, so
+ * this exercises the decision point itself, {@link Graph#markVisited(State, int)} under
+ * {@link Graph#setRebuilding(boolean)}, with plans with and without {@code APE_FIXES}.
  *
- * <p>During replay the flag is set, so activities are NOT re-marked (their counts are preserved,
- * being abstraction-invariant and surviving {@code ActivityNode.removeState}). Per-state source
- * counters are intentionally still incremented — the deferred concern documented on INV-MODEL-11.
+ * <p>With the member (an ADDONS plan) the replay does not re-mark activities; without it (the jar
+ * defaults) each replayed {@code markVisited(State)} counts the activity, as APE does. Per-state
+ * source counters are incremented in both plans (the deferred note on INV-MODEL-11).
  *
  * <p>Uses {@code sun.misc.Unsafe} to allocate a {@link State} without its Android-dependent
  * constructor (same technique as {@code StateTest}).
  */
 public class RebuildCountTest {
+
+    @After
+    public void resetPlan() {
+        RunContext.resetForTest();
+    }
 
     @SuppressWarnings("unchecked")
     private static <T> T allocate(Class<T> clazz) throws Exception {
@@ -53,6 +62,7 @@ public class RebuildCountTest {
 
     @Test
     public void rebuildDoesNotReMarkActivityButStateStillIncrements() throws Exception {
+        TestRunSpecs.install("ape.addons", "true");
         Graph g = new Graph();
         ActivityNode a = new ActivityNode("A");
         seedActivity(g, "A", a);
@@ -78,6 +88,7 @@ public class RebuildCountTest {
 
     @Test
     public void activityCountIsIdempotentAcrossManyRebuilds() throws Exception {
+        TestRunSpecs.install("ape.addons", "true");
         Graph g = new Graph();
         ActivityNode a = new ActivityNode("A");
         seedActivity(g, "A", a);
@@ -93,5 +104,50 @@ public class RebuildCountTest {
             g.setRebuilding(false);
         }
         assertEquals("activity count identical regardless of rebuild count", live, a.getVisitedCount());
+    }
+
+    @Test
+    public void rebuildCountsActivityVisitsAgainWithoutMember() throws Exception {
+        TestRunSpecs.install();
+        Graph g = new Graph();
+        ActivityNode a = new ActivityNode("A");
+        seedActivity(g, "A", a);
+        State s = stateInActivity("A");
+
+        for (int t = 1; t <= 10; t++) {
+            g.markVisited(s, t);
+        }
+        assertEquals(10, a.getVisitedCount());
+
+        // Rebuild replay calls markVisited(State) 4 times for states of the activity.
+        g.setRebuilding(true);
+        for (int t = 11; t <= 14; t++) {
+            g.markVisited(s, t);
+        }
+        g.setRebuilding(false);
+
+        assertEquals("each replayed markVisited(State) counts the activity", 14, a.getVisitedCount());
+        assertEquals(14, s.getVisitedCount());
+    }
+
+    @Test
+    public void rebuildPreservesActivityVisitsWithMember() throws Exception {
+        TestRunSpecs.install("ape.addons", "true");
+        Graph g = new Graph();
+        ActivityNode a = new ActivityNode("A");
+        seedActivity(g, "A", a);
+        State s = stateInActivity("A");
+
+        for (int t = 1; t <= 10; t++) {
+            g.markVisited(s, t);
+        }
+        g.setRebuilding(true);
+        for (int t = 11; t <= 14; t++) {
+            g.markVisited(s, t);
+        }
+        g.setRebuilding(false);
+
+        assertEquals("activity count preserved across rebuild replay", 10, a.getVisitedCount());
+        assertEquals(14, s.getVisitedCount());
     }
 }
