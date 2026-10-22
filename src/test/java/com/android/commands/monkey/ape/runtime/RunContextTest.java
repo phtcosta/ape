@@ -153,6 +153,21 @@ public class RunContextTest {
     }
 
     @Test
+    public void theHelperStreamIsNotMonkeysStream() {
+        // Monkey builds mRandom as new Random(seed); the helper is seeded with seed ^ K, so the two
+        // do not draw one sequence.
+        RunContext.initialize(spec(entries(), 777L), 777L);
+        java.util.Random monkey = new java.util.Random(777L);
+        int same = 0;
+        for (int i = 0; i < 16; i++) {
+            if (RandomHelper.nextInt(1 << 20) == monkey.nextInt(1 << 20)) {
+                same++;
+            }
+        }
+        assertTrue(same < 16);
+    }
+
+    @Test
     public void installForTestGivesAFullContextWithoutPropertyFiles() {
         // What the migrated read sites use: a plan stated as a value, not written to a file and
         // not poked into a static field.

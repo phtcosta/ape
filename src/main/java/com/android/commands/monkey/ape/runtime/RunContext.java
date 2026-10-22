@@ -83,6 +83,13 @@ public final class RunContext {
     /** How much of the plan digest the generated run id carries — enough to eyeball an arm. */
     private static final int RUN_ID_DIGEST_PREFIX = 8;
 
+    /**
+     * Mixed into the run seed for {@code RandomHelper}, so the helper and {@code Monkey.mRandom}
+     * ({@code new Random(seed)}) are separate streams rather than one sequence at two offsets.
+     * Distinct from {@code StepRng}'s constants.
+     */
+    private static final long RANDOM_HELPER = 0x2545F4914F6CDD1DL;
+
     private static RunContext current;
 
     private final RunSpec spec;
@@ -150,8 +157,9 @@ public final class RunContext {
         this.spec = spec;
         // Seeding belongs to constructing the context, not to the caller, so a context cannot
         // exist over an unseeded stream (INV-RUN-08, INV-EXPL-14). The value is the same seed
-        // Monkey's own Random was built from, so both streams derive from one number.
-        RandomHelper.seed(seed);
+        // Monkey's own Random was built from, mixed with RANDOM_HELPER, so both streams derive from
+        // one number without repeating each other.
+        RandomHelper.seed(seed ^ RANDOM_HELPER);
         this.stepRng = new StepRng(seed);
         this.runId = resolveRunId(spec, seed);
         this.t0 = System.currentTimeMillis();
