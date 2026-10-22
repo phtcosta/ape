@@ -15,7 +15,7 @@ The plan is echoed as the run's provenance: `RUN_START`, a single JSON object li
 
 - `/data/local/tmp/ape.properties`, `/sdcard/ape.properties` — the only behavioral input files `RunSpec.resolve` reads; loaded in that order (later wins); every entry validated (source: device filesystem, pushed by the harness). JVM system properties are not a plan input: `RunSpec` reads none. `Config`, which keeps fields only for keys `src/main` reads through it, falls back to a JVM system property for such a key when no file sets it ("Single Plan Resolution at Bootstrap")
 - `--ape <type>: String` — agent type; valid set `{sata, random, replay}`; CLI-only (source: Monkey command line)
-- `-s <seed>: long` — run seed, also seeding `RandomHelper`; absent ⇒ the seed `Monkey` derives for itself (source: Monkey command line)
+- `-s <seed>: long` — run seed; `Monkey.mRandom` is `new Random(seed)` and `RandomHelper` is seeded with `seed ^ RANDOM_HELPER`; absent ⇒ the seed `Monkey` derives for itself (source: Monkey command line)
 - `--ape-replay <log>: String` — replay log path, required iff `--ape replay` (source: Monkey command line)
 - `ape.preset: String (optional)` — `base | mop | as | as_mop | as_llm | as_mop_llm`; explicit keys override the cell's vector
 - `ape.variant: String (optional)` — the harness's variant name; echoed, never read by a decision
@@ -31,7 +31,7 @@ The plan is echoed as the run's provenance: `RUN_START`, a single JSON object li
 ### Side-Effects
 
 - **[Process]**: on any validation failure the process exits nonzero before the first exploration step; no agent, event source, or device interaction is constructed.
-- **[RNG]**: `RunContext.initialize` performs the single `RandomHelper.seed(seed)` call for the run; the four `StepRng` streams are derived from the same seed (INV-RUN-08).
+- **[RNG]**: `RunContext.initialize` performs the single `RandomHelper.seed(seed ^ RANDOM_HELPER)` call for the run; `Monkey.mRandom` keeps `new Random(seed)`, and the four `StepRng` streams are derived from the same seed (INV-RUN-08).
 
 ### Error
 
@@ -46,7 +46,7 @@ The plan is echoed as the run's provenance: `RUN_START`, a single JSON object li
 - **INV-RUN-05**: A feature absent from `features` SHALL have a null parameter object and SHALL have no constructed mechanism in the run (no pass, no stage, no LLM unit, no tracker, no launcher). A sub-parameter key explicitly present for an inactive feature SHALL be accepted at its declared neutral value, and, when it is that feature's activation key, also at any value the feature's activation rule reads as off (`<= 0` for a POSITIVE feature); either is recorded as `inert` in the echo, and any other value SHALL abort per INV-RUN-02 (design D-B22). *(This is the recorded substitute for INV-ARCH-06 of the former `scoring-pipeline` text, which required every RV flag to be registered and forced off and is dissolved: exemption lists are unnecessary because the sub-parameter of an absent feature parameterizes nothing.)*
 - **INV-RUN-06**: The jar SHALL read no behavioral input from `/sdcard` other than `/sdcard/ape.properties`. In particular `/sdcard/ape.xpath`, `/sdcard/ape.xpath.actions`, and `/sdcard/ape.strings` SHALL NOT be read by any code path (owner decision D6).
 - **INV-RUN-07**: No artifact produced by a previous run SHALL be read by the explorer (R3): there is no model/graph deserialization path, no resume, no read-back of trace or telemetry. Retry after failure is wholly the responsibility of the Python supervisor.
-- **INV-RUN-08**: All run-scoped randomness SHALL derive from the run seed owned by `RunContext` (the `-s` value, or the seed `Monkey` derives when `-s` is absent). Besides the agent and helper streams, the only further streams SHALL be the four `StepRng` streams, each a `Random` seeded with `seed ^ k` for a fixed constant `k` per stream: `llmCoin`, `mopCoin`, `componentCoin` and the fuzz toss (design D-B9). No component SHALL use `ThreadLocalRandom`, `Math.random`, or an unseeded `Random` for any decision or generated input. Coverage: `RngNeutralityTest`, and the existing static guard on bare `Random` sites, which SHALL admit the `StepRng` construction as its one seeded addition.
+- **INV-RUN-08**: All run-scoped randomness SHALL derive from the run seed owned by `RunContext` (the `-s` value, or the seed `Monkey` derives when `-s` is absent). `Monkey.mRandom` SHALL be `new Random(seed)` and `RandomHelper` SHALL be seeded with `seed ^ RANDOM_HELPER`, a fixed odd 64-bit constant distinct from the four `StepRng` constants, so that the two generators do not produce one sequence at two offsets. Besides these two, the only further streams SHALL be the four `StepRng` streams, each a `Random` seeded with `seed ^ k` for a fixed constant `k` per stream: `llmCoin`, `mopCoin`, `componentCoin` and the fuzz toss (design D-B9). No component SHALL use `ThreadLocalRandom`, `Math.random`, or an unseeded `Random` for any decision or generated input. Coverage: `RngNeutralityTest`, and the existing static guard on bare `Random` sites, which SHALL admit the `StepRng` construction as its one seeded addition.
 - **INV-RUN-09**: When the `MOP` feature is in the plan, `ape.mopScoring` SHALL select exactly one of two disjoint key sets as read: `ape.mopWeightDirect`, `ape.mopWeightTransitive` under `flag`; `ape.mopWeightD1`, `ape.mopWeightD2`, `ape.mopWeightD3`, `ape.mopRetireAfter`, `ape.mopLauncherDmax` under `distance`. A key of the set the mode does not select SHALL be accepted at any value of its declared type, SHALL have no effect on the run, and, when the plan states it (in a properties file or through the preset vector), SHALL be listed in `RUN_START.inert`. All other `MOP` keys, `ape.mopScoring` among them, SHALL be read in both modes. When the `MOP` feature is absent, the six Part B keys fall under INV-RUN-05 like every other sub-parameter of an absent feature. Coverage: `RunSpecResolveTest` (inert lists per mode, a non-neutral mode-inert value accepted) and `RunSpecEchoTest`.
 - **INV-RUN-10**: `ape.variant` SHALL be owned by the resolver, SHALL be echoed verbatim as `RUN_START.variant` (omitted when absent), SHALL NOT be read by any component that decides an action or builds a mechanism, and SHALL NOT enter the plan `digest`. Two runs that differ only in `ape.variant` SHALL have equal digests. Coverage: `RunSpecEchoTest`, `RunSpecResolveTest`.
 - **INV-RUN-11**: The dose keys `ape.llmPercentage` (`p_L`), `ape.mopCoinPercentage` (`p_M`) and `ape.componentPercentage` SHALL be clamped to `[0, 1]` at resolution and SHALL NOT abort for an out-of-range value of their declared type. The clamped value is the effective value echoed in `params` and hashed in the digest. Coverage: `RunSpecResolveTest`.
@@ -104,7 +104,7 @@ After resolution, `RunSpec` is the behavioral authority. `Config` keeps a final 
 The declared dependencies SHALL be at minimum:
 
 - `STATIC` and `MOP` require `STATIC_DATA`; `ADDONS`, `LLM` and `STATIC_DATA` are roots;
-- `MODEL_MENU`, `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `BACK_MENU_CAP` and `ACTIVITY_STABLE_RESTART` require `ADDONS`;
+- `MODEL_MENU`, `FORM_COMPLETION`, `TREE_ENHANCEMENTS`, `ACTIVITY_BUDGET`, `DYNAMIC_EPSILON`, `HEURISTIC_INPUT`, `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD`, `COVERAGE_BOOST`, `BACK_MENU_CAP`, `ACTIVITY_STABLE_RESTART` and `APE_FIXES` require `ADDONS`;
 - `NAV_FRONTIER`, `TYPED_FUZZ` and `COMPONENT_TRIGGER` require `STATIC`;
 - `WTG`, `MOP_FRONTIER`, `MOP_LAUNCHER`, `MOP_ACTIVITY_SOURCE` and `MOP_COIN` require `MOP`; `MENU_GATEWAY` requires `MOP` and `MODEL_MENU`;
 - `LLM_NEW_STATE`, `LLM_STAGNATION` and `LLM_COIN` require `LLM`;
@@ -136,6 +136,7 @@ Dependency validation SHALL distinguish explicit input from defaults: an **expli
 | `ape.llmBreakerOpenMs` | `LLM` | long | `60000` | `60000` | |
 | `ape.backMenuPickCap` | `BACK_MENU_CAP` (POSITIVE) | int | `3` | `0` | formerly a base key; absent ⇒ `backMenuPickCap()` returns `0` (no cap) |
 | `ape.activityStableRestartThreshold` | `ACTIVITY_STABLE_RESTART` (POSITIVE) | int | `200` | `0` | formerly a base key; absent ⇒ `Integer.MAX_VALUE` |
+| `ape.apeFixes` | `APE_FIXES` (TRUE) | bool | `true` | `false` | the fork's corrections of APE's own behaviour (`guidance-groups` "Declared Consequences of the Cell Composition"); absent ⇒ APE's code at each of its points; the ADDONS block states `true` |
 | `ape.frontierBoostWeight` | `NAV_FRONTIER` (POSITIVE) | int | `200` | `0` | formerly owned by `FRONTIER` (MOP) |
 | `ape.fuzzInputTyped` | `TYPED_FUZZ` (TRUE) | bool | `true` | `false` | |
 | `ape.componentPercentage` | `COMPONENT_TRIGGER` (POSITIVE) | double | `0.0` | `0` | formerly owned under `MOP`; the STATIC block sets `0.03` (D-B13) |
@@ -231,6 +232,15 @@ The other keys of the former addon features keep their names and owners; those f
 - **WHEN** the `base` cell resolves, so `BACK_MENU_CAP` is absent from `features`
 - **THEN** the plan's `backMenuPickCap()` SHALL return `0`, the neutral value, and not the jar default `3`
 - **AND** no BACK or MENU action SHALL be filtered by a pick cap
+
+#### Scenario: APE_FIXES follows ADDONS
+
+- **WHEN** a properties file sets `ape.addons=true` and does not set `ape.apeFixes`
+- **THEN** resolution SHALL succeed with `APE_FIXES` in `features`, its jar default `true` activating it
+- **AND WHEN** a properties file sets neither `ape.addons` nor `ape.apeFixes`
+- **THEN** resolution SHALL succeed with `APE_FIXES` absent and no abort
+- **AND WHEN** a properties file sets `ape.apeFixes=true` without `ape.addons`
+- **THEN** resolution SHALL abort with `reason=missing_dependency key=ape.apeFixes` naming `ADDONS`
 
 #### Scenario: an LLM gate parameter at zero unmounts the gate
 
@@ -416,9 +426,9 @@ The line SHALL be produced by a serializer that escapes quotes, backslashes, and
 
 ### Requirement: Run Identity and Seed
 
-`RunSpec.seed` SHALL be the seed `Monkey` resolved — the `-s` value when one was passed, and otherwise the value `Monkey` derived for itself — and `RunContext.initialize` SHALL be the single point that calls `RandomHelper.seed(seed)` (INV-EXPL-14 unchanged). `runId` SHALL be the `ape.runId` value when present (a recognized key; no current deployment pushes it) and otherwise self-generated, deterministic in format (`<utc-compact>-<seed>-<digest-prefix>`), and echoed in `RUN_START`.
+`RunSpec.seed` SHALL be the seed `Monkey` resolved — the `-s` value when one was passed, and otherwise the value `Monkey` derived for itself — and `RunContext.initialize` SHALL be the single point that seeds `RandomHelper`, with `RandomHelper.seed(seed ^ RANDOM_HELPER)`, where `RANDOM_HELPER` is a fixed odd 64-bit constant distinct from the four `StepRng` constants (INV-EXPL-14). `Monkey.mRandom` SHALL remain `new Random(seed)`, as APE builds it, so that the two generators do not produce one sequence at two offsets; `RUN_START.seed` SHALL be the run seed, not `seed ^ RANDOM_HELPER`. `runId` SHALL be the `ape.runId` value when present (a recognized key; no current deployment pushes it) and otherwise self-generated, deterministic in format (`<utc-compact>-<seed>-<digest-prefix>`), and echoed in `RUN_START`.
 
-**Recording the seed and choosing it are two different things.** The harness appends `-s <seed>` only when a seed is configured (`tool.py`), and the decisive campaign configured none — the flag appears in none of its 360 traces except as a widget resource id in one application. `Monkey` does not run unseeded when `-s` is absent: it derives one, `mSeed = System.currentTimeMillis() + System.identityHashCode(this)`, in `Monkey.run` before the `--ape` branch is reached, and both `mRandom` and, through `RunContext.initialize`, `RandomHelper` are built from that value. `RUN_START` records no *absence* of a seed, because there is none: `RunSpec.seed` is always a real number and `RUN_START.seed` is always full.
+**Recording the seed and choosing it are two different things.** The harness appends `-s <seed>` only when a seed is configured (`tool.py`), and the decisive campaign configured none — the flag appears in none of its 360 traces except as a widget resource id in one application. `Monkey` does not run unseeded when `-s` is absent: it derives one, `mSeed = System.currentTimeMillis() + System.identityHashCode(this)`, in `Monkey.run` before the `--ape` branch is reached, and both `mRandom` and, through `RunContext.initialize`, `RandomHelper` are built from that value: `mRandom` from the value itself, `RandomHelper` from the value XOR `RANDOM_HELPER`. `RUN_START` records no *absence* of a seed, because there is none: `RunSpec.seed` is always a real number and `RUN_START.seed` is always full.
 
 What a derived seed lacks is not reproducibility but **control**. A run is individually reproducible from its own trace, bounded by what a seed does not reach: the trajectory depends on the observed GUI tree and therefore on device timing. Every draw comes from a seeded stream (INV-RUN-08: the one bare `new Random()`, `RandomHelper`'s field initializer, is replaced by `RunContext.initialize` before any exploration component exists), so the parity oracle's premise — the same decisions *under the same seed* — is satisfiable per run. An incidental seed, however, is reproducible only after the fact, and cannot be used to pair two arms on the same randomness; that needs a seed the harness designs.
 
@@ -434,8 +444,15 @@ What a derived seed lacks is not reproducibility but **control**. A run is indiv
 #### Scenario: no seed configured on the command line
 
 - **WHEN** the harness launches a run without `-s`, as every run of the decisive campaign was launched
-- **THEN** `RUN_START` SHALL record the seed `Monkey` derived for the run, which is the value both `mRandom` and `RandomHelper` were built from — so the trace states the randomness the run actually had, rather than an empty field the reader must interpret
+- **THEN** `RUN_START` SHALL record the seed `Monkey` derived for the run, which is the value `mRandom` was built from and the value `RandomHelper`'s seed was derived from (`seed ^ RANDOM_HELPER`) — so the trace states the randomness the run actually had, rather than an empty field the reader must interpret
 - **AND** no component SHALL substitute a *different* seed for the echo than the one in force, in either direction: neither a placeholder to fill the field nor a blank to signal that nobody chose it
+
+#### Scenario: the helper and Monkey generators are separate streams
+
+- **WHEN** a run starts with `-s 42`
+- **THEN** `Monkey.mRandom` SHALL be seeded with `42` and `RandomHelper` with `42 ^ RANDOM_HELPER`
+- **AND** `RUN_START.seed` SHALL be `42`
+- **AND** the first values drawn from the two generators SHALL differ from each other, and the sequence of either SHALL NOT be a shifted copy of the other's
 
 #### Scenario: corpus basis echoed when supplied
 

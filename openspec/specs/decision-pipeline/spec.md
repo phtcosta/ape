@@ -18,14 +18,21 @@ cell, and it is hard precedence, never weighted sampling. The step is a fixed se
     Budget, Restart, LlmNewState, LlmStagnation, LlmCoin, MopLauncher, ComponentTrigger, MopCoin, SataChain
 
 (the stage `name()` values; the `Candidate` constants spell the same order `BUDGET, RESTART, LLM_NEW_STATE, …,
-SATA_CHAIN`). Each step records the owner that took it. The restart is a guard stage that runs before any
-selection, so no restart replaces an action after selection. At step open, before any stage runs,
+SATA_CHAIN`). Each step records the owner that took it. The restart has two paths, and the plan chooses one for
+the run. With the ADDONS member `APE_FIXES` and `ape.checkRestart` (the `as`, `as_mop`, `as_llm` and `as_mop_llm`
+cells), the `Restart` stage is a guard that runs before any selection, so no restart replaces an action after
+selection. Without `APE_FIXES` (the `base` and `mop` cells), the pipeline assembles no `Restart` stage and the agent
+applies `checkRestart` after selection, as APE does: the selected action is marked visited, the restart may replace
+it by a start action, and the step is recorded as a restart decision. At step open, before any stage runs,
 `StepRouting.open` draws the LLM coin `u_L`, the MOP coin `u_M` and the component coin `u_C` of the mounted groups,
-each from its own `StepRng` stream. The fuzz toss draws from a fourth `StepRng` stream, once per step, in
-`MonkeySourceApe.generateEvents` after the step's action events are generated. Mounting a gate, a coin or fuzzing
-therefore never shifts SATA's draws (P-3, D-B9, D-B13). The component trigger is a STATIC member (D-B13). The
-launcher's cadence is global (D-A16, D-B11): it advances on every step, whichever stage takes it. An owner that
-preempts a non-empty SATA buffer abandons it without weakening the graph (P-4). Episode-scoped state has single
+each from its own `StepRng` stream. With `APE_FIXES` the fuzz toss draws from a fourth `StepRng` stream, once per
+step, in `MonkeySourceApe.generateEvents` after the step's action events are generated; without it the toss is
+`RandomHelper.toss(fuzzingRate)`, drawn only when fuzzing is on, as in APE. Mounting a gate or a coin therefore
+never shifts SATA's draws, and on a plan that carries `APE_FIXES` neither does mounting fuzzing; without it, turning
+fuzzing on adds one helper-stream draw per step, as in APE (P-3, D-B9, D-B13). The component trigger is a STATIC
+member (D-B13). The launcher's cadence is global (D-A16, D-B11): it advances on every step, whichever stage takes it. An owner that
+preempts a non-empty SATA buffer abandons it without weakening the graph (P-4); the launcher and the MOP coin do so
+only when the agent keeps their selection. Episode-scoped state has single
 owners: the LLM stagnation single-shot flag lives in the `LlmStagnation` stage; the launcher's cadence and launch
 state live in the `MopLauncher` stage; the component round-robin cursor lives in the `ComponentTrigger` stage;
 resets travel over the `onStateTransition` hook. LLM fallback is structural: an LLM stage that declines, fails, or is
@@ -61,8 +68,9 @@ refused by a gate returns `Continue`, and the remainder of the cell's assembled 
 - **INV-DP-07**: Every piece of episode-scoped decision state SHALL be owned by exactly one stage: the stagnation
   single-shot flag (`firedThisEpisode`) by `LlmStagnation`; the cadence counter, the launch count, the round-robin
   cursor and the launched-activity set by `MopLauncher`; the component round-robin cursor by `ComponentTrigger`.
-  It SHALL change only through the stage's own `onStepOpen`, `decide()` or `onStateTransition`; no stage SHALL read
-  or write another stage's episode state. `graphStableCounter` is exploration state shared with the stability
+  It SHALL change only through the stage's own `onStepOpen`, `decide()`, `onSelectionKept` or `onStateTransition`;
+  the launched-activity set and the launch count change in `onSelectionKept`, for a kept launch only; no stage
+  SHALL read or write another stage's episode state. `graphStableCounter` is exploration state shared with the stability
   restart, not episode state; it stays agent-owned, and the `LlmStagnation` stage's reset on an accepted escape
   (`StepContext.resetGraphStableCounter()`) is the single stage-side write.
 - **INV-DP-08**: The launcher's cadence counter SHALL advance exactly once per step, in the `MopLauncher` stage's `onStepOpen` hook, whichever stage takes the step. A step decided by an earlier stage advances the counter and defers the firing to the next step that reaches `MopLauncher`.
@@ -86,16 +94,18 @@ refused by a gate returns `Continue`, and the remainder of the cell's assembled 
   selection).
 - **INV-DP-13**: `StepRouting.open`, called by `DecisionPipeline.decide` before any stage's `onStepOpen` or
   `decide()`, SHALL draw `u_L` when the `LLM` group is mounted, `u_M` when the `MOP` group is mounted, and the
-  component coin `u_C` when `COMPONENT_TRIGGER` is mounted. The fuzz toss SHALL be drawn once per step from
-  `StepRng`'s `fuzz` stream, in `MonkeySourceApe.generateEvents` after the step's action events are generated,
-  whether or not `FUZZING` is in the plan. Each comes from its own `Random`, derived from the run seed. No LLM
-  stage, gate or coin, no MOP coin, no component coin and no fuzz toss SHALL draw from the agent stream
+  component coin `u_C` when `COMPONENT_TRIGGER` is mounted, each from its own `Random`, derived from the run seed.
+  With `APE_FIXES` in the plan, the fuzz toss SHALL be drawn once per step from `StepRng`'s `fuzz` stream, in
+  `MonkeySourceApe.generateEvents` after the step's action events are generated, whether or not `FUZZING` is in the
+  plan, and SHALL NOT draw from the agent or helper stream; without `APE_FIXES`, it SHALL be
+  `RandomHelper.toss(fuzzingRate)`, drawn only when `FUZZING` is in the plan, and the `fuzz` stream SHALL NOT be
+  read. No LLM stage, gate or coin, no MOP coin and no component coin SHALL draw from the agent stream
   (`ape.getRandom()`) or the helper stream (`RandomHelper`). For one seed and one fixture set, two runs that differ
   only in mounting or unmounting an LLM gate, or in mounting the MOP coin at `p_M = 0`, SHALL consume the same
   agent- and helper-stream draws and SHALL make the same SATA choices on every step that both runs hand to
   `SataChain`.
-- **INV-DP-14**: A restart SHALL be selected only by the `Restart` stage, before any LLM, MOP or SATA stage is evaluated. No restart SHALL replace an action after selection. On a restart step `dec.src` SHALL be `restart`, `dec.restart` SHALL name its kind, and `dec.a` SHALL name the start action that ran.
-- **INV-DP-15**: When the `Budget` stage, an LLM stage, the `MopLauncher` stage or the `MopCoin` stage selects a step's action while the SATA action buffer is non-empty, the buffer SHALL be cleared without calling `weakenStateTransition`, and `dec.buf` SHALL name that owner; for the `Budget` stage the buffer cleared is the one it preempted, and the path its navigation planned stays buffered (D-B20). When the `Restart` stage takes the step, the new episode it starts SHALL clear the buffer, also without `weakenStateTransition` and without `dec.buf` (design D-B14.13). A path failure detected inside `SataChain` SHALL still weaken the planned edge, as in APE.
+- **INV-DP-14**: The `Restart` stage SHALL be assembled if and only if `ape.checkRestart` is `true` and the plan carries `APE_FIXES`. In a run whose pipeline assembled it, a restart SHALL be selected only by that stage, before any LLM, MOP or SATA stage is evaluated, and no restart SHALL replace an action after selection. In a run whose pipeline did not assemble it and with `ape.checkRestart=true`, a due restart SHALL be applied after selection and SHALL replace the selected action of whichever owner selected it ("Post-Selection Restart"). On every restart step, of either path, `dec.src` SHALL be `restart`, `dec.restart` SHALL name its kind, and `dec.a` SHALL name the start action that ran.
+- **INV-DP-15**: When the `Budget` stage, an LLM stage, the `MopLauncher` stage or the `MopCoin` stage selects a step's action while the SATA action buffer is non-empty, the buffer SHALL be cleared without calling `weakenStateTransition`, and `dec.buf` SHALL name that owner; for the `Budget` stage the buffer cleared is the one it preempted, and the path its navigation planned stays buffered (D-B20). The `MopLauncher` and `MopCoin` stages SHALL abandon the buffer only when the agent keeps their selection (`onSelectionKept`); a selection that a post-selection restart replaces leaves the buffer to the restart. When the `Restart` stage takes the step, the new episode it starts SHALL clear the buffer, also without `weakenStateTransition` and without `dec.buf` (design D-B14.13). When a post-selection restart replaces the selected action, the restart's new episode SHALL clear the buffer through `clearBuffer`, weakening the planned edge as APE's does, with no `dec.buf`. A path failure detected inside `SataChain` SHALL still weaken the planned edge, as in APE.
 
 ## Requirements
 
@@ -151,7 +161,7 @@ Order" gives `dec.own.i`, the first claimer):
 | Stage | Owner | Present when |
 |---|---|---|
 | `Budget` | `budget` | `ACTIVITY_BUDGET` in the plan (an ADDONS member) |
-| `Restart` | `restart` | `ape.checkRestart` is `true` (BASE, jar default `true`; D-B14.12) |
+| `Restart` | `restart` | `ape.checkRestart` is `true` (jar default `true`; D-B14.12) and `APE_FIXES` is in the plan (an ADDONS member, key `ape.apeFixes`) |
 | `LlmNewState` | `llm` | `LLM_NEW_STATE` (LLM ∧ `llm.onNewState`) |
 | `LlmStagnation` | `llm` | `LLM_STAGNATION` (LLM ∧ `llm.onStagnation`) |
 | `LlmCoin` | `llm` | `LLM_COIN` (LLM ∧ `p_L = ape.llmPercentage > 0`; renamed from `LLM_RANDOM`) |
@@ -159,6 +169,11 @@ Order" gives `dec.own.i`, the first claimer):
 | `ComponentTrigger` | none (side effect) | `COMPONENT_TRIGGER` (a STATIC member, `componentPercentage > 0`; D-B13) |
 | `MopCoin` | `mop` | `MOP_COIN` (a MOP member, `p_M = ape.mopCoinPercentage > 0`) |
 | `SataChain` | `sata` | always |
+
+The `Restart` candidate's gate is `Feature.APE_FIXES` and its condition is
+`spec.exploration().checkRestart() && spec.has(Feature.APE_FIXES)`. A plan without ADDONS (the `base` and `mop`
+cells) and a plan that states `ape.apeFixes=false` therefore assemble no `Restart` stage, and their restart is
+applied after selection ("Post-Selection Restart").
 
 The order puts the guards first (P-2), then the LLM (D-A4), then MOP (D-A10). The launcher is never before the
 LLM (D-A8), and SATA comes last.
@@ -190,8 +205,8 @@ presets" is kept. Its body now covers the six cell presets that replaced those f
 
 #### Scenario: the four shipped presets assemble the rosters their keys state
 - **WHEN** a plan is resolved from each cell preset plus the deployment keys the tool passes (`ape.staticDataPath`, `ape.llmUrl`, `ape.variant`)
-- **THEN** `base` SHALL assemble `[Restart, SataChain]`
-- **AND** `mop` SHALL assemble `[Restart, MopLauncher, MopCoin, SataChain]`, with no `Budget` because `ACTIVITY_BUDGET` is an ADDONS member
+- **THEN** `base` SHALL assemble `[SataChain]`
+- **AND** `mop` SHALL assemble `[MopLauncher, MopCoin, SataChain]`, with no `Budget` because `ACTIVITY_BUDGET` is an ADDONS member and no `Restart` because `APE_FIXES` is an ADDONS member
 - **AND** `as` SHALL assemble `[Budget, Restart, ComponentTrigger, SataChain]`, and `as_mop` SHALL assemble `[Budget, Restart, MopLauncher, ComponentTrigger, MopCoin, SataChain]`
 - **AND** `as_llm` SHALL assemble `[Budget, Restart, LlmNewState, LlmStagnation, LlmCoin, ComponentTrigger, SataChain]`, and `as_mop_llm` SHALL assemble all nine stages
 - **AND** the `[APE-ARCH]` echo SHALL name exactly that roster
@@ -202,9 +217,9 @@ presets" is kept. Its body now covers the six cell presets that replaced those f
 - **AND** no LLM unit, launcher counter, MOP coin, coin stream or trigger machinery SHALL exist in the run (feature absent = stage absent, structurally)
 
 #### Scenario: the stage census names the stages that were not assembled
-- **WHEN** the `mop` cell assembles `[Restart, MopLauncher, MopCoin, SataChain]`
-- **THEN** the `PIPELINE` record's `stageCandidates` SHALL carry all nine candidates in the fixed order, with `enabled:true` on exactly `Restart`, `MopLauncher`, `MopCoin` and `SataChain` and `enabled:false` on `Budget`, `LlmNewState`, `LlmStagnation`, `LlmCoin` and `ComponentTrigger`
-- **AND** its `stages` SHALL be `[Restart, MopLauncher, MopCoin, SataChain]`
+- **WHEN** the `mop` cell assembles `[MopLauncher, MopCoin, SataChain]`
+- **THEN** the `PIPELINE` record's `stageCandidates` SHALL carry all nine candidates in the fixed order, with `enabled:true` on exactly `MopLauncher`, `MopCoin` and `SataChain` and `enabled:false` on `Budget`, `Restart`, `LlmNewState`, `LlmStagnation`, `LlmCoin` and `ComponentTrigger`
+- **AND** its `stages` SHALL be `[MopLauncher, MopCoin, SataChain]`
 - **AND** no stage object SHALL have been constructed for a candidate with `enabled:false`
 
 #### Scenario: stage order is not configurable
@@ -212,7 +227,10 @@ presets" is kept. Its body now covers the six cell presets that replaced those f
 - **THEN** the relative order of the assembled stages SHALL be the fixed order above
 - **AND** no configuration key SHALL exist that reorders stages
 
----
+#### Scenario: the Restart candidate follows APE_FIXES
+- **WHEN** a plan resolved from the `as` cell plus `ape.apeFixes=false` is assembled, with `ape.checkRestart=true`
+- **THEN** the pipeline SHALL be `[Budget, ComponentTrigger, SataChain]`, and the `PIPELINE` record's `stageCandidates` SHALL carry `Restart` with `enabled:false`
+- **AND** the restart SHALL be applied after selection ("Post-Selection Restart")
 
 ### Requirement: Hard Preemption Order
 
@@ -317,17 +335,29 @@ Episode-scoped decision state SHALL live inside its owning stage (INV-DP-07):
 
 The `MopLauncher` cadence counter is advanced only by the stage's own `onStepOpen` hook, once per step
 (INV-DP-08). The agent SHALL forward each visited `StateTransition` to every assembled stage's
-`onStateTransition(edge)` hook exactly once, after its own stability-counter bookkeeping. `LlmStagnation` SHALL
+`onStateTransition(edge)` hook exactly once, after its own stability-counter bookkeeping. The agent SHALL forward
+the step's selected action to every assembled stage's `onSelectionKept(ctx, action)` hook once, after
+`checkRestart`, when no post-selection restart replaced it; `MopLauncher` commits its launch there (the launched
+set, the launch budget, `launches` and the buffer abandonment) and `MopCoin` its pick (`coinMop` and the buffer
+abandonment), so a replaced selection commits nothing ("Post-Selection Restart Model
+Effect"). `LlmStagnation` SHALL
 re-arm its flag on `NEW_ACTION`/`NEW_ACTION_TARGET` edges, the same event that resets `graphStableCounter`.
 
 `graphStableCounter` itself SHALL remain shared exploration state owned by the agent and `RunContext`, because the
 stability restart consumes it through step 2's `checkStable`. `LlmStagnation` MAY reset it to 0 on an accepted
 escape, through the `StepContext`'s single declared write method; no other stage SHALL write it. The restart
 flag, its kind, `lastRestartStep`, `nextRestartThreshold` and the `disableRestart` latch remain agent state. The
-`Restart` stage reads them only through `StageCollaborators.restartDue()` and `restartAction()`. The
-`disableRestart` latch SHALL no longer be cleared at step open. The `Restart` stage's evaluation SHALL read it and
-then clear it, so the guard reads the value that the previous step's selection left (INV-DP-14). A step that the
-`Budget` stage takes never reaches `Restart`, so the latch is left for the next step (design D-B14.16).
+`Restart` stage reads them only through `StageCollaborators.restartDue()` and `restartAction()`. The latch has
+two semantics, one per restart path, and the path is fixed for the run by whether the pipeline assembled
+`Restart` (`ApeAgent.restartStageMounted()`):
+- **Stage path** (`Restart` assembled). The `disableRestart` latch SHALL NOT be cleared at step open. The
+  `Restart` stage's evaluation SHALL read it and then clear it, so the guard reads the value that the previous
+  step's selection left (INV-DP-14). A step that the `Budget` stage takes never reaches `Restart`, so the latch is
+  left for the next step (design D-B14.16).
+- **Post-selection path** (`Restart` not assembled). The latch SHALL be cleared at step start, before selection,
+  and read by `ApeAgent.checkRestart` after this step's selection, as APE does (`disableRestart = false` before
+  selection). A selection that calls `disableRestart()` therefore prevents the periodic restart on its own step
+  ("Post-Selection Restart").
 
 #### Scenario: stagnation flag burns on firing and re-arms on a new edge
 - **WHEN** the stagnation trigger fires (counter ≥ threshold/2, flag armed), the gate chain admits, and the LLM returns null
@@ -345,7 +375,11 @@ then clear it, so the guard reads the value that the previous step's selection l
 - **THEN** it SHALL have no read or write access to the cadence counter, launch budget counter, round-robin cursor, or launched set
 - **AND** the counter SHALL change only in the stage's `onStepOpen` (advance) and `decide()` (reset at firing)
 
----
+#### Scenario: the post-selection path reads the latch its own step set
+- **WHEN** in the `base` cell 41 steps have passed since the last restart, `nextRestartThreshold` is `40`, no stability flag is up, and this step's SATA selection calls `disableRestart()`
+- **THEN** `checkRestart` SHALL return the selected action and no restart SHALL run on this step
+- **AND WHEN** the next step opens, the latch is cleared, and that step's selection does not call `disableRestart()`
+- **THEN** `checkRestart` SHALL replace that step's selected action by a start action, with `dec.restart="periodic"`
 
 ### Requirement: LLM Fallback Realized Structurally
 
@@ -412,13 +446,18 @@ suite of this capability, restated for the order above.
 
 ### Requirement: Restart Guard Stage
 
-The `Restart` stage SHALL be the restart decision of the run. It is a guard of the BASE group, assembled second,
-after `Budget` and before every LLM, MOP and SATA stage, and it is mounted if and only if `ape.checkRestart` is
-`true` (BASE, jar default `true`; design D-B14.12). It replaces the post-selection `checkRestart` that
-`ApeAgent.updateStateWrapper` applied to the selected action (`checkInput(checkFuzzing(checkRestart(...)))`).
-For an agent that has a pipeline (`SataAgent`), that chain no longer contains `checkRestart` (INV-DP-14).
-`RandomAgent` and `ReplayAgent` have no pipeline and keep the post-selection `checkRestart` wrapping unchanged;
-the wrapping is skipped only for an agent that has a pipeline.
+The `Restart` stage SHALL be the restart decision of a run whose pipeline assembled it. It is a guard, assembled
+second, after `Budget` and before every LLM, MOP and SATA stage, and it is mounted if and only if
+`ape.checkRestart` is `true` (jar default `true`; design D-B14.12) and `APE_FIXES` is in the plan (an ADDONS
+member, `ape.apeFixes`, default `true` with ADDONS; the candidate's gate is `Feature.APE_FIXES`). The cells that
+mount ADDONS (`as`, `as_mop`, `as_llm`, `as_mop_llm`) assemble it; `base` and `mop` do not.
+
+`ApeAgent.restartStageMounted()` is the agent's single question about the path: it returns `false` in `ApeAgent`,
+and `SataAgent` overrides it with whether its assembled pipeline contains `RESTART`. When it returns `true`,
+`ApeAgent.checkRestart(origin)` returns `origin` unchanged and no restart replaces a selected action
+(INV-DP-14). When it returns `false` — `SataAgent` without the stage, and `RandomAgent` and `ReplayAgent`, which
+have no pipeline — the restart is applied after selection ("Post-Selection Restart"). `ApeAgent.updateStateWrapper`
+is one path for every agent, `checkInput(checkFuzzing(updateStateInternal(...)))`.
 
 A restart is due on a step when either of the following holds:
 - **Stability flag.** The flag that the stability checks of step 2 (`checkStable` → `onGraphStable`,
@@ -427,22 +466,30 @@ A restart is due on a step when either of the following holds:
 - **Periodic threshold.** The steps since the last restart exceed `nextRestartThreshold`, and the **previous**
   step's selection did not call `disableRestart()`. The kind is `periodic`.
 
-The selection that can disable the restart now runs after the guard, so the guard reads the latch the previous
-step left. The design declares this (§ Risks): the restart sequence differs from `eea2b1a9`, and the goldens are
-recaptured. When a restart is due, the stage SHALL:
+The selection that can disable the restart runs after the guard, so the guard reads the latch the previous
+step left. When a restart is due, the stage SHALL:
 1. lower the stability flag;
 2. set `lastRestartStep`;
 3. redraw the periodic threshold when the kind is `periodic`;
 4. start a new episode, which clears a non-empty SATA buffer without weakening and without `dec.buf` (D-B14.13);
-5. return `Select` with the start action `restartAction()` yields.
+5. return `Select` with the start action `restartAction()` yields. `StatefulAgent.restartAction()` is
+   `actionBuffer.clear(); return startRestart();`: the buffer drop without weakening belongs to the stage path
+   only, and `ApeAgent.startRestart()` performs steps 1–4 and yields the start action.
 
 The start action keeps APE's kind toss: `EVENT_CLEAN_RESTART` with probability 0.2, else `EVENT_RESTART`. The
 threshold and the kind toss stay on the helper stream. The step's owner SHALL be `restart`, and `dec.restart`
 SHALL be the kind. When no restart is due, the stage returns `Continue`. The stage reaches the agent only
 through `StageCollaborators.restartDue()` and `restartAction()`.
 
-No target retirement count is pending on a restart step, because no model action was selected. The
-`StatefulAgent.checkRestart` override no longer applies or discards one.
+No target retirement count is pending on a restart step the stage takes, because no model action was selected.
+No `StatefulAgent.checkRestart` override applies or discards one.
+
+INV-DP-14, as amended: in a run whose pipeline assembled the `Restart` stage, a restart SHALL be selected only by
+that stage, before any LLM, MOP or SATA stage is evaluated, and no restart SHALL replace an action after
+selection. In a run whose pipeline did not assemble it and with `ape.checkRestart=true`, a due restart SHALL be
+applied after selection and SHALL replace the selected action of whichever owner selected it ("Post-Selection
+Restart"). On every restart step, of either path, `dec.src` SHALL be `restart`, `dec.restart` SHALL name its kind,
+and `dec.a` SHALL name the start action that ran.
 
 #### Scenario: graph-stability restart is decided before the LLM
 - **WHEN** `graphStableCounter` reaches `101` with `graphStableRestartThreshold=100`, so step 2 raises the restart flag with kind `graph`
@@ -457,16 +504,15 @@ No target retirement count is pending on a restart step, because no model action
 - **THEN** the `Restart` stage SHALL select a start action with `dec.restart="periodic"`
 
 #### Scenario: no restart replaces a selected action
-- **WHEN** any stage after `Restart` selects a step's action
+- **WHEN** the pipeline assembled `Restart` and any stage after `Restart` selects a step's action
 - **THEN** the action that runs SHALL be that action, and `dec.a` SHALL name it
+- **AND** `ApeAgent.checkRestart` SHALL return that action unchanged
 
 #### Scenario: the guard follows ape.checkRestart
-- **WHEN** a `SataAgent` plan sets `ape.checkRestart=false`
-- **THEN** no `Restart` stage SHALL be assembled, and no restart SHALL be selected on any step
-- **AND WHEN** the agent is `RandomAgent` or `ReplayAgent`
-- **THEN** no pipeline exists and the post-selection `checkRestart` wrapping SHALL apply unchanged
-
----
+- **WHEN** a `SataAgent` plan sets `ape.checkRestart=false`, with or without `APE_FIXES`
+- **THEN** no `Restart` stage SHALL be assembled, `ApeAgent.checkRestart` SHALL return every selected action unchanged, and no restart SHALL run on any step
+- **AND WHEN** the plan sets `ape.checkRestart=true` and the agent is `RandomAgent` or `ReplayAgent`
+- **THEN** no pipeline exists, `restartStageMounted()` SHALL return `false`, and the restart SHALL be applied after selection
 
 ### Requirement: Per-Step Own Random Streams
 
@@ -478,14 +524,26 @@ constant `k` per stream: `llmCoin`, `mopCoin`, `componentCoin` and `fuzz`. When 
 - `u_C = componentCoin.nextDouble()` when `COMPONENT_TRIGGER` is in the plan; the `ComponentTrigger` stage fires
   when `u_C < componentPercentage`.
 
-The fuzz toss (`StepRng.fuzzToss(fuzzingRate)`) SHALL be drawn once per step by `MonkeySourceApe.generateEvents`,
-after the step's action events are generated, whether or not `FUZZING` is in the plan and whatever the step's
-owner (`exploration` "Fuzzing Integration").
+The fuzz toss source depends on `APE_FIXES` (`exploration` "Fuzzing Integration"):
+- with `APE_FIXES` in the plan, the toss (`StepRng.fuzzToss(fuzzingRate)`) SHALL be drawn once per step by
+  `MonkeySourceApe.generateEvents`, after the step's action events are generated, whether or not `FUZZING` is in
+  the plan and whatever the step's owner;
+- without `APE_FIXES` (the `base` and `mop` cells), the toss SHALL be `RandomHelper.toss(fuzzingRate)`, drawn from
+  the helper stream only when `FUZZING` is in the plan, as in APE; the `fuzz` stream is not read.
 
 Each value is drawn whether or not a later stage reads it (INV-DP-13). `u_L` and `u_M` reach the stages through
 the `StepContext`. When their group is mounted, they are written in `dec.own` as `uL` and `uM`. The agent stream
 and the helper stream keep every other draw: the ε-greedy toss, the roulettes, `randomPick`, typed text, and the
 restart threshold and kind. No coin draws from the agent stream, so mounting the trigger never shifts SATA's draws.
+
+INV-DP-13, as amended: `StepRouting.open` SHALL draw `u_L`, `u_M` and `u_C` as listed above. With `APE_FIXES` in
+the plan, the fuzz toss SHALL be drawn once per step from the `fuzz` stream, whether or not `FUZZING` is in the
+plan, and SHALL NOT draw from the agent or helper stream; without `APE_FIXES`, it SHALL be
+`RandomHelper.toss(fuzzingRate)`, drawn only when `FUZZING` is in the plan, and the `fuzz` stream SHALL NOT be
+read. No LLM stage, gate or coin, no MOP coin and no component coin SHALL draw from the agent stream or the helper
+stream. For one seed and one fixture set, two runs that differ only in mounting or unmounting an LLM gate, or in
+mounting the MOP coin at `p_M = 0`, SHALL consume the same agent- and helper-stream draws and SHALL make the same
+SATA choices on every step that both runs hand to `SataChain`.
 
 #### Scenario: an LLM gate does not shift SATA's draws
 - **WHEN** two runs of the `as_llm` cell share seed `42` and fixtures, and differ only in `ape.llmGateMinActions` (`3` against `0`, the latter leaving the gate unmounted)
@@ -498,16 +556,21 @@ restart threshold and kind. No coin draws from the agent stream, so mounting the
 - **AND** step N+1's `u_L` SHALL be the stream's next value
 
 #### Scenario: no coin stream is read without its group
-- **WHEN** the plan is the `base` cell
+- **WHEN** the plan is the `base` cell, with `FUZZING` in the plan
 - **THEN** no `u_L`, `u_M` or `u_C` SHALL be drawn, and `dec.own` SHALL carry neither `uL` nor `uM`
-- **AND** the fuzz toss SHALL still be drawn once on every step, after the step's action events are generated
+- **AND** the fuzz toss SHALL be drawn from `RandomHelper` once per step, after the step's action events are generated, and the `fuzz` stream SHALL NOT be read
+- **AND WHEN** the plan is the `as` cell
+- **THEN** the fuzz toss SHALL be drawn from the `fuzz` stream once on every step, whether or not `FUZZING` is in the plan
 
 ### Requirement: Buffer Abandonment by a Preempting Owner
 
 When an LLM stage, the `MopLauncher` stage or the `MopCoin` stage selects while `actionBufferSize() > 0`, the
 selecting stage SHALL itself call the agent's `abandonBuffer(owner)` — injected at assembly as
-`StageCollaborators::abandonBuffer` — with its owner (`llm`, `launcher` or `mop`) before returning `Select` (design
-D-B14.13): the LLM stages through `LlmCall.select`, the launcher and the MOP coin in their own `decide()`.
+`StageCollaborators::abandonBuffer` — with its owner (`llm`, `launcher` or `mop`) (design D-B14.13): the LLM
+stages through `LlmCall.select`, before returning `Select`; the launcher and the MOP coin in their
+`onSelectionKept`, once the agent keeps their selection ("Episode-State Ownership and Reset"). A launcher or
+MOP-coin selection that a post-selection restart replaces SHALL NOT abandon the buffer: the restart's new episode
+clears it through `clearBuffer` and weakens the planned edge, as in APE ("Post-Selection Restart Model Effect").
 `DecisionPipeline.decide` does not call it. The `Budget` stage abandons the buffer it preempts with owner `budget`
 through `budgetNavigation()`, described below (D-B20). `abandonBuffer` SHALL clear the buffer **without**
 `weakenStateTransition`, record `dec.buf=<owner>`, and add one to `RUN_END.counters.bufAbandoned`. The edge the
@@ -528,7 +591,114 @@ records the abandonment of the detached buffer when it was non-empty, leaving th
 - **THEN** the step's action SHALL be the LLM's, the buffer SHALL be empty after the step, and no `weakenStateTransition` call SHALL have been made
 - **AND** the step record SHALL carry `dec.buf="llm"`
 
+#### Scenario: a MOP-coin pick replaced by a restart leaves the buffer
+- **WHEN** in the `mop` cell the buffer holds a planned transition, the `MopCoin` stage selects an action, and a periodic restart then replaces it after selection
+- **THEN** `abandonBuffer` SHALL NOT be called, the step record SHALL carry no `dec.buf`, and `bufAbandoned` and `coinMop` SHALL NOT count the step
+- **AND** the restart's new episode SHALL weaken the planned edge
+- **AND WHEN** on a later step the coin's pick is kept with a non-empty buffer
+- **THEN** the buffer SHALL be abandoned without weakening, with `dec.buf="mop"`, and `coinMop` and `bufAbandoned` SHALL count the step
+
 #### Scenario: a failed path still weakens
 - **WHEN** no preempting owner takes the step and the `SataChain` buffer rung finds that the buffered action's source state is not the current state
 - **THEN** the planned edge SHALL be weakened and the buffer cleared, as in APE
 - **AND** no `dec.buf` SHALL be written
+
+### Requirement: Post-Selection Restart
+
+When `ape.checkRestart` is `true` and `ApeAgent.restartStageMounted()` is `false` (a `SataAgent` without
+`APE_FIXES`, as in `base` and `mop`, and every `RandomAgent` and `ReplayAgent`), `StatefulAgent.updateStateInternal`
+SHALL resolve the step's action, mark it visited when it is a model action, call `ApeAgent.checkRestart(action)`,
+and then run `recordActionHistory` and `moveForward` for a kept action or `resetTrace` for a replaced one. The
+replaced action MAY come from any owner.
+
+#### Scenario: base cell has no Restart stage
+- **WHEN** a `SataAgent` run is resolved from the `base` cell with `ape.checkRestart=true`
+- **THEN** its pipeline SHALL be `[SataChain]`, `PIPELINE.stageCandidates` SHALL carry `Restart` with `enabled:false`, and `restartStageMounted()` SHALL return `false`
+- **AND** every restart of the run SHALL be applied by `ApeAgent.checkRestart` after the step's selection
+
+#### Scenario: a disabled restart keeps the selected action
+- **WHEN** the stage is not mounted, no stability flag is up, the periodic threshold has passed, and the step's selection called `disableRestart()`
+- **THEN** `checkRestart` SHALL return the selected action, which SHALL be recorded and advance the trace through `moveForward`
+
+#### Scenario: the replaced action of the MOP coin is not executed
+- **WHEN** in the `mop` cell the `MopCoin` stage selects an action with `mopWeight=500` on a step on which a stability restart is due
+- **THEN** `checkRestart` SHALL replace it by the start action, and the step record SHALL carry `dec.src:"restart"`
+- **AND** the `MopInteractionLedger` SHALL NOT record the replaced action's key, and no target SHALL be counted for it
+
+### Requirement: Post-Selection Restart Decision
+
+`ApeAgent.checkRestart(origin)` SHALL return `origin` when the `Restart` stage is mounted, when `ape.checkRestart`
+is `false`, on the step's `BadStateException` retry, or when `restartDue()` is false. Otherwise it SHALL return the start action of
+`ApeAgent.startRestart()`, which lowers the stability flag, sets `lastRestartStep`, redraws a `periodic`
+threshold, starts a new episode, writes `dec.restart`, counts one `restarts`, and tosses the start action's kind on
+the helper stream.
+
+#### Scenario: a stability restart replaces the pick whatever the latch
+- **WHEN** the stage is not mounted, the graph-stability flag is up, and the step's SATA selection called `disableRestart()`
+- **THEN** `checkRestart` SHALL return a start action and the step SHALL carry `dec.restart="graph"`
+- **AND** the stability flag SHALL be lowered and `lastRestartStep` set to the step
+
+#### Scenario: no restart is due
+- **WHEN** the stage is not mounted, no stability flag is up, and the steps since the last restart do not exceed `nextRestartThreshold`
+- **THEN** `checkRestart` SHALL return the selected action and SHALL NOT call `startRestart()`
+
+#### Scenario: startRestart without a due restart fails
+- **WHEN** `ApeAgent.startRestart()` is called on a step on which `restartDue()` is false
+- **THEN** it SHALL throw `IllegalStateException`
+
+### Requirement: Post-Selection Restart Model Effect
+
+A replaced action SHALL stay marked visited, and the restart's new episode SHALL clear the SATA buffer through
+`clearBuffer`, weakening the planned edge, with no `dec.buf` (INV-DP-15, as amended: when a post-selection restart
+replaces the selected action, the buffer is cleared as APE's is). The ledger, retirement, UI coverage, budget
+iteration and LLM action history SHALL NOT record the replaced action.
+
+#### Scenario: the replaced action is not recorded by the fork's bookkeeping
+- **WHEN** in the `base` cell a stability restart replaces a SATA pick of a widget never touched in its activity
+- **THEN** `UICoverageTracker` SHALL NOT count that widget's interaction, and the LLM action history SHALL NOT hold the replaced action
+
+#### Scenario: a SATA pick replaced by a periodic restart is marked visited and the planned edge weakened
+- **WHEN** in the `base` cell 41 steps have passed since the last restart, `nextRestartThreshold` is `40`, the SATA buffer holds a planned transition, and the step's SATA selection does not call `disableRestart()`
+- **THEN** the selected model action SHALL be marked visited before `checkRestart` runs
+- **AND** `checkRestart` SHALL return a start action of kind `periodic`, `moveForward` and `recordActionHistory` SHALL NOT run for the selected action, and the trace SHALL be reset
+- **AND** the new episode SHALL clear the buffer through `clearBuffer`, weakening the planned edge, with no `dec.buf`
+
+### Requirement: Post-Selection Restart on the BadStateException Retry
+
+The post-selection restart SHALL run only on the step's first `updateStateInternal`. On the
+`BadStateException` retry of `ApeAgent.updateStateWrapper`, `checkRestart` SHALL return the retry's selected
+action unchanged, as APE's retry, which has no `checkRestart`, does. The `badStateRetry` flag marks the retry: set
+before it, cleared at step start, read only by `checkRestart`. On the stage path the retry runs `Restart` again.
+
+#### Scenario: the BadStateException retry does not restart
+- **WHEN** in the `mop` cell step 41 opens with `nextRestartThreshold` `40` and no restart since step 0, the step's first state build throws `BadStateException`, and the retry's SATA selection does not call `disableRestart()`
+- **THEN** `checkRestart` SHALL return the retry's selected action, no `restarts` SHALL be counted and `lastRestartStep` SHALL stay `0`
+- **AND** the kept action SHALL be recorded and advance the trace through `moveForward`
+- **AND WHEN** step 42 opens and its first `updateStateInternal` selects an action
+- **THEN** `checkRestart` SHALL replace it by a start action of kind `periodic`
+
+### Requirement: Post-Selection Restart Launch Commit
+
+A replaced launch of the `MopLauncher` stage SHALL commit nothing: its activity SHALL NOT enter the stage's
+launched set, the launch budget SHALL NOT be consumed, `launches` SHALL NOT count it, and the buffer SHALL NOT be
+abandoned. A replaced `MopCoin` pick SHALL NOT count `coinMop` or abandon the buffer. Both stages commit in
+`onSelectionKept`, which runs only for a kept action. The cadence reset and the cursor move at the firing.
+
+#### Scenario: a replaced launch frees its activity
+- **WHEN** in the `mop` cell the `MopLauncher` stage selects `com.x.Target` on a step on which a periodic restart is due
+- **THEN** `checkRestart` SHALL replace the launch by a start action, `com.x.Target` SHALL stay eligible, the launch budget SHALL be unchanged, `launches` SHALL NOT be counted and the buffer SHALL NOT be abandoned
+- **AND WHEN** on a later step on which no restart is due the stage selects `com.x.Target` and the action is kept
+- **THEN** `com.x.Target` SHALL enter the launched set and `launches` SHALL count one
+
+### Requirement: Post-Selection Restart Record
+
+After a replacement, `StatefulAgent` SHALL write
+`sink().decisionReplaced(start.toString(), DecisionSource.RESTART.owner(), PickChannel.RESTART.getLabel())` and
+clear `lastDecisionAction`, so the record is the one a step the `Restart` stage takes writes (`event-sink`
+"StepRecord Schema"). LLM attempts made on the step before the replacement SHALL stay in `llm[]`.
+
+#### Scenario: the step record carries src and ch restart
+- **WHEN** in the `base` cell a graph-stability restart is due after SATA selected step 300's action through the ε roulette
+- **THEN** the `s:300` record's `dec` SHALL carry `src:"restart"`, `ch:"restart"`, `restart:"graph"` and an `a` naming the start action
+- **AND** it SHALL carry no `strat`, `draw`, `cfc`, `pri` or scorer field of the replaced decision
+- **AND** `RUN_END.counters.restarts` SHALL count the step once
