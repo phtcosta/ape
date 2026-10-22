@@ -41,6 +41,7 @@ import com.android.commands.monkey.ape.TreePackageGuard;
 import com.android.commands.monkey.ape.agent.ApeAgent;
 import com.android.commands.monkey.ape.agent.ReplayAgent;
 import com.android.commands.monkey.ape.events.ApeEvent;
+import com.android.commands.monkey.ape.events.ApeEvents;
 import com.android.commands.monkey.ape.model.Action;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ActivityTriggerAction;
@@ -803,6 +804,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
         int repeat = refectchInfoCount;
 
         Action action = null;
+        // Whether the agent's updateState ran on this step, so the open record may be this step's.
+        boolean updated = false;
         while (repeat-- > 0) {
             topComp = this.getTopActivityComponentName();
             info = getRootInActiveWindow();
@@ -864,6 +867,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 // cannot be read. It is written once updateState has opened the step's record.
                 int rotation = AndroidDevice.getRotation();
                 action = mAgent.updateState(topComp, info);
+                updated = true;
                 if (action == null) {
                     throw new NullPointerException("Resolved action should not be null");
                 }
@@ -910,6 +914,14 @@ public class MonkeySourceApe implements MonkeyEventSource {
             if (mAgent.canFuzzing()) {
                 Action fuzzingAction = mAgent.generateFuzzingAction();
                 generateEventsForAction(fuzzingAction);
+                // dec.fz: the queued events' kinds, into this step's record only. A step on which
+                // updateState did not run (the null-tree recovery) opened no record, and one whose
+                // updateState opened none (a bad state) holds the previous step's: the sink checks
+                // the record's step.
+                if (updated) {
+                    RunContext.current().sink().fuzzing(mAgent.getTimestamp(),
+                            ApeEvents.fuzzKinds(((FuzzAction) fuzzingAction).getFuzzingEvents()));
+                }
             }
         }
         mAgent.notifyActionConsumed();

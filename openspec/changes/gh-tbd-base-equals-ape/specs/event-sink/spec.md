@@ -58,6 +58,8 @@ Both are MOP fields: in a run without `Feature.MOP` no lookup is made and neithe
 
 **`dec.trig` — a component the trigger fired.** Shape: `{"k":"broadcast"|"service"|"provider","c":"<class>"}`: the kind of component `ComponentTriggerStage` (STATIC, `component-triggering`) dispatched and its class name. It SHALL be written on the record of the step during which the stage fired, whatever that record's `src`: the trigger is a side effect of the step, not a step owner, so it never sets `src`, `ch` or `own.i`. It reaches the open record through its own sink entry, `componentTrigger(kind, className)`, called after the step's `sink.decision(...)` call. Absent on a step on which the trigger did not fire, and on every step of a plan without `COMPONENT_TRIGGER`. `dec.comp` stays the launcher's activity-launch outcome; a component trigger writes no `comp`.
 
+**`dec.fz` — the step's fuzzing** (design D14). Shape: an array of strings, the kinds of the gesture events the step's fuzz action queued, in order, one per `ApeFuzzer` event class: `rotation`, `app_switch`, `key` (every key event, navigation, major-navigation and system alike), `trackball`, `drag`, `pinch`, `click`. The mapping is `ApeEvents.fuzzKind`, read from `FuzzAction.getFuzzingEvents()`. `MonkeySourceApe` SHALL write it through `EventSink.fuzzing(step, kinds)` after the fuzz events are queued, iff the fuzz toss fired and `Agent.canFuzzing()` held, in every cell. Absent means the step did not fuzz; `[]` means the toss fired and no event was queued. Without `APE_FIXES` a pinch is built and not queued (`exploration` "Fuzz Gesture Emission"), so it is missing from `fz`. A step that opened no record of its own writes no `fz`: on the null-tree recovery's `NOP`/`ACTIVATE` step `updateState` did not run, and after a bad state the open record is the previous step's, so the sink writes only into the record whose `s` is the fuzzing step. Telemetry only: no RNG draw and no change to the queued events.
+
 **`llm`** (optional ordered array): one entry per LLM routing attempt made during the step's selection, in occurrence order — completed calls (`call`, `mode`, `tool`, `qwen:[x,y]`, `px:[x,y]`, `result` ∈ `matched|llm_tap|no_match`, optional `reason` ∈ `dead_pair|degenerate|boundary`, optional `repair` (repair-form provenance), `mcls`, `ncls`, `ndist`, `widgets`, `tok:[in,out]`, `ms`, optional `text`, and — when the prompt-dump flag is on (default) — `sys`/`user`/`resp`/`tool_calls`); abandoned attempts (`result:"error"` with `cause` and `detail`); and the once-per-open-episode breaker decline (`result:"breaker_open"` with `trips`). The array holds at most one call entry, completed or abandoned, because a step makes at most one LLM call (`llm-routing` "Declared LLM Fallback"); a breaker decline is not a call.
 
 **`out`** (outcome, attached at step N+1): `new_state` (omitted when false), `target` (STATE ID of the resulting state), `act_changed` (omitted when false). `activity_has_mop` for both the step's and the outcome's activity is carried by the referenced `ACT` dictionary entries, not repeated per record. A record closed without a resolved outcome has no `out` member; a record flushed at teardown has `out:{"resolved":false}`.
@@ -182,11 +184,65 @@ Every `dec` member is telemetry only: none is read by any decision, so they fall
 - **AND** `trig` SHALL reach the record through `EventSink.componentTrigger("broadcast","com.foo.BootReceiver")`, called after the step's `sink.decision(...)` call
 - **AND** the record SHALL carry no `comp`, which only a launcher step writes
 
+#### Scenario: fuzzing recorded on the step that fuzzed
+- **WHEN** at step 120 of an `as` run the fuzz toss fires, `canFuzzing()` holds, and the fuzz action queues a navigation key, a drag and a system key
+- **THEN** the `s:120` record's `dec` SHALL carry `fz:["key","drag","key"]`
+- **AND WHEN** at step 121 the toss does not fire
+- **THEN** the `s:121` record SHALL carry no `fz`
+- **AND WHEN** a later step is the null-tree recovery's `ACTIVATE` and its toss fires
+- **THEN** no record SHALL receive `fz` for it, and the previous step's record SHALL keep its own `dec`
+
 #### Scenario: LLM attempts survive a post-selection restart
 
 - **WHEN** a plan with `LLM` and without `APE_FIXES` makes an LLM call on step 75 that matches a widget, and a stability restart then replaces the LLM's action after selection
 - **THEN** the `s:75` record's `llm` array SHALL still hold that call's entry with `result:"matched"`
 - **AND** its `dec` SHALL carry `src:"restart"` and `ch:"restart"`, and no `own.trg`
+
+### Requirement: Telemetry Completeness
+
+Every mechanism that can decide or change a step SHALL appear in the trace, with the fact that it acted and, where it is cheap and pure, the counterfactual (INV-SNK-17). The jar records decisions, never outcomes: coverage, violations and scenes are reconstructed offline and stay out of the trace by design. The value of every scorer for every candidate also stays out, because its volume is N candidates × scorers per step; `dec.cfc` answers the causal question without that volume (plan §5, D-A18 Q-13). The mapping is normative:
+
+| Mechanism | Where it appears |
+|---|---|
+| groups mounted, doses, gates, launcher cadence, extension-point variants, variant name | `RUN_START` (`params`, `features`, `inert`, digest, `variant`) |
+| LLM coin, gate that barred, call, action taken, fallback and reason | `dec.own` + `llm[]` |
+| MOP coin, eligibility, action chosen | `dec.own` + `dec.mopd` / `dec.mops` / `dec.hnd` |
+| LLM screenshot that could not be captured | `dec.own.fb:"screenshot"` + `RUN_END.counters.screenshot_failed` |
+| null-tree recovery that relaunched the app (with the launcher) | `RUN_END.counters.nullRelaunches` (a recovery is not a step) |
+| each scorer: the term of the chosen action and whether it changed the choice | scorer fields (`mop` `mopf` `wtg` `navf` `cov` `menu` `form`) + `dec.cfc` |
+| the path inside SATA and its draw | `dec.strat` + `dec.draw` |
+| ties and path choice (X1, X3, X4) | `dec.nav` (and `dec.cfc` for X1) |
+| launcher, Budget, restart | `dec.own` (owner = guard or launcher) + `dec.src` + `dec.ch` (`launcher`, `budget`, `restart`) + `dec.restart` + `RUN_END.counters` (`launches`, `restarts`) |
+| component trigger (STATIC) | `dec.trig` on the record of the step during which it fired |
+| buffer abandoned by preemption | `dec.buf` + `RUN_END.counters.bufAbandoned` |
+| BACK/MENU cap, text origin, display rotation | `dec.bmc`, `dec.inp`, `dec.rot` |
+| fuzzing: the gesture events a fuzz action queued | `dec.fz` (absent when the step did not fuzz) |
+| foreign-activity and tree-package guards | `RUN_END.counters.guardBacks` (a guard BACK is not a step) |
+
+A mechanism added later that can decide or change a step SHALL add its row to this table and its field to the trace in the same change.
+
+#### Scenario: every owner of a run is visible
+
+- **WHEN** an `as_mop_llm` run takes steps through the Budget guard, the restart guard, the LLM coin, the launcher, the MOP coin and SATA
+- **THEN** each of those step records SHALL carry `dec.src` equal to `budget`, `restart`, `llm`, `launcher`, `mop` and `sata` respectively
+- **AND** `RUN_END.counters.restarts` and `launches` SHALL equal the number of records with `src:"restart"` and `src:"launcher"`
+
+#### Scenario: a gate's loss is visible
+
+- **WHEN** at step 7 the LLM coin is won but the screen has 2 actions and `ape.llmGateMinActions=3`
+- **THEN** the `s:7` record's `dec.own` SHALL carry `i:"llm"`, `trg:"coin"`, `g:"min_actions"` and `fb:"gate"`
+- **AND** the step SHALL be counted in `RUN_END.counters.gateMinActions`
+
+#### Scenario: a fuzzed step is visible
+
+- **WHEN** a `base` run fuzzes on step 210, and the fuzz action queues a rotation and a click
+- **THEN** the `s:210` record SHALL carry `dec.fz:["rotation","click"]`
+
+#### Scenario: guard BACKs counted without a step record
+
+- **WHEN** the foreign-activity guard injects 4 BACK events during a run
+- **THEN** no step record SHALL be written for those BACKs
+- **AND** `RUN_END.counters.guardBacks` SHALL be `4`
 
 ### Requirement: RUN_END As the Natural Last Record
 

@@ -454,6 +454,18 @@ public final class NdjsonSink implements EventSink {
         }
     }
 
+    @Override
+    public void fuzzing(int step, List<String> kinds) {
+        if (disabled || !pending.isOpen() || pending.step() != step) {
+            return;
+        }
+        try {
+            pending.fuzzing(kinds);
+        } catch (Throwable failure) {
+            latch("fuzzing", failure);
+        }
+    }
+
     /**
      * Counted whether or not a record is open: a counter totals the run, and a guard BACK sent
      * outside a step is still a BACK the run sent.

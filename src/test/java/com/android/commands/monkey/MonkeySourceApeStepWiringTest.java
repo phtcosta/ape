@@ -64,6 +64,23 @@ public class MonkeySourceApeStepWiringTest {
                         + " : spec.has(Feature.FUZZING) && RandomHelper.toss(rate);"));
     }
 
+    @Test
+    public void theFuzzKindsReachOnlyAStepThatRanUpdateState() throws IOException {
+        String body = generateEventsBody().replaceAll("\\s+", " ");
+        assertEquals(1, count(body, "sink().fuzzing("));
+        int update = body.indexOf("mAgent.updateState(topComp, info); updated = true;");
+        int fuzzed = body.indexOf("generateEventsForAction(fuzzingAction);");
+        int written = body.indexOf("if (updated) { RunContext.current().sink().fuzzing("
+                + "mAgent.getTimestamp(), ApeEvents.fuzzKinds(((FuzzAction) fuzzingAction)"
+                + ".getFuzzingEvents()));");
+        assertTrue("updated is set where updateState returns: " + body, update >= 0);
+        assertTrue("dec.fz is written after the fuzz events are queued, and only when this step "
+                + "ran updateState (the null-tree recovery did not): " + body,
+                fuzzed >= 0 && written > fuzzed);
+        assertTrue("updated starts false on every step",
+                body.contains("boolean updated = false;"));
+    }
+
     /** The body of {@code generateEvents()}, comments removed, brace-matched from its signature. */
     private static String generateEventsBody() throws IOException {
         String source = new String(Files.readAllBytes(Paths.get(SOURCE)), StandardCharsets.UTF_8);

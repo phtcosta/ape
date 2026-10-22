@@ -109,6 +109,8 @@ final class StepRecord {
     private String bufferOwner;
     private String triggerKind;
     private String triggerClass;
+    /** {@code dec.fz}: the kinds of the queued fuzz events; null when the step did not fuzz. */
+    private String[] fuzzKinds;
 
     // LLM sub-events, and the dumps staged for the next one.
     private final List<LlmEvent> llm = new ArrayList<LlmEvent>();
@@ -342,6 +344,10 @@ final class StepRecord {
         this.triggerClass = className;
     }
 
+    void fuzzing(List<String> kinds) {
+        this.fuzzKinds = kinds.toArray(new String[0]);
+    }
+
     void componentLaunch(int result, String error) {
         this.hasComponentLaunch = true;
         this.componentResult = result;
@@ -540,6 +546,14 @@ final class StepRecord {
                     .name("c").value(triggerClass)
                     .endObject();
         }
+        if (fuzzKinds != null) {
+            // Present whenever the step fuzzed: `[]` says the toss fired and queued no event.
+            buf.name("fz").beginArray();
+            for (String kind : fuzzKinds) {
+                buf.value(kind);
+            }
+            buf.endArray();
+        }
     }
 
     private static void optionalName(Json.Buf buf, String name, String value) {
@@ -605,6 +619,7 @@ final class StepRecord {
         bufferOwner = null;
         triggerKind = null;
         triggerClass = null;
+        fuzzKinds = null;
         llmCount = 0;
         stagedSystem = null;
         stagedUser = null;

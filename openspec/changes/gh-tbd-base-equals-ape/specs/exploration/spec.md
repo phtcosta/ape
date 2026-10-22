@@ -90,6 +90,8 @@ INV-EXPL-32: for an agent with a decision pipeline (`SataAgent`), the `Restart` 
 
 The injection happens when `FUZZING` is in the plan, the toss holds, and `Agent.canFuzzing()` admits. `canFuzzing()` is `false` on a step whose selected action's activity has been visited fewer than `ape.fuzzingActivityVisitThreshold` (default: `10`) times (`StatefulAgent.checkFuzzing` sets `disableFuzzing`), preventing fuzzing from disrupting early exploration, and always `false` under `ReplayAgent`.
 
+A step that injects a `FuzzAction` SHALL record the kinds of the gesture events it queued as `dec.fz` (`event-sink` "StepRecord Schema", design D14), with no RNG draw and no change to the events.
+
 #### Scenario: Fuzzing disabled
 
 - **WHEN** `ape.doFuzzing=false`
@@ -104,6 +106,13 @@ The injection happens when `FUZZING` is in the plan, the toss holds, and `Agent.
 - **AND** the current activity's visit count reaches `ape.fuzzingActivityVisitThreshold` (default: `10`)
 - **THEN** across a large number of steps, approximately 2% of steps SHALL inject a `FuzzAction`
 - **AND** the remaining 98% of steps SHALL proceed through the normal action-selection path
+
+#### Scenario: an injected FuzzAction is recorded
+
+- **WHEN** a step's fuzz toss fires, `canFuzzing()` holds, and the `FuzzAction` queues a trackball event and a pinch, with `APE_FIXES` in the plan
+- **THEN** the step's record SHALL carry `dec.fz:["trackball","pinch"]`
+- **AND WHEN** the same events are generated without `APE_FIXES`, so the pinch is not queued
+- **THEN** the record SHALL carry `dec.fz:["trackball"]`
 
 #### Scenario: fuzz toss without APE_FIXES draws from RandomHelper
 

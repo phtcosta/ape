@@ -198,6 +198,17 @@ distinct from `StepRng`'s four (for example `0x2545F4914F6CDD1DL`); `Monkey.mRan
 `.gitignore:13` already ignores `backup/`, so the folder is local and never committed. This change supersedes no
 whole file; it creates the folder with a short `README.md` and moves nothing into it.
 
+**D14 — The step's fuzzing in the record (Pedro, 2026-10-22).** The step record carries `dec.fz`, the kinds of
+the gesture events the fuzz action queued on that step, in order: `rotation`, `app_switch`, `key`, `trackball`,
+`drag`, `pinch`, `click` (one per `ApeFuzzer` event class; every key event is `key`). It is written iff the fuzz toss
+fired and `canFuzzing()` held, in every cell; absent means the step did not fuzz, `[]` that it fired and queued
+nothing. Without `APE_FIXES` a pinch is built and not queued, so it is missing from `fz` while the log still says
+`Fuzzing: generate pinch or zoom.` — that is how a sent and a dropped pinch are told apart. A step that opened no
+record of its own (the null-tree recovery's `NOP`/`ACTIVATE`) writes nothing, because the record still open then is
+the previous step's. Telemetry only: no RNG draw, no change to the events; `RUN_START.v` stays `2`, since no existing
+field changes meaning. aperv-tool's reader ignores unknown `dec` members; mapping `fz` to a `StepRow` field is
+rv-android's work.
+
 ## API Design
 
 ### `Feature.APE_FIXES`

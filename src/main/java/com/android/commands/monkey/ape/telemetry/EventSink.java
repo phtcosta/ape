@@ -258,6 +258,16 @@ public interface EventSink {
      */
     void componentTrigger(String kind, String className);
 
+    /**
+     * {@code dec.fz}: the kinds of the gesture events the step's fuzz action queued, in order
+     * ({@code ApeEvents.fuzzKind}). Written into the open record only when it is the record of
+     * {@code step}, so a step that opened no record of its own writes nothing.
+     *
+     * @param step the step that fuzzed
+     * @param kinds the queued events' kinds, possibly empty
+     */
+    void fuzzing(int step, List<String> kinds);
+
     /** Adds one to a {@code RUN_END.counters} member of isolate-guidance-groups. */
     void count(RunCounter counter);
 

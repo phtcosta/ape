@@ -114,6 +114,10 @@ public final class NoopSink implements EventSink {
     }
 
     @Override
+    public void fuzzing(int step, List<String> kinds) {
+    }
+
+    @Override
     public void count(RunCounter counter) {
     }
 

@@ -213,6 +213,60 @@ public class NdjsonSinkTest {
 
     // --- volume rules (INV-SNK-04, INV-SNK-05) ---------------------------------------------------
 
+    // --- dec.fz (gh-tbd-base-equals-ape D14) ----------------------------------------------------
+
+    @Test
+    public void theFuzzKindsAreWrittenInOrderAndSurviveTheRoundTrip() throws Exception {
+        sink.beginStep(30, 1L, "com.foo/.Main", false, "S1");
+        sink.decision("model=CLICK@x", "sata", "roulette_greedy", 9,
+                0, 0, 0, 0, 0, 0, 0, EventSink.ABSENT, EventSink.ABSENT, null, null);
+        sink.fuzzing(30, Arrays.asList("key", "drag", "pinch"));
+        sink.flushPendingStep();
+
+        JSONArray fz = onlyStepRecord().getJSONObject("dec").getJSONArray("fz");
+        assertEquals(3, fz.length());
+        assertEquals("key", fz.getString(0));
+        assertEquals("drag", fz.getString(1));
+        assertEquals("pinch", fz.getString(2));
+    }
+
+    @Test
+    public void aFiredTossWithNoEventIsAnEmptyArray() throws Exception {
+        sink.beginStep(31, 1L, "com.foo/.Main", false, "S1");
+        sink.decisionNonModel("EVENT_RESTART", "restart", "restart");
+        sink.fuzzing(31, new ArrayList<String>());
+        sink.flushPendingStep();
+
+        assertEquals(0, onlyStepRecord().getJSONObject("dec").getJSONArray("fz").length());
+    }
+
+    @Test
+    public void aStepThatDidNotFuzzHasNoFz() throws Exception {
+        sink.beginStep(32, 1L, "com.foo/.Main", false, "S1");
+        sink.decisionNonModel("EVENT_RESTART", "restart", "restart");
+        sink.beginStep(33, 2L, "com.foo/.Main", false, "S1");
+        sink.decisionNonModel("EVENT_RESTART", "restart", "restart");
+        sink.fuzzing(33, Arrays.asList("click"));
+        sink.flushPendingStep();
+
+        List<JSONObject> steps = stepRecords();
+        assertFalse(steps.get(0).getJSONObject("dec").has("fz"));
+        assertTrue("the reset clears nothing the next step writes",
+                steps.get(1).getJSONObject("dec").has("fz"));
+    }
+
+    @Test
+    public void aStepThatOpenedNoRecordWritesNoFz() throws Exception {
+        // Step 34's record is still open when step 35 fuzzes without having opened its own (a bad
+        // state before selection), so the kinds would land on the wrong step.
+        sink.beginStep(34, 1L, "com.foo/.Main", false, "S1");
+        sink.decisionNonModel("EVENT_RESTART", "restart", "restart");
+        sink.fuzzing(35, Arrays.asList("rotation"));
+        sink.flushPendingStep();
+
+        assertFalse(onlyStepRecord().getJSONObject("dec").has("fz"));
+    }
+
     @Test
     public void aFieldAtItsDefaultIsAbsentRatherThanZero() throws Exception {
         sink.beginStep(1, 1L, "com.foo/.Main", false, "S1");
