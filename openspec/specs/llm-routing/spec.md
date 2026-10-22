@@ -56,20 +56,22 @@ The LLM infrastructure (`LlmClient` with its `SglangClient` and `LlmCircuitBreak
 - **INV-RTR-03**: The `ModelAction` returned by `selectAction()` MUST be either (a) a member of the input `actions` list — a widget action matched by coordinate — or (b) a synthesized `LlmTapAction` of type `MODEL_LLM_TAP` constructed for the off-tree case. In case (b) the action is intentionally NOT a member of `actions`; it is a targetless action carrying the LLM pixel coordinate, mirroring how `EVENT_TRIGGER_ACTIVITY` (activity-frontier) returns a synthesized action not drawn from the state's action set. When even the off-tree construction does not apply (degenerate coordinate, boundary reject, `type_text`, or `back` with no back action), `selectAction()` returns null and the LLM coordinates are logged for telemetry.
 - **INV-RTR-04**: LLM routing SHALL NOT modify `ModelAction.priority` values. LLM selects an action directly; it does not boost priorities. The MOP scoring pass runs independently before LLM routing.
 - **INV-RTR-05**: The LLM members are independent: removing one SHALL NOT affect the others. Each is gated by its own member feature — `LLM_NEW_STATE` (`ape.llmOnNewState`), `LLM_STAGNATION` (`ape.llmOnStagnation`), `LLM_COIN` (`ape.llmPercentage`).
-- **INV-RTR-06**: `LlmEngine.selectAction()` SHALL explicitly null out large intermediate objects (`pngBytes`, `base64Image`, `messages`) in a `finally` block to prevent memory pressure from accumulated screenshots.
+- **INV-RTR-06**: `LlmEngine.selectAction()` SHALL explicitly null out its large intermediate objects (`pngBytes`, `base64`, `messages`) in a `finally` block to prevent memory pressure from accumulated screenshots.
 - **INV-RTR-07**: `totalCalls` SHALL be incremented at the start of each `selectAction()` invocation, counting all attempts regardless of success or failure. The circuit breaker independently limits consecutive failures. There is no call budget limit.
 - **INV-RTR-08**: `ape.llmPercentage` SHALL be clamped to the closed interval `[0.0, 1.0]` at plan resolution (`RunSpec`), before any reader sees it. A configured value `< 0` SHALL become `0.0`; a value `> 1` SHALL become `1.0`. A resolved value `<= 0` leaves `LLM_COIN` out of the plan.
 - **INV-RTR-10**: No dedicated LLM configuration line SHALL exist. The sampling parameters sent by `SglangClient.buildRequestBody` SHALL be the plan's resolved values (`spec().llm()`), fixed at `LlmClient` construction; `RUN_START.params` echoes each one that differs from its jar default, and the build stamp recovers the rest. When `LLM` is not in the plan no LLM component is constructed (INV-RTR-01).
-- **INV-RTR-11**: The sum `timeoutCount + httpErrorCount + connErrorCount + parseErrorCount + imageErrorCount + internalErrorCount + screenshotFailedCount` SHALL equal the number of `selectAction()` attempts abandoned before the mapping step — the attempts that return null **without** emitting an `[APE-LLM-TEL]` line. Exactly one cause counter SHALL be incremented per abandoned attempt (none uncounted, none double-counted). `no_match` outcomes also return null from `selectAction()` but emit an `[APE-LLM-TEL]` line and are counted by `noMatchCount` only; they are outside this sum.
-- **INV-RTR-12**: The `[APE-LLM-CONFIG-ACK]` line SHALL be emitted at most once per run, only after a successful `chat()` response. A run with zero successful responses SHALL emit no ACK line (its absence, combined with the failure-cause counters, is itself diagnostic).
+- **INV-RTR-11**: The sum `timeoutCount + httpErrorCount + connErrorCount + parseErrorCount + imageErrorCount + internalErrorCount + screenshotFailedCount` SHALL equal the number of `selectAction()` attempts abandoned before the mapping step — the attempts that return null **without** appending a completed-mapping `llm[]` sub-event (`result` `matched`, `llm_tap` or `no_match`). Each such attempt appends one `llm[]` sub-event with `result:"error"` and its `cause` (`LlmTelemetry.imageFailed`, `transportFailed`, `parseFailed`, `internalError`), except the screenshot failure, which appends none (INV-RTR-20). Exactly one cause counter SHALL be incremented per abandoned attempt (none uncounted, none double-counted). `no_match` outcomes also return null from `selectAction()` but append a completed-mapping sub-event and are counted by `noMatchCount` only; they are outside this sum.
+- **INV-RTR-12**: The `LLM_ACK` record SHALL be written at most once per run, only after a successful `chat()` response: `LlmTelemetry.acknowledge` calls the sink's `llmAck`, which latches after the first record. A run with zero successful responses SHALL write no `LLM_ACK` (its absence, combined with the failure-cause counters in `RUN_END.counters.llm`, is itself diagnostic).
+- **INV-RTR-13**: When a routed decision's `ParsedAction` carries a repair-form label other than `none` (`llm-infrastructure` INV-LLM-09), the decision's `llm[]` sub-event SHALL carry `repair:"<form>"` and `LlmTelemetry`'s `repairedCount` (`RUN_END.counters.llm.repaired`) SHALL be incremented exactly once for that decision. A decision whose label is `none` SHALL NOT carry the `repair` field and SHALL NOT increment `repairedCount`. `repair` is additive telemetry on a mapped decision: it never suppresses an `error` sub-event and never alters the `parse` cause attribution, which is recorded only when `ToolCallParser.parse()` returns null.
+- **INV-RTR-14**: The status-bar band fraction, the snap-tolerance floor and the request `max_tokens` SHALL be read from the plan's `LlmParams` (`ape.llmBoundaryTopPct`, `ape.llmSnapTolerancePx`, `ape.llmMaxTokens`, owned by `LLM` in `KeyOwnership`), injected once into `CoordinateMapper` and `LlmClient` at construction, with defaults `0.035` / `50` / `1024`. The tolerance floor and `max_tokens` defaults reproduce the formerly hard-coded constants; the band is the single status-bar band of INV-RTR-22, and `ape.llmBoundaryBottomPct` is a retired key.
 - **INV-RTR-15**: A dead pair — `(stateKey, pixelX, pixelY)` for `llm_tap`, `(stateKey, Name.toXPath(), eventType)` for `matched` — SHALL never be returned by `selectAction()` again within the same run once dead per the death rule (**five** executions with `new_state=false`, the same threshold for every widget class the ban covers; a `new_state=true` execution neither counts toward nor resets the accumulated count). A `matched` pair whose resolved target is input-capable per `ApePromptBuilder.INPUT_CLASS_NAMES` SHALL never become dead at any strike count, and SHALL never be entered into the record; the exemption keys on the widget, not the event type, and has no counterpart on the `llm_tap` side, where no widget class exists. The ban anchor SHALL be the stable pair, never a list index. The `matched` anchor is `Name`-level and therefore abstract: one dead pair may cover several physical nodes, and ban counts SHALL NOT be reported as widget counts. The record is per-run and in-memory.
 - **INV-RTR-16**: A dead-pair ban SHALL NOT invoke `breaker.recordFailure()` and SHALL NOT contribute to opening the circuit breaker; the banned decision records pipeline success and returns null through the `no_match` path with `reason=dead_pair`.
 - **INV-RTR-17**: The tool name the model called SHALL constrain the matched `ActionType` in both matching passes: a `click` answer SHALL only ever return a `MODEL_CLICK` widget action (or an off-tree `MODEL_LLM_TAP`); a `type_text` answer SHALL only ever return an input-capable widget action; `long_click` MAY fall back from `MODEL_LONG_CLICK` to `MODEL_CLICK`.
 - **INV-RTR-18**: The snap fallback SHALL measure point-to-rectangle (edge) distance with clamped `dx`/`dy`; a point inside a candidate's bounds has distance 0, and a point within tolerance of a widget's edge SHALL be snappable regardless of the widget's aspect ratio. The tolerance formula and its configuration keys are unchanged.
 - **INV-RTR-19**: The stagnation LLM hook SHALL fire exactly once per stagnation episode: it fires at the first check where `graphStableCounter >= graphStableRestartThreshold / 2` with the episode flag armed, sets the flag, and the flag re-arms only when `graphStableCounter` resets to 0.
-- **INV-RTR-20**: Every routing attempt abandoned at screenshot capture SHALL emit exactly one `[APE-LLM-ERROR] cause=screenshot` line carrying the foreground activity, and SHALL still emit no `[APE-LLM-TEL]` line; `screenshotFailedCount` remains its only cause counter (the INV-RTR-11 partition is unchanged).
+- **INV-RTR-20**: Every routing attempt abandoned at screenshot capture SHALL print exactly one Logger line `[APE-RV] LLM screenshot capture failed, skipping LLM step activity=<activity> detail=<stage>` (`LlmTelemetry.screenshotFailed`), carrying the foreground activity and the failing capture stage (`unknown` when the capture named none), and SHALL append no `llm[]` sub-event; `screenshotFailedCount` remains its only cause counter (the INV-RTR-11 partition is unchanged).
 - **INV-RTR-21**: Within one `LlmEngine.selectAction` call, the `{width, height}` returned by `ScreenshotStep.deviceDimensions` in step 2 SHALL be the only device dimensions used: by `ScreenshotStep.capture` (step 2), by `ApePromptBuilder.build` (step 4), and by `CoordinateMapper.toPixels` and `CoordinateMapper.map` (step 8). No step SHALL determine dimensions of its own.
-- **INV-RTR-22**: The boundary reject SHALL be expressed in the display base of INV-RTR-21. It SHALL reject exactly the answers whose pixel lies in the status-bar band (`pixelY < deviceHeight * ape.llmBoundaryTopPct`) and, in step 8 before the answer is mapped, the answers outside `[0,999]` on either axis whose tool is not `back` (their clamped pixel is still computed by `toPixels`, for telemetry only, and is never matched or tapped). No lower band SHALL exist. A reject SHALL surface as `result:"no_match"` with `reason:"degenerate"` for `(0,0)` and `reason:"boundary"` otherwise; the reason set is unchanged. This supersedes INV-RTR-14's clause that the band defaults reproduce the hard-coded `0.05`/`0.94`.
+- **INV-RTR-22**: The boundary reject SHALL be expressed in the display base of INV-RTR-21. It SHALL reject exactly the answers whose pixel lies in the status-bar band (`pixelY < deviceHeight * ape.llmBoundaryTopPct`) and, in step 8 before the answer is mapped, the answers outside `[0,999]` on either axis whose tool is not `back` (their clamped pixel is still computed by `toPixels`, for telemetry only, and is never matched or tapped). No lower band SHALL exist. A reject SHALL surface as `result:"no_match"` with `reason:"degenerate"` for `(0,0)` and `reason:"boundary"` otherwise; the reason set is unchanged.
 - **INV-RTR-23**: The conditions under which an LLM stage, once its trigger or coin holds, does not call the LLM SHALL be exactly the mounted `LlmGate` chain. That chain is `MinActionsGate(ape.llmGateMinActions)` and then `BreakerGate`, evaluated in this order with short-circuit. A gate whose parameter is `0` SHALL NOT be mounted. `MinActionsGate(3)` admits exactly the states with `getActions().size() >= 3`, which equals the former `> 2`. The SATA action buffer SHALL NOT be a condition of any LLM stage.
 - **INV-RTR-24**: The `LlmCoin` stage's trigger SHALL be `u_L < p_L`, where `u_L` was drawn at step open from `StepRng`'s `llmCoin` stream (`decision-pipeline` INV-DP-13). The `LlmNewState` and `LlmStagnation` triggers SHALL consume no coin.
 - **INV-RTR-25**: On every step on which an LLM stage's trigger or coin held, `dec.own` SHALL record, whichever owner finally took the step: `i="llm"`; the trigger `trg`; the barring gate `g`, when one barred; the fallback reason `fb`, when the LLM did not take the step.
@@ -89,10 +91,10 @@ When the plan carries `LLM_NEW_STATE`, the `LlmNewState` stage SHALL be assemble
    is false, return `Continue` and record nothing.
 2. **Gates.** Evaluate the shared gate chain (INV-RTR-23) on the step's `StepContext`. When a gate refuses,
    return `Continue` and record `dec.own` with `i="llm"`, `trg="new_state"`, `g=<gate name>` and `fb="gate"`.
-3. **Call.** When every gate admits, invoke `LlmEngine.selectAction(..., "new-state", step)`.
+3. **Call.** When every gate admits, invoke `LlmEngine.selectAction(tree, state, actions, recentActions, "new-state")`
+   through the shared `LlmCall.call`. The engine's mode label is `new-state`; `dec.own.trg` is `new_state`.
 4. **Result.** On a non-null result:
-   - stamp the owner `llm` and the channel `llm` through `LlmAcceptance`, the acceptance helper formerly in
-     `LlmGate.accept`, and resolve a synthesized `MODEL_LLM_TAP` against the state (unchanged);
+   - stamp the owner `llm` and the channel `llm` through `LlmAcceptance.accept`, and resolve a synthesized `MODEL_LLM_TAP` against the state (unchanged);
    - when the buffer is non-empty, abandon it without weakening (`decision-pipeline` INV-DP-15);
    - return `Select`.
 
@@ -125,8 +127,6 @@ The stage SHALL run after `adjustActionsByGUITree()` has assigned priorities (un
 - **THEN** all three SHALL consult the same `LlmGate` chain that the composition root mounted from the plan (`MinActionsGate`, then `BreakerGate`)
 - **AND** no stage SHALL carry its own copy of a gate expression, and none SHALL test the action buffer
 
----
-
 ### Requirement: Stagnation LLM Mode
 
 When the plan carries `LLM_STAGNATION`, the `LlmStagnation` stage SHALL be assembled after `LlmNewState` and
@@ -152,7 +152,7 @@ step's pipeline (`decision-pipeline` "Restart Guard Stage").
 
 #### Scenario: LLM provides escape action at or past the stagnation midpoint
 - **WHEN** `graphStableCounter` reaches `threshold / 2` (or any greater value with the flag armed), the state has 3+ actions, and the breaker allows
-- **THEN** the stage SHALL burn the flag and invoke `LlmEngine.selectAction(..., "stagnation", step)`
+- **THEN** the stage SHALL burn the flag and invoke `LlmEngine.selectAction(tree, state, actions, recentActions, "stagnation")`
 - **AND** on a non-null result it SHALL reset `graphStableCounter` to 0 and return `Select` with `dec.src="llm"`
 
 #### Scenario: hook fires once per episode even when the LLM fails
@@ -175,19 +175,17 @@ step's pipeline (`decision-pipeline` "Restart Guard Stage").
 - **THEN** the `LlmStagnation` stage SHALL NOT exist in the pipeline
 - **AND** the restart behavior SHALL proceed unchanged
 
----
-
 ### Requirement: Action Selection Pipeline
 
-`LlmEngine.selectAction(GUITree tree, State state, List<ModelAction> actions, List<ApePromptBuilder.ActionHistoryEntry> recentActions, String mode)` SHALL run the LLM decision pipeline over the decomposed units and return `ModelAction` or `null`. The step semantics are those of the pre-decomposition `LlmRouter.selectAction`, with two exceptions: the prompt shares the decision's coordinate base (step 4) instead of deriving dimensions from the tree's root node, and step 8 refuses an answer outside the answer space and applies one boundary band, the status bar, instead of two (INV-RTR-22). Otherwise only the owner of each step changes:
+`LlmEngine.selectAction(GUITree tree, State state, List<ModelAction> actions, List<ApePromptBuilder.ActionHistoryEntry> recentActions, String mode)` SHALL run the LLM decision pipeline over the decomposed units and return `ModelAction` or `null`. Each step below is owned by one LLM unit ("LLM Unit Lifecycle and Ownership"). The prompt shares the decision's coordinate base (step 4), and step 8 refuses an answer outside the answer space and applies one boundary band, the status bar (INV-RTR-22). The call's `mode` is the label the calling stage passes: `new-state`, `stagnation` or `random`.
 
-**The argument list drops the MOP context (`isolate-guidance-groups`, design D-B1, plan §4.6).** The engine no longer receives a `MopContext`, and no LLM stage reads `ctx.mopData()` to build a prompt. The MOP and static signals reach the prompt as the mounted prompt contributions (`llm-prompt` "Prompt Built From Group Contributions"): the composition root builds `StaticPromptContribution` iff `Feature.STATIC` and `MopPromptContribution` iff `Feature.MOP` is in the plan, and hands that list to the engine's `ApePromptBuilder` when the run's LLM units are constructed (see `LLM Unit Lifecycle and Ownership`); the MOP contribution holds the run's MOP context itself. `recentActions` remains a per-step, agent-owned value that step 4 below hands to `ApePromptBuilder.build(...)`. The engine is constructed once per run and owned by `RunContext`, while the per-step view belongs to the stages — so for the engine to source it itself it would have to hold a `StepContext` or the agent, and design D2 exists to prevent exactly that. The calling stage passes it from `ctx.actionHistory()`, unchanged.
+**The argument list carries no MOP context (design D-B1).** The engine receives no `MopContext`, and no LLM stage reads `ctx.mopData()` to build a prompt. The MOP and static signals reach the prompt as the mounted prompt contributions (`llm-prompt` "Prompt Built From Group Contributions"): the composition root builds `StaticPromptContribution` iff `Feature.STATIC` and `MopPromptContribution` iff `Feature.MOP` is in the plan, and hands that list to the engine's `ApePromptBuilder` when the run's LLM units are constructed (see `LLM Unit Lifecycle and Ownership`); the MOP contribution holds the run's MOP context itself. `recentActions` remains a per-step, agent-owned value that step 4 below hands to `ApePromptBuilder.build(...)`. The engine is constructed once per run and owned by `RunContext`, while the per-step view belongs to the stages — so for the engine to source it itself it would have to hold a `StepContext` or the agent, and design D2 exists to prevent exactly that. The calling stage passes it from `ctx.actionHistory()`, unchanged.
 
 1. `LlmTelemetry` counts the attempt (`totalCalls++`, per INV-RTR-07).
 2. `ScreenshotStep` determines the device dimensions (`deviceDimensions(tree)`: the display bounds, the tree's root node only if the display throws, the 1080 × 1920 constants last) and captures the screenshot at those dimensions. This pair is the decision's coordinate base: steps 4 and 8 use it and determine none of their own (INV-RTR-21). Null capture → `screenshot_failed` counter + the free-text screenshot-failure diagnostic carrying the activity and the failing stage via `LlmTelemetry`, fallback reason `screenshot`, return null. The attempt spends the step's one call (INV-RTR-26). A null capture SHALL NOT record a breaker failure: it neither increments the failure count nor reopens a `HALF_OPEN` breaker, because the server was never asked and nothing about the model's health was learned (design D-B18). The breaker records failures only for transport (step 5) and parse (step 7). This is the one abandoned attempt that produces **no** `llm[]` sub-event (INV-RTR-20).
 3. `ScreenshotStep` resizes and base64-encodes. Null → `image` cause as an `llm[]` sub-event with `result:"error"`, return null.
 4. `ApePromptBuilder.build(deviceWidth, deviceHeight, state, actions, base64, recentActions)` builds the messages from the base prompt and the mounted contributions, with the step-2 dimensions, so every [0,1000) coordinate in the prompt is in the space of the image and of the step-8 mapping (`llm-prompt` INV-PRM-06). The tree is not passed to the builder; `LlmTelemetry` stages the prompt via `llmDump`, which rides the next sub-event as `sys`/`user` when the prompt-dump flag is on (default on).
-5. `LlmClient.chat(messages, tools)` — the tools schema chosen by the same `hasInputField` predicate the prompt used (INV-LLM-11). Null → breaker failure, cause read once from the client's error seam (INV-LLM-08), cause counters + an `llm[]` sub-event with `result:"error"` and that `cause` via `LlmTelemetry`, return null.
+5. `LlmClient.chat(messages, hasInputField)` — `LlmClient` hands `SglangClient.chat` the tools schema selected by the same `hasInputField` predicate the prompt used (INV-LLM-11). Null → breaker failure, cause read once from the client's error seam (INV-LLM-08), cause counters + an `llm[]` sub-event with `result:"error"` and that `cause` via `LlmTelemetry`, return null.
 6. `LlmTelemetry` emits the once-per-run `LLM_ACK` record on the first successful response (INV-RTR-12) and stages the response text, which rides the sub-event as `resp`/`tool_calls` under the same prompt-dump flag.
 7. `ToolCallParser.parse(response)` — including the raw-arguments repair pipeline for native tool-call malformations (`SglangClient.ToolCall.rawArguments` → Level 1 → shared `parseJsonString`), surfacing through the existing `repair=` field (INV-LLM-10, INV-RTR-13). Null → `parse` cause (client seam NOT consulted), return null.
 8. If the answer's tool is not `back` and `CoordinateMapper.inAnswerSpace(x, y)` is false (either coordinate outside `[0,999]`), the answer SHALL NOT be mapped: the match is null and the outcome is `no_match` with `reason:"boundary"` (INV-RTR-22). Its clamped pixel is still computed by `toPixels`, for the sub-event's `px` and the nearest-widget fields only. Otherwise `CoordinateMapper` converts the answer to a pixel with the step-2 dimensions, applies the status-bar boundary band, maps to a `ModelAction` (containment → snap tolerance → off-tree `LlmTapAction` synthesis → `fixTextEdit` conversion → back/long-click preference), and applies the dead-pair ban check (a banned answer is a refused answer: same caller-visible path as `no_match`, breaker still records success — INV-RTR-15/16).
@@ -196,7 +194,7 @@ step's pipeline (`decision-pipeline` "Restart Guard Stage").
 
 **type_text handling**: unchanged — when the match is an input-capable widget and text is present, `setInputText(text)` is applied before returning.
 
-**Known defect preserved, deliberately.** "Unchanged" here includes a defect measured at 28 of 1,233 LLM responses (2.3%): a `type_text` answer can execute a `MODEL_LONG_CLICK`. The containment pass restricts the candidate's `ActionType` only when the tool is `"click"` (`CoordinateMapper.java:160` at `e93dea86`), and `fixTextEdit` returns the match untouched for any tool that is neither `click` nor `long_click` (`:274`), so the long-click preference can win on a `type_text` answer. This stage is behavior-neutral by contract (parity-gated, R8): `CoordinateMapper` SHALL reproduce this path exactly, defect included. The fix is **out of scope here** and belongs to a separate change against `CoordinateMapper`, whose slicing is precisely what makes it testable in a JVM unit. Recording it is mandatory: a silently inherited defect in a newly extracted unit is indistinguishable from a slicing regression when the parity oracle later disagrees.
+**Known defect preserved, deliberately.** "Unchanged" here includes a defect measured at 28 of 1,233 LLM responses (2.3%): a `type_text` answer can execute a `MODEL_LONG_CLICK`. The containment pass restricts the candidate's `ActionType` only when the tool is `"click"` (the containment pass of `CoordinateMapper.map`), and `fixTextEdit` returns the match untouched for any tool that is neither `click` nor `long_click`, so the long-click preference can win on a `type_text` answer. This stage is behavior-neutral by contract (parity-gated, R8): `CoordinateMapper` SHALL reproduce this path exactly, defect included. The fix is **out of scope here** and belongs to a separate change against `CoordinateMapper`, whose slicing is precisely what makes it testable in a JVM unit. Recording it is mandatory: a silently inherited defect in a newly extracted unit is indistinguishable from a slicing regression when the parity oracle later disagrees.
 
 The dead-pair outcome feedback SHALL continue to flow from the join-buffer site in `StatefulAgent` — the point where `new_state` is computed for the step record's `out` section — into the ban record, now `CoordinateMapper.recordLlmOutcome(...)` reached through `RunContext`'s LLM units, with unchanged key material and strike semantics.
 
@@ -254,13 +252,11 @@ The dead-pair outcome feedback SHALL continue to flow from the join-buffer site 
 - **WHEN** any unexpected exception occurs inside the engine
 - **THEN** the engine SHALL catch it, count `internal`, append a sub-event with `result:"error"` and `cause:"internal"`, and return null
 
----
-
 ### Requirement: Coordinate-to-ModelAction Mapping
 
-`LlmRouter.mapToModelAction(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions, State state, int deviceWidth, int deviceHeight)` SHALL map LLM output coordinates to a `ModelAction` for the current state, returning a matched widget action, a synthesized off-tree `LlmTapAction`, or null.
+`CoordinateMapper.map(int pixelX, int pixelY, String actionType, String text, List<ModelAction> actions, State state, int deviceWidth, int deviceHeight)` SHALL map LLM output coordinates to a `ModelAction` for the current state, returning a matched widget action, a synthesized off-tree `LlmTapAction`, or null.
 
-**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * ape.llmBoundaryTopPct` (default `0.035`: the 63 px status bar of the campaign AVD over its 1794 px display, and any degenerate `(0,0)` emission), `mapToModelAction` SHALL return null and log the boundary reject. This prevents the LLM from tapping system UI, and no off-tree tap is synthesized for these coordinates. `deviceHeight` is the display height `ScreenshotStep.deviceDimensions` returned (INV-RTR-21), which on Android excludes the navigation bar, and `normalize` clamps every answer to `[0, deviceHeight − 1]`. There is therefore no lower band: the bottom of the display is app content (bottom navigation, footer buttons, snackbar actions), and an answer that points outside the image is refused before it is mapped ("Action Selection Pipeline" step 8, `CoordinateMapper.inAnswerSpace`). The top fraction is configuration-exposed (J1b) for devices of another density (INV-RTR-22). The former `ape.llmBoundaryBottomPct` was a fraction written for a 1920-high screen whose bottom 6 % was the navigation bar; on the display it rejected y ∈ (1686, 1794), and it is retired.
+**Boundary reject**: Before coordinate matching, if `pixelY < deviceHeight * ape.llmBoundaryTopPct` (default `0.035`: the 63 px status bar of the campaign AVD over its 1794 px display, and any degenerate `(0,0)` emission), `CoordinateMapper.map` SHALL return null and print the Logger line `[APE-RV] LLM coordinate rejected (boundary): pixelY=<y> deviceHeight=<h>`. This prevents the LLM from tapping system UI, and no off-tree tap is synthesized for these coordinates. `deviceHeight` is the display height `ScreenshotStep.deviceDimensions` returned (INV-RTR-21), which on Android excludes the navigation bar, and `normalize` clamps every answer to `[0, deviceHeight − 1]`. There is therefore no lower band: the bottom of the display is app content (bottom navigation, footer buttons, snackbar actions), and an answer that points outside the image is refused before it is mapped ("Action Selection Pipeline" step 8, `CoordinateMapper.inAnswerSpace`). The top fraction is configuration-exposed (J1b) for devices of another density (INV-RTR-22). The former `ape.llmBoundaryBottomPct` was a fraction written for a 1920-high screen whose bottom 6 % was the navigation bar; on the display it rejected y ∈ (1686, 1794), and it is retired.
 
 **ActionType filter (both matching passes)**: the tool the model called SHALL constrain the `ActionType` of the matched action, in the containment pass AND the Euclidean fallback:
 - `"click"` SHALL match only `MODEL_CLICK` actions (measured defect this closes: a `click` answer executed CLICK only 80.9% of the time — the rest matched long-clicks, scrolls, or other types sharing the widget's bounds);
@@ -271,37 +267,37 @@ The dead-pair outcome feedback SHALL continue to flow from the join-buffer site 
 - If `actionType` equals `"back"`, the state's `backAction` SHALL be returned directly without coordinate matching.
 - If `actionType` equals `"type_text"` and a match is found, the caller SHALL call `action.getResolvedNode().setInputText(text)` to inject the LLM-provided text into APE's existing input event generation pipeline.
 
-**fixTextEdit (input-widget click conversion)**: when `actionType` is `"click"` or `"long_click"` and the matched widget (containment or snap) is input-capable (EditText, SearchView, AutoCompleteTextView), `mapToModelAction` SHALL NOT return the bare click. It SHALL convert the decision into a text-entry action on that widget: the target comes from the LLM coordinate (the *where*), and the text is generated by APE's existing typed-input generation path — the same generator a SATA-selected input action uses (the *what*); no second LLM call is made. This removes the bare click on input widgets from the LLM's effective action space (banning by subtraction — the mechanism that outperforms prompt instruction), attacking the measured `type_text≈0` collapse. EditText is the widget class with the model's best grounding (93.1%), so the *where* is trustworthy; only the *what* was missing. The input-capable set used here is the same one that exempts these widgets from the dead-pair ban ("Deterministic Dead-Pair Ban") — a decision that resolves to an input widget is transformed rather than refused, and is never withdrawn from the action space by repetition.
+**fixTextEdit (input-widget click conversion)**: when `actionType` is `"click"` or `"long_click"` and the matched widget (containment or snap) is input-capable (EditText, SearchView, AutoCompleteTextView), `CoordinateMapper.map` SHALL NOT return the bare click. It SHALL convert the decision into a text-entry action on that widget: the target comes from the LLM coordinate (the *where*), and the text is generated by APE's existing typed-input generation path — the same generator a SATA-selected input action uses (the *what*); no second LLM call is made. This removes the bare click on input widgets from the LLM's effective action space (banning by subtraction — the mechanism that outperforms prompt instruction), attacking the measured `type_text≈0` collapse. EditText is the widget class with the model's best grounding (93.1%), so the *where* is trustworthy; only the *what* was missing. The input-capable set used here is the same one that exempts these widgets from the dead-pair ban ("Deterministic Dead-Pair Ban") — a decision that resolves to an input widget is transformed rather than refused, and is never withdrawn from the action space by repetition.
 
 **Bounds containment (primary matching strategy)**: For each action passing the ActionType filter where `action.requireTarget() == true` AND `action.isValid() == true` AND `action.getResolvedNode() != null`, check if `(pixelX, pixelY)` falls within the node's `getBoundsInScreen()` rectangle. If exactly one action's bounds contain the point, return that action. If multiple actions' bounds contain the point, return the one with the smallest area (most specific widget).
 
 **Edge-based distance (fallback matching)**: If no action's bounds contain the point, compute the **point-to-rectangle distance** from `(pixelX, pixelY)` to each candidate's resolved bounds: `dx = max(bounds.left − pixelX, 0, pixelX − bounds.right)`, `dy = max(bounds.top − pixelY, 0, pixelY − bounds.bottom)`, `dist = hypot(dx, dy)` (zero when the point is inside). Return the action with the minimum distance if that distance is within the proportional tolerance `max(ape.llmSnapTolerancePx, min(nodeWidth, nodeHeight) / 2)` pixels (floor default `50`, configuration-exposed per J1b; read from the plan, `spec().llm().integer("ape.llmSnapTolerancePx")`, with no `Config` field, design D-B24). This replaces centre-distance, whose geometry punished elongated widgets: on a 1080×150 bar, only points within ~75 px of the **centre** could snap, leaving ~450 px of the bar's own edge unsnappable — a tap 20 px outside a wide widget failed while being visually on target. The `ape.llmSnapTolerancePx` default is unchanged; raising it (to ~150) is an rv-android configuration decision gated on the dead-pair ban.
 
-**Off-tree coordinate tap (dynamic element)**: If no action's bounds contain the point AND no action is within edge-distance tolerance AND `actionType` is `"click"` or `"long_click"`, `mapToModelAction` SHALL return `new LlmTapAction(state, pixelX, pixelY, "long_click".equals(actionType))` — a targetless `MODEL_LLM_TAP` action carrying the LLM coordinate. Because the answer-space check, the clamp in `normalize` and the boundary reject run first, a coordinate reaching this point is inside the display and non-degenerate. For any other `actionType` (e.g. `type_text`), `mapToModelAction` SHALL return null. This is the mechanism by which APE acts on elements invisible to UIAutomator (game canvas, custom view, Compose-without-semantics).
+**Off-tree coordinate tap (dynamic element)**: If no action's bounds contain the point AND no action is within edge-distance tolerance AND `actionType` is `"click"` or `"long_click"`, `CoordinateMapper.map` SHALL return `new LlmTapAction(state, pixelX, pixelY, "long_click".equals(actionType))` — a targetless `MODEL_LLM_TAP` action carrying the LLM coordinate. Because the answer-space check, the clamp in `normalize` and the boundary reject run first, a coordinate reaching this point is inside the display and non-degenerate. For any other `actionType` (e.g. `type_text`), `CoordinateMapper.map` SHALL return null. This is the mechanism by which APE acts on elements invisible to UIAutomator (game canvas, custom view, Compose-without-semantics).
 
 #### Scenario: LLM says "back"
 
-- **WHEN** `mapToModelAction(0, 0, "back", null, actions)` is called
+- **WHEN** `CoordinateMapper.map(0, 0, "back", null, actions)` is called
 - **THEN** `state.getBackAction()` SHALL be returned
 - **AND** no coordinate matching SHALL be performed
 
 #### Scenario: click answer only matches MODEL_CLICK
 
-- **WHEN** `mapToModelAction(200, 230, "click", null, actions)` is called
+- **WHEN** `CoordinateMapper.map(200, 230, "click", null, actions)` is called
 - **AND** the only action whose bounds contain the point is a `MODEL_LONG_CLICK`
 - **THEN** that action SHALL NOT be returned by the containment pass
 - **AND** matching SHALL proceed to the edge-distance fallback over `MODEL_CLICK` candidates (or off-tree synthesis)
 
 #### Scenario: Click coordinates inside button bounds
 
-- **WHEN** `mapToModelAction(200, 230, "click", null, actions)` is called
+- **WHEN** `CoordinateMapper.map(200, 230, "click", null, actions)` is called
 - **AND** MODEL_CLICK action A has resolved node bounds `[100, 200, 300, 250]` (contains point)
 - **AND** MODEL_CLICK action B has resolved node bounds `[0, 0, 480, 800]` (also contains point, but larger)
 - **THEN** action A SHALL be returned (smallest area containing the point)
 
 #### Scenario: edge snap on an elongated bar
 
-- **WHEN** `mapToModelAction(540, 180, "click", null, actions)` is called
+- **WHEN** `CoordinateMapper.map(540, 180, "click", null, actions)` is called
 - **AND** a MODEL_CLICK bar has bounds `[0, 200, 1080, 350]`, whose centre is `(540, 275)` — the point is 20 px above the bar's top edge but 95 px from its centre
 - **THEN** the point-to-rectangle distance SHALL be 20 (dx=0, dy=20)
 - **AND** with tolerance `max(50, 75) = 75` the bar SHALL be snapped and returned
@@ -309,53 +305,53 @@ The dead-pair outcome feedback SHALL continue to flow from the join-buffer site 
 
 #### Scenario: click on an EditText becomes text entry
 
-- **WHEN** `mapToModelAction(225, 325, "click", null, actions)` is called
+- **WHEN** `CoordinateMapper.map(225, 325, "click", null, actions)` is called
 - **AND** the containing widget is an EditText
 - **THEN** the bare click SHALL NOT be returned
 - **AND** the decision SHALL become a text-entry action on that EditText whose text comes from APE's typed-input generation path
 
 #### Scenario: type_text targets EditText
 
-- **WHEN** `mapToModelAction(225, 325, "type_text", "user@example.com", actions)` is called
+- **WHEN** `CoordinateMapper.map(225, 325, "type_text", "user@example.com", actions)` is called
 - **AND** action C is an EditText at bounds `[50, 300, 400, 350]` (contains point)
 - **THEN** action C SHALL be returned
 - **AND** the caller SHALL call `action.getResolvedNode().setInputText("user@example.com")`
 
 #### Scenario: long_click prefers MODEL_LONG_CLICK
 
-- **WHEN** `mapToModelAction(200, 230, "long_click", null, actions)` is called
+- **WHEN** `CoordinateMapper.map(200, 230, "long_click", null, actions)` is called
 - **AND** the same widget offers MODEL_LONG_CLICK and MODEL_CLICK actions containing the point
 - **THEN** the MODEL_LONG_CLICK action SHALL be returned
 
 #### Scenario: Off-tree click builds an LlmTapAction
 
-- **WHEN** `mapToModelAction(600, 900, "click", null, actions, state, 1080, 1794)` is called
+- **WHEN** `CoordinateMapper.map(600, 900, "click", null, actions, state, 1080, 1794)` is called
 - **AND** no MODEL_CLICK action contains the point and none is within edge-distance tolerance
-- **THEN** `mapToModelAction` SHALL return a new `LlmTapAction` of type `MODEL_LLM_TAP` with `pixelX=600`, `pixelY=900`, `longClick=false`
+- **THEN** `CoordinateMapper.map` SHALL return a new `LlmTapAction` of type `MODEL_LLM_TAP` with `pixelX=600`, `pixelY=900`, `longClick=false`
 
 #### Scenario: Off-tree type_text stays no_match
 
-- **WHEN** `mapToModelAction(600, 900, "type_text", "hello", actions, state, 1080, 1794)` is called
+- **WHEN** `CoordinateMapper.map(600, 900, "type_text", "hello", actions, state, 1080, 1794)` is called
 - **AND** no input-capable widget contains or is near the point
-- **THEN** `mapToModelAction` SHALL return null (no off-tree tap is synthesized for text input)
+- **THEN** `CoordinateMapper.map` SHALL return null (no off-tree tap is synthesized for text input)
 
 #### Scenario: Boundary reject — status bar
 
-- **WHEN** `mapToModelAction(540, 40, "click", null, actions, state, 1080, 1794)` is called
+- **WHEN** `CoordinateMapper.map(540, 40, "click", null, actions, state, 1080, 1794)` is called
 - **AND** `pixelY (40) < deviceHeight * ape.llmBoundaryTopPct (62.79 at the 0.035 default)`
-- **THEN** `mapToModelAction` SHALL return null
+- **THEN** `CoordinateMapper.map` SHALL return null
 - **AND** no `LlmTapAction` SHALL be constructed
 
 #### Scenario: toolbar below the status bar is not rejected
 
-- **WHEN** `mapToModelAction(540, 80, "click", null, actions, state, 1080, 1794)` is called
+- **WHEN** `CoordinateMapper.map(540, 80, "click", null, actions, state, 1080, 1794)` is called
 - **AND** a MODEL_CLICK toolbar action has bounds `[0,63][1080,210]`
 - **THEN** the boundary check SHALL pass (80 ≥ 62.79)
 - **AND** the toolbar action SHALL be returned
 
 #### Scenario: Boundary reject — navigation bar
 
-- **WHEN** `mapToModelAction(135, 1720, "click", null, actions, state, 1080, 1794)` is called
+- **WHEN** `CoordinateMapper.map(135, 1720, "click", null, actions, state, 1080, 1794)` is called
 - **AND** a MODEL_CLICK bottom-navigation item has bounds `[0,1647][270,1794]`
 - **THEN** no boundary reject SHALL occur: the navigation bar lies below the 1794 px display, outside every pixel `normalize` can produce, so there is no lower band to reject it with
 - **AND** the bottom-navigation item SHALL be returned (under the retired `0.94` band, `1720 > 1686.36` was rejected)
@@ -367,7 +363,7 @@ The dead-pair outcome feedback SHALL continue to flow from the join-buffer site 
 
 ### Requirement: Server Model Acknowledgement
 
-The router SHALL emit one `{"type":"LLM_ACK","server_model":"<model>"}` record (event-sink capability) after the first successful `chat()` response of the run, carrying the model identifier reported by the server in the response envelope (`unknown` when the response omits the field). The `RUN_START` plan echo records the model the run *requested*; `LLM_ACK` records what the server *actually served* — the pair proves an arm talked to the intended model without inspecting the server. At most one `LLM_ACK` per run; a run with zero successful responses emits none (its absence, with the failure-cause counters, is itself diagnostic).
+`LlmTelemetry.acknowledge` SHALL emit, through the sink's `llmAck`, one `{"type":"LLM_ACK","server_model":"<model>"}` record (event-sink capability) after the first successful `chat()` response of the run, carrying the model identifier reported by the server in the response envelope (`unknown` when the response omits the field). The `RUN_START` plan echo records the model the run *requested*; `LLM_ACK` records what the server *actually served* — the pair proves an arm talked to the intended model without inspecting the server. At most one `LLM_ACK` per run (the sink latches after the first); a run with zero successful responses emits none (its absence, with the failure-cause counters, is itself diagnostic).
 
 #### Scenario: Server model acknowledged once
 
@@ -383,14 +379,14 @@ The router SHALL emit one `{"type":"LLM_ACK","server_model":"<model>"}` record (
 
 ### Requirement: LLM Telemetry Logging
 
-`LlmRouter` SHALL record structured per-attempt telemetry as `llm[]` sub-events on the current step's `StepRecord` (event-sink capability) and aggregate counters reported in `RUN_END`.
+`LlmTelemetry` SHALL record structured per-attempt telemetry as `llm[]` sub-events on the current step's `StepRecord` (event-sink capability), through the sink's `llmCall`, `llmError` and `llmDump`, and aggregate counters reported in `RUN_END.counters.llm`. The breaker-decline sub-event is written by `LlmClient.allows()` through the sink's `llmBreakerOpen`.
 
 **Per-attempt sub-event** (one array entry per routing attempt, in occurrence order within the step):
 
 | Field | Values |
 |-------|--------|
 | `call` | running call counter for the run |
-| `mode` | `new_state`, `stagnation`, `random` |
+| `mode` | the engine's mode label as the calling stage passes it to `LlmCall.call`: `new-state` (with a hyphen), `stagnation`, `random`. This is not the `dec.own.trg` vocabulary (`new_state`, `stagnation`, `coin`); the trace carries both as written |
 | `tool` | the parsed tool name (`click`, `long_click`, `type_text`, `back`) |
 | `qwen` / `px` | `[x,y]` model-space and mapped pixel coordinates |
 | `result` | `matched`, `llm_tap`, `no_match` for completed mappings; `error` for attempts abandoned before the mapping step; `breaker_open` for the once-per-open-episode breaker decline |
@@ -400,13 +396,13 @@ The router SHALL emit one `{"type":"LLM_ACK","server_model":"<model>"}` record (
 | `tok` | `[prompt_tokens, completion_tokens]` (0 if unavailable) |
 | `ms` | wall-clock milliseconds for the full pipeline (screenshot → response) |
 | `text` | only for text-entry decisions: the typed text (JSON-escaped by the serializer) |
-| `cause` / `detail` | only on `result:"error"`: exactly one named cause per abandoned attempt — `timeout`, `http_<status>`, `connection`, `parse`, `image`, `internal` — attributed at the failure point (client seam `getLastErrorCause()` consulted only when `chat()` returned null; router-attributed otherwise). The screenshot-capture failure keeps its counter (`screenshot_failed`) and its existing free-text line, with no `error` sub-event |
-| `trips` | only on `result:"breaker_open"`: the breaker trip count; emitted at the first routing-predicate decline of each open episode only, using a side-effect-free breaker state query (`isOpen()`), never a second `shouldAttempt()` |
+| `cause` / `detail` | only on `result:"error"`: exactly one named cause per abandoned attempt — `timeout`, `http_<status>`, `connection`, `parse`, `image`, `internal` — attributed at the failure point (client seam `getLastErrorCause()` consulted only when `chat()` returned null; attributed by `LlmEngine` otherwise). The screenshot-capture failure keeps its counter (`screenshot_failed`) and its free-text Logger line (INV-RTR-20), with no `error` sub-event |
+| `trips` | only on `result:"breaker_open"`: the breaker trip count; written by `LlmClient.allows()` at the first breaker decline of each open episode only, using a side-effect-free breaker state query (`isOpen()`), never a second `shouldAttempt()` |
 | `sys` / `user` / `resp` / `tool_calls` | prompt and response dumps, present when the prompt-dump flag is on (default on — recordability parity with the retired unconditional `[APE-LLM-PROMPT]`/`[APE-LLM-RESPONSE]` lines) |
 
 No sub-event carries a step, activity, or variant field: the step and activity are the parent record's envelope, and the prompt variant is run-constant in the `RUN_START` plan echo. The `repair` field remains orthogonal to `result` (a repaired call yields a normal outcome plus `repair=<form>`).
 
-**Counters**: the per-cause failure counters (partitioning the retired `null`), `matched`/`llm_tap`/`no_match`/`dead_pair`/`repaired`, token and latency totals, and `breaker_trips` SHALL be maintained exactly as before and exposed via an accessor consumed by the `RUN_END` emitter. The decisions denominator (`matched + llm_tap + no_match + Σ failure causes`) is derived by consumers; no ratio is stored.
+**Counters**: the per-cause failure counters (partitioning the retired `null`), `matched`/`llm_tap`/`no_match`/`dead_pair`/`repaired`, token and latency totals, and `breaker_trips` SHALL be maintained by `LlmTelemetry` and exposed through `counters()`, which teardown hands to the `RUN_END` emitter; they are written as the nested object `RUN_END.counters.llm`, present exactly when `LLM` is in the plan. The decisions denominator (`matched + llm_tap + no_match + Σ failure causes`) is derived by consumers; no ratio is stored.
 
 **Where the retired renderings' assertions went.** Four scenarios below keep the header the pre-change
 requirement gave them and carry a body this change contradicts, because the thing they asserted is
@@ -436,7 +432,7 @@ question is not whether the old line is gone but where its claim lives now:
 
 - **WHEN** two decisions in a run are banned by the dead-pair ban and one is discarded for a boundary coordinate
 - **THEN** the two banned decisions' sub-events SHALL carry `result:"no_match"` with `reason:"dead_pair"`
-- **AND** `RUN_END` SHALL report `no_match:3` and `dead_pair:2` — the overlay counter that makes bucket D, the falsification gate of the ban, countable from the run's last record alone
+- **AND** `RUN_END.counters.llm` SHALL report `no_match:3` and `dead_pair:2` — the overlay counter that makes bucket D, the falsification gate of the ban, countable from the run's last record alone
 
 #### Scenario: Repaired tool call logged and counted
 
@@ -455,7 +451,7 @@ question is not whether the old line is gone but where its claim lives now:
 - **WHEN** one attempt times out and a later attempt gets HTTP 500
 - **THEN** the first step's record SHALL carry `{"result":"error","cause":"timeout",...}` and increment `timeoutCount`
 - **AND** the second's SHALL carry `{"result":"error","cause":"http_500",...}` and increment `httpErrorCount`
-- **AND** `RUN_END` counters SHALL report `timeout:1` and `http_error:1`
+- **AND** `RUN_END.counters.llm` SHALL report `timeout:1` and `http_error:1`
 
 #### Scenario: Router-side parse failure attributed without the client seam
 
@@ -474,12 +470,12 @@ question is not whether the old line is gone but where its claim lives now:
 - **WHEN** `ScreenshotCapture.capture()` returns null on a FLAG_SECURE window while activity `org.fedorahosted.freeotp.MainActivity` is foreground, in a run that ends after 5 attempts of which 3 were abandoned at capture and 1 failed at parse
 - **THEN** the failure SHALL be attributable from the surviving free-text line, which carries `activity=org.fedorahosted.freeotp.MainActivity` and `detail=<stage>` read from the `ScreenshotCapture` seam
 - **AND** `screenshotFailedCount` SHALL be incremented, `breaker.recordFailure()` SHALL NOT be called, and each of the three steps SHALL carry `dec.own.fb:"screenshot"` (design D-B18: the breaker counts transport and parse failures only)
-- **AND** `RUN_END` counters SHALL report `parse_error:1 screenshot_failed:3`
+- **AND** `RUN_END.counters.llm` SHALL report `parse_error:1` and `screenshot_failed:3`
 - **AND** the screenshot failures SHALL have produced no `error` sub-event — the one abandoned attempt that does not, deliberately (INV-RTR-20)
 
 #### Scenario: Stagnation mode triggered
 
-- **WHEN** `shouldRouteStagnation(150)` is called with `graphStableRestartThreshold = 200` and the episode flag armed, and the resulting attempt completes
+- **WHEN** `LlmStagnationStage.stagnationMidpointReached` holds at `graphStableCounter = 150` with `graphStableRestartThreshold = 200` and the episode flag armed, and the resulting attempt completes
 - **THEN** the attempt's sub-event SHALL carry `mode:"stagnation"`
 - **AND** no free-text mode line SHALL be emitted — the pre-change scenario named `[APE-RV] LLM mode=stagnation, state=…`, which no shipped router ever wrote; the trigger condition itself is asserted by `Stagnation LLM Mode`, unmodified by this change
 
@@ -494,6 +490,14 @@ question is not whether the old line is gone but where its claim lives now:
 - **WHEN** the prompt-dump flag is at its default (on)
 - **THEN** each completed call's sub-event SHALL carry `sys`/`user`/`resp` with the prompt and response text JSON-escaped
 - **AND** with the flag off, the same sub-event SHALL omit those fields and nothing else changes
+
+#### Scenario: mode label as the stage passes it
+
+- **WHEN** the new-state stage makes a call that maps to a widget
+- **THEN** the call's sub-event SHALL carry `mode:"new-state"`
+- **AND** the step's `dec.own.trg` SHALL be `"new_state"`
+- **AND WHEN** the coin stage makes a call
+- **THEN** the sub-event SHALL carry `mode:"random"` and `dec.own.trg` SHALL be `"coin"`
 
 ### Requirement: Probabilistic LLM Routing
 
@@ -602,7 +606,7 @@ Every share below is computed against a denominator of **6,500 LLM decisions** �
 - **k=5 raises the floor under every class the exception list named except `EditText`, which keeps its exemption by name.** The list this rule replaces would have granted `Switch`/`CheckBox`/`RadioButton` a threshold of k=2; k=5 grants them 5, so each is protected at least as well without a class test. Those classes are not rare — at k=1 they account for 81 of 2,586 banned pairs (3.1%) in the calibration corpus, with `Spinner` and `CheckedTextView` adding another 25 — so this is dominance by arithmetic, not by rarity. `EditText` is the one member the arithmetic does not cover: the list exempted it outright, and no finite k reproduces an exemption, which is why it survives as the input-capable carve-out above.
 - The uniform threshold also reaches cases no class-name enumeration can: N-ary selection widgets (`Spinner`, where one coordinate opens many options — 10 banned pairs at k=1, dropping to 2 by k=3 and fewer still at k=5), Material/AppCompat subclasses whose simple names differ from the base classes (`SwitchCompat`, `MaterialCheckBox` — the corpus does show AndroidX simple names such as `LinearLayoutCompat`, `FloatingActionButton` and `CardView` reaching the tree, so the divergence is real), and Compose trees that expose no meaningful widget class name at all. The input-capable exemption is a class-name test and inherits exactly this limitation: an input widget whose class name is not one of the four is banned like any other.
 
-**Scope limit (stated because it bounds what this mechanism can be credited with):** the ban check runs *after* `mapToModelAction` returns — the screenshot, the HTTP call and the parse have already completed. The ban changes which action executes; it does NOT reduce the LLM arm's per-step latency cost. In the calibration corpus that cost is 35% of a 300 s run's budget, and it is the dominant reason the LLM arm executes 0.622× the steps and discovers 0.729× the distinct states of the algorithmic arm on the same wall clock. This mechanism raises yield per decision; it does not address throughput, and it is not expected to close that gap on its own.
+**Scope limit (stated because it bounds what this mechanism can be credited with):** the ban check runs *after* `CoordinateMapper.map` returns — the screenshot, the HTTP call and the parse have already completed. The ban changes which action executes; it does NOT reduce the LLM arm's per-step latency cost. In the calibration corpus that cost is 35% of a 300 s run's budget, and it is the dominant reason the LLM arm executes 0.622× the steps and discovers 0.729× the distinct states of the algorithmic arm on the same wall clock. This mechanism raises yield per decision; it does not address throughput, and it is not expected to close that gap on its own.
 
 **Outcome feedback:** `StatefulAgent` SHALL report the outcome of each executed LLM-originated decision to `CoordinateMapper` — reached through `RunContext`'s LLM units, via `recordLlmOutcome(...)` — at the point where `new_state` is computed for the step record's `out` section, using the same single-shot, reference-equality-guarded buffered-decision discipline that closes the record (`event-sink` INV-SNK-08). The key material and strike semantics are unchanged by the decomposition; only the owner of the record moves. Only LLM-originated decisions feed the ban record; SATA-selected actions are never banned.
 
@@ -678,14 +682,14 @@ When the plan carries the LLM feature, `RunContext` SHALL construct and own the 
 - `ApePromptBuilder` — variant from `LlmParams`; `build` takes the decision's display dimensions instead of the `GUITree` (`llm-prompt` "Single Coordinate Base").
 - `ToolCallParser` — unchanged.
 - `CoordinateMapper` — coordinate normalization, the status-bar boundary band (`llmBoundaryTopPct`) and the answer-space check, snap tolerance floor (`llmSnapTolerancePx`), back/long-click preference, `fixTextEdit`, and the dead-pair ban record.
-- `LlmTelemetry` — all LLM counters and latches, and the sink calls that carry them (`llmCall`, `llmError`, `llmBreakerOpen`, `llmDump`, `llmAck`); it exposes the counters through an accessor for `RUN_END` and prints no summary.
+- `LlmTelemetry` — all LLM counters, and the sink calls that carry them (`llmCall`, `llmError`, `llmDump`, `llmAck`); it exposes the counters through `counters()` for `RUN_END.counters.llm` and prints no summary. The breaker-decline sink call `llmBreakerOpen` is made by `LlmClient.allows()`, which owns the open-episode latch.
 - `LlmEngine` — the thin orchestrator of the Action Selection Pipeline over the units above.
 
 The `max_tokens` value SHALL be read once from `LlmParams` and shared by the request body and the `RUN_START` effective-plan echo, so what the trace reports is what the wire carried. No manifest line SHALL be emitted at `LlmClient` construction: every field it carried (model, temperature, top_p, top_k, max_tokens, timeout_ms, prompt_variant, llm_percentage, on_new_state, on_stagnation, stagnation_threshold, url) is in the echo, which states the whole resolved plan rather than the LLM slice of it.
 
-**Per-request tool schema:** the two schema constants (with and without `type_text`) SHALL be built once at construction and the appropriate one passed to each `chat()` invocation by the same `hasInputField` predicate the system message uses (prompt/wire coherence, INV-LLM-11) — unchanged behavior, now owned by `LlmClient`/`LlmEngine`.
+**Per-request tool schema:** the two schema constants (with and without `type_text`) SHALL be built once at `LlmClient` construction, and `LlmClient.chat(messages, hasInputField)` SHALL pass `SglangClient.chat` the one selected by the same `hasInputField` predicate the system message uses (prompt/wire coherence, INV-LLM-11).
 
-When the plan does NOT carry the LLM feature, none of these units SHALL be constructed and no LLM stage SHALL exist in the decision pipeline (feature absent = stage absent, `decision-pipeline` INV-DP-03; replaces the null `_llmRouter` convention of INV-RTR-01).
+When the plan does NOT carry the LLM feature, none of these units SHALL be constructed and no LLM stage SHALL exist in the decision pipeline (feature absent = stage absent, `decision-pipeline` INV-DP-03); `RunContext.llmEngine()` is then null (INV-RTR-01).
 
 All unit references SHALL be final and reused for the entire run; all unit state (counters, latches, ban record, breaker state) is per-run and dies with the process.
 

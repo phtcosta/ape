@@ -23,13 +23,13 @@ For infinite scroll screens (RecyclerView loading items on demand), each scroll 
 
 ### Widget Identification
 
-Widgets are identified by `Name.toXPath()` — the same abstraction the rest of APE-RV uses to identify widgets. This is superior to a coordinate-based scheme (`coords:centerX,centerY`) because:
+Widgets are identified by `Name.toXPath()` — the same abstraction the rest of APE-RV uses to identify widgets — suffixed with the action type: `UICoverageTracker.widgetId` returns `<xpath>|<ActionType.name()>` for a target action (INV-COV-06). This is superior to a coordinate-based scheme (`coords:centerX,centerY`) because:
 
 1. **Scroll-stable**: When content scrolls, `getBoundsInScreen()` changes but `Name` remains the same. A coordinate-based ID would re-register the same widget as "new" after every scroll, causing the coverage gap to oscillate instead of converge (violating INV-COV-02).
 2. **Consistent with the model**: APE-RV already abstracts widgets via `Name` (text, class, index, resourceId combinations). Using a different identification scheme in the tracker creates a parallel, disconnected abstraction that can disagree with the model.
 3. **1:1 with ModelAction targets**: Each `ModelAction` with a target has `action.getTarget()` returning a `Name`. Using `Name.toXPath()` as the widget ID means the tracker and the action selection operate on the same vocabulary.
 
-For non-targeted actions (BACK, MENU, scroll), the tracker uses the `ActionType` name as the widget ID (e.g., `"MODEL_BACK"`).
+For targetless actions (`MODEL_BACK`, `MODEL_MENU`, `MODEL_LLM_TAP`, and any action whose target is null), the tracker uses the `ActionType` name alone as the widget ID (e.g., `"MODEL_BACK"`). Scroll actions require a target, so they are keyed `<xpath>|MODEL_SCROLL_TOP_DOWN` and so on.
 
 ### Coverage Boost Design
 
@@ -63,22 +63,22 @@ The coverage boost is **per-action**, not uniform. Each action receives a boost 
 - **INV-COV-05**: `stateData` SHALL be bounded. When the bound is reached, the tracker SHALL evict entries but SHALL preserve the per-Activity rollup so that already-counted coverage is not zeroed mid-run.
 - **INV-COV-06**: The coverage key for a target action SHALL incorporate the action type, so two distinct action types on the same target widget are tracked as distinct coverage elements.
 - **INV-COV-07**: The coverage dump SHALL be read-only and SHALL run at most once per tracked state at teardown (with an optional additional emission at LRU eviction for that state). It SHALL NOT alter `stateData`, `activityRollup`, registered-widget sets, or any interaction count; `getTotalElements()` and `getTotalInteractions()` SHALL be invariant across the dump.
-- **INV-COV-10**: The teardown coverage dump SHALL be emitted exactly once per run, strictly before every other teardown step that writes output (re-anchored, not dissolved: the pre-change phrasing bound it to the `saveGraph` model-serialization step, which no longer exists, so the binding is now to chain position among writers — today the action-history save); the emission SHALL be read-only (INV-COV-07 applies). It has exactly one call site, so no cross-path idempotence guard is required. This invariant governs the teardown dump only; it makes no claim about the optional per-state emission at LRU eviction that INV-COV-07 and "UICoverageTracker — Coverage Dump" permit.
+- **INV-COV-10**: The teardown coverage dump SHALL be emitted exactly once per run, strictly before every other teardown step that writes output. The binding is to chain position among writers: in `StatefulAgent.tearDown` the chain is `flushPendingStep → superTearDown → coverageDump → actionCounters → activityNodes → namingDump → modelCounters → runEnd`, so the boundary today is the `actionCounters` dump (no teardown step writes a file any more). `flushPendingStep` precedes it and is outside the boundary (it writes one already-serialized `StepRecord`, `event-sink` INV-SNK-08). The emission SHALL be read-only (INV-COV-07 applies). It has exactly one call site, the `coverageDump` step, so no cross-path idempotence guard is required. This invariant governs the teardown dump only; it makes no claim about the optional per-state emission at LRU eviction that INV-COV-07 and "UICoverageTracker — Coverage Dump" permit.
 
 ## Requirements
 
 ### Requirement: UICoverageTracker — Widget Registration
 
 `UICoverageTracker.registerScreenElements(State state, List<ModelAction> actions)` SHALL register all actions of the state as trackable widgets. The widget ID for each action SHALL incorporate the action type for ALL actions:
-- For actions with a target (`requireTarget() == true`): `action.getTarget().toXPath() + "|" + action.getType().name()`
-- For actions without a target (BACK, MENU): `action.getType().name()`
+- For actions with a target (`requireTarget() == true` and a non-null target): `action.getTarget().toXPath() + "|" + action.getType().name()`
+- For every other action (`MODEL_BACK`, `MODEL_MENU`, `MODEL_LLM_TAP`): `action.getType().name()`
 
 Including the action type for target actions ensures distinct action types on the same target widget are tracked separately (INV-COV-06). Registration is idempotent — re-registering the same state replaces the widget set while preserving prior interaction counts for widgets still present.
 
 #### Scenario: Register distinct action types on the same target
-- **WHEN** `registerScreenElements(stateA, actions)` is called for a state where the same `RecyclerView` target has both `MODEL_SCROLL_DOWN` and `MODEL_SCROLL_UP` actions
+- **WHEN** `registerScreenElements(stateA, actions)` is called for a state where the same `RecyclerView` target has both `MODEL_SCROLL_TOP_DOWN` and `MODEL_SCROLL_BOTTOM_UP` actions
 - **THEN** the state SHALL have two distinct registered elements
-- **AND** their IDs SHALL be `"<xpath>|MODEL_SCROLL_DOWN"` and `"<xpath>|MODEL_SCROLL_UP"`
+- **AND** their IDs SHALL be `"<xpath>|MODEL_SCROLL_TOP_DOWN"` and `"<xpath>|MODEL_SCROLL_BOTTOM_UP"`
 
 #### Scenario: Non-target action keyed by type
 - **WHEN** the state has a `MODEL_BACK` action
@@ -91,7 +91,7 @@ Including the action type for target actions ensures distinct action types on th
 
 ### Requirement: Per-Activity coverage aggregation for reporting
 
-Coverage reporting SHALL aggregate per Activity, collapsing the `naming`-level fragments that `StateKey` (`StateKey.java:47,57`) produces for one Activity. The reported coverage for an Activity SHALL be computed over the union of its fragments' registered widgets and interactions, so that finer NamingFactory refinement does not inflate the reported gap. The per-`State` tracking used for steering MAY remain fragment-level; only the reported metric aggregates.
+Coverage reporting SHALL aggregate per Activity, collapsing the `naming`-level fragments that `StateKey` (activity + naming + widgets) produces for one Activity. The reported coverage for an Activity SHALL be computed over the union of its fragments' registered widgets and interactions, so that finer NamingFactory refinement does not inflate the reported gap. The per-`State` tracking used for steering MAY remain fragment-level; only the reported metric aggregates.
 
 #### Scenario: Fragments of one Activity report as one
 - **WHEN** `MainActivity` has fragmented into 4 `StateKey`s via naming refinement
@@ -100,7 +100,7 @@ Coverage reporting SHALL aggregate per Activity, collapsing the `naming`-level f
 
 ### Requirement: Bounded stateData
 
-`UICoverageTracker.stateData` SHALL be bounded to a configurable maximum number of entries. When the bound is exceeded, the tracker SHALL evict the least-recently-updated entries, after folding their coverage into the per-Activity rollup so that eviction does not zero already-counted coverage mid-run (INV-COV-05). This replaces the current unbounded growth (`StatefulAgent.java:163`, no prune).
+`UICoverageTracker.stateData` SHALL be bounded to a configurable maximum number of entries (`Config.coverageMaxStates`, plan key `ape.coverageMaxStates` owned by `COVERAGE_BOOST`, default 2000), as an access-ordered map whose eldest entry is removed once its size exceeds the bound. When the bound is exceeded, the tracker SHALL evict the least-recently-updated entries, after folding their coverage into the per-Activity rollup so that eviction does not zero already-counted coverage mid-run (INV-COV-05).
 
 #### Scenario: Eviction preserves the rollup
 - **WHEN** `stateData` reaches its bound and an entry is evicted
@@ -117,7 +117,7 @@ Coverage reporting SHALL aggregate per Activity, collapsing the `naming`-level f
 
 #### Scenario: Record first interaction
 - **WHEN** `recordInteraction(stateA, clickOkAction)` is called for the first time
-- **THEN** the interaction count for `stateA + "//Button[@text=\"OK\"]"` SHALL be 1
+- **THEN** the interaction count for widget `"//Button[@text=\"OK\"]|MODEL_CLICK"` in `stateA` SHALL be 1
 
 #### Scenario: Record repeated interaction
 - **WHEN** `recordInteraction(stateA, clickOkAction)` is called 3 times
@@ -148,27 +148,26 @@ Coverage reporting SHALL aggregate per Activity, collapsing the `naming`-level f
 `UICoverageTracker.getInteractionCount(State state, String widgetId)` SHALL return the number of times the specific widget has been interacted with in the given state. Returns 0 for unknown state/widget combinations.
 
 #### Scenario: Query interaction count
-- **WHEN** widget "//Button[@text=\"OK\"]" in stateA has been interacted with 5 times
-- **THEN** `getInteractionCount(stateA, "//Button[@text=\"OK\"]")` SHALL return 5
+- **WHEN** widget `"//Button[@text=\"OK\"]|MODEL_CLICK"` in stateA has been interacted with 5 times
+- **THEN** `getInteractionCount(stateA, "//Button[@text=\"OK\"]|MODEL_CLICK")` SHALL return 5
 
 #### Scenario: Unknown widget
-- **WHEN** widget "//Button[@text=\"Cancel\"]" has never been interacted with
-- **THEN** `getInteractionCount(stateA, "//Button[@text=\"Cancel\"]")` SHALL return 0
+- **WHEN** widget `"//Button[@text=\"Cancel\"]|MODEL_CLICK"` has never been interacted with
+- **THEN** `getInteractionCount(stateA, "//Button[@text=\"Cancel\"]|MODEL_CLICK")` SHALL return 0
 
 ### Requirement: Coverage Boost in Action Scoring — Per-Action
 
-`StatefulAgent.adjustActionsByGUITree()` SHALL include a coverage boost pass after the WTG scoring pass. For each valid, target-requiring, resolved action, the boost SHALL be computed per-action based on whether the specific widget has been tested anywhere in the current Activity:
+`StatefulAgent.adjustActionsByGUITree()` runs the `ScoringPipeline`, in which `CoveragePass` (mounted iff `ape.coverageBoostWeight` is non-zero) follows `WtgPass`. For each valid, target-requiring, resolved action, the boost SHALL be computed per-action based on whether the specific widget has been tested anywhere in the current Activity:
 
 ```
 widgetId = UICoverageTracker.widgetId(action)
-interacted = _coverageTracker.hasActivityInteraction(newState.getActivity(), widgetId)
-stateVisits = newState.getVisitedCount()
-if (!interacted) {
-    boost = coverageBoostWeight / (1 + stateVisits / 5)
-} else {
-    boost = 0
+interacted = coverageTracker.hasActivityInteraction(state.getActivity(), widgetId)
+stateVisits = state.getVisitedCount()
+boost = coverageBoostWeight / (1 + stateVisits / 5)   // integer division
+if (!interacted && boost > 0) {
+    action.setPriority(action.getPriority() + boost)
+    action.setCoverageBoost(boost)   // dec.cov
 }
-action.setPriority(action.getPriority() + boost)
 ```
 
 This ensures widgets untested anywhere in the Activity receive the boost while widgets already tested — in this abstract state or any sibling fragment of the same Activity — receive zero. The differential therefore survives NamingFactory refinement: a fragment split does not re-arm the boost for already-exercised widgets.
@@ -219,7 +218,7 @@ The coverage boost SHALL be the plan key `ape.coverageBoostWeight`, the activati
 
 `UICoverageTracker` SHALL expose a read-only dump method that emits, at agent teardown, one `[APE-RV] UICOV` line per tracked state. The line SHALL report the per-state widget-level coverage already held in `stateData` and, when `Feature.MOP` is in the plan, a `mopReach` flag indicating whether the state's Activity gates a MOP target. The dump exists so that per-screen exploration completeness — invisible in the trace otherwise — becomes observable at the end of a run. The tracker and the coverage part of the line are not MOP: they are mounted and written identically in every cell (`base`, `mop`, `as`, `as_mop`, `as_llm`, `as_mop_llm`).
 
-The dump SHALL be invoked from the agent teardown path (`SataAgent.tearDown()`, which holds `_coverageTracker` and, through `StatefulAgent`, `getMopData()`). `getMopData()` SHALL be null if and only if `Feature.MOP` is not in the plan, even when the static artifact was loaded for `STATIC` (design D-B14.21). The `mopReach` value SHALL be computed at the call site as `getMopData().activityHasMop(state.getActivity())`, and only when `getMopData()` is non-null, because `UICoverageTracker` does not hold a `MopData` reference; the value SHALL be supplied to the dump as a predicate over `State`, and the supplied predicate SHALL be absent (null) when `Feature.MOP` is not in the plan.
+The dump SHALL be invoked by the `coverageDump` step of the `StatefulAgent.tearDown` chain, which calls the `dumpCoverage()` hook; `StatefulAgent.dumpCoverage` is a no-op and `SataAgent.dumpCoverage` overrides it, calling `getCoverageTracker().dump(...)` with the predicate built from `getMopData()`. `getMopData()` SHALL be null if and only if `Feature.MOP` is not in the plan, even when the static artifact was loaded for `STATIC` (design D-B14.21). The `mopReach` value SHALL be computed at the call site as `getMopData().activityHasMop(state.getActivity())`, and only when `getMopData()` is non-null, because `UICoverageTracker` does not hold a `MopData` reference; the value SHALL be supplied to the dump as a predicate over `State`, and the supplied predicate SHALL be absent (null) when `Feature.MOP` is not in the plan.
 
 For each tracked state the line format SHALL be, when `Feature.MOP` is in the plan:
 
@@ -270,8 +269,6 @@ The dump SHALL be read-only: it SHALL NOT register widgets, record interactions,
 #### Scenario: Dump does not alter counts
 - **WHEN** the dump runs at teardown
 - **THEN** `getTotalElements()` and `getTotalInteractions()` SHALL return the same values immediately before and immediately after the dump
-
----
 
 ### Requirement: UICoverageTracker — Activity-Scoped Interaction Membership
 

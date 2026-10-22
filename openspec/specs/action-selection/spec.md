@@ -17,15 +17,28 @@ Each step records `dec.src`, the owner that executed it; `dec.strat`, the SATA p
 
 ## Requirements
 
-### Requirement: State.greedyPickLeastVisited() — Priority Tiebreaker
+### Requirement: State.greedyPickLeastVisited() — Scorer-Sum Tie (X1/R2)
 
-`State.greedyPickLeastVisited(ActionFilter filter, LeastVisitedTie tie)` SHALL select the action with the lowest `visitedCount`. When two or more actions share that lowest count, it SHALL hand them, in array order, to the X1 strategy (`LeastVisitedTie`, "SATA Navigation Extension Points (X1, X3, X4)"), which applies **rule R2** (plan P-5, design D-B4): the action whose **scorer sum** is strictly the largest wins; on equal sums the first in array order wins. The scorer sum of an action is the sum of its scorer fields as written by the mounted scoring passes (`mopBoost`, `mopFrontierBoost`, `wtgBoost`, `navFrontierBoost`, `menuBoost`, `coverageBoost`, `formBoost`; `scoring-pipeline` "Scorer Ownership by Group"). The X1 strategy is `ScorerSumLeastVisitedTie`. The pick SHALL NOT read `priority`: priority includes APE's base priority per action type, which differs between actions with no scorer at all, and comparing it changed upstream's choice in every cell.
+`State.greedyPickLeastVisited(ActionFilter filter, LeastVisitedTie tie)` (and its overload with an `excluded`
+action, the form-submit guard) SHALL select the action with the lowest `visitedCount`. `State.leastVisited` collects,
+in array order, the actions sharing that lowest count; `State.pickLeastVisited` returns the single candidate
+without consulting the strategy, and otherwise hands the candidates to the X1 strategy (`LeastVisitedTie`, "SATA
+Navigation Extension Points (X1, X3, X4)"), which applies **rule R2** (plan P-5, design D-B4): the action whose
+**scorer sum** is strictly the largest wins; on equal sums the first in array order wins. The scorer sum of an
+action is the sum of its scorer fields as written by the mounted scoring passes (`mopBoost`, `mopFrontierBoost`,
+`wtgBoost`, `navFrontierBoost`, `menuBoost`, `coverageBoost`, `formBoost`; `scoring-pipeline` "Scorer Ownership by
+Group"), computed by `ScorerSumLeastVisitedTie.scorerSum`. The X1 strategy is `ScorerSumLeastVisitedTie`. The pick
+SHALL NOT read `priority`: priority includes APE's base priority per action type, which differs between actions
+with no scorer at all, and comparing it changed upstream's choice in every cell.
 
-With zero scorers mounted every sum is 0, so the first of the array wins and the pick equals upstream APE (`model/State.java:185-190` at `8f51b99c`). With scorers mounted, a scorer term decides only a visit-count tie; it never overrides a lower visit count (INV-SEL-01). `ape.leastVisitedPriorityTiebreak` and `Feature.LEAST_VISITED_TIEBREAK` are retired ("replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers"); a properties file that sets the key aborts resolution with `retired_key` (`run-spec`). `State` reads no configuration for this pick.
+With zero scorers mounted every sum is 0, so the first of the array wins and the pick equals upstream APE (`model/State.java` at `8f51b99c`). With scorers mounted, a scorer term decides only a visit-count tie; it never overrides a lower visit count (INV-SEL-01). `ape.leastVisitedPriorityTiebreak` and `Feature.LEAST_VISITED_TIEBREAK` are retired ("replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers"); a properties file that sets the key aborts resolution with `retired_key` (`run-spec`). `State` reads no configuration for this pick.
 
 Because the pick is a conversion point for every scorer, it SHALL be pinned by a paired unit test over one fixed action set — same visit counts, same base priorities, called once with scorer fields set and once with every scorer field 0, asserting different picks.
 
 The pick writes `dec.nav` with `x:"X1"` when it resolved a tie, and the step's record carries `dec.cfc` over the scorers with a non-zero term among the tied candidates ("Per-step counterfactual attribution").
+
+The scenario headers below that name a priority tie or a flag are kept because `openspec archive` matches scenarios
+by name; no flag exists and priority is not read.
 
 #### Scenario: Single least-visited action
 - **WHEN** actions have visitedCounts [0, 3, 5]
@@ -57,23 +70,21 @@ The pick writes `dec.nav` with `x:"X1"` when it resolved a tie, and the step's r
 
 ### Requirement: Per-action decision-source telemetry
 
-For every action returned by `selectNewActionNonnull()`, `StatefulAgent.resolveNewAction()` SHALL record one `StepRecord` decision section (event-sink capability), after the action is finalized and before it is executed. Recording is unconditional — no configuration key gates it, and every cell records identically. The record SHALL attribute the action to the **owner that executed the step** (`dec.src`), carry its pick channel (`dec.ch`), the owner record `dec.own` (`decision-pipeline`), and the non-zero scorer fields.
+For every action returned by `selectNewActionNonnull()`, `StatefulAgent.resolveNewAction()` SHALL record one `StepRecord` decision section (event-sink capability), after the action is finalized and before it is executed. Recording is unconditional — no configuration key gates it, and every cell records identically. The record SHALL attribute the action to the **owner that executed the step** (`dec.src`), carry its pick channel (`dec.ch`), the owner record `dec.own` (`decision-pipeline`), and the non-zero scorer fields. Exactly one record exists per finally-selected action (INV-SEL-04).
 
-`ModelAction` SHALL carry a `decisionSource` provenance field set at the point of selection by the selecting `DecisionPipeline` stage (decision-pipeline capability). The field SHALL be populated on every return path: the guards (`budget`, `restart`), the three LLM stages, the launcher, the MOP coin, the SATA chain and the null path. Its value set is the owner enum:
+`ModelAction` SHALL carry a `decisionSource` provenance field set at the point of selection by the selecting `DecisionPipeline` stage (decision-pipeline capability). The field SHALL be populated on every return path: the guards (`budget`, `restart`), the three LLM stages, the launcher, the MOP coin, the SATA chain and the null path. Its value set is the owner enum (`ModelAction.DecisionSource.owner()`):
 
 `budget`, `restart`, `llm`, `launcher`, `mop`, `sata`.
 
-`dec.src` is no longer a largest-boost attribution (design § Telemetry contract). The boost-attribution rule, its precedence `MOP > MopFrontier > WTG > Menu > Form > Coverage` and the values `MOP`, `MopFrontier`, `Coverage`, `Fuzz`, `Menu`, `WTG`, `Component`, `Form` SHALL NOT exist: a scorer's term is visible in its own field (`dec.mop`, `dec.mopf`, `dec.wtg`, `dec.navf`, `dec.menu`, `dec.cov`, `dec.form`) and its causal effect in `dec.cfc` ("Per-step counterfactual attribution"). A step owned by the MOP coin carries `dec.src:"mop"`; a step SATA chose carries `dec.src:"sata"` whatever its boosts.
+`dec.src` is not a largest-boost attribution. The boost-attribution rule, its precedence `MOP > MopFrontier > WTG > Menu > Form > Coverage` and the values `MOP`, `MopFrontier`, `Coverage`, `Fuzz`, `Menu`, `WTG`, `Component`, `Form` SHALL NOT exist: a scorer's term is visible in its own field (`dec.mop`, `dec.mopf`, `dec.wtg`, `dec.navf`, `dec.menu`, `dec.cov`, `dec.form`) and its causal effect in `dec.cfc` ("Per-step counterfactual attribution"). A step owned by the MOP coin carries `dec.src:"mop"`; a step SATA chose carries `dec.src:"sata"` whatever its boosts.
 
 When `dec.src` is `sata`, the record SHALL carry `dec.strat`, the SATA path that chose the action, from the `event-sink` enum (`buffer`, `back_to_activity`, `aba`, `early_roulette`, `greedy_global`, `greedy_path`, `trivial`, `early_backward`, `backtrack`, `eps_back`, `eps_menu`, `least_visited`, `eps_roulette`, `null`, `saturated`). It refines what the channel `sata_other` lumped together. A roulette pick additionally carries `dec.draw` (`[idx,total]`) for offline replay.
 
-`dec.ch` survives as the pick channel (design D-B14.17). It keeps its values for the paths that survive (`roulette_greedy`, `roulette_early`, `launcher`, `llm`, `buffer`, `sata_other`), and three new values name the owners that are not SATA paths: a step the MOP coin takes carries `mop_coin`, a step the `Budget` guard takes carries `budget`, and a step the `Restart` guard takes carries `restart`. `sata_other` is produced only by SATA paths again. The values `short_circuit_unvisited` and `short_circuit_0step` are not produced, because the shortcut left SATA.
+`dec.ch` is the pick channel (`ModelAction.PickChannel`, design D-B14.17): `roulette_greedy`, `roulette_early`, `launcher`, `llm`, `buffer`, `sata_other` for the SATA and LLM/launcher paths, and three values naming the owners that are not SATA paths: a step the MOP coin takes carries `mop_coin`, a step the `Budget` guard takes carries `budget`, and a step the `Restart` guard takes carries `restart`. `sata_other` is produced only by SATA paths. The values `short_circuit_unvisited` and `short_circuit_0step` are not produced.
 
 The record's envelope SHALL carry the step number `s` — the agent exploration timestamp (`getTimestamp()`) at selection time, incremented exactly once per agent step, hence unique within a run — and the time `t` in milliseconds since `RUN_START` (whose record carries the epoch base; the device wall clock remains recoverable as `t0 + t`, preserving offline temporal joins with externally collected artifacts without any APE↔logcat coupling — the heartbeat aside, APE SHALL NOT read from logcat). There is no join key: the outcome attaches to the same record (scoring-pipeline capability).
 
-- **INV-SEL-04**: Exactly one `StepRecord` SHALL be recorded per finally-selected action, covering every selection path including the guards, the LLM stages, the launcher and the MOP coin, in every cell. The record SHALL carry a `dec.src` from the owner enum, never a free-form string, and recording SHALL NOT modify any scorer field.
-
-**Where the retired rendering's assertions went.** Several scenarios below keep the header an earlier requirement gave them and carry a body this change contradicts, because what they assert is what this change removes. Recorded rather than dropped, since the reader's question is where the claim lives now:
+**Where the retired rendering's assertions went.** Several scenarios below keep the header an earlier requirement gave them and carry a body that contradicts it, because what they asserted no longer exists. Recorded rather than dropped, since the reader's question is where the claim lives now:
 
 | Scenario header | What it asserted | Where the claim is now |
 |---|---|---|
@@ -85,6 +96,7 @@ The record's envelope SHALL carry the step number `s` — the agent exploration 
 | `No [APE-STEP] lines when telemetry is disabled` | zero lines with the gate off | **nothing, deliberately** — the key is deleted and aborts plan resolution as an unknown key |
 | `MOP-boosted action from the EARLY_STAGE roulette attributed to MOP`, `MOP-frontier-driven pick attributed to MopFrontier, not WTG`, `Tie precedence MOP>MopFrontier>WTG>Menu>Form>Coverage` | the largest-boost attribution of `dec.src` | `dec.src` names the owner; the scorer term stays in its field, its effect in `dec.cfc` |
 | `pick_channel discriminates short-circuit from roulette` | the shortcut channels | the MOP coin is an owner: `dec.src:"mop"` |
+| `Every step is attributable when telemetry is enabled` | one record per action when the gate is on | INV-SEL-04, with no gate |
 
 #### Scenario: SATA-selected action attributed
 
@@ -114,7 +126,7 @@ The record's envelope SHALL carry the step number `s` — the agent exploration 
 
 - **WHEN** a roulette pick carries scorer fields `mop=300, mopf=300`
 - **THEN** the record SHALL carry `dec.src:"sata"`, `dec.mop:300` and `dec.mopf:300`
-- **AND** no precedence between scorers SHALL exist, because `dec.src` no longer names a scorer
+- **AND** no precedence between scorers SHALL exist, because `dec.src` does not name a scorer
 
 #### Scenario: click on a patch-fabricated widget is marked
 
@@ -238,15 +250,15 @@ Whenever the cap removes candidates from the pick that chooses the step's action
 
 ### Requirement: Per-step counterfactual attribution
 
-When the step's action was chosen by a priority roulette that records `dec.draw` (the EARLY_STAGE unvisited roulette, the epsilon-greedy roulette `State.randomlyPickAction`, and the roulette of the null-action handler) or by the X1 least-visited pick, the `StepRecord`'s decision section SHALL additionally carry `dec.cfc`, a per-scorer counterfactual (plan §5, design § Data Flow 4): `{"<scorer>":0|1}`, one key for each **mounted** scorer whose field is non-zero on at least one candidate of that pick, keyed by the scorer's record name (`mop`, `mopf`, `wtg`, `navf`, `cov`, `menu`, `form`). The value is `1` when the same pick, recomputed with that scorer's field zeroed on every candidate (the other fields and the candidate set unchanged), would have chosen a different action, and `0` otherwise. `dec.cfc` replaces `dec.cf`, which covered only `mopBoost` and `mopFrontierBoost` and named the counterfactual action; `dec.cf` is not written (P3).
+When the step's action was chosen by a priority roulette that records `dec.draw` (the EARLY_STAGE unvisited roulette, the epsilon-greedy roulette `State.randomlyPickAction`, and the roulette of the null-action handler) or by the X1 least-visited pick, the `StepRecord`'s decision section SHALL additionally carry `dec.cfc`, a per-scorer counterfactual (plan §5, design § Data Flow 4): `{"<scorer>":0|1}`, one key for each **mounted** scorer whose field is non-zero on at least one candidate of that pick, keyed by the scorer's record name (`mop`, `mopf`, `wtg`, `navf`, `cov`, `menu`, `form`). The value is `1` when the same pick, recomputed with that scorer's field zeroed on every candidate (the other fields and the candidate set unchanged), would have chosen a different action, and `0` otherwise. `dec.cf` is not written (P3).
 
 Records from other picks (the guards, the LLM, the launcher, the MOP coin, the buffer, the navigation paths) SHALL NOT carry `dec.cfc`: no scorer term takes part in them. A pick with no mounted scorer term among its candidates carries no `dec.cfc`. Because the absence of a key is information, `dec.cfc` is exempt from the defaults-omitted rule for its `0` values (`event-sink` INV-SNK-05).
 
 Recomputation per pick type:
 - A roulette recomputes the weighted pick over the same candidates with each candidate's weight reduced by the zeroed scorer's term, replaying the factual pick's recorded draw as a fraction of total weight.
-- The X1 pick recomputes R2 over the same tied candidates with the zeroed scorer's field removed from every sum; it is deterministic.
+- The X1 pick recomputes R2 over the same tied candidates with the zeroed scorer's field removed from every sum (`ScorerSumLeastVisitedTie.pickWithout`); it is deterministic.
 
-The recomputation is `MopCounterfactual`'s mould generalized to `ScorerCounterfactual`.
+The recomputation lives in `model/ScorerCounterfactual`.
 
 **RNG stream isolation (hard constraint).** The counterfactual recomputation SHALL NOT advance or otherwise perturb any seeded stream (the agent stream, the helper stream, or the own streams of `decision-pipeline`), SHALL call no `resolveAction`, and SHALL touch no cache (INV-SEL-09). A dedicated test SHALL assert sequence identity under a fixed seed with the counterfactual enabled and disabled. This is a distinct property from sink neutrality (`event-sink` INV-SNK-07) and both tests SHALL exist.
 
@@ -283,7 +295,7 @@ The recomputation is `MopCounterfactual`'s mould generalized to `ScorerCounterfa
 
 ### Requirement: SATA Navigation Extension Points (X1, X3, X4)
 
-`SataAgent` SHALL take three tie-breaks through Strategy interfaces fixed in wave 0, each mounted once by the composition root (the `SataAgent` constructor) from the resolved plan. There is no plan key for any of them.
+`SataAgent` SHALL take three tie-breaks through Strategy interfaces, each mounted once by the composition root (`SataAgent.mountExtensionPoints`, called from the `SataAgent` constructor) from the resolved plan. There is no plan key for any of them.
 
 ```java
 interface LeastVisitedTie { ModelAction pick(List<ModelAction> leastVisited); }      // X1
@@ -296,9 +308,9 @@ The implementations are named `<Variant><Interface>` (design D-B12): X1 `ScorerS
 
 | Point | Site | APE default (mounted without `MOP`) | MOP variant (mounted with `MOP`) |
 |---|---|---|---|
-| X1 | the visit-count tie of `State.greedyPickLeastVisited` | `ScorerSumLeastVisitedTie`: rule R2 ("State.greedyPickLeastVisited() — Priority Tiebreaker"); draws nothing | none: X1 has one strategy in every cell |
+| X1 | the visit-count tie of `State.greedyPickLeastVisited` | `ScorerSumLeastVisitedTie`: rule R2 ("State.greedyPickLeastVisited() — Scorer-Sum Tie (X1/R2)"); draws nothing | none: X1 has one strategy in every cell |
 | X3 | the equal-visit-count tie between two greedy targets of the ABA path, in both the same-activity branch (state visit counts) and the cross-activity branch (activity visit counts) | `ApeAbaTargetTie`: never replace the incumbent on a tie; draws nothing | `MopAbaTargetTie`: replace when `stateMopDensity(candidate) > stateMopDensity(incumbent)` (`mop-guidance` "Navigation Tie-Breaks as MOP Variants"); draws nothing |
-| X4 | the choice among the shortest paths to a trivial activity | `ApeTrivialPathPick`: always `RandomHelper.randomPick(paths)`, one draw, also for a single path (upstream `SataAgent` `8f51b99c` `:755-757`) | `MopTrivialPathPick`: the first path whose end state holds the strictly largest density; `randomPick` when every density is equal |
+| X4 | the choice among the shortest paths to a trivial activity | `ApeTrivialPathPick`: always `RandomHelper.randomPick(paths)`, one draw, also for a single path (upstream `SataAgent` at `8f51b99c`) | `MopTrivialPathPick`: the first path whose end state holds the strictly largest density; `randomPick` when every density is equal |
 
 The defaults reproduce upstream APE including RNG consumption, so a cell without `MOP` shifts no draw at these sites (INV-SEL-11). The selection of a variant SHALL happen only at mount time; no use site SHALL branch on MOP availability (INV-SEL-12).
 
@@ -343,12 +355,12 @@ The rule holds whatever owner takes the step. X4 is also consulted by the `Budge
 
 `StatefulAgent` SHALL offer two distinct ways of emptying the SATA action buffer:
 
-- `clearBuffer()` — a **real path failure**: the buffered path no longer matches the observed state or action (`StatefulAgent.java:597-656`, unexpected action or state, then a fresh choice). It SHALL keep upstream behaviour: weaken the next planned edge with `Graph.weakenStateTransition`, then clear the buffer.
+- `clearBuffer()` — a **real path failure**: the buffered path no longer matches the observed state or action (the mismatch checks of `StatefulAgent.selectNewActionFromBuffer`), and the other upstream sites that call it (`refillBuffer`, `resetTrace`, `onActivityStopped`). It SHALL keep upstream behaviour: weaken the next planned edge with `Graph.weakenStateTransition`, then clear the buffer.
 - `abandonBuffer(String owner)` — a **preemption**: an owner placed before SATA in the pipeline (`budget`, `llm`, `launcher`, `mop`) takes a step while the buffer is non-empty. It SHALL clear the buffer **without** weakening any edge (plan P-4, D-A6, design D-B14.13), record `dec.buf` with the owner on the step's record and increment `RUN_END.counters.bufAbandoned`.
 
-A restart step does not go through `abandonBuffer`: the `Restart` guard starts a new episode, which clears the buffer without weakening any edge (design D-B14.13). It records no `dec.buf` and does not count in `bufAbandoned`.
+A restart step does not go through `abandonBuffer`: `StatefulAgent.restartAction()` empties the buffer before the new episode's `resetTrace` runs, so no edge is weakened (design D-B14.13). It records no `dec.buf` and does not count in `bufAbandoned`.
 
-The preempting stages reach the operation through `StageCollaborators.abandonBuffer(owner)` (`decision-pipeline`). An empty buffer is a no-op for both operations, with no `dec.buf` and no counter change.
+The LLM stages, the launcher and the MOP coin reach `abandonBuffer` through the `StageCollaborators::abandonBuffer` reference injected at assembly; the `Budget` guard reaches it through `budgetNavigation()` (`decision-pipeline`). An empty buffer is a no-op for both operations, with no `dec.buf` and no counter change.
 
 #### Scenario: LLM coin preempts a buffered path
 - **WHEN** the buffer holds a 3-edge path A→B→C→D, the step is in state A, and the LLM coin takes the step
@@ -377,15 +389,31 @@ The preempting stages reach the operation through `StageCollaborators.abandonBuf
 - **INV-SEL-01**: `greedyPickLeastVisited()` SHALL always prefer the action with the lowest `visitedCount`; among the actions sharing it, the X1 strategy decides by rule R2 (the larger scorer sum, otherwise array order). Priority SHALL NOT be read by the pick. With zero scorers mounted, the pick SHALL equal upstream APE's.
 - **INV-SEL-02**: When all actions have distinct `visitedCount` values, the pick SHALL be the minimum and the X1 strategy SHALL NOT be consulted.
 - **INV-SEL-03**: The method SHALL remain O(n) — single pass over actions, no sorting.
-- **INV-SEL-04**: When `Config.stepTelemetryEnabled` is `true` (default), exactly one `[APE-STEP]` line SHALL be emitted per finally-selected action, covering every selection path including the LLM early-returns and budget/trivial early-returns. The line SHALL carry a `decision_source` from a fixed enum, never a free-form string. The boost-attribution rule SHALL only change which enum value is carried; it SHALL NOT add, remove, or duplicate `[APE-STEP]` lines, and SHALL NOT modify any boost field. When the flag is `false` (the `ape_pure` arm), zero `[APE-STEP]` lines are emitted while `decisionSource` is still populated internally — scoped by `rv-scoring-pipeline`.
+- **INV-SEL-04**: Exactly one `StepRecord` SHALL be recorded per finally-selected action, covering every selection
+  path including the guards, the LLM stages, the launcher and the MOP coin, in every cell. Recording is
+  unconditional: no plan key gates it. The record SHALL carry a `dec.src` from the owner enum, never a free-form
+  string, and recording SHALL NOT modify any scorer field.
 - **INV-SEL-05**: Every record SHALL carry exactly one `dec.src` from the owner enum `budget`, `restart`, `llm`, `launcher`, `mop`, `sata`, and every record with `dec.src:"sata"` SHALL carry exactly one `dec.strat` from the fixed enum of `event-sink`. Every record SHALL carry one `dec.ch`; a step the MOP coin takes carries `dec.ch:"mop_coin"`, a step the `Budget` guard takes `dec.ch:"budget"` and a step the `Restart` guard takes `dec.ch:"restart"`, and the channel values `short_circuit_unvisited` and `short_circuit_0step` SHALL NOT be produced (design D-B14.17).
-- **INV-SEL-06**: On every emitted `[APE-STEP]` line, `activity_has_mop` SHALL equal `MopData.activityHasMop(<current activity>)` when `MopData` is non-null, and `0` whenever `MopData` is null. The field is 0/1, never absent when the line is emitted.
-- **INV-SEL-07**: Every `[APE-STEP]` line SHALL occupy exactly one physical line; no widget-derived text SHALL introduce an unescaped `\n`/`\r` into the line.
+- **INV-SEL-06**: When `MOP` is in the plan, every `ACT` dictionary entry SHALL carry `mop` equal to
+  `MopData.activityHasMop(<activity>)` as `0|1` (`StatefulAgent.activityHasMop`, handed to
+  `NdjsonSink.beginStep`). When `MOP` is not in the plan, no `ACT` entry SHALL carry `mop`. No step record SHALL
+  carry an `activity_has_mop` member: a step reaches the bit through its `act` id.
+- **INV-SEL-07**: Every `StepRecord` SHALL occupy exactly one physical line; no widget-derived text SHALL introduce an
+  unescaped `\n` or `\r` into it. The property is the serializer's (`ape.runtime.Json`, `event-sink` INV-SNK-02).
 - **INV-SEL-08**: `dec.cfc` SHALL appear only on records whose pick was a priority roulette that writes `dec.draw` or the X1 least-visited pick, and only over mounted scorers with a non-zero term in that pick's candidate set. In a cell without MOP, `dec.cfc` SHALL carry none of the keys `mop`, `mopf`, `wtg`, `menu`.
 - **INV-SEL-09**: The counterfactual recomputation of every scorer SHALL consume zero draws from any seeded stream, call no `resolveAction` and touch no cache.
-- **INV-SEL-10**: Every emitted `[APE-STEP]` line for an action with a resolved target SHALL carry exactly one `patched=0|1` field reporting whether that target's clickability was written by `patchGUITree`; lines for targetless actions SHALL omit it. The bit SHALL be set at the patch sites and never inferred at emission time from post-patch attributes, which are indistinguishable from native ones by construction. `patched=1` records that the patch *wrote* the node's clickability, in either direction — it is set both where the patch grants clickability to a child and where it removes it from the parent — so a causal reading ("this action exists only because of the patch") holds for `MODEL_CLICK` and SHALL NOT be extended to other action types on a patched node.
+- **INV-SEL-10**: For an action with a resolved target node, the step record SHALL carry `dec.patched` as `0|1`,
+  reporting whether that node's clickability was written by `patchGUITree` (`GUITreeNode.isPatchedClickable()`,
+  read by `StatefulAgent.patchedValue`); for a targetless action (`MODEL_BACK`, `MODEL_MENU`, `MODEL_LLM_TAP`) or an
+  action with no resolved node, `dec.patched` SHALL be absent. `dec.patched:0` is written, not omitted (exempt from
+  the defaults-omitted rule). The bit SHALL be set at the patch sites in `GUITreeBuilder` and never inferred at
+  emission time from post-patch attributes, which are indistinguishable from native ones by construction. `1`
+  records that the patch *wrote* the node's clickability, in either direction — where it grants clickability to a
+  child and where it removes it from the parent — so a causal reading ("this action exists only because of the
+  patch") holds for `MODEL_CLICK` and SHALL NOT be extended to other action types on a patched node.
 - **INV-SEL-11**: Each extension point's APE default SHALL consume exactly the RNG draws upstream APE consumes at that site: X1 none, X3 none, X4 one `RandomHelper.randomPick` per pick.
 - **INV-SEL-12**: The MOP variants of X3 and X4 SHALL be mounted if and only if `MOP` is in the resolved plan. No SATA code path SHALL test `getMopData() != null` to choose a tie-break.
 - **INV-SEL-13**: A buffer abandoned by a preempting owner SHALL leave every edge strength of the graph unchanged; only a real failure of the buffered path weakens an edge.
 - **INV-SEL-14**: `dec.src` SHALL be the owner that executed the step and SHALL NOT be derived from boost values.
 - **INV-SEL-15**: `dec.bmc` SHALL equal the number of candidates the BACK/MENU cap removed from the pick that chose the step's action, and SHALL be absent when it is 0 or when `BACK_MENU_CAP` is not in the plan.
+

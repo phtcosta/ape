@@ -4,7 +4,7 @@
 
 `aperv-tool` integrates `ape-rv.jar` into the rv-android tool registry as the `aperv` plugin. It follows the same integration pattern as `rvsmart-tool` (external module, lazy-import registration) and mirrors the execution model of the builtin `ape` tool (ADB `app_process` invocation, `com.android.commands.monkey.Monkey` main class). The plugin ID `aperv` is distinct from the existing `ape` builtin, allowing both tools to coexist and be compared within the same experiment.
 
-The plugin's variants are the six experimental cells of the guidance groups — `base`, `mop`, `as`, `as_mop`, `as_llm`, `as_mop_llm` — each bound to the jar-resident cell preset of the same name, plus `default`, bound to `base` (design D-B1). A variant writes the fixed lines `ape.preset`, `ape.variant` (echoed by the jar as `RUN_START.variant`, outside the plan digest) and, on every cell but `base`, `ape.staticDataPath`, the artifact's device path (D-B2); `system-broadcast.json` is pushed only for the four `as*` cells, where its only reader, the STATIC member `COMPONENT_TRIGGER`, runs (D-B13). The retired keys `ape.mopDataPath`, `ape.leastVisitedPriorityTiebreak` and `ape.mopTargetPickCap` are never emitted; a properties file that sets one aborts with `retired_key`. The roster's owner is rv-android's `aperv` capability (contract v3.1: "ApeRVTool Cell Variants", "ApeRVTool Configuration", "ApeRVTool Execution Flow"); this spec is the jar repository's mirror of that contract and does not contradict it.
+The plugin's variants are the six experimental cells of the guidance groups — `base`, `mop`, `as`, `as_mop`, `as_llm`, `as_mop_llm` — each bound to the jar-resident cell preset of the same name, plus `default`, bound to `base` (design D-B1). A variant writes the fixed lines `ape.preset`, `ape.variant` (echoed by the jar as `RUN_START.variant`, outside the plan digest) and, on every cell but `base`, `ape.staticDataPath`, the artifact's device path (D-B2); `system-broadcast.json` is pushed only for the four `as*` cells, where its only reader, the STATIC member `COMPONENT_TRIGGER`, runs (D-B13). The retired keys `ape.mopDataPath`, `ape.leastVisitedPriorityTiebreak`, `ape.mopTargetPickCap` and `ape.llmPercentageNoSubstrate` are never emitted; a properties file that sets one aborts with `retired_key`. The roster's owner is rv-android's `aperv` capability (contract v3.1: "ApeRVTool Cell Variants", "ApeRVTool Configuration", "ApeRVTool Execution Flow"); this spec is the jar repository's mirror of that contract and does not contradict it.
 
 ---
 
@@ -148,8 +148,8 @@ If `ape-rv.jar` is not found in any path, `RVToolExecutionError` SHALL be raised
 3. Resolve `ape-rv.jar` via `_resolve_jar_path()` and push to `/data/local/tmp/ape-rv.jar`
 4. **Push the broadcast catalog** only when the variant carries `broadcast_catalog=True` — the four `as*` cells — and `system-broadcast.json` exists in the module directory: push it to `/data/local/tmp/system-broadcast.json`. Its only reader in the jar is the STATIC member `COMPONENT_TRIGGER`, which the `as*` presets mount at `componentPercentage=0.03` (design D-B13). `base` and `mop` do not mount STATIC and SHALL push no catalog. If the file is absent, skip (the jar degrades gracefully)
 5. If `_tool_config.get("static_data") == "static_analysis"` (every cell but `base`): locate `<task.results_dir>/<apk_name>.json` via `_find_static_analysis_file(task)`. **If not found, raise `RVToolExecutionError`** naming the expected path — a cell without its static-analysis input is a failed task, never a silently degraded run. If found, obtain the derived artifact via `_derive_mop_artifact(task)` (cache-or-generate; a `DerivationError` also raises `RVToolExecutionError`), push **only that artifact** to `/data/local/tmp/mop-artifact.json`, and set `artifact_pushed = True`. The full JSON is never modified and never pushed
-6. Push `ape.properties` generated as: `ape.preset=<preset>` first; `ape.variant=<variant>` second; `ape.staticDataPath=/data/local/tmp/mop-artifact.json` third if and only if `artifact_pushed` (that is, iff the cell mounts STATIC or MOP); then one `ape.<key>=<value>` line per entry of `overrides`, translated through `APERV_PROPERTY_MAPPING`, with Python bools serialized lowercase. `ape.llmUrl` therefore appears only for `as_llm` and `as_mop_llm`, whose `overrides` carry `llm_url`; the jar aborts a plan that sets `ape.llmUrl` without the LLM group (D-B14.4). The retired keys `ape.mopDataPath`, `ape.leastVisitedPriorityTiebreak` and `ape.mopTargetPickCap` SHALL never be emitted. The full property expansion SHALL NOT be performed
-7. Capture LLM provenance to the sidecar for the LLM cells (`as_llm`, `as_mop_llm`; unchanged, INV-APV-33)
+6. Push `ape.properties` generated as: `ape.preset=<preset>` first; `ape.variant=<variant>` second; `ape.staticDataPath=/data/local/tmp/mop-artifact.json` third if and only if `artifact_pushed` (that is, iff the cell mounts STATIC or MOP); then one `ape.<key>=<value>` line per entry of `overrides`, translated through `APERV_PROPERTY_MAPPING`, with Python bools serialized lowercase. `ape.llmUrl` therefore appears only for `as_llm` and `as_mop_llm`, whose `overrides` carry `llm_url`; the jar aborts a plan that sets `ape.llmUrl` without the LLM group (D-B14.4). The retired keys `ape.mopDataPath`, `ape.leastVisitedPriorityTiebreak`, `ape.mopTargetPickCap` and `ape.llmPercentageNoSubstrate` SHALL never be emitted. The full property expansion SHALL NOT be performed
+7. Capture LLM provenance to the sidecar for the LLM cells (`as_llm`, `as_mop_llm`; rv-android INV-APV-33)
 8. Build and execute the main command (`--ape <strategy>`, `-s <seed>` when configured), capturing stdout+stderr to `task.result.trace_file` (the captured stream is the NDJSON trace)
 9. On `RVCommandTimeoutError`: log as expected behaviour, run the collection step 11 below, then re-raise as `RVToolTimeoutError` — timeout is the normal exit for exploration runs, so collection MUST NOT be skipped on it
 10. Run the empty-trace check (`_check_empty_trace`, unchanged)
@@ -157,7 +157,7 @@ If `ape-rv.jar` is not found in any path, `RVToolExecutionError` SHALL be raised
 
 Step 11 SHALL NOT inspect, validate, or act on the trace's content: no `RUN_START`/`RUN_END` presence check, no exit-code interpretation beyond the existing debug log, no task-status change (owner decision D5). `task.result.trace_file` SHALL remain the raw NDJSON capture, byte-for-byte — no NDJSON→legacy conversion step exists.
 
-The tool SHALL NOT read back, parse, or validate any jar output (`RUN_START` included, its `variant` member too) — provenance is write-only in the trace (INV-APV-43, owner decision D1).
+The tool SHALL NOT read back, parse, or validate any jar output (`RUN_START` included, its `variant` member too) — provenance is write-only in the trace (rv-android INV-APV-43, owner decision D1).
 
 No health check step is required (APE has no `--health-check` flag).
 
@@ -271,7 +271,7 @@ The `[project.entry-points."rv_tools.plugins"]` table SHALL NOT be used for `ape
 The module SHALL provide `aperv_tool/analysis/trace_ndjson.py`, a read-only reader of the NDJSON trace, and it SHALL be the sole mechanism by which analysis code consumes a post-change trace. The reader SHALL stream the file and yield one typed row per step, having already:
 
 - resolved `act` / `st` integer references against the `ACT` / `STATE` dictionary records;
-- materialized the fields the sink omits at their defaults (`mop`, `mop_frontier`, `wtg`, `coverage`, `menu`, `form` at `0`; `new_state` and `activity_changed` at `false`);
+- materialized the fields the sink omits at their defaults (`mop`, `mop_frontier`, `wtg`, `nav_frontier` (from `navf`), `coverage`, `menu`, `form` at `0`; `new_state` and `activity_changed` at `false`);
 - re-derived `activity_has_mop` on the step side from the record's `ACT` entry and on the outcome side via `out.target` → `STATE.act` → `ACT.mop`;
 - expanded the run-relative `t` to epoch milliseconds via `RUN_START.t0`, where an absolute clock is wanted;
 - attached the step's `llm[]` sub-events and its `out` section to the same row, so the three-way join by `step=` no longer exists for any consumer;
@@ -281,18 +281,18 @@ The reader SHALL NOT write to the trace, SHALL NOT emit legacy `[APE-*]` lines, 
 
 **The dumps are named explicitly because dropping them is the easy mistake, and because this reader is the only sanctioned way to read a new trace.** They are on by default, they are the largest single item in the trace, and the throughput gate (`event-sink` INV-SNK-13) prices their per-character escaping — so a reader that discards them leaves the run paying the whole cost of data no analysis can reach. The failure is not hypothetical in the other direction either: the analysis that consumed them, `calibracao/decompose_nomatch.py`, pairs each `[APE-LLM-TEL]` with the `[APE-LLM-RESPONSE]` that produced it to decompose `no_match` causes, and that pairing was the gate of a change decision. Its successor over new traces needs `resp`. The new schema makes the pairing free — call and response share one record — so losing the field at the reader would give back exactly what the re-encoding bought. If the dumps are ever judged too expensive, the decision to make is the flag (`TelemetryParams.llmPromptDump`, default on), not a silent drop one layer down: written-and-unreadable is the one state that costs everything and returns nothing.
 
-The reader SHALL additionally expose the run-level records it encounters — `MOP_DATA`, `PIPELINE` and `LLM_ACK` — as attributes alongside the `RUN_START` header it already surfaces, since the step-row iteration has no natural place for them. Without this they are unreachable: this reader is the sole mechanism for consuming a post-change trace, so a record it skips is a record no conformant analysis can read, and `MOP_DATA.wtgEdges` and `PIPELINE.candidates` are precisely the two quantities this change added — one because `transitions` had been misread as the frontier gate for months, the other because "the arm turned it off" and "this application's data could not support it" were otherwise indistinguishable across 25 of 40 applications. Writing that census and leaving it unread would reproduce, one layer up, the defect the census was added to end.
+The reader SHALL additionally expose the run-level records it encounters — `MOP_DATA`, `PIPELINE`, `LLM_ACK` and `RUN_END` — as attributes alongside the `RUN_START` header it surfaces, since the step-row iteration has no natural place for them. Without this they are unreachable: this reader is the sole mechanism for consuming a post-change trace, so a record it skips is a record no conformant analysis can read, and `MOP_DATA.wtgEdges` and `PIPELINE.candidates` are precisely the two quantities this change added — one because `transitions` had been misread as the frontier gate for months, the other because "the arm turned it off" and "this application's data could not support it" were otherwise indistinguishable across 25 of 40 applications. Writing that census and leaving it unread would reproduce, one layer up, the defect the census was added to end.
 
-**`RUN_END` SHALL NOT be exposed**, and this asymmetry is deliberate rather than an oversight in the list above. Owner decision D5 is that no consumer reads it; an attribute is the first step toward `if not run_end: ...`, which is the exit contract D5 refuses. The other three are load and assembly census, not a termination signal, so exposing them creates no such gradient. Truncated-run detection remains post-hoc over timestamps.
+**`RUN_END` is exposed verbatim and interpreted by nothing in the reader** (`run_end`, the record minus `type`, or `None`). Its `counters` are the per-run census of the mechanisms the cell mounted, which analysis reads; what owner decision D5 refuses is an exit contract, so the reader SHALL derive no completeness flag or status from the record, and the collection path SHALL NOT read it (rv-android INV-APV-53). A trace cut by a `SIGKILL` legitimately has no `RUN_END`, and `None` reports that fact rather than repairing it. Truncated-run detection remains post-hoc over timestamps.
 
-`clock_logcat_join.py` SHALL be migrated onto this reader in this change. Its `[APE-STEP]` regex and its entire UTC-offset reconstruction — the year-candidate search, the quarter-hour rounding, the anchor selection, and `alignment_residual_ms` — SHALL be deleted, not disabled: the D4 logcat heartbeat places step and violation on the same clock, so the reconstruction has nothing left to reconstruct.
+`clock_logcat_join.py` SHALL read the trace through this reader and join steps to violations on the D4 logcat heartbeat, which places step and violation on the same clock. It SHALL carry no `[APE-STEP]` regex and no UTC-offset reconstruction — no year-candidate search, no quarter-hour rounding, no anchor selection, no `alignment_residual_ms`.
 
-The deletion has one precondition, and it is not a formality (`event-sink` INV-SNK-14). The platform captures logcat as a live stream under a strict tag allowlist (`adb logcat … -s RVSEC:V RVSEC-COV:V`), so the heartbeat reaches the joined file only once its tag is in that allowlist — a change in the `rvsec` repo, touching the byte-identical-command clause that pins the capture. Until a captured run is shown to contain heartbeat lines, the reconstruction SHALL stay. Deleting a working fallback in favour of a mechanism never observed end-to-end would reproduce, on the analysis path, exactly the silent-inertness class this change exists to remove.
+That join rests on one precondition (`event-sink` INV-SNK-14): the platform captures logcat as a live stream under a strict tag allowlist, so the heartbeat reaches the joined file only because its tag `ApeRvHb` is in the baseline tag set `LogcatManager.default_tags` (rv-android INV-PLT-21).
 
 #### Scenario: Reader yields a joined step row
 
 - **WHEN** the reader is run over a trace whose step 42 carries a `dec` with no boosts, two `llm[]` sub-events, and an `out` closed at step 43
-- **THEN** it SHALL yield one row for step 42 carrying the resolved activity and state strings, `mop=0 wtg=0 coverage=0 menu=0 form=0`, both LLM sub-events in occurrence order, and the outcome fields
+- **THEN** it SHALL yield one row for step 42 carrying the resolved activity and state strings, `mop=0 mop_frontier=0 wtg=0 nav_frontier=0 coverage=0 menu=0 form=0`, both LLM sub-events in occurrence order, and the outcome fields
 - **AND** no second pass over the trace SHALL be required to join them
 
 #### Scenario: Join runs without offset reconstruction
@@ -310,8 +310,9 @@ The deletion has one precondition, and it is not a formality (`event-sink` INV-S
 #### Scenario: the load census is reachable and the termination record is not
 
 - **WHEN** a trace carries `MOP_DATA`, `PIPELINE`, `LLM_ACK` and `RUN_END`
-- **THEN** the reader SHALL expose the first three as attributes, so `wtgEdges` and the candidate census can be read without a second parser
-- **AND** it SHALL expose no `RUN_END` accessor, so no consumer can come to depend on its presence (D5)
+- **THEN** the reader SHALL expose all four as attributes, so `wtgEdges`, the candidate census and the run counters can be read without a second parser
+- **AND** it SHALL expose `RUN_END` verbatim and derive no completeness flag or status from it, and no collection-path code SHALL read it (D5, rv-android INV-APV-53)
+- **AND** on a trace without `RUN_END` the accessor SHALL return `None`
 
 ### Requirement: Frozen Legacy-Corpus Readers Are Not Migrated
 
@@ -335,7 +336,7 @@ This carve-out is normative and stated here so that it is not mistaken for a P3 
 2. If `<apk_name>.mop.json` exists next to it AND its `source.digest` matches, reuse it (cache hit).
 3. Otherwise call `derive_mop_artifact.derive` + `serialize_canonical` and write `<apk_name>.mop.json` atomically (write-temp-then-rename); a failed derivation writes nothing.
 
-The artifact is cached in `task.results_dir` — inspectable and diffable next to its source — and is a pure function of the full JSON (INV-APERV-07, INV-DRV-05). This method replaces `_compact_static_analysis_json`, which is **deleted** together with its fallback-to-source-push behavior: there is no longer any condition under which the full JSON is pushed (INV-APERV-06).
+The artifact is cached in `task.results_dir` — inspectable and diffable next to its source — and is a pure function of the full JSON (INV-APERV-07; rv-android INV-DRV-05). This method replaces `_compact_static_analysis_json`, which is **deleted** together with its fallback-to-source-push behavior: there is no longer any condition under which the full JSON is pushed (INV-APERV-06).
 
 #### Scenario: cache hit skips derivation
 - **WHEN** `<apk_name>.mop.json` exists with a `source.digest` matching the current full JSON
@@ -356,6 +357,9 @@ The artifact is cached in `task.results_dir` — inspectable and diffable next t
 - **INV-APERV-02**: The device JAR path SHALL always be `/data/local/tmp/ape-rv.jar`. The host JAR name is `ape-rv.jar`. These paths MUST match the `mvn install` copy target in `ape/pom.xml`.
 - **INV-APERV-03**: `configure()` MUST be called before `execute_tool_specific_logic()`. The latter SHALL raise `RVToolExecutionError` if `self._tool_config` is empty at execution time.
 - **INV-APERV-04**: Timeout is ALWAYS controlled by `task.config.timeout` (set by rv-platform). The `running_minutes` passed to APE is derived from `task.config.timeout / 60`. Variants MUST NOT hardcode a timeout.
+- **INV-APERV-05**: A variant whose `static_data` is `"static_analysis"` (every cell but `base`) SHALL either push the freshly derived compact artifact to `/data/local/tmp/mop-artifact.json` and write the `ape.staticDataPath` line, or fail the task with `RVToolExecutionError` before launching the jar (static-analysis JSON absent, or a `DerivationError`). There SHALL be no execution path in which such a cell launches the jar without `ape.staticDataPath` set.
+- **INV-APERV-06**: The device SHALL only ever receive the derived compact artifact; no code path pushes the full static-analysis JSON.
+- **INV-APERV-07**: Cache freshness is digest-based: a cached `<apk_name>.mop.json` SHALL be reused only when its recorded `source.digest` equals the SHA-256 of the current full JSON; otherwise it SHALL be regenerated. Cache state SHALL never change what the device receives for a given full JSON (determinism, rv-android INV-DRV-05).
 
 ---
 
@@ -370,8 +374,8 @@ The artifact is cached in `task.results_dir` — inspectable and diffable next t
 
 ### Output
 
-- `task.result.trace_file: file` — APE stdout+stderr captured to this path; contains APE's structured log including `## Network stats` and strategy counters
-- No structured metrics file (APE does not emit a `APERV_METRICS:` line); metrics are extracted from the trace file by the rv-android analysis pipeline if needed
+- `task.result.trace_file: file` — APE stdout+stderr captured to this path: the jar's NDJSON sink records (every line that begins with `{`: `RUN_START`, dictionary entries, step records, `MOP_DATA`, `PIPELINE`, `LLM_ACK`, `RUN_END`) interleaved with its `[APE] ` Logger lines and the AOSP Monkey output (`## Network stats` included); gzipped at collection to `<trace>.ndjson.gz`
+- No structured metrics file (APE does not emit a `APERV_METRICS:` line); metrics are extracted from the trace file by the rv-android analysis pipeline, through the NDJSON reader, if needed
 
 ### Error
 

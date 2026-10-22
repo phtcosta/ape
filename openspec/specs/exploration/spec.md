@@ -6,17 +6,17 @@ APE-RV's exploration engine is responsible for systematically exercising an Andr
 
 The central abstraction mechanism, inherited from the original APE tool (ICSE 2019), is CEGAR-style (Counterexample-Guided Abstraction Refinement). The `NamingFactory` component maps concrete `GUITree` snapshots to abstract `State` nodes via a configurable `Naming` (a level in a widget-attribute lattice). When the abstraction is too coarse — detected by observing non-deterministic transitions from a single abstract state — the naming is automatically refined to a finer level, splitting the offending state. This adaptive refinement ensures the model stays sound (no false merging of distinct screens) without over-specifying upfront.
 
-APE-RV supports selectable exploration strategies, each suited to a different use case. `SataAgent` (`--ape sata`) is the primary strategy and implements an epsilon-greedy heuristic that aggressively prioritises unvisited actions while using graph-guided navigation to reach under-explored parts of the app. `RandomAgent` (`--ape random`) provides an experimental baseline using priority-weighted random selection over model actions — it still uses the `StatefulAgent` priority infrastructure but without SATA's directed navigation. `ReplayAgent` (activated on the command line via `--ape replay --ape-replay <log>`; `ape.replayLog` is retired as a file key) replays a recorded action sequence for deterministic regression testing. Phase 2 will add `ApeAgent` (`--ape ape`, full CEGAR naming-refinement), BFS (`--ape bfs`), and DFS (`--ape dfs`) as additional selectable strategies. The strategy is selected once at startup and does not change during a session.
+APE-RV supports three selectable exploration strategies, created by `ApeAgent.createAgent` from the plan's agent type. `SataAgent` (`--ape sata`, the default) is the primary strategy and implements an epsilon-greedy heuristic that aggressively prioritises unvisited actions while using graph-guided navigation to reach under-explored parts of the app. `RandomAgent` (`--ape random`) provides an experimental baseline: it takes the next buffered action when one is planned, and otherwise a priority-weighted roulette over the state's actions — it uses the `StatefulAgent` priority infrastructure but none of SATA's directed navigation. `ReplayAgent` (activated on the command line via `--ape replay --ape-replay <log>`; `ape.replayLog` is retired as a file key) replays a recorded action sequence for deterministic regression testing. Any other value, including `ape`, `bfs` and `dfs`, aborts the run before step 1. The strategy is selected once at startup and does not change during a session.
 
-The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is the heartbeat of the system. Each iteration captures the current screen as a `GUITree`, maps it to an abstract `State`, asks the active `Agent` to choose a `ModelAction`, translates that action into one or more `ApeEvent` objects (click, drag, key press, scroll gesture), enqueues those events in Monkey's event queue for execution on the device, then captures the resulting screen and updates the model. The loop terminates when a wall-clock time limit (`--running-minutes N`) or an event-count limit (`-v N`) is reached; teardown then writes the run's closing telemetry (no exploration-graph file is saved). The priority system on `ModelAction` objects allows extensions such as the APE-RV Phase 3 MOP guidance layer to influence action selection without rewriting agent logic: `StatefulAgent.adjustActionsByGUITree()` is the designated hook where a higher-level component may call `action.setPriority(int)` to promote preferred actions before the agent's selection step.
+The exploration loop, implemented inside `MonkeySourceApe.nextEventImpl()`, is the heartbeat of the system. Each iteration captures the current screen as a `GUITree`, maps it to an abstract `State`, asks the active `Agent` to choose a `ModelAction`, translates that action into one or more `ApeEvent` objects (click, drag, key press, scroll gesture), enqueues those events in Monkey's event queue for execution on the device, then captures the resulting screen and updates the model. The loop terminates when a wall-clock time limit (`--running-minutes N`) or an event-count limit (`-v N`) is reached; teardown then writes the run's closing telemetry (no exploration-graph file is saved). The priority system on `ModelAction` objects allows extensions such as the MOP guidance layer to influence action selection without rewriting agent logic: `StatefulAgent.adjustActionsByGUITree()` is the designated hook where the mounted scoring passes call `action.setPriority(int)` to promote preferred actions before the agent's selection step.
 
-For `SataAgent` the step is a fixed sequence of owners (`decision-pipeline`), mounted by group (`guidance-groups`). The restart is a guard stage that runs before any selection, so a restart never replaces an action already chosen and the step records `dec.src="restart"` with its kind; `RandomAgent` and `ReplayAgent` have no pipeline and keep the post-selection `checkRestart`. The LLM hooks consult declared gates rather than the SATA buffer: a new state reached mid-path may go to the LLM, and the buffer is then abandoned without weakening. The fuzz toss is drawn from its own stream on every step. The ADDONS mechanisms of the engine — `MODEL_MENU`, the dynamic epsilon and the two event-generation guards — are read from the plan (`spec().has(Feature.X)`, design D-B6), so a cell without ADDONS behaves as upstream APE. Every key the engine reads is resolved once, at startup, into the run plan (`RunContext.current().spec()`), with its default in `KeyOwnership`.
+For `SataAgent` the step is a fixed sequence of owners (`decision-pipeline`), mounted by group (`guidance-groups`). The restart is a guard stage that runs before any selection, so a restart never replaces an action already chosen and the step records `dec.src="restart"` with its kind; `RandomAgent` and `ReplayAgent` have no pipeline and keep the post-selection `checkRestart`. The LLM hooks consult declared gates rather than the SATA buffer: a new state reached mid-path may go to the LLM, and the buffer is then abandoned without weakening. The fuzz toss is drawn from its own stream once per step, after the step's action events are generated. The ADDONS mechanisms of the engine — `MODEL_MENU`, the dynamic epsilon and the two event-generation guards — are read from the plan, so a cell without ADDONS behaves as upstream APE. Every key the engine reads through the plan is resolved once, at startup, into the run plan (`RunContext.current().spec()`), with its default in `KeyOwnership`.
 
 ## Data Contracts
 
 ### Input
 
-- `--ape <strategy>: String` — selects the exploration strategy; currently accepted values are `sata` (default) and `random`; Phase 2 will add `ape`, `bfs`, `dfs`; passed as a Monkey command-line argument (source: `Monkey.main()`)
+- `--ape <strategy>: String` — selects the exploration strategy; the accepted values are `sata` (default), `random` and `replay` (with `--ape-replay <log>`); any other value aborts before step 1; passed as a Monkey command-line argument (source: `Monkey.main()`)
 - `--running-minutes <N>: int` — wall-clock time limit in minutes after which exploration stops (source: Monkey command-line)
 - `-v <N>: int` — maximum number of Monkey events; used as an alternative stop condition (source: Monkey command-line)
 - `/data/local/tmp/ape.properties` or `/sdcard/ape.properties: Properties file` — optional key-value configuration overrides, resolved at startup with the command line into the run plan (`RunSpec`); an unknown, retired or ill-typed key aborts the run before the first event (source: device filesystem)
@@ -40,7 +40,7 @@ For `SataAgent` the step is a fixed sequence of owners (`decision-pipeline`), mo
 ### Error
 
 - `StopTestingException` — thrown by the agent to signal a clean stop condition (time limit or step limit reached); caught by `MonkeySourceApe` to terminate the loop gracefully.
-- `BadStateException` — thrown by `StatefulAgent.selectNewActionNonnull()` when no valid action is available on the current state; triggers a recovery path (restart or back navigation).
+- `BadStateException` — thrown with `"No available action on the current state"` by `StatefulAgent.handleNullAction()` (the last rung of the `SataChain` stage, and `RandomAgent`'s fallback) when its roulette yields no valid action, and by the `SataChain` stage itself when every rung returns null; caught in `ApeAgent.updateStateWrapper`, which triggers a recovery path (restart or back navigation).
 - `NoValidActionException` — thrown when action validation fails after all candidates are exhausted; causes the loop to attempt a forced restart.
 - `OutOfMemoryError` — possible but unhandled; caused by retaining all `GUITree` objects in `treeHistory` lists throughout the session.
 
@@ -59,12 +59,12 @@ For `SataAgent` the step is a fixed sequence of owners (`decision-pipeline`), mo
 - **INV-EXPL-14**: Given identical `-s` seed, APK, and configuration, the sequence of `RandomHelper` draws SHALL be identical across runs.
 - **INV-EXPL-15**: No run SHALL spend more than 101 consecutive `checkAppActivity` iterations waiting for a foreground package without triggering a relaunch.
 - **INV-EXPL-16**: `tearDown()` SHALL run on every termination path of the exploration loop, normal or abnormal, **and SHALL NOT replace the in-flight exception**: a `Throwable` thrown by any teardown step SHALL be caught and logged with its full stack trace inside the teardown chain, never propagated out of the `finally` block in `Monkey.run`.
-- **INV-EXPL-29**: Teardown SHALL be step-isolated: a `Throwable` thrown by one teardown step (rotation restore, `disconnect()`, LLM summary, `super.tearDown()`, coverage dump, action-history save, action counters, activity nodes, naming dump, model counters — the graph-save step no longer exists) SHALL NOT prevent any subsequent teardown step from executing.
+- **INV-EXPL-29**: Teardown SHALL be step-isolated: a `Throwable` thrown by one teardown step SHALL NOT prevent any subsequent teardown step from executing. The steps are the rotation restore and `MonkeySourceApe.tearDown()` in `Monkey.run`'s `finally`; `disconnect`, `agentTearDown` and `imageWriters` in `MonkeySourceApe.tearDown`; and `flushPendingStep`, `superTearDown`, `coverageDump`, `actionCounters`, `activityNodes`, `namingDump`, `modelCounters` and `runEnd` in `StatefulAgent.tearDown` (each a `safeStep`). No graph-save, LLM-summary or action-history step exists.
 - **INV-EXPL-17**: Per-step debug artifacts (PNG/XML) SHALL be written only when explicitly enabled via `ape.properties`.
 - **INV-EXPL-18**: Every fuzz gesture branch SHALL emit exactly one event per invocation.
 - **INV-EXPL-19**: No touch event SHALL ever be delivered to coordinates derived from bounds other than the resolved node's own bounds — or, for coordinate-carrying actions without a node (`MODEL_LLM_TAP`), other than the action's own decided coordinate.
 - **INV-EXPL-30**: `MODEL_LLM_TAP` dispatch SHALL construct a non-degenerate rect `(x, y, x+1, y+1)` for the decided pixel `(x, y)`, and its validity domain SHALL be the physical display bounds (`AndroidDevice.getDisplayBounds()`), not the app root-node visible bounds. A tap whose pixel lies inside the display SHALL enqueue a touch down/up pair; a tap outside it SHALL be dropped with the `[APE-RV] off-screen action dropped` log line and no event. Node actions keep the root-node visible-bounds domain.
-- **INV-EXPL-31**: Each of `State` (menu action), `SataAgent.egreedy` (dynamic epsilon) and `MonkeySourceApe` (the foreign-activity and tree/package guards) SHALL decide through `RunContext.current().spec().has(Feature.X)`. None of them SHALL read the corresponding `Config` field. On a plan without the `ADDONS` group, each of these mechanisms SHALL behave as upstream APE.
+- **INV-EXPL-31**: Each of `State` (menu action, `spec().has(Feature.MODEL_MENU)` in its constructor), `SataAgent` (dynamic epsilon, `exploration().dynamicEpsilon()` in `computeDynamicEpsilon`, true exactly when `DYNAMIC_EPSILON` is in the plan) and `MonkeySourceApe.generateEvents` (the foreign-activity and tree/package guards, `spec().has(Feature.FOREIGN_ACTIVITY_GUARD)` and `spec().has(Feature.TREE_PACKAGE_GUARD)`) SHALL decide through the plan (`RunContext.current().spec()`). None of them SHALL read a `Config` field for it. On a plan without the `ADDONS` group, each of these mechanisms SHALL behave as upstream APE.
 - **INV-EXPL-32**: For an agent with a decision pipeline (`SataAgent`), no restart SHALL replace a selected action after selection, and every restart SHALL be a step whose owner is `restart` (`decision-pipeline` INV-DP-14). The `Restart` stage is mounted if and only if `ape.checkRestart` is `true`. `RandomAgent` and `ReplayAgent` have no pipeline and keep the post-selection `checkRestart` wrapping unchanged (design D-B14.12).
 
 ## Requirements
@@ -326,24 +326,32 @@ Beyond simple greedy unvisited-action selection, `SataAgent` uses multi-step gra
 
 ---
 
-### Requirement: RandomAgent — Stateless Uniform Random Selection
+### Requirement: RandomAgent — Buffer, Then Priority-Weighted Roulette
 
-`RandomAgent` MUST select actions without any reference to visit counts, state history, or graph structure. On each step, it MUST call `selectNewActionRandomly()`, which picks uniformly at random over all currently enabled, valid actions on the current state (as determined by `ActionFilter.ENABLED_VALID`). `RandomAgent` MUST override `onGraphStable()` and `onStateStable()` to return `false`, ensuring no restart is triggered by stability counters. `RandomAgent` does not maintain any per-state or per-action counters of its own.
+`RandomAgent.selectNewActionNonnull()` SHALL first take the next buffered action (`selectNewActionFromBuffer()`,
+validated); when there is none, it SHALL call `selectNewActionRandomly()`, which draws a **priority-weighted**
+roulette over all of the state's actions (`State.randomlyPickAction(getRandom())`, `ActionFilter.ALL`: an action is
+picked with probability proportional to its priority, via `random.nextInt(total priority)`), and validate the
+pick; when that yields no valid action, it SHALL fall back to `handleNullAction()` (a priority roulette over the
+validated actions, or `BadStateException`). The priorities are those `StatefulAgent.adjustActionsByGUITree()`
+assigned: the upstream base priority plus the mounted scoring passes. `RandomAgent` uses none of SATA's directed
+navigation (no ABA, no early-stage, no trivial-activity or epsilon-greedy rungs) and has no decision pipeline.
+`RandomAgent` MUST override `onGraphStable()` and `onStateStable()` to return `false`, so no restart is triggered by
+graph or state stability. `RandomAgent` does not maintain any per-state or per-action counters of its own.
 
 #### Scenario: Action selection with multiple candidates
 
-- **WHEN** `RandomAgent.selectNewActionNonnull()` is called
-- **AND** the current state has 5 enabled valid actions
-- **THEN** each of the 5 actions SHALL have equal probability (`0.2`) of being selected
-- **AND** no preference SHALL be given to unvisited or high-priority actions
+- **WHEN** `RandomAgent.selectNewActionNonnull()` is called with an empty buffer
+- **AND** the current state has 5 actions with priorities 10, 10, 20, 20, 40
+- **THEN** the selected action SHALL be drawn from the agent stream by the priority roulette, with probabilities 0.1, 0.1, 0.2, 0.2 and 0.4
+- **AND WHEN** the buffer holds a planned action that is still valid
+- **THEN** that action SHALL be returned and no roulette SHALL be drawn
 
 #### Scenario: Graph stable — no restart
 
 - **WHEN** `RandomAgent.onGraphStable(100)` is called
 - **THEN** the return value SHALL be `false`
 - **AND** no restart event SHALL be enqueued as a result
-
----
 
 ### Requirement: StatefulAgent — Priority-Based Action Selection
 
@@ -370,25 +378,6 @@ The selection method `RandomHelper.randomPickWithPriority(List<ModelAction>)` MU
 #### Scenario: Non-target actions not boosted
 - **WHEN** `MOP` is in the plan AND `actionB` is `MODEL_BACK` (`requireTarget() == false`)
 - **THEN** `actionB.getPriority()` SHALL NOT be modified by any MOP scoring pass
-
----
-
-### Requirement: StatefulAgent — BFS and DFS Traversal Modes
-
-When the strategy is `bfs` or `dfs`, `MonkeySourceApe` SHALL create a `StatefulAgent` configured with a BFS queue or DFS stack respectively. These modes do not use the ABA heuristic or epsilon-greedy selection of `SataAgent`; instead they traverse the state graph using classical breadth-first or depth-first order over unvisited states. Both modes still use the `Model` for state tracking and both apply `adjustActionsByGUITree()` for priority adjustments.
-
-#### Scenario: BFS strategy visits states level by level
-
-- **WHEN** the strategy is `bfs`
-- **AND** the model graph has states at depths 1, 2, and 3 from the initial state
-- **THEN** all depth-1 states SHALL be fully explored before any depth-2 state is targeted
-- **AND** all depth-2 states SHALL be explored before any depth-3 state is targeted
-
-#### Scenario: DFS strategy goes deep before backtracking
-
-- **WHEN** the strategy is `dfs`
-- **AND** the model graph has a linear chain of states A → B → C
-- **THEN** the agent SHALL navigate to C before backtracking to explore siblings of B or A
 
 ---
 
@@ -468,27 +457,25 @@ written around is one this change deletes:
 
 ### Requirement: Fuzzing Integration
 
-`ape.doFuzzing` and `ape.fuzzingRate` are BASE keys, and `MonkeySourceApe` SHALL read them from the plan (`spec`), never from `Config.doFuzzing`/`Config.fuzzingRate` (design D-B6, extended by author decision A10; no behaviour change). When `ape.doFuzzing=false`, the fuzzing path is disabled and the agent never injects random `FUZZ` actions outside the structured exploration loop. When `ape.doFuzzing=true` (the BASE feature `FUZZING`), at each step the agent MAY inject a random `FuzzAction` with probability `ape.fuzzingRate` (default: `0.02`, i.e., 2% of steps). The toss SHALL come from `StepRng`'s own `fuzz` stream (`decision-pipeline` INV-DP-13), not from `RandomHelper`. It is drawn at step open on **every** step, whether or not fuzzing is enabled and whatever the step's owner, so that enabling fuzzing or changing its rate never shifts a helper-stream draw. This changes the helper-stream sequence relative to `eea2b1a9`, where `MonkeySourceApe` drew `RandomHelper.toss(fuzzingRate)` only when `doFuzzing` was true. The design declares the change, and the goldens are recaptured. The injection happens when the toss holds, `ape.doFuzzing` is true and `Agent.canFuzzing()` admits; it is checked in `MonkeySourceApe` after the step's action events are generated. Fuzzing MUST only activate after the app's activity has been visited at least `ape.fuzzingActivityVisitThreshold` (default: `10`) times, preventing fuzzing from disrupting early exploration.
+`ape.doFuzzing` and `ape.fuzzingRate` are BASE keys of the feature `FUZZING`, and `MonkeySourceApe` SHALL read them from the plan (`spec`), never from `Config` (design D-B6, extended by author decision A10). When `ape.doFuzzing=false`, `FUZZING` is absent from the plan and the agent never injects random `FUZZ` actions outside the structured exploration loop. When `ape.doFuzzing=true` (the jar default), at each step the agent MAY inject a random `FuzzAction` with probability `ape.fuzzingRate` (default: `0.02`, i.e., 2% of steps). The toss SHALL come from `StepRng`'s own `fuzz` stream (`StepRng.fuzzToss`, `decision-pipeline` INV-DP-13), not from `RandomHelper`. It is drawn once per step in `MonkeySourceApe.generateEvents`, after the step's action events are generated, whether or not fuzzing is enabled and whatever the step's owner, so that enabling fuzzing or changing its rate never shifts a helper-stream draw. The injection happens when `FUZZING` is in the plan, the toss holds, and `Agent.canFuzzing()` admits. `canFuzzing()` is `false` on a step whose selected action's activity has been visited fewer than `ape.fuzzingActivityVisitThreshold` (default: `10`) times (`StatefulAgent.checkFuzzing` sets `disableFuzzing`), preventing fuzzing from disrupting early exploration, and always `false` under `ReplayAgent`.
 
 #### Scenario: Fuzzing disabled
 
 - **WHEN** `ape.doFuzzing=false`
-- **THEN** `Agent.canFuzzing()` SHALL return `false` at every step
+- **THEN** `FUZZING` SHALL be absent from the plan, so `Agent.canFuzzing()` is never consulted and no `FuzzAction` is generated at any step
 - **AND** no `FuzzAction` SHALL be injected into the event queue
-- **AND** the fuzz toss SHALL still be drawn from the `fuzz` stream on every step, and no `RandomHelper` draw SHALL be made for fuzzing
+- **AND** the fuzz toss SHALL still be drawn from the `fuzz` stream once on every step, and no `RandomHelper` draw SHALL be made for fuzzing
 
 #### Scenario: Fuzzing fires at expected rate
 
 - **WHEN** `ape.doFuzzing=true` and `ape.fuzzingRate=0.02`
-- **AND** the current activity's visit count exceeds `ape.fuzzingActivityVisitThreshold` (default: `10`)
+- **AND** the current activity's visit count reaches `ape.fuzzingActivityVisitThreshold` (default: `10`)
 - **THEN** across a large number of steps, approximately 2% of steps SHALL inject a `FuzzAction`
 - **AND** the remaining 98% of steps SHALL proceed through the normal action-selection path
 
----
-
 ### Requirement: Configuration Loading
 
-All tuning parameters MUST be loaded from `ape.properties` at process startup — `/data/local/tmp/ape.properties` first, then `/sdcard/ape.properties` (later wins) — and the loaded entries SHALL be **validated in full by `RunSpec.resolve`** (`run-spec` capability) before any component consumes them: unknown keys, foreign keys, retired keys, type-invalid values, missing feature dependencies, and invalid combinations abort the process before step 1. JVM system properties are not a configuration channel for `ape.*` behavior. All surviving `Config` fields are `public static final`, resolved once at class-loading time, and MUST NOT change for the lifetime of the process; the five formerly non-final test knobs no longer exist (tests construct `RunSpec` values instead). `Config` is a loading detail; the resolved `RunSpec` is the behavioral authority. A key that the plan owns SHALL be read from the plan (`RunContext.current().spec()`), never from its `Config` twin: in particular `ape.doFuzzing`, `ape.fuzzingRate` and `ape.checkRestart` are BASE keys read from the plan (design D-B6, extended by author decision A10).
+All tuning parameters MUST be loaded from `ape.properties` at process startup — `/data/local/tmp/ape.properties` first, then `/sdcard/ape.properties` (later wins) — and the loaded entries SHALL be **validated in full by `RunSpec.resolve`** (`run-spec` capability) before any component consumes them: unknown keys, foreign keys, retired keys, type-invalid values, missing feature dependencies, and invalid combinations abort the process before step 1. JVM system properties are not a supported configuration channel; note that `Config` builds its `Properties` with `System.getProperties()` as defaults, so a system property could reach a key that `Config` reads without plan validation or echo. All surviving `Config` fields are `public static final`, resolved once at class-loading time, and MUST NOT change for the lifetime of the process; tests construct `RunSpec` values instead of mutating `Config`. `Config` is a loading detail; the resolved `RunSpec` is the behavioral authority. A key that the plan owns SHALL be read from the plan (`RunContext.current().spec()`) and has no `Config` field: in particular `ape.doFuzzing`, `ape.fuzzingRate` and `ape.checkRestart` are BASE keys read from the plan (design D-B6, extended by author decision A10).
 
 The table below lists the configuration keys relevant to the exploration engine with their types and defaults:
 
@@ -508,7 +495,7 @@ The table below lists the configuration keys relevant to the exploration engine 
 | `ape.defaultGUIThrottle` | long (ms) | 200 | Delay between injected events |
 | `ape.trivialActivityRankThreshold` | int | 3 | Minimum activity count before trivial-activity logic activates |
 
-The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present. The keys `ape.mopDataPath` (renamed `ape.staticDataPath`), `ape.leastVisitedPriorityTiebreak` (replaced by the X1 scorer-sum tie) and `ape.mopTargetPickCap` (replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of picks per activity and widget (default 1)) are retired by this change and abort resolution with `retired_key` (`run-spec`).
+The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present. The keys `ape.mopDataPath` (renamed `ape.staticDataPath`), `ape.leastVisitedPriorityTiebreak` (replaced by the X1 scorer-sum tie) and `ape.mopTargetPickCap` (replaced by `ape.mopCoinLedgerMaxInteractions`, k, the MOP coin's limit on executions by any owner per activity and `xpath|ActionType` key (default 1)) are retired and abort resolution with `retired_key` (`run-spec`).
 
 #### Scenario: Property file present on device
 
@@ -532,8 +519,6 @@ The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.sa
 - **THEN** `ACTIVITY_STABLE_RESTART` SHALL be in the plan and the activity-stability check SHALL raise the restart flag once the counter exceeds `200`
 - **AND WHEN** the `base` cell resolves
 - **THEN** `ACTIVITY_STABLE_RESTART` SHALL be absent and the threshold SHALL be `Integer.MAX_VALUE`, so the activity check never raises the flag
-
----
 
 ### Requirement: StatefulAgent — LLM Router Integration
 
@@ -796,17 +781,17 @@ LLM stagnation routing SHALL be the `LlmStagnation` decision stage, assembled af
 
 ### Requirement: Dynamic Epsilon Decay
 
-`SataAgent.egreedy()` SHALL compute a coverage-adaptive epsilon when the plan carries `DYNAMIC_EPSILON` (key `ape.dynamicEpsilon`). That feature is a member of the ADDONS group, so it is absent from the `base` and `mop` cells (design D-B1). `SataAgent` SHALL read the feature through `spec.has(Feature.DYNAMIC_EPSILON)`, never `Config.dynamicEpsilon`. The bounds are the `DYNAMIC_EPSILON` parameter keys `ape.minEpsilon` (`0.02`) and `ape.maxEpsilon` (`0.15`), read through the plan as today (`SataAgent.java:1214`); their dead `Config` twins are deleted. The epsilon value SHALL be interpolated between `Config.minEpsilon` and `Config.maxEpsilon` based on the current state's UI coverage gap:
+`SataAgent.egreedy()` SHALL compute a coverage-adaptive epsilon (`SataAgent.computeDynamicEpsilon()`) when the plan carries `DYNAMIC_EPSILON` (key `ape.dynamicEpsilon`). That feature is a member of the ADDONS group, so it is absent from the `base` and `mop` cells (design D-B1). `SataAgent` SHALL read the feature from the plan, through its injected exploration parameters (`exploration().dynamicEpsilon()`, true exactly when `DYNAMIC_EPSILON` is in the plan), never from `Config`. The bounds are the `DYNAMIC_EPSILON` parameter keys `ape.minEpsilon` (`0.02`) and `ape.maxEpsilon` (`0.15`), read through the plan (`exploration().minEpsilon()`/`maxEpsilon()`); `Config` has no field for either. The epsilon value SHALL be interpolated between `ape.minEpsilon` and `ape.maxEpsilon` based on the current state's UI coverage gap:
 
 ```
 epsilon = minEpsilon + (maxEpsilon - minEpsilon) * coverageGap
 ```
 
-Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(currentState)`. The SataAgent accesses the tracker via the `getCoverageTracker()` accessor inherited from `StatefulAgent`.
+Where `coverageGap` is obtained from `UICoverageTracker.getCoverageGap(newState)`. The SataAgent accesses the tracker via the `getCoverageTracker()` accessor inherited from `StatefulAgent`.
 
 **Scope note**: `egreedy()` is called from `selectNewActionEpsilonGreedyRandomly()`, which is one of the last steps in the SATA selection chain. Dynamic epsilon has incremental impact — it improves decisions that reach epsilon-greedy, but does not affect decisions resolved earlier (LLM hooks, buffer, early-stage, trivial activity).
 
-When the plan does not carry `DYNAMIC_EPSILON`, upstream APE's behavior SHALL be preserved: epsilon is the fixed value `defaultEpsilon`, the BASE plan key `ape.defaultEpsilon` (`spec.exploration().defaultEpsilon()`).
+When the plan does not carry `DYNAMIC_EPSILON`, or no coverage tracker exists, upstream APE's behavior SHALL be preserved: epsilon is the fixed value `defaultEpsilon`, the BASE plan key `ape.defaultEpsilon` (`spec.exploration().defaultEpsilon()`).
 
 #### Scenario: New state (high gap)
 - **WHEN** `egreedy()` is called in a state with coverageGap=1.0 and maxEpsilon=0.15, minEpsilon=0.02
@@ -820,13 +805,11 @@ When the plan does not carry `DYNAMIC_EPSILON`, upstream APE's behavior SHALL be
 - **WHEN** the plan does not carry `DYNAMIC_EPSILON` (the `base` cell, or `ape.dynamicEpsilon=false`)
 - **THEN** `egreedy()` SHALL use the fixed `defaultEpsilon` value (`0.05`)
 
----
-
 ### Requirement: Config Flags for Dynamic Epsilon
 
-Coverage-adaptive epsilon is the ADDONS member feature `DYNAMIC_EPSILON`, activated by `ape.dynamicEpsilon` (boolean, jar default `true`, depends on `ADDONS`; design D-B1). Every read site SHALL decide through `spec.has(Feature.DYNAMIC_EPSILON)`, never through `Config.dynamicEpsilon` (design D-B6). With `ape.addons=false` (the jar default and the `base`/`mop` cells) the feature is absent whatever its key says, unless the key is set explicitly, which aborts resolution with `MISSING_DEPENDENCY`.
+Coverage-adaptive epsilon is the ADDONS member feature `DYNAMIC_EPSILON`, activated by `ape.dynamicEpsilon` (boolean, jar default `true`, depends on `ADDONS`; design D-B1). Every read site SHALL decide through the plan — `SataAgent` reads `exploration().dynamicEpsilon()`, which holds exactly when the feature is in the plan — and `Config` has no `dynamicEpsilon` field (design D-B6). With `ape.addons=false` (the jar default and the `base`/`mop` cells) the feature is absent whatever its key says, unless the key is set explicitly, which aborts resolution with `MISSING_DEPENDENCY`.
 
-The interpolation bounds are the parameter keys of `DYNAMIC_EPSILON`, read through the plan (`spec.exploration().minEpsilon()`/`maxEpsilon()`, as `SataAgent.java:1214` already does); their dead `Config` twins (`Config.java:218-219`) are deleted:
+The interpolation bounds are the parameter keys of `DYNAMIC_EPSILON`, read through the plan (`spec.exploration().minEpsilon()`/`maxEpsilon()`, in `SataAgent.computeDynamicEpsilon`); `Config` has no field for either:
 
 | Key | Type | Default | Description |
 |------|------|-------|-------------|
@@ -838,8 +821,6 @@ The interpolation bounds are the parameter keys of `DYNAMIC_EPSILON`, read throu
 - **THEN** `DYNAMIC_EPSILON` SHALL be in the plan's `features`, and `egreedy()` SHALL interpolate between `ape.minEpsilon = 0.02` and `ape.maxEpsilon = 0.15`
 - **AND WHEN** it sets neither `ape.addons` nor `ape.dynamicEpsilon`
 - **THEN** `DYNAMIC_EPSILON` SHALL be absent and `egreedy()` SHALL use the fixed `defaultEpsilon` (`0.05`)
-
----
 
 ### Requirement: Seeded Agent Decision Reproducibility
 
@@ -912,7 +893,7 @@ Before appending, `generatePinchOrZoomEvent` SHALL size the `points` array to ex
 
 ### Requirement: Off-Screen Action Handling
 
-When `generateClickEventAt` finds that the target node's bounds do not intersect the visible screen (`getVisibleBounds` returns null), it SHALL NOT emit any touch event and SHALL log one `[APE-RV] off-screen action dropped: <action>` line. It SHALL NOT substitute the display bounds and click the screen center: that behavior executed an unrelated click while the model credited the original action, creating false edges (260 occurrences measured across 17/1513 baseline runs). The invalid-bounds branch (`!bounds.contains(p)`) keeps its no-event behavior and gains the same log line. Visit/coverage crediting of the dropped action is unchanged in this change (the markVisited-before-event-generation reorder is a separate, deferred item); the log line makes the wasted-step frequency measurable.
+When `generateClickEventAt` finds that the target node's bounds do not intersect the visible screen (`getVisibleBounds` returns null), it SHALL NOT emit any touch event and SHALL log one `[APE-RV] off-screen action dropped: <rect>` line, where `<rect>` is the node rect handed to `generateClickEventAt`. It SHALL NOT substitute the display bounds and click the screen center: that behavior executed an unrelated click while the model credited the original action, creating false edges (260 occurrences measured across 17/1513 baseline runs). The invalid-bounds branch (`!bounds.contains(p)`) keeps its no-event behavior and logs `Invalid bounds: <bounds>` followed by the same `[APE-RV] off-screen action dropped: <rect>` line. Visit/coverage crediting of the dropped action is unchanged (the markVisited-before-event-generation reorder is a separate, deferred item); the log line makes the wasted-step frequency measurable.
 
 For coordinate-carrying actions without a resolved node (`MODEL_LLM_TAP`), the rect handed to
 `generateClickEventAt` MUST be the minimal non-degenerate rect anchored at the decided pixel —
@@ -928,7 +909,7 @@ the log line and no event; node actions keep the root-node visible-bounds domain
 #### Scenario: off-screen node produces no event
 - **WHEN** a MODEL_CLICK resolves to a node whose bounds do not intersect the visible screen
 - **THEN** no touch event SHALL be enqueued
-- **AND** one `[APE-RV] off-screen action dropped` line SHALL be emitted
+- **AND** one `[APE-RV] off-screen action dropped: <rect>` line SHALL be emitted, naming the node rect
 - **AND** no click SHALL be delivered to the screen center
 
 #### Scenario: on-screen node unchanged

@@ -29,8 +29,8 @@ The model enables three agent capabilities: (1) exhaustive coverage — the agen
 - **[Graph mutation]**: `Model.getState(GUITree)` creates a new `State` in `Graph.states` if no state with the computed `StateKey` exists, then appends the `GUITree` to the state's `treeHistory`.
 - **[Graph mutation]**: `Graph.addTransition(source, action, target, ...)` inserts a new `StateTransition` or updates the `visitedCount` of an existing one.
 - **[Graph mutation]**: `Model.rebuild()` removes stale `State`s and `StateTransition`s from the graph and re-inserts them under the updated `Naming`, incrementing `Model.version`.
-- **[Graph listener]**: `Graph` fires `GraphListener` callbacks when states or transitions are added or removed; `SataAgent` subscribes to maintain its own priority queues.
-- **[Filesystem]**: none. `StatefulAgent.tearDown()` writes no model artifact: the serialization protocol (`sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`) is deleted, and the model exists only for the lifetime of the process (R1/R3 — clean runs, no read-back).
+- **[Graph listener]**: `Graph` fires `GraphListener` callbacks when states or transitions are added or removed; `StatefulAgent` implements `GraphListener` and registers itself with `graph.addListener(this)`, so `SataAgent` (a `StatefulAgent`) receives them to maintain its own priority queues.
+- **[Filesystem]**: none. `StatefulAgent.tearDown()` writes no model artifact: the serialization protocol (`sataModel.obj`, `sataGraph.dot`, `sataGraph.vis.js`) is deleted, no `action-history.log` is written, and the model exists only for the lifetime of the process (R1/R3 — clean runs, no read-back).
 
 ### Error
 
@@ -38,44 +38,32 @@ The model enables three agent capabilities: (1) exhaustive coverage — the agen
 - `IllegalStateException` — thrown by `State.getAction(Name, ActionType)` when the requested widget is not present in the state's `StateKey`, preventing stale action references.
 - `RuntimeException("Cannot be appended twice.")` — thrown by `State.append(GUITree)` when the same `GUITree` is appended to a `State` twice, enforcing bijection between `GUITree` and `State`.
 - `NullPointerException` — thrown by `Model.rebuild()` when a rebuilt `GUITree` has no assigned `State`, detecting incomplete rebuild logic.
-- `RuntimeException` — thrown by `ModelAction.resolveAt(...)` when `requireTarget() = true` and the resolved node array is empty, indicating that the action target has disappeared from the current screen.
+- `IllegalStateException("Fail to resolve a node for this action: …")` — thrown by `ModelAction.resolveAt(...)` when `requireTarget() = true` and the resolved node array is empty, indicating that the action target has disappeared from the current screen.
 
 ## Invariants
 
 - **INV-MODEL-01**: Every `State` MUST contain exactly one `ModelAction` with `actionType = MODEL_BACK` and `target = null`; this is the `State.backAction` field. It MUST be present even for states where the system back button has no visible effect.
-
 - **INV-MODEL-02**: `ActionType.requireTarget()` MUST return `false` for the targetless model actions `MODEL_BACK`, `MODEL_MENU` and `MODEL_LLM_TAP`, and MUST return `true` for `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_LEFT_RIGHT`, and `MODEL_SCROLL_RIGHT_LEFT`. This contract is enforced by ordinal comparison: `requireTarget()` returns `true` if and only if `ordinal() >= MODEL_CLICK.ordinal() && ordinal() <= MODEL_SCROLL_RIGHT_LEFT.ordinal()`.
-
-- **INV-MODEL-03**: `ActionType.isModelAction()` MUST return `true` for all **eight** `MODEL_*` values (`MODEL_BACK` through `MODEL_SCROLL_RIGHT_LEFT`, including `MODEL_LLM_TAP`) and MUST return `false` for all non-model values (`PHANTOM_CRASH`, `FUZZ`, `EVENT_*`).
-
+- **INV-MODEL-03**: `ActionType.isModelAction()` MUST return `true` for all **nine** `MODEL_*` values (`MODEL_BACK`, `MODEL_MENU`, `MODEL_LLM_TAP`, `MODEL_CLICK`, `MODEL_LONG_CLICK`, `MODEL_SCROLL_TOP_DOWN`, `MODEL_SCROLL_BOTTOM_UP`, `MODEL_SCROLL_LEFT_RIGHT`, `MODEL_SCROLL_RIGHT_LEFT` — the ordinal range `MODEL_BACK..MODEL_SCROLL_RIGHT_LEFT`) and MUST return `false` for all non-model values (`PHANTOM_CRASH`, `FUZZ`, `EVENT_*`).
 - **INV-MODEL-04**: The `Graph` MUST NOT contain two distinct `State` objects with equal `StateKey`s. `Graph.getOrCreateState(StateKey)` MUST be the sole factory for `State` objects, and it MUST return the same object on repeated calls with equal keys.
-
 - **INV-MODEL-05**: Every `StateTransition` MUST satisfy `transition.source == transition.action.getState()`. The `StateTransition` constructor enforces this with an `IllegalStateException`.
-
 - **INV-MODEL-06**: Each `GUITree` MUST be appended to exactly one `State`. Once `GUITree.currentState` is set to a non-null `State`, it MUST NOT be changed except during `Model.rebuild()` when the state is removed and re-assigned under the updated `Naming`. During `Model.rebuild()`, the `GUITree.currentState` pointer is cleared to `null` before re-appending the tree to its new `State`, which allows `State.append()` to accept the tree again without triggering the duplicate-append guard (`RuntimeException("Cannot be appended twice.")`).
-
 - **INV-MODEL-07**: `State.visitedCount` (inherited from `GraphElement`) MUST be incremented by exactly 1 each time `GraphElement.visitedAt(timestamp)` is called. It MUST equal the total number of calls to `visitedAt` on that element.
-
 - **INV-MODEL-08**: `StateTransition.treeTransitions` MUST be non-empty after the transition is first created; `Graph.addTransition(...)` MUST append the `GUITreeTransition` to the list on every call, both for new and existing transitions.
-
 - **INV-MODEL-09**: `Model.version` MUST be incremented by exactly 1 each time `Model.rebuild()` produces a structural change to the graph. If `rebuild()` is called but no states are affected, `version` MUST remain unchanged.
-
 - **INV-MODEL-10**: `StateKey` equality MUST imply widget-set equality: two `StateKey`s are equal if and only if their `activity` strings are equal, their `naming` references are equal (same `Naming` object or equal by `Naming.equals()`), and their `widgets` arrays are equal by `Arrays.equals()`.
-
 - **INV-MODEL-11**: `Model.rebuild()` SHALL be count-preserving for edge and activity counters: after any number of rebuilds, each edge's `visitedCount` equals the count implied by the replayed transition history, and each `ActivityNode`'s visit count equals its pre-rebuild (live-exploration) total. (Per-state source counters are excluded — see the deferred note above.)
-
 - **INV-MODEL-12**: `ActionType.MODEL_LLM_TAP` MUST satisfy `requireTarget() == false` and `isModelAction() == true`. This is enforced by its ordinal position (`MODEL_BACK.ordinal() <= MODEL_MENU.ordinal() < MODEL_LLM_TAP.ordinal() < MODEL_CLICK.ordinal() <= MODEL_SCROLL_RIGHT_LEFT.ordinal()`), with no change to the bodies of `requireTarget()` or `isModelAction()`. An `LlmTapAction` MUST be constructable with `target = null` without error.
-
 - **INV-MODEL-13**: `LlmTapAction` identity MUST include its `(pixelX, pixelY, longClick)` payload in addition to the inherited `(state, target = null, type)`. Two taps with identical payloads in the same state MUST be equal with equal `hashCode`; two taps whose coordinate or `longClick` flag differ MUST NOT be equal. Consequently each distinct off-tree tap owns its own `StateTransition` edges, and a differing outcome between two *different* coordinates MUST NOT be reported as non-determinism of a single action.
-
 - **INV-MODEL-14**: An **ephemeral** action — one synthesized per decision and never a member of any `State.actions` (`isEphemeral()`, true exactly for `MODEL_LLM_TAP`) — MUST NOT be registered in the graph's unvisited/visited action inventory, and the graph's visit bookkeeping MUST accept it without error rather than treating it as a violated registration. Any **non**-ephemeral model action reaching that bookkeeping unregistered MUST still raise the existing sanity-check error. An ephemeral action MUST NOT trigger naming refinement: its outcome varies with its payload or with a non-deterministic surface, neither of which any abstraction can resolve.
-
-- **INV-MODEL-15**: `Model.saveActionHistory` SHALL complete and produce `action-history.log` for every teardown, regardless of how many individual `ActionRecord`s fail to resolve. A resolution failure affects only its own record (the record is skipped); it MUST NOT abort the iteration, suppress other records, or propagate out of the method.
-
 - **INV-MODEL-16**: The ephemeral-action quarantine SHALL survive a model rebuild. An ephemeral edge (a `StateTransition` whose action `isEphemeral()`) SHALL NOT be replayed by `Model.rebuild`: it is observational and does not survive the refinement that removed its states — its `GUITreeTransition`s are dropped from the replay set **and** from the graph's tree-transition history (so `rebuildHistory` cannot resurrect a dangling edge). A post-refinement re-anchor of an agent action reference (`Model.update(ModelAction, GUITreeAction)`) SHALL return an ephemeral action unchanged — its identity is its payload (INV-MODEL-13), not `State.getActions()` membership, so a membership lookup is a category error, not a recoverable miss. Neither path SHALL throw for an ephemeral action; non-ephemeral behavior is unchanged.
-
 - **INV-MODEL-17**: `Graph.addTransition` SHALL NOT construct a `StateTransition` for an ephemeral action whose `getState()` differs from the transition source (a stale anchor left by a rebuild). It SHALL log one `[APE-RV] stale ephemeral edge dropped` line and return `null`; it SHALL NOT throw. Behavior for non-ephemeral actions is unchanged (a mismatch still throws `IllegalStateException`).
+- **INV-MODEL-18**: No `Model.ActionRecord` in `Model.actionHistory` SHALL hold a reference to an `Action`, `GUITreeAction`, `GUITree` or `GUITreeNode`: a record holds primitives and strings only (`clockTimestamp`, `agentTimestamp`, `actionType`, `stateId`, `targetXPath`, `treeId`, `treeTimestamp`, `throttle`), captured in `Model.appendToActionHistory`. The history's only rich retention is the depth-1 `Model.RecoveryPoint`, which retains at most one `(ModelAction, GUITreeAction)` pair whose tree is owned by a live state.
+- **INV-MODEL-19**: After `Model.release(tree)` returns, no `ModelAction` of the tree's owning state SHALL hold a resolved reference into the released tree (`ModelAction.releaseResolved` clears `resolvedTree`, `resolvedGUITreeAction`, `resolvedNode`, `resolvedNodes` and resets the resolve timestamp to `-1`), and every such cleared action SHALL report `isResolvedAt(t) == false` for every step timestamp `t` while keeping its `resolvedSaturation` unchanged. A tree with no owning state is released without touching any action.
+- **INV-MODEL-20**: The retention fixes (GUITreeBuilder cache release, snapshot action history, resolved-object release) MUST be decision-neutral: same seed ⇒ identical action sequence with and without them. No retention fix may alter a decision input (`resolvedSaturation`, priorities, boosts, provenance) or add a configuration flag; in particular the recovery point is remapped across a rebuild only when its action satisfies `requireTarget()` (`StatefulAgent.updateModel`). Neutrality is evidenced by unit tests that execute the changed paths (release cycles, history append, recovery, rebuild remap); the parity-oracle goldens are a regression floor on the decision ladder and SHALL NOT be cited as evidence for this invariant, since their harness never runs `GUITreeBuilder.release`, `Model.release`, `Model.appendToActionHistory`, `recoverCurrentState` or `updateModel`.
+
 ## Requirements
+
 ### Requirement: State Creation on Novel Abstract State
 
 When the model encounters a `GUITree` whose `StateKey` has not been seen before, it MUST allocate a new `State`, populate its action set from the `StateKey.widgets`, add the `MODEL_BACK` action unconditionally, and register the state in the `Graph`.
@@ -202,7 +190,7 @@ Every `State` MUST have a designated back action of type `MODEL_BACK` with no wi
 
 ### Requirement: LLM Coordinate Tap Action
 
-The model MUST provide `LlmTapAction`, a subclass of `ModelAction` with `actionType = MODEL_LLM_TAP` and `target = null`, carrying an off-tree tap payload: an integer pixel coordinate `(pixelX, pixelY)` and a `longClick` flag. It is constructed only by `LlmRouter` for the off-tree case and returned directly to the agent; it is NOT a member of any `State.actions` array.
+The model MUST provide `LlmTapAction`, a subclass of `ModelAction` with `actionType = MODEL_LLM_TAP` and `target = null`, carrying an off-tree tap payload: an integer pixel coordinate `(pixelX, pixelY)` and a `longClick` flag. It is constructed only by `CoordinateMapper.map` on the LLM path, for the off-tree case, and returned through `LlmEngine` to the LLM pipeline stage that selected it; it is NOT a member of any `State.actions` array.
 
 Because `MODEL_LLM_TAP.isModelAction()` is `true`, the agent-side action resolution path reads the action's resolved `GUITreeAction` and asserts it is non-null. A synthesized `LlmTapAction`, being absent from `State.actions`, is not resolved by the normal per-state resolution pass. Therefore the agent MUST resolve the synthesized tap against the current state before it is dispatched — populating its `GUITreeAction` via the targetless resolution branch (`target = null`), exactly as `MODEL_MENU` and `MODEL_BACK` are resolved. A widget action returned on the same path is already resolved and MUST NOT be re-resolved.
 
@@ -250,8 +238,6 @@ The synthesized tap is **ephemeral** (INV-MODEL-14): it is dispatched once and r
 
 - **WHEN** a `StateTransition` whose action is ephemeral is reported to non-determinism resolution
 - **THEN** the model MUST be left unrefined and unrebuilt
-
----
 
 ### Requirement: Model Rebuild After Naming Refinement
 
@@ -418,7 +404,7 @@ The host-side crash minimizer `reducer/ape/Reducer.java` also read rich records,
 2. else if model action → recovery point set to the rich pair, unblocked;
 3. else → no change.
 
-Recovery SHALL occur iff the point exists and is not blocked, and SHALL restore exactly what the HEAD scan restored. After a model rebuild, the recovery point's action reference SHALL be remapped through `Model.update(ModelAction, GUITreeAction)` in `StatefulAgent.updateModel` — **iff the action satisfies `requireTarget()`**, which is the condition the deleted remap loop applied (`StatefulAgent.java:308`). A targetless model action (`MODEL_BACK`, `MODEL_MENU`) held as the recovery point SHALL therefore keep referring to the pre-rebuild object, exactly as at HEAD, and a recovery from it SHALL restore that object. Remapping it unconditionally would be a behavior change — plausibly an improvement, since it would remove a stale-recovery path, but not a neutral one, and this change carries no evidence able to evaluate it (INV-MODEL-20). It is left to a change that measures exploration, not to this one. The recovery point is the **only** rich retention in the history subsystem, and it retains at most one tree — one that the owning state's `treeHistory` retains anyway.
+Recovery SHALL occur iff the point exists and is not blocked, and SHALL restore exactly what the HEAD scan restored. After a model rebuild, the recovery point's action reference SHALL be remapped through `Model.update(ModelAction, GUITreeAction)` in `StatefulAgent.updateModel` — **iff the action satisfies `requireTarget()`**, which is the condition the deleted history remap loop applied. A targetless model action (`MODEL_BACK`, `MODEL_MENU`) held as the recovery point SHALL therefore keep referring to the pre-rebuild object, exactly as at HEAD, and a recovery from it SHALL restore that object. Remapping it unconditionally would be a behavior change — plausibly an improvement, since it would remove a stale-recovery path, but not a neutral one, and this change carries no evidence able to evaluate it (INV-MODEL-20). It is left to a change that measures exploration, not to this one. The recovery point is the **only** rich retention in the history subsystem, and it retains at most one tree — one that the owning state's `treeHistory` retains anyway.
 
 #### Scenario: recovery from the most recent model action
 
@@ -489,4 +475,3 @@ Anything beyond these fixes — bounds or eviction on `Graph` collections, `Stat
 - **WHEN** the stage-6 fixes are applied
 - **THEN** no new `ape.properties` key SHALL exist for enabling or disabling them
 - **AND** the kill-switch registries SHALL be unchanged
-

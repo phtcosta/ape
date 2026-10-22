@@ -98,11 +98,11 @@ this capability.
   from that parse. No STATIC member SHALL hold or read a `MopData` reference. Coverage: `StaticGuiModelTest`,
   `MopDataTest`.
 - **INV-GRP-06**: Every read site of an ADDONS, STATIC or MOP mechanism SHALL read the plan. No such site SHALL
-  read the mechanism's switch from `Config`. In particular `model/State.java` (`modelMenuEnabled`),
-  `tree/GUITreeNode.java` and `tree/GUITreeBuilder.java` (`treeEnhancementsEnabled`), `agent/ApeAgent.java`
-  (`heuristicInput`), `MonkeySourceApe.java` (the foreign-activity and tree-package guards) and
-  `utils/MopData.java` (`mopActivitySourceComponents`) SHALL read `spec.has(<member>)`. Coverage:
-  `GroupReadSiteTest`.
+  read the mechanism's switch from `Config`, and `Config` SHALL declare no field for a plan-read switch. In
+  particular the `State` constructor (`MODEL_MENU`), `GUITreeBuilder.treeEnhancementsEnabled()` and its callers in
+  `GUITreeBuilder` and `GUITreeNode` (`TREE_ENHANCEMENTS`), `ApeAgent.generateInputText` (`HEURISTIC_INPUT`),
+  `MonkeySourceApe.generateEvents` (the foreign-activity and tree-package guards) and `StaticArtifactLoader.load`
+  (`MOP_ACTIVITY_SOURCE`) SHALL read `spec.has(<member>)`. Coverage: `GroupReadSiteTest`.
 - **INV-GRP-07**: A run whose plan does not contain `MOP` SHALL carry no MOP decision and no MOP field. The full
   list of trace fields is `event-sink` INV-SNK-18 (clean control): among them, no `ACT` dictionary entry SHALL carry
   a `mop` member; no `StepRecord` SHALL carry `dec.src` or `dec.own.i` equal to `mop` or `launcher`, a `mop`,
@@ -215,8 +215,8 @@ component intent filter, which the loader reads as "no data" when absent.
 #### Scenario: format 2 is still the only format read
 
 - **WHEN** `ape.staticDataPath` names an artifact with `formatVersion: 1`
-- **THEN** the load SHALL be rejected with `version-mismatch` exactly as `MopData.load` rejects it before this
-  change
+- **THEN** `StaticArtifactLoader.load` SHALL reject it with `version-mismatch` (its `formatVersion` gate), and
+  neither provider SHALL be built
 
 ### Requirement: Cell Presets as Unions of Group Blocks
 
@@ -335,21 +335,21 @@ checked by an A/A on a subset of APKs (plan §6.4).
 ### Requirement: Addon Read Sites Read the Plan
 
 Every site that decides whether an ADDONS, STATIC or MOP mechanism acts SHALL read the plan through
-`RunContext.current().spec()` (INV-GRP-06). These sites read `Config` before this change and SHALL switch to the
-plan:
+`RunContext.current().spec()` (INV-GRP-06). These sites read the plan, and `Config` has no field for any of
+their switches:
 
 | Mechanism | Site | Plan read |
 |---|---|---|
-| `MODEL_MENU` | `model/State.java:78` | `spec.has(Feature.MODEL_MENU)` |
-| `TREE_ENHANCEMENTS` | `tree/GUITreeNode.java:218,594`, `tree/GUITreeBuilder.java:444` | `spec.has(Feature.TREE_ENHANCEMENTS)` |
-| `HEURISTIC_INPUT` | `agent/ApeAgent.java:252` | `spec.has(Feature.HEURISTIC_INPUT)` |
-| `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD` | `MonkeySourceApe.java:818,837` | `spec.has(...)` of each |
-| `MOP_ACTIVITY_SOURCE` | `utils/MopData.java:207` | `spec.has(Feature.MOP_ACTIVITY_SOURCE)` |
-| `FORM_COMPLETION` | `agent/ApeAgent.java:199`, `agent/StatefulAgent.java:305`, `agent/SataAgent.java:558,1477` (formerly `Config.formCompletionEnabled`) | `spec.has(Feature.FORM_COMPLETION)` |
-| `FUZZING` (BASE) | `MonkeySourceApe.java:876` (formerly `Config.doFuzzing`, `Config.fuzzingRate`) | `spec.has(Feature.FUZZING)` and its `ape.fuzzingRate` parameter |
-| restart wrapping (BASE) | `agent/ApeAgent.java:280` (formerly `Config.checkRestart`) | the `ExplorationParams` value of `ape.checkRestart` |
-| `BACK_MENU_CAP` | the BACK/MENU cap in `SataAgent` | `spec.has(Feature.BACK_MENU_CAP)` and its parameter |
-| `ACTIVITY_STABLE_RESTART` | the activity-stability restart check | its parameter; absent ⇒ threshold `Integer.MAX_VALUE` |
+| `MODEL_MENU` | the `State` constructor (`model/State`) | `spec.has(Feature.MODEL_MENU)` |
+| `TREE_ENHANCEMENTS` | `GUITreeBuilder.treeEnhancementsEnabled()`, read by `GUITreeBuilder.checkAndRemoveWebView`, `GUITreeNode.isEditText` and `GUITreeNode.getScrollType` | `spec.has(Feature.TREE_ENHANCEMENTS)` |
+| `HEURISTIC_INPUT` | `ApeAgent.generateInputText` | `spec.has(Feature.HEURISTIC_INPUT)` |
+| `FOREIGN_ACTIVITY_GUARD`, `TREE_PACKAGE_GUARD` | `MonkeySourceApe.generateEvents` | `spec.has(...)` of each |
+| `MOP_ACTIVITY_SOURCE` | `StaticArtifactLoader.load` | `spec.has(Feature.MOP_ACTIVITY_SOURCE)` |
+| `FORM_COMPLETION` | `StatefulAgent.inFormCompletionContext` (read by `ApeAgent.checkInput`), `SataAgent.mountExtensionPoints` (the submit exclusion), `ScoringParams.fromSpec` (`FormCompletionPass`) and the `MopCoin` stage's assembly in `DecisionPipeline.fromSpec` | `spec.has(Feature.FORM_COMPLETION)` |
+| `FUZZING` (BASE) | `MonkeySourceApe.generateEvents` | `spec.has(Feature.FUZZING)` and its `ape.fuzzingRate` parameter |
+| restart wrapping (BASE) | `ApeAgent.checkRestart` and the `Restart` candidate of `DecisionPipeline` | the `ExplorationParams` value of `ape.checkRestart` |
+| `BACK_MENU_CAP` | the BACK/MENU cap in `SataAgent` | its parameter, `exploration().backMenuPickCap()` (`0` when the feature is absent) |
+| `ACTIVITY_STABLE_RESTART` | the activity-stability restart check (`StatefulAgent`) | its parameter, `exploration().activityStableRestartThreshold()`; absent ⇒ threshold `Integer.MAX_VALUE` |
 
 The two BASE rows carry no group switch; they read the plan so that `Config` is not a second authority over a
 planned key (design D-B6, decision A10), and they change no behaviour. When a member is absent, its site SHALL
@@ -368,11 +368,14 @@ behave as upstream APE does for that mechanism. The absent
 
 #### Scenario: guards follow the plan, not Config
 
-- **WHEN** `GroupReadSiteTest` scans the read sites of the table
-- **THEN** none of them SHALL read `Config.modelMenuEnabled`, `Config.treeEnhancementsEnabled`,
-  `Config.heuristicInput`, `Config.foreignActivityGuard`, `Config.treePackageGuard`,
-  `Config.mopActivitySourceComponents`, `Config.formCompletionEnabled`, `Config.doFuzzing`, `Config.fuzzingRate` or
-  `Config.checkRestart`
+- **WHEN** `GroupReadSiteTest` inspects `Config` and the plan
+- **THEN** `Config` SHALL declare no field named `modelMenuEnabled`, `treeEnhancementsEnabled`, `heuristicInput`,
+  `foreignActivityGuard`, `treePackageGuard`, `mopActivitySourceComponents`, `doFuzzing`, `fuzzingRate`,
+  `checkRestart`, `minEpsilon`, `maxEpsilon`, `mopDataPath`, `mopTargetPickCap`, `leastVisitedPriorityTiebreak` or
+  `frontierBoostWeight`
+- **AND** under the `base` cell every ADDONS member the table names SHALL be absent from the plan, the BACK/MENU
+  cap SHALL read `0` and the activity-stable threshold `Integer.MAX_VALUE`, while `FUZZING` and `ape.checkRestart`
+  keep their BASE defaults
 
 ### Requirement: Component Triggering as a STATIC Member
 

@@ -1,23 +1,41 @@
 # APE-RV Specifications
 
-This directory contains the main specifications for APE-RV. Each subdirectory covers one domain of the system. Specifications are written in the SDD format: narrative Purpose, Data Contracts, Invariants (INV-XX-NN), and Requirements with WHEN/THEN/AND scenarios.
+This directory contains the main specifications for APE-RV. Each subdirectory covers one capability of the system. Specifications are written in the SDD format: narrative Purpose, Data Contracts, Invariants (INV-XX-NN), and Requirements with WHEN/THEN/AND scenarios. They describe the code as it stands on `master`.
 
-## Domain Map
+## Capability Map
 
-| Domain | Spec | Phase | Status | Description |
-|--------|------|-------|--------|-------------|
-| [build](build/spec.md) | Build Infrastructure | 1 | **Current** | Maven + d8 build system producing `ape-rv.jar` |
-| [exploration](exploration/spec.md) | Exploration Engine | 1–2 | **Current** | Agent interface, 5 strategies, SATA heuristic |
-| [model](model/spec.md) | Exploration Model | 1–2 | **Current** | Graph of States, Transitions, ModelActions, ActionType |
-| [naming](naming/spec.md) | Naming & Abstraction | 1 | **Current** | Core CEGAR algorithm: Naming lattice, NamingFactory, refinement |
-| [ui-tree](ui-tree/spec.md) | UI Tree | 1–2 | **Current** | GUITree, GUITreeNode, scroll detection |
-| [mop-guidance](mop-guidance/spec.md) | MOP Guidance | 3 | **Current** | MopData loader, MopScorer, configurable weights (500/300/100) |
-| [aperv-tool](aperv-tool/spec.md) | aperv-tool Plugin | 4 | **Current** | Python ApeRVTool for rv-android, 5 variants, JAR resolution |
-| [llm-infrastructure](llm-infrastructure/spec.md) | LLM Infrastructure | 6 | **Current** | SglangClient, ScreenshotCapture, ImageProcessor, ToolCallParser, CoordinateNormalizer, LlmCircuitBreaker, LlmException |
-| [llm-prompt](llm-prompt/spec.md) | LLM Prompt Builder | 6 | **Current** | ApePromptBuilder: system message, widget list, MOP markers, action history, exploration context |
-| [llm-routing](llm-routing/spec.md) | LLM Routing | 6 | **Current** | LlmRouter lifecycle, new-state mode, stagnation mode, action selection pipeline, coordinate mapping, telemetry |
+Behavior is organised in five groups — BASE (≈ upstream APE, no key), ADDONS, STATIC, MOP and LLM — see [guidance-groups](guidance-groups/spec.md).
+
+| Capability | Area | Description |
+|------------|------|-------------|
+| [build](build/spec.md) | Build | Maven + d8 build producing `target/ape-rv.jar`; `BuildInfo` git stamp; install copy to aperv-tool |
+| [run-spec](run-spec/spec.md) | Runtime | `RunSpec` plan resolved once at startup: keys, presets (six cells), fail-fast aborts, `RunContext`, `RUN_START` echo |
+| [guidance-groups](guidance-groups/spec.md) | Runtime | The five behavior groups, their member `Feature`s, dependencies and the six preset cells |
+| [exploration](exploration/spec.md) | Agents | Agent strategies (`sata`, `random`, `replay`), SATA heuristic, epsilon, fuzzing, restart, teardown |
+| [decision-pipeline](decision-pipeline/spec.md) | Agents | The per-step owner sequence (`Budget` … `SataChain`), `StepRng` streams, buffer abandonment |
+| [action-selection](action-selection/spec.md) | Agents | SATA's pick inside `SataChain`: least-visited X1 tie, roulette, extension points, per-step attribution |
+| [scoring-pipeline](scoring-pipeline/spec.md) | Agents | Additive, independent `ScoringPass`es (rule R1) and their assembly from the plan |
+| [activity-budget](activity-budget/spec.md) | ADDONS | Per-activity step budget and navigation to a trivial activity when exhausted |
+| [form-completion](form-completion/spec.md) | ADDONS | Boost for submit actions once a form's input fields are filled |
+| [heuristic-input](heuristic-input/spec.md) | ADDONS | Field-aware text generation for `EditText` widgets |
+| [ui-coverage](ui-coverage/spec.md) | ADDONS / all cells | Per-state widget coverage tracking, coverage boost and the coverage dump |
+| [wtg-navigation](wtg-navigation/spec.md) | STATIC / MOP | Window Transition Graph view from the static artifact and its scoring passes |
+| [static-analysis-entrypoints](static-analysis-entrypoints/spec.md) | STATIC / MOP | What the producer (GATOR, rv-android generator) emits and what reaches the jar (format 2) |
+| [component-triggering](component-triggering/spec.md) | STATIC / MOP | Probabilistic receiver/service/provider triggers and the MOP activity launcher |
+| [mop-guidance](mop-guidance/spec.md) | MOP | `StaticArtifactLoader`, `MopData`/`MopContext`, `flag`/`distance` scoring, retirement, MOP coin, ledger |
+| [llm-infrastructure](llm-infrastructure/spec.md) | LLM | `SglangClient` (vLLM), `LlmClient` + breaker, screenshot, image processing, tool-call parsing |
+| [llm-prompt](llm-prompt/spec.md) | LLM | `ApePromptBuilder`: system message, widget list, group prompt contributions, history |
+| [llm-routing](llm-routing/spec.md) | LLM | LLM stages (new state, stagnation, coin), gates, `CoordinateMapper`, LLM telemetry |
+| [event-sink](event-sink/spec.md) | Telemetry | `EventSink`/`NdjsonSink`: `StepRecord`, `RUN_START`, `PIPELINE`, `MOP_DATA`, `LLM_ACK`, `RUN_END`, heartbeat |
+| [parity-oracle](parity-oracle/spec.md) | Testing | Golden decision traces, scripted LLM stub and the neutrality gates |
+| [model](model/spec.md) | Core | Exploration graph: `State`, `StateTransition`, `ModelAction`, `ActionType` |
+| [naming](naming/spec.md) | Core | CEGAR abstraction: `Naming` lattice, `NamingFactory`, refinement |
+| [ui-tree](ui-tree/spec.md) | Core | `GUITree`/`GUITreeNode` capture, scroll types, handler stamps, release |
+| [aperv-tool](aperv-tool/spec.md) | Integration | The rv-android `aperv` plugin contract: variants, properties, JAR resolution, NDJSON trace reader |
 
 ## Spec→PRD Traceability
+
+`docs/PRD.md` predates most capabilities; only the original ten are traced.
 
 | Spec | PRD Requirements |
 |------|-----------------|
@@ -40,6 +58,6 @@ Specs are the source of truth for implementation. Changes to system behavior MUS
 2. Write a **delta spec** (what changes relative to the main spec)
 3. Implement from the delta spec via `/opsx:apply`
 4. Verify with `/opsx:verify`
-5. Sync delta into main spec with `/opsx:sync`, then archive with `/opsx:archive`
+5. Archive with `/opsx:archive`
 
-The main spec files in this directory are NEVER edited directly — only via the sync step after a completed change.
+`openspec archive` applies a delta's requirement operations (ADDED / MODIFIED / REMOVED / RENAMED) but not its preamble (Purpose, Data Contracts, Invariants). Preamble edits carried by a delta are synced into the main spec by hand at archive time, and the requirement blocks are checked to be identical to the archive's output. Outside that step the main specs are not edited directly.

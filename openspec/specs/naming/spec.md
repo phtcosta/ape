@@ -10,11 +10,9 @@ The abstraction is defined by a `Naming`, which is a set of `Namelet` rules. Eac
 
 The `Namer` implementations form a lattice ordered by discriminating power. The coarsest element is `EmptyNamer`, which returns the same empty `Name` (`""`) for every widget — meaning all widgets collapse into one group. The finest reachable element (without `useAncestorNamer`) is `parentTypeTextIndexNamer`, which considers the parent's attributes, the widget's class, its text/content-description, and its sibling index. When `useAncestorNamer=true`, the full-path `AncestorNamer` becomes the lattice top. This partial order is encoded in `NamerLattice`, which maps every `EnumSet<NamerType>` key to the corresponding `Namer` singleton and precomputes upper (finer), lower (coarser), and incomparable sets for each element. `NamerType` is an enum with values `TYPE`, `INDEX`, `PARENT`, `TEXT`, `ANCESTOR`; a `Namer`'s discriminating power is the cardinality and composition of its `NamerType` set.
 
-Non-determinism is detected by `NamingFactory.resolveNonDeterminism()`, which is called by the exploration loop whenever a `StateTransition` is observed to have multiple distinct target states (`StateTransition`s diverging from the same action). For each pair of diverging transitions, the system computes a `GUITreeWidgetDiffer` to identify widgets that differ, then calls `refine()`, which tries state refinement first (splitting the *source* state) and, if `actionRefinementFirst=true`, action refinement first (splitting the *actions* within a state). The chosen `RefinementResult` selects a finer `Namer` for the XPath selector of the discriminating widget, produces a new child `Naming` via `Naming.extend()` or `Naming.replaceLast()`, and then rebuilds the exploration model with `Model.rebuild()`, re-abstracting all affected `GUITree`s under the new `Naming`.
+Non-determinism is detected by `NamingFactory.resolveNonDeterminism()`, which is called by the exploration loop whenever a `StateTransition` is observed to have multiple distinct target states (`StateTransition`s diverging from the same action). For each pair of diverging transitions, the system computes a `GUITreeWidgetDiffer` to identify widgets that differ, then calls `refine()`. When `actionRefinementFirst=true` (the default) it tries action refinement first (splitting the *actions* within a state) and state refinement (splitting the *source* state) only if action refinement found no result; when `false` it tries state refinement first and action refinement only if state refinement found none. The chosen `RefinementResult` selects a finer `Namer` for the XPath selector of the discriminating widget, produces a new child `Naming` via `Naming.extend()` or `Naming.replaceLast()`, and then rebuilds the exploration model with `Model.rebuild()`, re-abstracting all affected `GUITree`s under the new `Naming`.
 
-The `NamingManager` interface (with implementations `ActivityNamingManager`, `StateNamingManager`, and `MonolithicNamingManager`) mediates between the `NamingFactory` and the rest of the system. It maintains a per-tree `treeToNaming` map so that each `GUITree` is associated with exactly one current `Naming`, and provides `getNaming(GUITree)` as the single access point for the rest of the code. Configuration flags in `ape.utils.Config` govern the entire system: `evolveModel` (default `true`) enables CEGAR; when `false`, the base `Naming` is used throughout and `resolveNonDeterminism` returns the model unchanged.
-
----
+The `NamingManager` interface (with implementations `ActivityNamingManager`, `StateNamingManager`, and `MonolithicNamingManager`) mediates between the `NamingFactory` and the rest of the system. It maintains a per-tree `treeToNaming` map so that each `GUITree` is associated with exactly one current `Naming`, and provides `getNaming(GUITree)` as the single access point for the rest of the code. The plan key `ape.evolveModel` (default `true`, read as `RunContext.current().spec().exploration().evolveModel()`) enables CEGAR. The gate sits in the agent, not in `NamingFactory`: when it is `false`, `StatefulAgent.checkNonDeterministicTransitions` and `StatefulAgent.preEvolveModel` return before doing anything, so `Model.resolveNonDeterministicTransitions` (and through it `NamingFactory.resolveNonDeterminism`), `stateAbstraction` and `actionRefinement` are never invoked and the base `Naming` is used throughout. `NamingFactory` itself never reads the key. The refinement tuning flags (`actionRefinementFirst`, `maxStatesPerActivity`, `maxGUITreesPerState`, `useAncestorNamer`, `activityManagerType`) are `ape.utils.Config` fields.
 
 ## CEGAR Refinement Flow
 
@@ -29,9 +27,10 @@ sequenceDiagram
 
     EL->>EL: execute action A from state S<br/>observe target tree t2
     EL->>EL: detect non-determinism<br/>(S --A--> S1 already recorded,<br/>now S --A--> S2, S1 ≠ S2)
+    Note over EL: ape.evolveModel = false → StatefulAgent returns here;<br/>NamingFactory is never called
     EL->>NF: resolveNonDeterminism(model, nst)
 
-    alt evolveModel = false OR action.isBack() OR action in NDActionBlacklist
+    alt action.isBack() OR action in NDActionBlacklist
         NF-->>EL: return model unchanged
     else refinement eligible
         NF->>GD: diff(t1, t2) — identify widgets<br/>that differ between the two target trees
@@ -77,8 +76,8 @@ sequenceDiagram
 - `tree: GUITree` — a concrete UI snapshot captured after each action; its `Document` (W3C DOM) is the primary input to `Naming.naming()`; its `ActivityName: ComponentName` is used by `ActivityNamingManager` to select the per-activity `Naming`
 - `naming: Naming` — the current abstraction level; selected from the `NamingManager` by activity or globally
 - `nst: StateTransition` — the newly observed non-deterministic transition; carries `source: State`, `target: State`, and `action: ModelAction`; passed to `NamingFactory.resolveNonDeterminism()` to trigger CEGAR
-- `ape.evolveModel: boolean` (default `true`) — permits refinement; read from `ape.properties` at startup
-- `ape.actionRefinementFirst: boolean` (default `true`) — when `true`, action refinement is attempted before state refinement
+- `ape.evolveModel: boolean` (default `true`) — plan key (`KeyOwnership` base key, read through `spec().exploration().evolveModel()`); permits refinement, gated in `StatefulAgent` (see Purpose)
+- `ape.actionRefinementFirst: boolean` (default `true`, `Config` field) — when `true`, action refinement is attempted before state refinement
 - `ape.maxStatesPerActivity: int` (default `10`) — upper bound on abstract states per activity before refinement is suppressed
 - `ape.maxGUITreesPerState: int` (default `20`) — upper bound on stored GUITrees per state before refinement is suppressed
 - `ape.useAncestorNamer: boolean` (default `true`) — includes `AncestorNamer` variants in the lattice, making full-path discrimination available
@@ -95,47 +94,32 @@ sequenceDiagram
 - **[NamingManager.treeToNaming]**: `updateNaming(GUITree, Naming)` writes the new `Naming` into the per-tree dictionary and increments `NamingManager.version`; the exploration loop uses this version to detect when the model needs rebuilding
 - **[GUITreeNode.xpathName / tempXPathName]**: `Naming.naming(tree, updateNodeName=true)` writes `Name` values back into each `GUITreeNode`; `tempXPathName` is a scratch field cleared after each naming pass; `xpathName` is the persisted value used by `ParentNamer` and `AncestorNamer` when processing children
 - **[Naming.treeToNamingResult]**: results of `naming()` are cached per `GUITree` inside the `Naming` instance; cache entries are evicted via `Naming.release(GUITree)` when the tree is discarded from the model
-- **[NamingFactory.NDActionBlacklist]**: actions whose non-determinism exceeds 2 diverging transitions are added to a blacklist and excluded from future refinement attempts
-- **[NamingFactory.guiTreeNamingBlacklist]**: records which `(GUITree, Naming)` pairs have already been attempted for refinement to prevent cycles
+- **[NamingFactory.NDActionBlacklist]**: after a refinement attempt that found no result, an action with 3 or more outgoing state transitions (`outStateTransitions.size() >= 3`) is added to this blacklist and excluded from future refinement attempts
+- **[NamingFactory.guiTreeNamingBlaclist]** (the field's spelling in code): records which `(GUITree, Naming)` pairs have already been attempted for refinement to prevent cycles
 
 ### Error
 
 - `IllegalStateException("A node has no namelets.")` — thrown during `Naming.namingInternal()` when a DOM element matches no `Namelet`; indicates a corrupt or unexpected tree structure; the bad tree is saved to `/sdcard/badtree.xml`
 - `IllegalStateException("A node has no namelet.")` — thrown when `Namelet` selection among multiple candidates returns `null`; should not occur if `Naming` is well-formed
-- `NullPointerException("Parent name should not be null.")` — thrown by `ParentNamer.naming()` when a parent node's `tempXPathName` and `xpathName` are both `null`; indicates a top-down traversal was not performed before accessing child names
+- `IllegalStateException("Parent name should not be null.")` — thrown by `ParentNamer.naming()` when a parent node's `tempXPathName` and `xpathName` are both `null`; indicates a top-down traversal was not performed before accessing child names
 - `IllegalArgumentException("Extended child namer should refine to parent namer.")` — thrown by `Naming.extend()` when the candidate `Namelet`'s `Namer` does not satisfy `refinesTo()` with respect to the parent `Namelet`'s `Namer`; enforces the monotonicity of refinement
 - `IllegalArgumentException("Incomplete lattice")` — thrown by `NamerLattice` constructor if either the bottom (`noneOf()`) or top (`allOf()`) element is absent, or if the complement of any element is missing; the lattice MUST be complete at construction time
-
----
 
 ## Invariants
 
 - **INV-NAME-01**: For any `GUITree` `t` and current `Naming` `N`, `N.naming(t)` MUST return exactly one `NamingResult`; every node in `t`'s DOM MUST be assigned to exactly one `Name` group. No node MAY be unassigned (enforced by the `IllegalStateException` on missing namelets).
-
 - **INV-NAME-02**: If `N2 = N.extend(parentNamelet, newNamelet)`, then `N2` MUST be strictly finer than `N`: for every pair of `GUITree`s `t1`, `t2` that map to the same `StateKey` under `N2`, they MUST also map to the same `StateKey` under `N`. The converse MUST NOT hold for at least the pair of trees that triggered refinement.
-
 - **INV-NAME-03**: Refinement MUST be monotone: `Naming.extend()` creates a child `Naming` that adds exactly one new `Namelet` to the parent's `Namelet` array; `Naming.replaceLast()` replaces the last `Namelet` with a strictly finer one. In both cases, the new `Namer` MUST satisfy `newNamer.refinesTo(existingNamer) == true` (i.e., `newNamer.getNamerTypes()` properly contains `existingNamer.getNamerTypes()`).
-
 - **INV-NAME-04**: The `NamerLattice` MUST have `EmptyNamer` (with `NamerType` set `{}`) as its unique bottom element (`getBottomNamer()`) and the namer with the full `NamerType` set (either `{TYPE, INDEX, PARENT, TEXT}` or `{TYPE, INDEX, PARENT, TEXT, ANCESTOR}` depending on `useAncestorNamer`) as its unique top element (`getTopNamer()`).
-
 - **INV-NAME-05**: `EmptyNamer.naming(node)` MUST always return `EmptyNamer.emptyName` — the same singleton `Name` instance — regardless of the `GUITreeNode`'s attributes. This makes `EmptyNamer` the identity for the `meet` operation in the lattice.
-
 - **INV-NAME-06**: `CompoundNamer.naming(node)` MUST return a `CompoundName` whose `toString()` is the concatenation of `toString()` of each component `Namer`'s `Name` in array order. Equality between two `CompoundName` values MUST be determined by element-wise equality of the component `Name` array via `Arrays.equals()`.
-
 - **INV-NAME-07**: `AncestorNamer.naming(node)` MUST return an `AncestorName` whose `Name[]` array encodes the full path from the root to the node, in root-first order. Two nodes that differ at any ancestor MUST produce unequal `AncestorName` values.
-
-- **INV-NAME-08**: When `ape.evolveModel=false`, `NamingFactory.resolveNonDeterminism()` MUST return the model unchanged. No `Naming.extend()`, `Naming.replaceLast()`, or `NamingManager.updateNaming()` call MAY occur during the session.
-
+- **INV-NAME-08**: When `ape.evolveModel=false`, `StatefulAgent.checkNonDeterministicTransitions` and `StatefulAgent.preEvolveModel` MUST return before any refinement, so `NamingFactory.resolveNonDeterminism()`, `stateAbstraction()` and `actionRefinement()` are never invoked. No `Naming.extend()`, `Naming.replaceLast()`, or `NamingManager.updateNaming()` call MAY occur during the session.
 - **INV-NAME-09**: The `treeToNamingResult` cache inside each `Naming` MUST be invalidated (via `Naming.release(GUITree)`) whenever the `GUITree` is removed from the model. Stale cache entries MUST NOT be used; after `release()`, a subsequent call to `naming(tree)` for the same tree MUST recompute from the DOM.
-
 - **INV-NAME-10**: `NamingManager.version` MUST be incremented exactly once per call to `updateNaming(GUITree, Naming)`. The exploration loop MAY use this version counter to determine whether model state counts are still valid without recomputing.
-
 - **INV-NAME-11**: `Namer.refinesTo(other)` MUST return `true` if and only if `this.getNamerTypes().containsAll(other.getNamerTypes())`. In particular, `namer.refinesTo(namer)` MUST return `true` (reflexivity), and if `a.refinesTo(b)` and `b.refinesTo(c)`, then `a.refinesTo(c)` MUST hold (transitivity).
-
 - **INV-NAME-12**: For any two `GUITree`s `t1` and `t2` that differ only in widget properties not covered by `N`'s `Namelet` set (i.e., no `NamerType` in any `Namelet`'s `Namer` reads those properties), `N.naming(t1)` and `N.naming(t2)` MUST produce equal `StateKey` values. Abstraction MUST ignore irrelevant properties.
-
 - **INV-NAME-13**: Every `binarySearch` not-found test in `ape.naming` SHALL use `index < 0`; no code path SHALL index an array or list with a negative binary-search result.
-
 - **INV-NAME-14**: No refinement-guard condition SHALL compare a quantity different from the one its threshold names and its log message reports.
 
 ---
@@ -242,23 +226,20 @@ When a `RefinementResult` is accepted, the model MUST be fully reconstructed und
 
 - **WHEN** `NamingFactory.rebuild()` completes and debug mode is active (`debug=true` in `NamingFactory`),
 - **THEN** for every affected `GUITree` `t`, `t.getCurrentNaming()` MUST equal `nm.getNaming(t)` MUST equal `nm.getNaming(t, activityName, document)`,
-- **AND** any inconsistency MUST throw `IllegalStateException("Inconsistent naming update.")`.
-
----
+- **AND** any inconsistency MUST dump the naming manager (`nm.dump()`) and throw an `IllegalStateException` with no message.
+- **AND** with `debug=false` (the compiled value of `NamingFactory.debug`) the check MUST NOT run.
 
 ### Requirement: evolveModel=false Freezes the Naming
 
-When `ape.evolveModel=false`, the system MUST behave as a static abstraction tool. The base `Naming` (constructed at startup) MUST be used for all `GUITree`s throughout the entire testing session. No refinement MUST occur regardless of how many non-deterministic events are observed.
+When `ape.evolveModel=false`, the system MUST behave as a static abstraction tool. The gate is in the agent: `StatefulAgent.checkNonDeterministicTransitions` and `StatefulAgent.preEvolveModel` return at once, so no refinement entry point (`resolveNonDeterministicTransitions`, `stateAbstraction`, `actionRefinement`) is called. The base `Naming` (constructed at startup) MUST be used for all `GUITree`s throughout the entire testing session. No refinement MUST occur regardless of how many non-deterministic events are observed.
 
 #### Scenario: non-determinism observed but not refined
 
-- **WHEN** `ape.evolveModel=false` is set in `ape.properties`,
+- **WHEN** `ape.evolveModel=false` is set in the plan (`ape.properties` or the command line),
 - **AND** action `A` from state `S` leads to two distinct target trees `t1` and `t2` with different action sets on two separate visits,
-- **THEN** `NamingFactory.resolveNonDeterminism(model, nst)` MUST return the original `model` object without modification,
+- **THEN** `StatefulAgent.checkNonDeterministicTransitions` MUST return without calling `Model.resolveNonDeterministicTransitions`, so `NamingFactory.resolveNonDeterminism` is never invoked and the agent's `model` remains the same object,
 - **AND** `NamingManager.version` MUST remain unchanged,
 - **AND** no `Naming.extend()`, `Naming.replaceLast()`, or `NamingManager.updateNaming()` call MUST occur during the session.
-
----
 
 ### Requirement: AncestorNamer Full-Path Discrimination
 

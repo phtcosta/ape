@@ -6,13 +6,11 @@ The prompt is built from the mounted behaviour groups (design D-B1, D-A3): `ApeP
 
 The prompt design follows a principle from the rvsmart experiments: the LLM performs best when it receives both visual (screenshot) and structured (widget list) information. The screenshot lets the LLM understand the visual layout and identify UI elements that the accessibility tree may miss — including **dynamic elements** (WebView content, custom-drawn views, canvas elements, dynamically loaded content) that do not appear in the UIAutomator dump. The widget list provides precise bounds, action types, visited counts, and (with MOP) MOP markers that the LLM cannot infer from pixels alone. Combining both reduces coordinate errors (from ~70% with image-only to ~84% with image+text) and, in a cell with MOP, enables MOP-aware reasoning.
 
-A key advantage of the LLM integration is the ability to perform **semantic clicks on elements invisible to UIAutomator**. While SATA can only interact with widgets present in the accessibility tree, the LLM sees the screenshot and can identify and click on visual elements that have no corresponding accessibility node — buttons inside WebViews, custom-rendered UI, dynamically injected content, etc. When the LLM targets such an element, `mapToModelAction()` may return null (no matching ModelAction), but a future enhancement could inject a raw coordinate click for these cases.
+A key advantage of the LLM integration is the ability to perform **semantic clicks on elements invisible to UIAutomator**. While SATA can only interact with widgets present in the accessibility tree, the LLM sees the screenshot and can identify and click on visual elements that have no corresponding accessibility node — buttons inside WebViews, custom-rendered UI, dynamically injected content, etc. When the LLM targets such an element, `CoordinateMapper.map` finds no widget action containing or near the point and, for a `click` or `long_click` answer, synthesizes an off-tree `LlmTapAction` of type `MODEL_LLM_TAP` carrying the LLM's pixel, which the jar executes as a coordinate tap (`llm-routing` INV-RTR-03, "Coordinate-to-ModelAction Mapping").
 
 The inclusion of recent action history (last 3-5 actions with results) prevents the LLM from being "amnesic" — without history, the LLM may repeatedly suggest the same action. This is a consensus finding from the state of the art (GPTDroid, VisionDroid, rvsmart V17, LLM-Explorer all include some form of action memory).
 
 The prompt uses Qwen3-VL's normalized coordinate space [0, 1000) for both input widget positions and LLM response coordinates. The `CoordinateNormalizer` converts between this space and device pixels: `toNormalized` from pixel to [0,1000) for every coordinate the prompt shows, `normalize` back to a pixel for the answer. There is a single base per decision: the display dimensions that `ScreenshotStep.deviceDimensions` returns, which are the dimensions the screenshot is captured at and the answer is multiplied by. The element list and the action history both divide by that pair, at build time, never by the active window's root node or a constant ("Single Coordinate Base", INV-PRM-06). A listed coordinate is the centre of the part of the widget that is on screen, the point the jar taps for it; a widget with no part on screen lists none. Reference: https://github.com/QwenLM/Qwen3-VL/issues/1486
-
----
 
 ## Data Contracts
 
@@ -98,10 +96,10 @@ Key design choices:
 
 - **WHEN** `build()` is called with any valid inputs
 - **THEN** the first message SHALL have role `"system"`
-- **AND** it SHALL contain the DIALOG HANDLING, PRIORITY, and RULES sections
+- **AND** for the variants `ape_current` and `ape_reasoning` it SHALL contain the `DIALOG:`, `PRIORITY:`, `AVOID:` and `RULES:` lines quoted above
 - **AND** it SHALL declare the `click`, `long_click`, and `back` tool schemas
 - **AND** it SHALL specify that coordinates use [0, 1000) normalized space
-- **AND** it SHALL explain the meaning of [DM] and [M] markers exactly when `Feature.MOP` is in the plan, and SHALL contain neither `[DM]` nor `[M]` otherwise
+- **AND** its `PRIORITY:` line SHALL rank `[DM]/[M] elements` first exactly when `Feature.MOP` is in the plan, and the message SHALL contain neither `[DM]` nor `[M]` otherwise; the message does not define the two markers beyond that ranking
 
 #### Scenario: Dynamic tool schema — type_text included
 
@@ -127,7 +125,7 @@ The text content of the user message SHALL contain a structured list of all avai
 
 **Non-target actions** (MODEL_BACK, MODEL_MENU):
 ```
-[<index>] <ACTION_TYPE> (key press)
+[<index>] <ACTION_TYPE> (key)
 ```
 
 **Target actions** (MODEL_CLICK, MODEL_LONG_CLICK, MODEL_SCROLL_*):

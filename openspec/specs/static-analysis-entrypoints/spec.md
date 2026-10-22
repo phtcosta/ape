@@ -8,9 +8,9 @@ The RVSEC static analysis pipeline (rvsec-gator) produces a JSON file per APK co
 
 This specification defines which components are entry points, how they appear in the JSON output, and what the runtime needs from them — the intent surface `component-triggering` dispatches against, and the activity reachability the A′ union draws on as one of its three sources.
 
-Component triggering is a STATIC member whose pool reads no MOP data (design D-B13), so the compact artifact projects every receiver, service and provider whatever its `reachesTarget`, and each receiver and service intent filter carries, besides `actions` and `categories`, an optional reduced `data` member (`schemes`, `hosts`, `paths`, `pathPrefixes`, `mimeTypes`; design D-B14.11) so that a filter matching on a scheme, host, path or MIME type can be targeted. The member is additive: the artifact stays `formatVersion: 2`, and the generator string and the `source.digest` chain are unchanged. The derive is implemented in rv-android (its `aperv` spec); this specification mirrors the same contract on the jar side.
+The producer's document speaks the analyser's neutral vocabulary: a method or component that reaches a monitored operation carries `reachesTarget` / `directlyReachesTarget`, and a component lists its reaching lifecycle methods in `targetMethods`. The generator is the one component that reads that document, and it renames to the MOP vocabulary on the wire (`mop`, `mopActivities`, `reachesMop`); `hasTargetMethods` is the one `Target` name the wire keeps (design D7).
 
----
+Component triggering is a STATIC member whose pool reads no MOP data (design D-B13), so the compact artifact projects every receiver, service and provider whatever its `reachesTarget`, and each receiver and service intent filter carries, besides `actions` and `categories`, an optional reduced `data` member (`schemes`, `hosts`, `paths`, `pathPrefixes`, `mimeTypes`; design D-B14.11) so that a filter matching on a scheme, host, path or MIME type can be targeted. The member is additive: the artifact stays `formatVersion: 2`, and the generator string and the `source.digest` chain are unchanged. The derive is implemented in rv-android (its `aperv` spec); this specification mirrors the same contract on the jar side. The INV-DRV-* invariants cited here are rv-android's, defined in its `aperv` spec (INV-DRV-06 is mirrored below); INV-ANA-* and INV-INS-* are rv-android's `analysis` and `instrumentation` invariants.
 
 ## Data Contracts
 
@@ -20,8 +20,8 @@ Component triggering is a STATIC member whose pool reads no MOP data (design D-B
 - `xml.getReceivers()` — `Iterator<String>` of BroadcastReceiver class names declared in the manifest (requires new getter)
 
 ### Output
-- Extended `reachability[]` in JSON — classes reachable from Service/Receiver lifecycle methods included with `reachable`, `reachesMop`, `directlyReachesMop`, `isService`, `isReceiver` flags
-- New `components{}` section in JSON — structured data for receivers and services with intent-filters, exported status, MOP reachability, and MOP method signatures
+- Extended `reachability[]` in JSON — classes reachable from Service/Receiver lifecycle methods included, each with `componentType` and `isMain` (INV-EP-04) and per-method `signature`, `reachable`, `reachesTarget` and `directlyReachesTarget` flags (and, since gh120, `targetDistances`)
+- New `components{}` section in JSON — structured data for activities, receivers, services and providers with intent-filters (or authorities), exported status, target reachability (`reachesTarget`) and the signatures of the reaching lifecycle methods (`targetMethods`)
 
 ### Side-Effects
 - **[Static Analysis JSON]**: JSON files produced by rvsec-gator will contain additional entries in `reachability[]` and a new `components{}` section
@@ -87,13 +87,11 @@ Public and protected methods of Service and Receiver classes SHALL also be added
 
 ### Requirement: MOP flag propagation for Service/Receiver callbacks
 
-Service and BroadcastReceiver lifecycle methods SHALL receive MOP flag propagation through the call graph, following the same mechanism used for Activity lifecycle handlers in `complementWithCallbacks()`.
+Service and BroadcastReceiver lifecycle methods SHALL receive MOP flag propagation through the call graph, following the same mechanism used for Activity lifecycle handlers in `complementWithCallbacks()`. In the producer's document the flags are `reachesTarget` and `directlyReachesTarget`; the generator renames them to the MOP vocabulary on the wire.
 
 #### Scenario: Service lifecycle method reaches MOP
 - **WHEN** a Service's `onStartCommand` method calls a method that directly reaches a MOP specification
-- **THEN** `onStartCommand` SHALL be marked with `reachesMop=true` in `reachability[]`
-
----
+- **THEN** `onStartCommand` SHALL be marked with `reachesTarget=true` in `reachability[]`
 
 ### Requirement: Reachability entries — component type classification
 
@@ -124,11 +122,13 @@ Each activity/receiver/service entry SHALL contain:
 - `isMain` (boolean): true only for the main launcher activity
 - `intentFilters` (Array): list of `{actions: [...], categories: [...]}` objects from the manifest
 - `exported` (boolean): value of `android:exported` attribute
-- `reachesMop` (boolean): true if any lifecycle method reaches a MOP specification
-- `mopMethods` (Array of String): Soot signatures of lifecycle methods that reach MOP
+- `reachesTarget` (boolean): true if any lifecycle method reaches a MOP specification
+- `targetMethods` (Array of String): Soot signatures of lifecycle methods that reach MOP
 
 Each provider entry SHALL contain the same fields except `intentFilters` is replaced by:
 - `authorities` (String): value of `android:authorities` attribute
+
+The generator reads `reachesTarget` and `targetMethods` and emits them on the wire as `reachesMop` and the boolean `hasTargetMethods` ("Derived compact MOP artifact — projection contents" item 7); `exported` stays in the full JSON.
 
 #### Scenario: App with all component types
 - **WHEN** an APK declares an Activity, Receiver, Service, and ContentProvider
@@ -140,32 +140,32 @@ Each provider entry SHALL contain the same fields except `intentFilters` is repl
       "isMain": true,
       "intentFilters": [{"actions": ["android.intent.action.MAIN"], "categories": ["android.intent.category.LAUNCHER"]}],
       "exported": true,
-      "reachesMop": false,
-      "mopMethods": []
+      "reachesTarget": false,
+      "targetMethods": []
     }],
     "receivers": [{
       "className": "com.example.app.BootReceiver",
       "isMain": false,
       "intentFilters": [{"actions": ["android.intent.action.BOOT_COMPLETED"], "categories": []}],
       "exported": true,
-      "reachesMop": true,
-      "mopMethods": ["<com.example.app.BootReceiver: void onReceive(android.content.Context,android.content.Intent)>"]
+      "reachesTarget": true,
+      "targetMethods": ["<com.example.app.BootReceiver: void onReceive(android.content.Context,android.content.Intent)>"]
     }],
     "services": [{
       "className": "com.example.app.CryptoService",
       "isMain": false,
       "intentFilters": [{"actions": ["com.example.START_CRYPTO"], "categories": []}],
       "exported": false,
-      "reachesMop": true,
-      "mopMethods": ["<com.example.app.CryptoService: int onStartCommand(android.content.Intent,int,int)>"]
+      "reachesTarget": true,
+      "targetMethods": ["<com.example.app.CryptoService: int onStartCommand(android.content.Intent,int,int)>"]
     }],
     "providers": [{
       "className": "com.example.app.DataProvider",
       "isMain": false,
       "authorities": "com.example.app.data",
       "exported": false,
-      "reachesMop": false,
-      "mopMethods": []
+      "reachesTarget": false,
+      "targetMethods": []
     }]
   }
   ```
@@ -308,22 +308,3 @@ The full static-analysis JSON SHALL remain in `<results_dir>`, byte-identical, a
 - **AND** the analysis pipeline's `directly_reaches_mop` set for that app SHALL be computed from the full JSON, identical to the pre-change value
 
 ---
-
-### Requirement: Equivalence gate for the parser cutover
-
-Before the jar's full-JSON parser is deleted, a one-shot equivalence gate SHALL demonstrate, over a **designed input set** — the cryptoapp fixture pair plus one synthetic full-JSON fragment per relocated rule the fixture cannot exercise — that for every member the projections served by the **old** parser on the full JSON and by the **new** parser on the derived artifact are identical: widget flag maps (per-event entries and aggregates), widget metadata fields, both MOP-activity sets (flag off and on), OPTIONSMENU-gateway sets (flag off and on), WTG views, component trigger tuples and provider tuples, **the per-activity deep-link URI including its null cases** (INV-DRV-07 — activities are otherwise absent from the tuple comparison, so nothing else would catch a deep-link divergence), and `package`/`mainActivity`. Every synthetic SHALL be derived through the production generator rather than hand-written, so the artifact side of each comparison is never an author's idea of what the generator emits. The gate SHALL run in the repository's ordinary test invocation and SHALL NOT be conditioned on a system property, an environment variable or an external directory: a gate that can be skipped by an unset input is indistinguishable, in a green build, from a gate that ran. The gate is the merge condition for the cutover commit; the gate code, its synthetics, and the old parser it needs as oracle are deleted immediately after it passes (P3 — the permanent protection is the per-rule generator unit tests plus the jar fixture tests).
-
-The gate SHALL cover each relocated rule with at least one input-set member that **fires** it — flagged-and-dropped empty-id widgets (INV-DRV-02), recovered synthetic-lambda handlers including the negative case (INV-DRV-01), re-keyed dialogs with host promotion (INV-DRV-03), an A′ union differing from the widget-derived set (INV-DRV-06), and the deep-link URI with its null cases (INV-DRV-07) — and SHALL fail when any rule has no member that fires it. Equality over inputs that never trigger a rule is not evidence for that rule. A synthetic authored for a rule but deriving to an artifact where the rule did not fire is a defect in the synthetic, not coverage of the rule.
-
-**Scope, and what it deliberately does not establish** (owner decision 2026-08-05): this gate was specified over the pinned 345-application corpus via `-Dmop.corpusDir`, and that run does not occur — the APE-RV side executes once, in `gh97-rearch-ab-gate`, which is a merge gate rather than a cutover gate. The generator's exposure to real producer documents is established separately and already: `gh96` derived all 345 with no crash and no refusal, and its recorded totals were independently reproduced. What no longer has evidence is the *jar-side* comparison over unanticipated real-application shapes; that residual is carried by the permanent Python suite and, indirectly, by `gh97`'s campaign. The corpus is not a precondition of this requirement and MUST NOT be reinstated as one without a decision that reverses the above.
-
-#### Scenario: equivalence over the designed input set
-- **WHEN** the equivalence gate runs as part of the ordinary test invocation, with no property or directory supplied
-- **THEN** every member of the input set SHALL compare equal on every projection listed above
-- **AND** any inequality SHALL fail the gate naming the member and the first differing projection
-- **AND** each relocated rule SHALL have at least one member that fires it, the gate failing when one does not
-
-#### Scenario: gate is a cutover artifact, not a permanent test
-- **WHEN** the cutover commit lands
-- **THEN** the repository SHALL contain neither the full-JSON parser, nor the gate test, nor its synthetic full-JSON fragments
-- **AND** the permanent suites (generator unit tests, jar fixture tests) SHALL cover every relocated invariant (INV-DRV-01..04, INV-DRV-06, INV-DRV-07)

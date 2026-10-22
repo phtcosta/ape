@@ -13,16 +13,16 @@ The scoring path SHALL be expressed as an ordered sequence of `ScoringPass` obje
 
 ```java
 public interface ScoringPass {
-    String name();                                        // for the assembly log and tests
+    String name();                                        // for the PIPELINE record and tests
     boolean isEnabled();                                  // decided in the constructor from injected params
     void apply(State state, ModelAction[] actions, ScoringContext ctx);
 }
 ```
 
-`isEnabled()` SHALL be decided once when the pass is constructed — from the presence of its mounting feature (its member feature, or the root `MOP` for `MopWidgetPass`) in the resolved plan, carried by the `ScoringParams` value object injected at construction, and from its data gate where it has one — never from static `Config`, and SHALL NOT be re-evaluated per `apply` call. A pass that is disabled SHALL NOT be added to the assembled pipeline; therefore a disabled pass SHALL make no priority change, set no scorer field, and emit no log line. Each pass SHALL read its weights from its injected `ScoringParams` and its collaborators (its group's provider — `StaticGuiModel` or `MopData` — the coverage tracker, the form context, the graph) exclusively through the `ScoringContext` passed to `apply`, and only those its group owns ("Scorer Ownership by Group"); a pass SHALL NOT hold run-mutable state of its own, so that the pass stays unit-testable with a stub context and explicit params. `MopScorer`'s weights (`mopWeightDirect`, `mopWeightTransitive`, `mopWeightOpenMenu`) SHALL likewise be supplied as parameters by the calling pass; `MopScorer` SHALL NOT read static `Config`.
+`isEnabled()` SHALL be decided once when the pass is constructed — from the presence of its mounting feature in the resolved plan and from its data gate where it has one — never from static `Config`, and SHALL NOT be re-evaluated per `apply` call. For the member-feature passes the feature's presence is carried by the `ScoringParams` value injected at construction (`ScoringParams.fromSpec` writes the off value, `0` or `false`, when the feature is absent); `MopWidgetPass`, mounted by the root `MOP`, is enabled iff the `ScoringContext` carries a `MopContext`, which it does exactly when `MOP` is in the plan. A pass that is disabled SHALL NOT be added to the assembled pipeline; therefore a disabled pass SHALL make no priority change, set no scorer field, and emit no log line. Each pass SHALL read its weights from its injected `ScoringParams` — or, for `MopWidgetPass`, from the run's `MopContext` (`ScoringContext.getMopContext()`, built from `spec().mop()` and the loaded providers), which carries the scoring mode and the `flag`/`distance` weights — and its collaborators (its group's provider — `StaticGuiModel` or `MopData` — the coverage tracker, the form context, the graph) exclusively through the `ScoringContext` passed to `apply`, and only those its group owns ("Scorer Ownership by Group"); a pass SHALL NOT hold run-mutable state of its own, so that the pass stays unit-testable with a stub context and explicit params. `MopScorer` SHALL receive its weights as arguments from the calling pass: the `MopContext` for the widget weights (`mopWeightDirect`, `mopWeightTransitive`, `mopWeightD1..3`), and an explicit integer for `mopWeightOpenMenu` (`MopScorer.scoreOpenMenu`) and `mopWeightWtg` (`MopScorer.scoreWtg`); `MopScorer` SHALL NOT read static `Config`.
 
 - **INV-ARCH-02**: A `ScoringPass` whose `isEnabled()` returned `false` at construction SHALL NOT appear in the assembled pipeline and SHALL therefore be a strict no-op for the run — zero priority mutations, zero scorer-field writes, zero log lines. A `ScoringPass` SHALL hold no run-mutable field.
-- **INV-ARCH-11**: No scoring pass, and no helper it calls (`MopScorer` included), SHALL read static `Config` at any time after construction; every weight and gate SHALL arrive via `ScoringParams` injection. Tests SHALL construct `ScoringParams` directly, never mutate `Config`.
+- **INV-ARCH-11**: No scoring pass, and no helper it calls (`MopScorer` included), SHALL read static `Config` at any time; every weight and gate SHALL arrive by injection — through `ScoringParams`, or, for the MOP widget weights and mode, through the run's `MopContext` handed in by the `ScoringContext`. Tests SHALL construct `ScoringParams` (and a `MopContext` where needed) directly, never mutate `Config`.
 - **INV-ARCH-12**: Because INV-ARCH-11 makes every pass test blind to the values a real plan resolves to, the plan → `ScoringParams` mapping SHALL itself be guarded: a `ScoringParams` derived from each cell preset SHALL equal that cell's weights and feature gates, asserted as literals in one test per cell. Nothing else in the change set observes a scoring default — the parity goldens never reach the scoring pipeline (it runs above their entry point) and the `RUN_START` echo is write-only by owner decision D1 of `rearch-02-runspec`.
 
 #### Scenario: disabled pass is absent and inert
@@ -45,11 +45,11 @@ public interface ScoringPass {
 - **THEN** the per-cell defaults-guard test SHALL fail, naming the field and both values
 - **AND** the per-cell parity goldens SHALL still pass, because the scoring pipeline never executes under them — which is why the guard is a separate test and not a golden
 
-### Requirement: Scoring Pipeline Assembly from Config
+### Requirement: Scoring Pipeline Assembly from the RunSpec
 
-`ScoringPipeline.fromParams(ScoringParams, ScoringContext)` SHALL be the single point that maps the resolved plan's scoring configuration to the ordered list of enabled passes. It SHALL construct the **seven** candidate passes in the fixed order `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `NavFrontierPass` → `MopFrontierPass` → `CoveragePass` → `FormCompletionPass` (the frontier family contiguous), retain only those whose `isEnabled()` is `true` — that is, whose member feature is in the plan and whose data gate holds ("Scorer Ownership by Group") — and emit exactly one `PIPELINE` sink record (event-sink capability) whose `passes` member lists the retained passes' `name()` values in pipeline order. No other code path SHALL assemble or reorder the pipeline. The class documentation SHALL state the seven-pass roster.
+`ScoringPipeline.fromParams(ScoringParams, ScoringContext, EventSink)` SHALL be the single point that maps the resolved plan's scoring configuration to the ordered list of enabled passes. It SHALL construct the **seven** candidate passes in the fixed order `MopWidgetPass` → `MenuGatewayPass` → `WtgPass` → `NavFrontierPass` → `MopFrontierPass` → `CoveragePass` → `FormCompletionPass` (the frontier family contiguous), retain only those whose `isEnabled()` is `true` — that is, whose mounting feature is in the plan and whose data gate holds ("Scorer Ownership by Group") — and emit exactly one `PIPELINE` sink record (event-sink capability) whose `passes` member lists the retained passes' `name()` values in pipeline order. The `EventSink` argument is handed to `MopWidgetPass`, the one pass that records something of its own (the MOP exposure pair). No other code path SHALL assemble or reorder the pipeline. The class documentation SHALL state the seven-pass roster.
 
-Under rule R1 the order has no effect on any term or on the final priorities ("Scorer Independence (Rule R1)"); it is kept fixed so the `PIPELINE` record and the assembly tests stay deterministic. The sole caller (`StatefulAgent`, at construction) SHALL pass the real `ScoringParams` derived from the `RunSpec`.
+Under rule R1 the order has no effect on any term or on the final priorities ("Scorer Independence (Rule R1)"); it is kept fixed so the `PIPELINE` record and the assembly tests stay deterministic. The sole caller (the `StatefulAgent` constructor) SHALL pass the real `ScoringParams` derived from the `RunSpec` (`ScoringParams.fromSpec(spec)`), the agent's `ScoringContext` and the run's sink (`RunContext.current().sink()`).
 
 **The same assembly SHALL also record the candidates it dropped.** Beside the retained list — whose content and format are unchanged — assembly SHALL record every candidate pass with whether it was constructed, carried by the `PIPELINE` record's `candidates` member. The census SHALL be produced inside `fromParams`, where the full candidate list is still in scope: the pipeline discards the disabled passes at construction and has no handle on them afterwards.
 
@@ -61,7 +61,7 @@ No `reason` field SHALL be added to the entries, and no `disabledReason()` metho
 - **INV-ARCH-04**: `ScoringPipeline.fromParams` SHALL be the sole assembly point. The `PIPELINE` record's `passes` member SHALL list exactly the enabled passes, in pipeline order, and nothing else SHALL construct a pipeline. The candidate census (`PIPELINE.candidates`) is a **sibling** record member, never a widening of this list.
 
 #### Scenario: only enabled passes are assembled and logged
-- **WHEN** `ScoringPipeline.fromParams(params, ctx)` runs for a plan with `ADDONS` (`COVERAGE_BOOST` at `coverageBoostWeight=100`, `FORM_COMPLETION`) and without `STATIC` or `MOP`
+- **WHEN** `ScoringPipeline.fromParams(params, ctx, sink)` runs for a plan with `ADDONS` (`COVERAGE_BOOST` at `coverageBoostWeight=100`, `FORM_COMPLETION`) and without `STATIC` or `MOP`
 - **THEN** the pipeline SHALL contain `CoveragePass`, `FormCompletionPass` in that order and no MOP, WTG or frontier pass
 - **AND** one `PIPELINE` record SHALL be emitted with `passes:["CoveragePass","FormCompletionPass"]`
 
@@ -81,23 +81,21 @@ No `reason` field SHALL be added to the entries, and no `disabledReason()` metho
 
 ### Requirement: adjustActionsByGUITree Delegates to the Pipeline
 
-`StatefulAgent.adjustActionsByGUITree(State, ModelAction[])` SHALL consist of the upstream APE base-priority loop followed by exactly one pipeline invocation `pipeline.apply(state, actions, ctx)`. The base-priority loop SHALL be byte-identical to upstream APE (`github.com/tianxiaogu/ape` @ `8f51b99`). No RV-specific scoring term SHALL remain inline in the method body — every RV term SHALL be a `ScoringPass` in the pipeline. The `StatefulAgent` SHALL hold one `ScoringPipeline`, built once (at construction) from `Config` and the `ScoringContext`.
+`StatefulAgent.adjustActionsByGUITree()` (no arguments; it iterates `newState.getActions()`) SHALL consist of the upstream APE base-priority loop followed by exactly one pipeline invocation `scoringPipeline.apply(newState, actions, scoringContext)`. The base-priority loop SHALL be the upstream APE loop (`github.com/tianxiaogu/ape` @ `8f51b99`), term for term and in the same order; its one parameter, `maxExtraPriorityAliasedActions`, is read from the plan's injected exploration parameters. No RV-specific scoring term SHALL remain inline in the method body — every RV term SHALL be a `ScoringPass` in the pipeline. The `StatefulAgent` SHALL hold one `ScoringPipeline`, built once in its constructor from the `RunSpec` (`ScoringParams.fromSpec`), the `ScoringContext` and the run's sink. `ScoringPipeline.apply` is a strict no-op when the pipeline is empty; otherwise it clears the actions' boost fields (`resetBoosts()`) and runs the enabled passes.
 
 This preserves `INV-EXPL-11` (adjustActionsByGUITree is called after base priority assignment and before selection) and `INV-MOP-03` (boosts are additive over the base priority): the base loop runs first, the pipeline adds on top.
 
-- **INV-ARCH-05**: The non-pipeline body of `adjustActionsByGUITree()` SHALL be byte-identical to the upstream APE base-priority loop; the single `pipeline.apply(...)` call SHALL be the only RV addition to the method. There SHALL be no inline RV scoring `if`-block in the method after this change.
+- **INV-ARCH-05**: The non-pipeline body of `adjustActionsByGUITree()` SHALL be the upstream APE base-priority loop (same terms, same order, its bound read from the plan instead of `Config`); the single `scoringPipeline.apply(...)` call SHALL be the only RV addition to the method. There SHALL be no inline RV scoring `if`-block in the method.
 
 #### Scenario: method body is upstream loop plus one pipeline call
-- **WHEN** `adjustActionsByGUITree(state, actions)` is invoked
-- **THEN** it SHALL run the upstream base-priority loop over `actions`
-- **AND** it SHALL then invoke `pipeline.apply(state, actions, ctx)` exactly once
+- **WHEN** `adjustActionsByGUITree()` is invoked on the new state
+- **THEN** it SHALL run the upstream base-priority loop over `newState.getActions()`
+- **AND** it SHALL then invoke `scoringPipeline.apply(newState, actions, scoringContext)` exactly once
 - **AND** it SHALL contain no other RV scoring logic
 
 #### Scenario: empty pipeline yields upstream priorities
 - **WHEN** the pipeline is empty (pure arm) and `adjustActionsByGUITree` runs
 - **THEN** the resulting action priorities SHALL equal the upstream base-priority loop's output for the same actions and seed
-
----
 
 ### Requirement: Scoring Pass Roster and Gates
 
@@ -170,13 +168,13 @@ The following keys SHALL be the activation keys of ADDONS member features (`guid
 
 A `MopFrontierPass` (in `com.android.commands.monkey.ape.agent.scoring`, implementing `ScoringPass`) is a MOP scorer, mounted by `MOP_FRONTIER` (activated by `ape.mopFrontierWeight`, POSITIVE, neutral 0, depends on `MOP`). It SHALL add `mopFrontierWeight` to the priority of a target-requiring, valid, resolved action when ALL THREE of the following hold for a WTG transition matched to that action:
 
-1. **Widget match** — the action's short resource id equals `WtgTransition.widgetName` (the same resource-id matching used by `WtgPass` and `NavFrontierPass`), obtained via its own `StaticGuiModel.getWtgTransitions(activity)` lookup;
+1. **Widget match** — the action's short resource id equals `WtgTransition.widgetName` (the same resource-id matching used by `WtgPass` and `NavFrontierPass`), obtained via its own `StaticGuiModel.wtgTransitions(activity)` lookup;
 2. **Target is MOP-bearing** — `MopData.activityHasMop(WtgTransition.targetActivity) == true`;
 3. **Target is unvisited** — `Graph.getActivityNode(WtgTransition.targetActivity) == null` at scoring time (evaluated live each pass; the term recedes once the target is visited).
 
 Under rule R1 the pass SHALL compute its term without reading priority or any other scorer field, write it to its own field `mopFrontierBoost` and add it to the priority (`action.setPriority(action.getPriority() + term)` — the steering mechanism, since `mopFrontierBoost` never enters `getPriority()`). It SHALL NOT write `wtgBoost` or `navFrontierBoost`. Its term is visible in the step record as `dec.mopf`, and its causal effect at a weighted pick as `dec.cfc.mopf` (`action-selection`).
 
-`MopFrontierPass.isEnabled()` SHALL be true only when `MOP_FRONTIER` is in the plan and `StaticGuiModel.hasWtgData()` holds. It is independent of and additive to the STATIC `NavFrontierPass` (which requires only an unvisited target, not a MOP one): B is the strictly narrower predicate (unvisited AND MOP), and the two terms stay in separate fields. An explicit non-zero `ape.mopFrontierWeight` on a plan without `MOP` aborts resolution as a missing dependency (`run-spec` INV-RUN-05).
+`MopFrontierPass.isEnabled()` SHALL be true only when `MOP_FRONTIER` is in the plan (`mopFrontierWeight > 0` in its `ScoringParams`), the context carries `MopData`, and `StaticGuiModel.hasWtgData()` holds. It is independent of and additive to the STATIC `NavFrontierPass` (which requires only an unvisited target, not a MOP one): B is the strictly narrower predicate (unvisited AND MOP), and the two terms stay in separate fields. An explicit non-zero `ape.mopFrontierWeight` on a plan without `MOP` aborts resolution as a missing dependency (`run-spec` INV-RUN-05).
 
 - **INV-MFP-01**: `MopFrontierPass` SHALL add `mopFrontierWeight` to an action **only** when its matched WTG transition target satisfies both `activityHasMop(target) == true` AND `Graph.getActivityNode(target) == null` at scoring time. An action failing either condition SHALL receive nothing from this pass.
 - **INV-MFP-02**: The term SHALL be added to the priority AND written to `mopFrontierBoost`; because `mopFrontierBoost` is never read by `getPriority()`, the priority increment is mandatory for the term to steer. `MopFrontierPass` SHALL NOT write `wtgBoost` or `navFrontierBoost`; when `WtgPass` and/or `NavFrontierPass` co-apply to the same action, each field SHALL reflect only its own pass's term.
@@ -288,7 +286,7 @@ Every `ScoringPass` is a **scorer**: one term added to the priority of each cand
 
 - the screen (the new state, its actions and their resolved nodes);
 - the model (graph, visit counts, activity nodes);
-- its own data: its group's provider (`StaticGuiModel` for STATIC, `MopData`, `StaticGuiModel` and the read-only `MopInteractionLedger` for MOP, the coverage tracker or form context for ADDONS) and its own injected parameters.
+- its own data: its group's provider (`StaticGuiModel` for STATIC, `MopData` and `StaticGuiModel` for MOP, the coverage tracker or form context for ADDONS) and its own injected parameters. No scorer reads the run's `MopInteractionLedger` (INV-ARCH-14).
 
 It SHALL NOT read the action's current priority, nor any scorer field, its own included, from a previous write within the same scoring call. It SHALL write its term to its own field (assigned, one field per scorer, "Scorer Ownership by Group") and add the same term to the priority. Because the terms do not depend on one another, the chain is commutative: mounting or unmounting scorer B never changes the term scorer A computes (INV-ARCH-13). The sum of the seven fields is the action's **scorer sum**, the quantity X1 compares (`action-selection` rule R2) and the counterfactual zeroes field by field (`dec.cfc`).
 
@@ -342,3 +340,4 @@ Each pass SHALL belong to exactly one group, SHALL be mounted by exactly one fea
 - **INV-ARCH-13**: No scoring pass SHALL read `ModelAction.getPriority()` or another pass's field to compute its term. Applying the mounted passes in any order SHALL leave every action with the same priority and the same seven fields.
 - **INV-ARCH-14**: A pass SHALL be constructed if and only if its mounting feature — its member feature, or the group root `MOP` for `MopWidgetPass` — is in the resolved plan (and its data gate, where it has one, holds). A pass owned by a group SHALL read only that group's provider: a STATIC pass reads `StaticGuiModel` and never `MopData`; an ADDONS pass reads neither. No pass reads the run's `MopInteractionLedger` (`mop-guidance`, design D-B19 reverted).
 - **INV-MFP-04**: `MopFrontierPass` SHALL be mounted only with `MOP_FRONTIER`, a MOP member; in a cell without `MOP`, `mopFrontierBoost` SHALL be 0 on every action and `dec.mopf` SHALL never be written.
+

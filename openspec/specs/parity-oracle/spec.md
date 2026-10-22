@@ -74,8 +74,8 @@ X3/X4 defaults (D-B12) each shift the random sequence relative to `eea2b1a9`.
   declared inputs nothing below the entry point assigns (a widget's `mopWeight`, the seeded
   cadence counter, an exhausted activity) (source: test tree, committed)
 - `preset injection profile` — one profile per cell preset; the cell's resolved plan decides which
-  mechanisms the scaffold mounts (`StaticGuiModel`, `MopData`, the scripted LLM router, the gates,
-  the MOP coin, the X1/X3/X4 variants) (source: `OracleScaffold`)
+  mechanisms the scaffold mounts (`StaticGuiModel`, `MopData`, the scripted LLM (`ScriptedLlm`),
+  the gates, the MOP coin, the X1/X3/X4 variants) (source: `OracleScaffold`)
 - `seed: long` — seeds every RNG stream of the run: the agent stream (`getRandom()`, via the
   harness subclass override), the helper stream (`RandomHelper.seed`), and the four `StepRng`
   streams derived from it (`llmCoin`, `mopCoin`, `componentCoin`, the fuzz toss) (source: capture test)
@@ -120,26 +120,27 @@ X3/X4 defaults (D-B12) each shift the random sequence relative to `eea2b1a9`.
 ## Invariants
 
 - **INV-ORA-01**: The oracle SHALL live entirely in the test tree, with exactly one carve-out:
-  `SataAgent.egreedy()` SHALL read the agent's RNG through the overridable `getRandom()`
-  (`ApeAgent.java:322-323`) instead of `ape.getRandom()` directly. That single line is
-  behavior-identical in production — `getRandom()` is defined as `return ape.getRandom()` — and
-  it is the only thing standing between the harness and both epsilon-greedy legs, because the
-  harness cannot supply an `ape`: `MonkeySourceApe` does not class-load off device
-  (`MonkeySourceApeForeignGuardTest:19-21`), and stubbing `android.*` toward it does not
-  converge (verified 2026-08-03: `IUiAutomationConnection` → `RemoteException` →
-  `Build$VERSION`, the last of which would require inventing an SDK level the production code
-  branches on). Apart from that line the oracle SHALL NOT modify any file under
+  `SataAgent.egreedy()` SHALL read the agent's RNG through the overridable `ApeAgent.getRandom()`
+  instead of `ape.getRandom()` directly. That single line is behavior-identical in production —
+  `getRandom()` is defined as `return ape.getRandom()` — and it is the only thing standing between
+  the harness and both epsilon-greedy legs, because the harness cannot supply an `ape`:
+  `MonkeySourceApe` does not class-load off device (`MonkeySourceApeForeignGuardTest`), and
+  stubbing `android.*` toward it does not converge (verified 2026-08-03: `IUiAutomationConnection` →
+  `RemoteException` → `Build$VERSION`, the last of which would require inventing an SDK level the
+  production code branches on). Apart from that line the oracle SHALL NOT modify any file under
   `src/main/java/`, SHALL NOT add production seams, and SHALL NOT place a class on the test
   classpath that shadows a production class. Source stubs under `src/test/java/android/**` (the
   established `Rect.java` pattern) are permitted for `android.*` framework types only.
 - **INV-ORA-02**: Capture and replay SHALL be deterministic: the same harness, seed, preset,
-  and scenario SHALL produce an identical decision-record sequence on every execution. Both
-  RNG streams (`RandomHelper` and the agent's `getRandom()`) SHALL be seeded from the
-  scenario's declared seed.
+  and scenario SHALL produce an identical decision-record sequence on every execution. Every
+  seeded stream — the agent stream (`getRandom()`), the helper stream (`RandomHelper`) and the four
+  `StepRng` streams (`llmCoin`, `mopCoin`, `componentCoin`, `fuzz`, derived by the installed run
+  context from the plan's seed) — SHALL be seeded from the scenario's declared seed.
 - **INV-ORA-03**: No oracle code path SHALL perform network I/O, capture a screenshot, or
-  depend on wall-clock time. In particular the scripted LLM router SHALL never invoke the
-  real `selectAction` pipeline and SHALL never drive `LlmCircuitBreaker` transitions
-  (`System.currentTimeMillis()`-based, `LlmCircuitBreaker.java:54,77,95`).
+  depend on wall-clock time. In particular the scripted LLM (`ScriptedLlm`) SHALL never invoke the
+  real `LlmEngine.selectAction` pipeline and SHALL never drive `LlmCircuitBreaker` transitions
+  (`System.currentTimeMillis()`-based, `LlmCircuitBreaker.java:54,77,95`): the scaffold replaces
+  each LLM stage's `BreakerGate` with the hook's scripted verdict.
 - **INV-ORA-04**: The default test run (`mvn test`, CI included) SHALL only compare; golden
   files SHALL be written exclusively when `-Dape.oracle.regenerate=true` is set explicitly.
   No mechanism SHALL regenerate goldens automatically.
@@ -149,10 +150,6 @@ X3/X4 defaults (D-B12) each shift the random sequence relative to `eea2b1a9`.
   `MOP_LAUNCHER`.
 - **INV-ORA-06**: A comparison failure SHALL identify the preset, scenario, step index, and
   the first divergent field with both golden and actual values.
-- **INV-ORA-07**: While `rearch-02-runspec` and `rearch-03-decision-pipeline` are in flight,
-  golden files and scenario scripts SHALL NOT change; only the injection scaffold MAY be
-  adapted to renamed or relocated fields. A behavior change in those stages that requires
-  regenerating a golden SHALL be treated as a deviation requiring an explicit owner decision.
 - **INV-ORA-08**: There SHALL be one committed golden set per cell preset, and no golden SHALL
   name a preset outside `base`, `mop`, `as`, `as_mop`, `as_llm`, `as_mop_llm`. The sets SHALL be
   captured once, in wave 2 of `isolate-guidance-groups`, through the deliberate regeneration
@@ -249,7 +246,7 @@ The component-trigger stage sits between the launcher and the MOP coin and is a 
 The preemption golden SHALL additionally pin:
 
 1. **Global cadence** (INV-ORA-05, replacing finding 3.3-1): on a step taken by an LLM stage, the launcher's cadence counter SHALL advance; on the first later step that reaches `MOP_LAUNCHER` with the counter at or above the cadence, the launcher SHALL fire.
-2. **Stagnation single-shot burn**: when the stagnation stage is consulted, `stagnationHookFired` SHALL become `true` regardless of the verdict — an LLM decline still burns the episode's shot.
+2. **Stagnation single-shot burn**: when the stagnation stage's trigger holds and its gates admit the call, the stage's `firedThisEpisode` flag SHALL become `true` regardless of the verdict — an LLM decline still burns the episode's shot.
 3. **Counter reset on accept only**: `graphStableCounter` SHALL be reset to 0 by a stagnation accept and SHALL be left unchanged by a stagnation decline.
 4. **Stage order**: on a step where several LLM stages would route, the new-state stage SHALL be consulted before stagnation, and stagnation before the coin; at most one of them calls the model on a step (design decision A3).
 
@@ -269,8 +266,8 @@ The preemption golden SHALL additionally pin:
 #### Scenario: Stagnation decline burns the single shot
 
 - **WHEN** the stagnation stage routes and the scripted verdict is decline, and a later step in the same episode would qualify the stagnation stage again
-- **THEN** the first step SHALL set `stagnationHookFired` to `true` with `graphStableCounter` unchanged
-- **AND** the later step SHALL NOT consult the stagnation stage (the stub honors the `firedThisEpisode` argument)
+- **THEN** the first step SHALL set the `LlmStagnationStage`'s `firedThisEpisode` flag to `true` with `graphStableCounter` unchanged
+- **AND** the later step SHALL NOT consult the stagnation stage's gate, because the stage's own trigger (`stagnationMidpointReached`, which reads `firedThisEpisode`) no longer holds
 
 #### Scenario: Budget exhaustion is pinned at the gate, not at the trivial return
 
@@ -293,7 +290,7 @@ The preemption golden SHALL additionally pin:
 
 ### Requirement: Deterministic LLM Stubbing
 
-LLM-cell goldens SHALL be captured with a scripted router (`ScriptedLlmRouter extends LlmRouter`) and never a live SGLang server. The stub SHALL override the routing predicates with per-step scripted verdicts that honor the agent-side arguments (`shouldRouteNewState` honors `isNewState`; `shouldRouteStagnation` honors `firedThisEpisode`), and SHALL override `selectAction` with scripted results: **accept** (a `ModelAction` chosen from the passed action list by a deterministic selector named in the script), **decline** (null), or **timeout** (null, recorded distinctly as provenance). The LLM coin is not scripted: it is decided by the seeded `u_L` draw and the plan's `p_L`, and the declared gates are mounted from the plan as in production. The stub SHALL NOT perform HTTP, SHALL NOT capture screenshots, and SHALL NOT record breaker transitions; scripts SHALL NOT model breaker-open episodes (out of oracle scope — wall-clock dependent). Script exhaustion, or a scripted consultation the agent never performed, SHALL fail the test.
+LLM-cell goldens SHALL be captured with the scripted LLM `ScriptedLlm` (test tree) and never a live LLM server. The scaffold (`OracleScaffold.installScriptedLlm`) SHALL rebuild each assembled LLM stage's `LlmCall` with two substitutions and nothing else: the stage's `BreakerGate` is replaced by a gate answering the hook's per-step scripted verdict (`ScriptedLlm.gateFor(hook)`, hooks `new-state`, `stagnation`, `random`), and the engine is replaced by `ScriptedLlm`'s inner `ScriptedEngine extends LlmEngine`, which overrides `selectAction` with scripted results: **accept** (a `ModelAction` chosen from the passed action list by a deterministic selector named in the script), **decline** (null), or **timeout** (null, recorded distinctly as provenance). The plan's `MinActionsGate` and the step's shared `StepRouting` (one LLM call per step) are kept. The stage's own trigger is not scripted and is honored: the new-state stage still requires `_isNewState`, and the stagnation stage still evaluates its midpoint predicate against its own `firedThisEpisode` flag before any gate is consulted. The LLM coin is not scripted: it is decided by the seeded `u_L` draw and the plan's `p_L`. The stub SHALL NOT perform HTTP, SHALL NOT capture screenshots, and SHALL NOT record breaker transitions; scripts SHALL NOT model breaker-open episodes (out of oracle scope — wall-clock dependent). Script exhaustion, or a scripted consultation the agent never performed, SHALL fail the test.
 
 #### Scenario: Accept returns a deterministic member of the offered actions
 
