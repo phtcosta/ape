@@ -19,6 +19,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.android.commands.monkey.ape.AndroidDevice;
+import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.RunContext;
 import com.android.commands.monkey.ape.utils.Logger;
 import com.android.commands.monkey.ape.utils.RandomHelper;
 
@@ -166,8 +168,16 @@ public class ApeFuzzer {
 
     private static void generatePinchOrZoomEvent(List<ApeEvent> events) {
         Rect displayBounds = AndroidDevice.getDisplayBounds();
-        int width = displayBounds.right;
-        int height = displayBounds.bottom;
+        generatePinchOrZoomEvent(events, displayBounds.right, displayBounds.bottom);
+    }
+
+    /**
+     * Draws the points of a pinch or zoom gesture on a {@code width} x {@code height} display. The
+     * draws are the same with and without {@link Feature#APE_FIXES}. With it the
+     * {@link ApePinchOrZoomEvent} is appended to {@code events}; without it the points are drawn and
+     * discarded, as in APE.
+     */
+    static void generatePinchOrZoomEvent(List<ApeEvent> events, int width, int height) {
         int count = RandomHelper.nextInt(10);
         int index = 0;
         // Exactly 6 + 2*count entries are written below:
@@ -194,7 +204,9 @@ public class ApeFuzzer {
         }
         p1 = randomWalk(width, height, p1, v1);
         points[index++] = p1;
-        events.add(new ApePinchOrZoomEvent(points));
+        if (RunContext.current().spec().has(Feature.APE_FIXES)) {
+            events.add(new ApePinchOrZoomEvent(points));
+        }
     }
 
     private static void generateDragEvent(List<ApeEvent> events) {
