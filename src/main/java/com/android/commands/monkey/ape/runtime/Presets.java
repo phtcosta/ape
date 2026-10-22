@@ -122,6 +122,7 @@ public final class Presets {
         block.put("ape.activityBudgetEnabled", "true");
         block.put("ape.activityStableRestartThreshold", "200");
         block.put("ape.coverageBoostWeight", "100");
+        block.put("ape.apeFixes", "true");
         return block;
     }
 

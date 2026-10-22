@@ -292,6 +292,13 @@ public class RunSpecAbortTest {
     }
 
     @Test
+    public void theApeFixesWithoutTheAddonsAbort() {
+        RunSpecException failure = abort(entries("ape.apeFixes", "true"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
+        assertEquals("ape.apeFixes", failure.getKey());
+    }
+
+    @Test
     public void theLauncherWithoutAMopSubstrateAborts() {
         RunSpecException failure = abort(entries("ape.activityTriggerEnabled", "true"));
         assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());

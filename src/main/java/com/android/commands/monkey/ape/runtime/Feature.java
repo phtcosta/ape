@@ -112,6 +112,13 @@ public enum Feature {
     BACK_MENU_CAP("ape.backMenuPickCap", Rule.POSITIVE, "0"),
     /** The restart after an activity stays stable for a threshold of steps. */
     ACTIVITY_STABLE_RESTART("ape.activityStableRestartThreshold", Rule.POSITIVE, "0"),
+    /**
+     * The fork's corrections of APE's own behaviour: the per-state GUI-tree cap, activity visits not
+     * recounted during a model rebuild, the namelet membership test, the restart decided before
+     * selection, the off-screen action dropped, the bounded foreground wait, and the fuzzing pinch
+     * appended with the fuzz toss on its own stream. Without it each of these points runs APE's code.
+     */
+    APE_FIXES("ape.apeFixes", Rule.TRUE, "false"),
 
     // --- STATIC members: each requires STATIC. -----------------------------------------------
 
@@ -229,7 +236,8 @@ public enum Feature {
         MOP.dependsOn(STATIC_DATA);
         for (Feature f : new Feature[] {MODEL_MENU, FORM_COMPLETION, TREE_ENHANCEMENTS,
                 ACTIVITY_BUDGET, DYNAMIC_EPSILON, HEURISTIC_INPUT, FOREIGN_ACTIVITY_GUARD,
-                TREE_PACKAGE_GUARD, COVERAGE_BOOST, BACK_MENU_CAP, ACTIVITY_STABLE_RESTART}) {
+                TREE_PACKAGE_GUARD, COVERAGE_BOOST, BACK_MENU_CAP, ACTIVITY_STABLE_RESTART,
+                APE_FIXES}) {
             f.dependsOn(ADDONS);
         }
         for (Feature f : new Feature[] {NAV_FRONTIER, TYPED_FUZZ, COMPONENT_TRIGGER}) {
