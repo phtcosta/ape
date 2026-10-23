@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 
 import com.android.commands.monkey.ape.Agent;
 import com.android.commands.monkey.ape.AndroidDevice;
@@ -103,7 +104,8 @@ public class MonkeySourceApe implements MonkeyEventSource {
     private static final int[] SCREEN_ROTATION_DEGREES = { Surface.ROTATION_0, Surface.ROTATION_90,
             Surface.ROTATION_180, Surface.ROTATION_270, };
 
-    private List<ComponentName> mMainApps;
+    private final List<ComponentName> mMainApps;
+    private final Supplier<List<ComponentName>> mLauncherQuery;
     private Map<String, String[]> packagePermissions;
     private int mEventCount = 0; // total number of events generated so far
     private MonkeyEventQueue mQ;
@@ -235,10 +237,12 @@ public class MonkeySourceApe implements MonkeyEventSource {
     }
 
     public MonkeySourceApe(Random random,
-            List<ComponentName> MainApps, long throttle, boolean randomizeThrottle, boolean permissionTargetSystem,
+            List<ComponentName> MainApps, Supplier<List<ComponentName>> launcherQuery,
+            long throttle, boolean randomizeThrottle, boolean permissionTargetSystem,
             File outputDirectory, RunSpec runSpec) {
         mRandom = random;
         mMainApps = MainApps;
+        mLauncherQuery = launcherQuery;
         packagePermissions = new HashMap<>();
         for (ComponentName app : MainApps) {
             packagePermissions.put(app.getPackageName(), AndroidDevice.getGrantedPermissions(app.getPackageName()));
@@ -885,7 +889,7 @@ public class MonkeySourceApe implements MonkeyEventSource {
                 // IME or the system launcher (D-B16, INV-CT-18). Without it, upstream's path.
                 if (NullTreeRecovery.relaunches(RunContext.current().spec())) {
                     mAgent.onActivityStopped();
-                    restartPackage(getMainApp(), false, "null tree");
+                    restartPackage(launchers().get(0), false, "null tree");
                     RunContext.current().sink().count(RunCounter.NULL_RELAUNCHES);
                     relaunched = true;
                 } else {
@@ -944,6 +948,38 @@ public class MonkeySourceApe implements MonkeyEventSource {
         static boolean relaunches(RunSpec spec) {
             return spec.has(Feature.MOP_LAUNCHER);
         }
+    }
+
+    /**
+     * The list a relaunch of the app under test picks its launcher from (INV-EXPL-33). It is a
+     * nested class so that JVM tests load it without {@code MonkeySourceApe}.
+     */
+    static final class RelaunchTargets {
+
+        private RelaunchTargets() {
+        }
+
+        /**
+         * With {@code APE_FIXES}, the launchers {@code query} resolves now, or {@code startup} when
+         * it resolves none: an app can switch its enabled launcher alias during the run. Without
+         * {@code APE_FIXES}, {@code startup}, and {@code query} is not called, as in APE.
+         */
+        static <T> List<T> of(RunSpec spec, List<T> startup, Supplier<List<T>> query) {
+            if (!spec.has(Feature.APE_FIXES)) {
+                return startup;
+            }
+            List<T> current = query.get();
+            return current == null || current.isEmpty() ? startup : current;
+        }
+    }
+
+    /** The launchers of this relaunch (INV-EXPL-33); a list other than the startup one is logged. */
+    private List<ComponentName> launchers() {
+        List<ComponentName> launchers = RelaunchTargets.of(RunContext.current().spec(), mMainApps, mLauncherQuery);
+        if (!launchers.equals(mMainApps)) {
+            Logger.iformat("[APE-RV] relaunch launcher %s", launchers);
+        }
+        return launchers;
     }
 
     protected void startRandomMainApp() {
@@ -1274,16 +1310,18 @@ public class MonkeySourceApe implements MonkeyEventSource {
     }
 
 
-    /** The primary app under test (first configured main app); used for the MOP package/mainActivity sanity check. */
+    /**
+     * The startup launcher (first main app resolved at startup), used for the static artifact's
+     * package/mainActivity sanity check. Relaunches read {@link #launchers()}.
+     */
     public ComponentName getMainApp() {
         return mMainApps.get(0);
     }
 
+    /** One {@code mRandom.nextInt(n)} draw over the launchers of this relaunch. */
     public ComponentName randomlyPickMainApp() {
-        int total = mMainApps.size();
-        int index = mRandom.nextInt(total);
-        ComponentName app = mMainApps.get(index);
-        return app;
+        List<ComponentName> launchers = launchers();
+        return launchers.get(mRandom.nextInt(launchers.size()));
     }
 
     /**

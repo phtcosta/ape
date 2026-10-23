@@ -149,7 +149,7 @@ does not double-count edges, the empty `StringCache` guard, the seeded RNG (`Ran
 `Monkey.mRandom`), the telemetry and the action-history memory; per-step PNG/XML stay off and the new-state capture
 is on. The fork's corrections of APE's own behaviour are the ADDONS member `APE_FIXES` (`ape.apeFixes`): the per-state
 GUI-tree cap, activity visits not recounted during a rebuild, the namelet membership test, the restart decided before
-selection, the off-screen action dropped, the bounded foreground wait, the fuzzing pinch and the fuzz toss on its own
+selection, the off-screen action dropped, the bounded foreground wait, the launcher resolved again at each relaunch (INV-EXPL-33), the fuzzing pinch and the fuzz toss on its own
 stream. Without it (`base`, `mop`) each of these points runs APE's code. The other four switch independently, each by one boolean plan key, and every member `Feature` declares its group
 as a dependency, so a member whose group is off is simply absent from the plan (stating its activation key ON
 explicitly aborts with `missing_dependency`; stating it OFF — the neutral value, or any value its rule reads as off,
@@ -193,7 +193,7 @@ priority is not a key. `MopInteractionLedger` counts those executions and is bui
 counter advances every step and launches on the first step that reaches the MOP/SATA branch; it launches each
 activity at most once per run (D-B15: a launched activity reads as visited, whether or not it opened). With
 `MOP_LAUNCHER` in the plan, the null-tree recovery (more than 10 null roots) relaunches the app under test —
-`onActivityStopped`, `restartPackage(getMainApp(), …)`, and `NOP` instead of `ACTIVATE` on that step (D-B16);
+`onActivityStopped`, `restartPackage(launchers().get(0), …)` (the relaunch launcher, INV-EXPL-33), and `NOP` instead of `ACTIVATE` on that step (D-B16);
 without it, upstream's `stopTopActivity()` path. The LLM coin, MOP coin, component coin and (with `APE_FIXES`) the fuzz toss each draw from their own
 stream (`agent/StepRng`, `new Random(seed ^ K)`), so mounting or re-dosing one never shifts SATA's draws. Without
 `APE_FIXES` the fuzz toss is APE's `RandomHelper.toss(fuzzingRate)`, drawn only when fuzzing is on.
@@ -329,7 +329,7 @@ The keys the selected mode does not read (`mopWeightDirect`/`Transitive` under `
 
 ## Notes
 
-- Unit + integration test suite: `mvn test` (1473 tests, 28 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`, 4 `Assume` in `ApeFuzzerPinchGateTest` without Android stubs). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
+- Unit + integration test suite: `mvn test` (1495 tests, 28 skipped — 18 `@Ignore` needing an Android runtime, 6 `Assume` in `SglangLiveTest`, 4 `Assume` in `ApeFuzzerPinchGateTest` without Android stubs). Live LLM tests: `SGLANG_URL=http://localhost:30000/v1 mvn test -Dtest=SglangLiveTest` runs those six.
 - Supports Android Marshmallow through Q; uses reflection (`ApeAPIAdapter`) for version compatibility
 - Known issue: `OutOfMemoryError` is possible on long runs, because every `State` keeps its `GUITree`s in `treeHistory` and the `Graph` keeps every `State` — the heap grows with the number of distinct states a run reaches. That is the only retention by design. The `GUITreeBuilder` naming caches and a `ModelAction`'s resolved references are cleared when their tree is released, and the diagnostic action history holds primitive snapshots plus a single depth-1 recovery point, whose tree a live state owns anyway. Nothing bounds or evicts `Graph`, `treeHistory` or the naming structures: such a bound changes exploration behavior, so it waits on a heap profile by retention root. `OutOfMemoryError` is not caught — the process dies and the supervisor marks the task FAILED and retries it
 - Pre-compiled `ape.jar` is included in repo for convenience
