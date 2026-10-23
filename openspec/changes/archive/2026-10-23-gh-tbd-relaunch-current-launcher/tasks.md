@@ -60,4 +60,4 @@
 - [x] 5.5 Run `/sdd-qa-lint-fix` on the touched files
 - [x] 5.6 Run `/sdd-verify`
 - [x] 5.7 Invoke `/sdd-code-reviewer` via Skill tool
-- [ ] 5.8 At archive: hand-sync the `exploration` `## Invariants` section with INV-EXPL-33, after INV-EXPL-15 (archive syncs requirements only)
+- [x] 5.8 At archive: hand-sync the `exploration` `## Invariants` section with INV-EXPL-33, after INV-EXPL-15 (archive syncs requirements only)

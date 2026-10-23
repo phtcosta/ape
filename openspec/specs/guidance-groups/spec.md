@@ -313,7 +313,8 @@ does not state `ape.mopWeightOpenMenu` (design D-B14.1), because a preset key co
 and is left out silently where it is not. In `as_mop` and `as_mop_llm` the gateway is present.
 
 Second, the `base` cell SHALL run the APE algorithm of the upstream `ape.jar` (`8f51b99c`) at every point the e03igg4
-audit (rv-android `docs/20261021_e03igg4_investigacao.md` §7.4–7.5, item numbers below are its numbers) lists,
+audit (rv-android `docs/20261021_e03igg4_investigacao.md` §7.4–7.5, item numbers below are its numbers; item 16 comes
+from the e03igg5 wait analysis, rv-android `docs/20261023_espera_activity_loading_e03igg5.md`) lists,
 except the points declared here. It SHALL NOT be claimed equal to `8f51b99c` byte for byte. In every cell, BASE
 carries, with no key:
 
@@ -342,6 +343,7 @@ that mounts ADDONS, in which `APE_FIXES` is present at its default `true`, SHALL
 | 10 | a target without visible bounds is clicked at the screen centre, the display bounds substituting for them | the action is dropped (`exploration` INV-EXPL-19) |
 | 11 | the foreground wait is unbounded | it is bounded at 100 cycles and followed by a relaunch (`exploration` INV-EXPL-15) |
 | 12 | the pinch/zoom event is built but not appended; the fuzz toss is `RandomHelper.toss(fuzzingRate)`, drawn only when `FUZZING` is in the plan | the pinch is appended; the fuzz toss is drawn from `StepRng`'s own stream every step (`decision-pipeline` INV-DP-13) |
+| 16 | every relaunch of the app under test targets a launcher component resolved at startup | every relaunch resolves the launcher again at the moment of the relaunch, falling back to the startup list when the query returns nothing (`exploration` INV-EXPL-33) |
 
 Form completion's deterministic fill and submit exclusion (addon F) are governed by `ape.formCompletionEnabled` and
 are therefore off in `base`. The SATA extension points X1, X3 and X4 SHALL take the APE default in `base`, including
@@ -381,7 +383,7 @@ checked by an A/A on a subset of APKs (plan §6.4).
 
 - **WHEN** a properties file contains `ape.preset=as`, the artifact path and `ape.apeFixes=false`
 - **THEN** resolution SHALL succeed with every other ADDONS member present and `APE_FIXES` absent
-- **AND** items 3, 4, 6, 9, 10, 11 and 12 SHALL run APE's code, as in `base`
+- **AND** items 3, 4, 6, 9, 10, 11, 12 and 16 SHALL run APE's code, as in `base`
 
 ### Requirement: Addon Read Sites Read the Plan
 
