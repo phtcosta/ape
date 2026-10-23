@@ -54,7 +54,6 @@ import android.app.IActivityManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.IPackageManager;
-import android.content.pm.ResolveInfo;
 import android.os.Build;
 import android.os.Debug;
 import android.os.Environment;
@@ -63,7 +62,6 @@ import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.StrictMode;
 import android.os.SystemClock;
-import android.os.UserHandle;
 import android.view.IWindowManager;
 import android.view.Surface;
 
@@ -262,7 +260,6 @@ public class Monkey {
     private String mApeAgent;
     private String mApeReplayLog;
     private File mOutputDirectory;
-    private HashSet<Integer> mUids = new HashSet<Integer>();
     private long mRunningMillis = -1;
     private long mEndTime;
 
@@ -762,8 +759,8 @@ public class Monkey {
 
             AndroidDevice.initializeAndroidDevice(mAm, mWm, mPm);
             AndroidDevice.checkInteractive();
-            mEventSource = new MonkeySourceApe(mRandom, mMainApps, mThrottle,
-                    mRandomizeThrottle, mPermissionTargetSystem, mOutputDirectory, runSpec);
+            mEventSource = new MonkeySourceApe(mRandom, mMainApps, () -> LauncherQuery.query(mPm, mMainCategories),
+                    mThrottle, mRandomizeThrottle, mPermissionTargetSystem, mOutputDirectory, runSpec);
             mEventSource.setVerbose(mVerbose);
             if (mApeCleanApp) {
                 for (ComponentName cn : mMainApps) {
@@ -1310,49 +1307,7 @@ public class Monkey {
      *         activities
      */
     private boolean getMainApps() {
-        try {
-            final int N = mMainCategories.size();
-            for (int i = 0; i < N; i++) {
-                Intent intent = new Intent(Intent.ACTION_MAIN);
-                String category = mMainCategories.get(i);
-                if (category.length() > 0) {
-                    intent.addCategory(category);
-                }
-                // List<ResolveInfo> mainApps =
-                // mPm.queryIntentActivities(intent, null, 0,
-                // UserHandle.myUserId());
-                List<ResolveInfo> mainApps = ApeAPIAdapter.queryIntentActivities(mPm, intent, UserHandle.myUserId());
-                if (mainApps == null || mainApps.size() == 0) {
-                    System.err.println("// Warning: no activities found for category " + category);
-                    continue;
-                }
-                if (mVerbose >= 2) { // very verbose
-                    System.out.println("// Selecting main activities from category " + category);
-                }
-                final int NA = mainApps.size();
-                for (int a = 0; a < NA; a++) {
-                    ResolveInfo r = mainApps.get(a);
-                    String packageName = r.activityInfo.applicationInfo.packageName;
-                    if (MonkeyUtils.getPackageFilter().checkEnteringPackage(packageName)) {
-                        if (mVerbose >= 2) { // very verbose
-                            System.out.println("//   + Using main activity " + r.activityInfo.name + " (from package "
-                                    + packageName + ")");
-                        }
-                        mUids.add(r.activityInfo.applicationInfo.uid);
-                        mMainApps.add(new ComponentName(packageName, r.activityInfo.name));
-                    } else {
-                        if (mVerbose >= 3) { // very very verbose
-                            System.out.println("//   - NOT USING main activity " + r.activityInfo.name
-                                    + " (from package " + packageName + ")");
-                        }
-                    }
-                }
-            }
-        } catch (RemoteException e) {
-            System.err.println("** Failed talking with package manager!");
-            return false;
-        }
-
+        mMainApps.addAll(LauncherQuery.query(mPm, mMainCategories));
         if (mMainApps.size() == 0) {
             System.out.println("** No activities found to run, monkey aborted.");
             return false;

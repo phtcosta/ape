@@ -73,7 +73,7 @@ public class MonkeySourceApeNullTreeRecoveryTest {
         int choice = body.indexOf("NullTreeRecovery.relaunches(RunContext.current().spec())");
         assertTrue("the recovery asks the plan: " + body, choice >= 0);
         int stopped = body.indexOf("mAgent.onActivityStopped();", choice);
-        int restart = body.indexOf("restartPackage(getMainApp(), false, \"null tree\");", choice);
+        int restart = body.indexOf("restartPackage(launchers().get(0), false, \"null tree\");", choice);
         int counted = body.indexOf("sink().count(RunCounter.NULL_RELAUNCHES);", choice);
         int upstream = body.indexOf("stopTopActivity();", choice);
         assertTrue("onActivityStopped, then the restart, then the counter, before the upstream branch",
