@@ -15,7 +15,8 @@
 - [x] 0.2 In the worktree at `bc4bc1b8`, run `nice -n 19 ionice -c3 mvn clean test` and record the baseline
       (expected 1495 run / 0 failures / 0 errors / 28 skipped) — not run, to save resources (Pedro, 2026-11-03): the
       baseline is the documented `bc4bc1b8` count 1495 / 0 / 0 / 28 (`CLAUDE.md`), and 5.6's 1536 equals it plus the
-      41 new `@Test` methods
+      41 new `@Test` methods. Measured as a by-product of 6.3: `bc4bc1b8` rebuilt with `mvn -o clean package` ran
+      1495 / 0 / 0 / 28
 
 ## 1. Plan key `ape.mopWeights` (run-spec deltas)
 
@@ -123,17 +124,22 @@
 
 ## 6. Delivery (only after Pedro's OK to commit)
 
-- [ ] 6.1 Commit the change on branch `gh-tbd-mop-weights-list` (by path, no push, no co-author line)
-- [ ] 6.2 Build the delivery jar from that commit: `nice -n 19 ionice -c3 mvn clean package` (never `install`); record
-      `sha256sum target/ape-rv.jar`; do not rebuild afterwards
-- [ ] 6.3 Reproducibility check (report only): `git -C WS/ape worktree add --detach <scratch path> bc4bc1b8`, build it
+- [x] 6.1 Commit the change on branch `gh-tbd-mop-weights-list` (by path, no push, no co-author line) — 2026-11-03: `e6d1be2b`
+- [x] 6.2 Build the delivery jar from that commit: `nice -n 19 ionice -c3 mvn clean package` (never `install`); record
+      `sha256sum target/ape-rv.jar`; do not rebuild afterwards — 2026-11-03, `nice -n 19 ionice -c3 mvn -o clean package` at
+      `e6d1be2b` (1537 / 0 / 0 / 28): `f4e9687d7f18d51091acf916146a041d017cf8fcbf50e58005090a4e2609f001`
+- [x] 6.3 Reproducibility check (report only): `git -C WS/ape worktree add --detach <scratch path> bc4bc1b8`, build it
       the same way, compare its sha256 with E7's `28f218be…` (`campaign.env:32`) and, when they differ, compare the
-      jar entries other than `BuildInfo` (`unzip -l` + per-entry CRC); remove that worktree
-- [ ] 6.4 Write `openspec/changes/gh-tbd-mop-weights-list/delivery-v6.md`, with: (1) commit hash and branch; (2) jar
+      jar entries other than `BuildInfo` (`unzip -l` + per-entry CRC); remove that worktree — 2026-11-03: `bc4bc1b8`
+      rebuilt = `2383abe4…` ≠ E7 `28f218be…`, as expected; the jar's one entry is `classes.dex`, and `dexdump` of two
+      `bc4bc1b8` builds differs only in `BuildInfo.JAR_BUILT`; the E7 jar, extracted from its image without running
+      a container (Pedro's OK), differs from the rebuilt `bc4bc1b8` dex only in `BuildInfo.JAR_BUILT`
+      (`evidence/repro_check.txt`); worktree removed
+- [x] 6.4 Write `openspec/changes/gh-tbd-mop-weights-list/delivery-v6.md`, with: (1) commit hash and branch; (2) jar
       path and sha256, plus the exact build command; (3) the full `mvn test` counts; (4) the `openspec validate --strict`
       output; (5) one line per scenario of the seven acceptance requirements (test `file:line`, method, result);
       (6) the `[E7-EQUIV]` line (inputs, 0 mismatches); (7) `evidence/cells_diff.txt` (digest only); and the
-      reproducibility result of 6.3
+      reproducibility result of 6.3 — 2026-11-03, `delivery-v6.md` written
 - [ ] 6.5 Commit the delivery note (Pedro's OK); then send session `calibracao` one message with the commit, the jar
       path and the sha256
 - [ ] 6.6 At archive (only when Pedro decides): hand-sync what deltas cannot carry. In `run-spec` `## Invariants`,
