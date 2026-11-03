@@ -6,6 +6,7 @@ import java.util.Map;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -86,40 +87,32 @@ public class RunSpecResolveTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    public void theSixMopScoringKeysResolveToTheirDefaults() {
+    public void theFourMopScoringKeysResolveToTheirDefaults() {
         RunSpec spec = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true"));
         Map<String, String> mop = spec.mop().values();
         assertEquals("flag", mop.get("ape.mopScoring"));
-        assertEquals("500", mop.get("ape.mopWeightD1"));
-        assertEquals("400", mop.get("ape.mopWeightD2"));
-        assertEquals("300", mop.get("ape.mopWeightD3"));
+        assertEquals("500,400,300", mop.get("ape.mopWeights"));
         assertEquals("3", mop.get("ape.mopRetireAfter"));
         assertEquals("6", mop.get("ape.mopLauncherDmax"));
         assertTrue("the plan states none of them, so none is inert", spec.inertKeys().isEmpty());
     }
 
     @Test
-    public void mopParamsReadsTheSixKeysThroughTypedAccessors() {
+    public void mopParamsReadsTheFourKeysThroughTypedAccessors() {
         RunSpec.MopParams defaults = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true")).mop();
         assertEquals(MopScoring.FLAG, defaults.scoring());
-        assertEquals(500, defaults.weightD1());
-        assertEquals(400, defaults.weightD2());
-        assertEquals(300, defaults.weightD3());
+        assertArrayEquals(new int[] {500, 400, 300}, defaults.weights());
         assertEquals(3, defaults.retireAfter());
         assertEquals(6, defaults.launcherDmax());
 
         RunSpec.MopParams stated = resolve(entries(
                 "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopScoring", "distance",
-                "ape.mopWeightD1", "600",
-                "ape.mopWeightD2", "450",
-                "ape.mopWeightD3", "350",
+                "ape.mopWeights", "600,450,350,200",
                 "ape.mopRetireAfter", "5",
                 "ape.mopLauncherDmax", "4")).mop();
         assertEquals(MopScoring.DISTANCE, stated.scoring());
-        assertEquals(600, stated.weightD1());
-        assertEquals(450, stated.weightD2());
-        assertEquals(350, stated.weightD3());
+        assertArrayEquals(new int[] {600, 450, 350, 200}, stated.weights());
         assertEquals(5, stated.retireAfter());
         assertEquals(4, stated.launcherDmax());
     }
@@ -130,8 +123,7 @@ public class RunSpecResolveTest {
                         "ape.mopWeightDirect", "ape.mopWeightTransitive")),
                 MopScoring.DISTANCE.unreadKeys());
         assertEquals(new java.util.LinkedHashSet<>(Arrays.asList(
-                        "ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3",
-                        "ape.mopRetireAfter", "ape.mopLauncherDmax")),
+                        "ape.mopWeights", "ape.mopRetireAfter", "ape.mopLauncherDmax")),
                 MopScoring.FLAG.unreadKeys());
         for (MopScoring mode : MopScoring.values()) {
             assertFalse(mode.unreadKeys().contains(MopScoring.KEY));
@@ -171,10 +163,10 @@ public class RunSpecResolveTest {
         RunSpec spec = resolve(entries(
                 "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopScoring", "flag",
-                "ape.mopWeightD2", "450",
+                "ape.mopWeights", "450,400,300",
                 "ape.mopRetireAfter", "5"));
-        assertEquals(Arrays.asList("ape.mopRetireAfter", "ape.mopWeightD2"), spec.inertKeys());
-        assertEquals("450", spec.effectiveValues().get("ape.mopWeightD2"));
+        assertEquals(Arrays.asList("ape.mopRetireAfter", "ape.mopWeights"), spec.inertKeys());
+        assertEquals("450,400,300", spec.effectiveValues().get("ape.mopWeights"));
     }
 
     @Test
@@ -183,13 +175,11 @@ public class RunSpecResolveTest {
                 "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopWeightDirect", "500",
                 "ape.mopWeightTransitive", "300",
-                "ape.mopWeightD1", "500",
-                "ape.mopWeightD2", "400",
-                "ape.mopWeightD3", "300",
+                "ape.mopWeights", "500,400,300",
                 "ape.mopRetireAfter", "3",
                 "ape.mopLauncherDmax", "6"));
         assertEquals(Arrays.asList("ape.mopLauncherDmax", "ape.mopRetireAfter",
-                "ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3"), spec.inertKeys());
+                "ape.mopWeights"), spec.inertKeys());
     }
 
     @Test
@@ -211,14 +201,12 @@ public class RunSpecResolveTest {
     }
 
     @Test
-    public void theModeSplitsTheFiveDistanceKeysFromTheTwoFlagWeights() {
+    public void theModeSplitsTheThreeDistanceKeysFromTheTwoFlagWeights() {
         Map<String, String> all = entries(
                 "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
                 "ape.mopWeightDirect", "500",
                 "ape.mopWeightTransitive", "300",
-                "ape.mopWeightD1", "500",
-                "ape.mopWeightD2", "400",
-                "ape.mopWeightD3", "300",
+                "ape.mopWeights", "500,400,300",
                 "ape.mopRetireAfter", "3",
                 "ape.mopLauncherDmax", "6");
         all.put("ape.mopScoring", "distance");
@@ -239,6 +227,70 @@ public class RunSpecResolveTest {
         RunSpecException failure = abort(entries("ape.mopScoring", "distance"));
         assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
         assertEquals("ape.mopScoring", failure.getKey());
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The distance ladder ape.mopWeights (gh-tbd-mop-weights-list, run-spec "Distance Ladder Key")
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    public void theLadderStatedUnderFlagIsInert() {
+        RunSpec spec = resolve(entries(
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.mopScoring", "flag",
+                "ape.mopWeights", "100"));
+        assertEquals(Arrays.asList("ape.mopWeights"), spec.inertKeys());
+        assertArrayEquals(new int[] {100}, spec.mop().weights());
+    }
+
+    @Test
+    public void theNeutralLadderWithoutMopIsInertAndANonNeutralOneAborts() {
+        RunSpec spec = resolve(entries("ape.mopWeights", "0"));
+        assertNull(spec.mop());
+        assertEquals(Arrays.asList("ape.mopWeights"), spec.inertKeys());
+
+        RunSpecException failure = abort(entries("ape.mopWeights", "500"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
+        assertEquals("ape.mopWeights", failure.getKey());
+
+        // Only the one-element 0 is neutral: lists compare element by element (review WR-02).
+        RunSpecException zeros = abort(entries("ape.mopWeights", "0,0,0"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, zeros.getReason());
+        assertEquals("ape.mopWeights", zeros.getKey());
+    }
+
+    @Test
+    public void anIncreasingLadderIsAccepted() {
+        RunSpec spec = resolve(entries(
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.mopScoring", "distance",
+                "ape.mopWeights", "300,500"));
+        assertArrayEquals(new int[] {300, 500}, spec.mop().weights());
+    }
+
+    @Test
+    public void weightsReturnsAFreshCopy() {
+        RunSpec.MopParams mop = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true")).mop();
+        mop.weights()[0] = 1;
+        assertArrayEquals(new int[] {500, 400, 300}, mop.weights());
+    }
+
+    @Test
+    public void theLadderDigestIsCanonical() {
+        Map<String, String> spaced = entries(
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.mopScoring", "distance", "ape.mopWeights", "500, 400");
+        Map<String, String> tight = new LinkedHashMap<>(spaced);
+        tight.put("ape.mopWeights", "500,400");
+        assertEquals(resolve(spaced).digest(), resolve(tight).digest());
+
+        Map<String, String> unset = new LinkedHashMap<>(spaced);
+        unset.remove("ape.mopWeights");
+        Map<String, String> statedDefault = new LinkedHashMap<>(spaced);
+        statedDefault.put("ape.mopWeights", "500,400,300");
+        assertEquals("a stated default equals the unset key in the digest",
+                resolve(unset).digest(), resolve(statedDefault).digest());
+        assertNotEquals(resolve(unset).digest(), resolve(tight).digest());
     }
 
     // -----------------------------------------------------------------------------------------

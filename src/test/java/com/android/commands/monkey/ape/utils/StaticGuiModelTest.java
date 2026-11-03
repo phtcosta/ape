@@ -55,7 +55,7 @@ public class StaticGuiModelTest {
                     + "\"targets\":0,\"handlers\":{}" + members + "}");
         }
         StaticArtifactLoader.Loaded loaded = StaticArtifactLoader.load(f.getAbsolutePath(), null,
-                null, false, new NoopSink());
+                null, false, StaticArtifactLoader.NO_CUT, new NoopSink());
         assertNotNull("artifact must load", loaded);
         return loaded;
     }
@@ -210,7 +210,7 @@ public class StaticGuiModelTest {
     public void testCryptoappFixtureStaticSurface() throws Exception {
         java.net.URL url = StaticGuiModelTest.class.getResource("/cryptoapp.apk.mop.json");
         StaticArtifactLoader.Loaded loaded = StaticArtifactLoader.load(
-                new File(url.toURI()).getAbsolutePath(), null, null, false, new NoopSink());
+                new File(url.toURI()).getAbsolutePath(), null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink());
         StaticGuiModel model = loaded.staticModel;
         assertEquals("br.unb.cic.cryptoapp", model.packageName());
         assertEquals(MAIN, model.mainActivity());

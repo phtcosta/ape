@@ -41,6 +41,6 @@ public final class TestMopContexts {
             return null;
         }
         return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.FLAG, weightDirect,
-                weightTransitive, 500, 400, 300, 3, 6, null);
+                weightTransitive, new int[] {500, 400, 300}, 3, 6, null);
     }
 }

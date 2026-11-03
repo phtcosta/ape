@@ -20,8 +20,8 @@ import java.util.List;
  * match is worth:
  *   direct (flag mode)        → the context's direct weight
  *   transitive only           → the context's transitive weight
- *   nearest unretired target  → the context's level weight for d (distance mode, before the
- *                               tie split {@link #splitTies})
+ *   nearest unretired target  → the ladder's weight of level max(d, 1) (distance mode, before
+ *                               the tie split {@link #splitTies})
  *   OPTIONSMENU gateway       → the caller's open-menu weight
  *   no match                  → 0 (discriminative-only; no activity-level fallback)
  *
@@ -171,35 +171,26 @@ public class MopScorer {
     }
 
     /**
-     * The {@code distance} weight of a nearest unretired target at distance {@code d} (design D18):
-     * {@code weightD1} for {@code d <= 1}, {@code weightD2} for {@code d = 2}, {@code weightD3} for
-     * {@code d = 3}, 0 from {@code d = 4} on and for {@link Integer#MAX_VALUE} (no pair). The one
-     * mapping from a distance to a weight; the tie split's levels are read off it.
+     * The {@code distance} weight of a nearest unretired target at distance {@code d}: the ladder
+     * {@code ape.mopWeights} read at level {@code l = max(d, 1)}, so {@code d = 0} and {@code d = 1}
+     * share level 1, and 0 beyond the cut c and for {@link Integer#MAX_VALUE} (no pair). At the
+     * default ladder 500,400,300 this is 500 for {@code d <= 1}, 400 for {@code d = 2}, 300 for
+     * {@code d = 3} and 0 from {@code d = 4} on. The one mapping from a distance to a weight.
      */
     public static int distanceWeight(MopContext mop, int d) {
-        if (d <= 1) {
-            return mop.weightD1();
-        }
-        if (d == 2) {
-            return mop.weightD2();
-        }
-        if (d == 3) {
-            return mop.weightD3();
-        }
-        return 0;
+        return mop.levelWeight(Math.max(d, 1));
     }
 
     /**
      * The tie split of the {@code distance} mode (design D18, mop-guidance "MopScorer — Priority
      * Boost"): given the undivided weights of a state's scored actions, the boosts they receive.
      *
-     * <p>Ties are by weight level: the tied actions are those whose undivided weight equals the
-     * state's best level, the largest positive weight. When there are {@code n > 1} of them, each
-     * receives {@code max(W / n, W_next)}, with {@code W} that weight, integer division, and
-     * {@code W_next} the weight of the next level ({@code weightD2} for the {@code d <= 1} level,
-     * {@code weightD3} for {@code d = 2}, 0 for {@code d = 3}). Every other action keeps its
-     * undivided weight. Under {@code flag} nothing is split. The one tie split; {@code
-     * MopWidgetPass} applies it.
+     * <p>Ties are by weight value, not by level: the tied actions are those whose undivided weight
+     * equals the state's best weight, the largest positive one. When there are {@code n > 1} of
+     * them, each receives {@code max(W / n, W_next)}, with {@code W} that weight, integer division,
+     * and {@code W_next} the weight of the level after W's ({@link #nextLevelWeight}). Every other
+     * action keeps its undivided weight. Under {@code flag} nothing is split. The one tie split;
+     * {@code MopWidgetPass} applies it.
      *
      * @return a new array, index-aligned with {@code weights}
      */
@@ -234,14 +225,16 @@ public class MopScorer {
     }
 
     /**
-     * The weight of the level after the one weighing {@code levelWeight}, read off
-     * {@link #distanceWeight}: the levels are {@code d <= 1}, {@code d = 2} and {@code d = 3}, and
-     * the level after {@code d = 3} weighs 0.
+     * The weight of the level after the one weighing {@code levelWeight}: W's level is the first
+     * level l in {@code 1..c} whose ladder weight equals it, and the result is the weight of
+     * {@code l + 1}, which is 0 for {@code l = c}. 0 when no level weighs {@code levelWeight}. On
+     * a ladder with a plateau the next level weighs the same, so nothing splits; under the
+     * increasing {@code 300,500} the weight 500 sits at level 2 = c, so the result is 0.
      */
-    private static int nextLevelWeight(MopContext mop, int levelWeight) {
-        for (int d = 1; d <= 3; d++) {
-            if (distanceWeight(mop, d) == levelWeight) {
-                return distanceWeight(mop, d + 1);
+    static int nextLevelWeight(MopContext mop, int levelWeight) {
+        for (int l = 1; l <= mop.cut(); l++) {
+            if (mop.levelWeight(l) == levelWeight) {
+                return mop.levelWeight(l + 1);
             }
         }
         return 0;

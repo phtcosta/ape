@@ -153,8 +153,8 @@ public class MopWidgetPassTest {
     }
 
     private static MopContext distance(MopData data) {
-        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 500, 400,
-                300, 3, 6, null);
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, new int[] {500, 400, 300},
+                3, 6, null);
     }
 
     /** Two widgets {@code x} and {@code y}, both at {@code d = 1} of a transitive target. */

@@ -1,20 +1,42 @@
 package com.android.commands.monkey.ape.agent.pipeline;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import org.json.JSONObject;
+import org.junit.After;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import com.android.commands.monkey.ape.agent.MopInteractionLedger;
 import com.android.commands.monkey.ape.llm.PromptFixtures;
 import com.android.commands.monkey.ape.model.ActionType;
 import com.android.commands.monkey.ape.model.ModelAction;
 import com.android.commands.monkey.ape.model.State;
+import com.android.commands.monkey.ape.runtime.MopScoring;
+import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.TestRunSpecs;
+import com.android.commands.monkey.ape.telemetry.NdjsonSink;
+import com.android.commands.monkey.ape.telemetry.NoopSink;
 import com.android.commands.monkey.ape.telemetry.RunCounter;
+import com.android.commands.monkey.ape.tree.GUITreeNode;
+import com.android.commands.monkey.ape.utils.MopContext;
+import com.android.commands.monkey.ape.utils.MopData;
+import com.android.commands.monkey.ape.utils.MopRetirement;
+import com.android.commands.monkey.ape.utils.MopScorer;
+import com.android.commands.monkey.ape.utils.StaticArtifactLoader;
+import com.android.commands.monkey.ape.utils.StaticGuiModel;
 import com.android.commands.monkey.ape.utils.UICoverageTracker;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -230,5 +252,124 @@ public class MopCoinStageTest {
 
         assertEquals(0, ctx.recorder.count(RunCounter.COIN_MOP));
         assertTrue(coin.abandoned.isEmpty());
+    }
+
+    // -------------------------------------------------------------------------
+    // The second key under distance: unretired targets within d + 1 (gh-tbd-mop-weights-list)
+    // -------------------------------------------------------------------------
+
+    @Rule
+    public TemporaryFolder folder = new TemporaryFolder();
+
+    @After
+    public void resetThePlan() {
+        RunContext.resetForTest();
+    }
+
+    /** A format-2 artifact whose widgets of {@link #ACTIVITY} carry the given click lists. */
+    private String artifact(int targets, String... idAndList) throws Exception {
+        StringBuilder widgets = new StringBuilder();
+        for (int i = 0; i < idAndList.length; i += 2) {
+            widgets.append(i == 0 ? "" : ",").append('"').append(idAndList[i])
+                    .append("\":{\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":")
+                    .append(idAndList[i + 1]).append("}}");
+        }
+        File f = folder.newFile();
+        try (FileWriter w = new FileWriter(f)) {
+            w.write("{\"formatVersion\":2,\"package\":\"com.example\",\"mainActivity\":\""
+                    + ACTIVITY + "\",\"targets\":" + targets + ",\"handlers\":{},"
+                    + "\"mopActivities\":[\"" + ACTIVITY + "\"],"
+                    + "\"widgets\":{\"" + ACTIVITY + "\":{" + widgets + "}}}");
+        }
+        return f.getAbsolutePath();
+    }
+
+    /** Loads under a distance plan with {@code ladder}, through the public entry, as a run does. */
+    private static MopData loadUnder(String path, String ladder) {
+        TestRunSpecs.installMop("ape.mopScoring", "distance", "ape.mopWeights", ladder);
+        StaticArtifactLoader.Loaded loaded = StaticArtifactLoader.load(path, null, null, new NoopSink());
+        assertNotNull(loaded);
+        return loaded.mopData;
+    }
+
+    private static MopContext distance(MopData data, int[] ladder, MopRetirement retirement) {
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, ladder, 3, 6,
+                retirement);
+    }
+
+    private static GUITreeNode node(String shortId) {
+        GUITreeNode n = new GUITreeNode(null);
+        n.setResourceID("com.example:id/" + shortId);
+        return n;
+    }
+
+    /**
+     * A click on widget {@code shortId} whose {@code mopWeight} is the scorer's undivided weight
+     * under {@code mop}, as {@code MopWidgetPass} sets it.
+     */
+    private static ModelAction scored(MopContext mop, String shortId) throws Exception {
+        ModelAction action = target("//" + shortId, 0);
+        GUITreeNode resolved = node(shortId);
+        action.resolveAt(1, 0, null, resolved, new GUITreeNode[] {resolved});
+        action.setMopWeight(MopScorer.weigh(mop, ACTIVITY, action).weight);
+        return action;
+    }
+
+    /** Scenario "Window boundary": the window is d + 1, and a tie on both keys goes to order. */
+    @Test
+    public void theSecondKeyCountsTheTargetsWithinDPlusOne() throws Exception {
+        int[] ladder = {500, 400, 300, 300, 300};
+        MopData data = loadUnder(artifact(10, "x", "[[0,1],[1,2],[2,3]]", "y", "[[5,1],[6,1],[7,3]]"),
+                "500,400,300,300,300");
+        MopContext mop = distance(data, ladder, new MopRetirement(10, 3));
+        ModelAction x = scored(mop, "x");
+        ModelAction y = scored(mop, "y");
+        assertEquals(500, x.getMopWeight());
+        assertEquals(500, y.getMopWeight());
+        assertEquals("targets 0 and 1, not 2", 2, MopCoinStage.targetCount(mop, ACTIVITY, x));
+        assertEquals(2, MopCoinStage.targetCount(mop, ACTIVITY, y));
+
+        MopInteractionLedger ledger = new MopInteractionLedger(1);
+        assertSame(x, MopCoinStage.pick(stateOf(x, y), null, ledger, mop));
+        assertSame(y, MopCoinStage.pick(stateOf(y, x), null, ledger, mop));
+    }
+
+    /** Scenario "Retired target excluded". */
+    @Test
+    public void aRetiredTargetInTheWindowIsNotCounted() throws Exception {
+        MopData data = loadUnder(artifact(4, "x", "[[0,1],[1,2]]", "r", "[[1,2]]", "z", "[[1,1]]"),
+                "500,400,300");
+        MopRetirement retirement = new MopRetirement(4, 1);
+        retirement.onFirstInteraction(data.lookup(ACTIVITY, node("r"), "click"));
+        assertTrue(retirement.retired(1));
+        MopContext mop = distance(data, new int[] {500, 400, 300}, retirement);
+
+        ModelAction x = scored(mop, "x");
+        assertEquals(500, x.getMopWeight());
+        assertEquals("target 0 only", 1, MopCoinStage.targetCount(mop, ACTIVITY, x));
+
+        ModelAction z = scored(mop, "z");
+        assertEquals("every target of the lookup is retired", 0, z.getMopWeight());
+        assertEquals(0, MopCoinStage.targetCount(mop, ACTIVITY, z));
+        assertNull("weighing 0, the action is not eligible",
+                MopCoinStage.pick(stateOf(z), null, new MopInteractionLedger(1), mop));
+    }
+
+    /** Scenario "Window never passes the cut": the pairs beyond c = 3 were dropped at load. */
+    @Test
+    public void theWindowNeverPassesTheCut() throws Exception {
+        String path = artifact(4, "w", "[[0,3],[1,3],[2,4],[3,4]]");
+        TestRunSpecs.installMop("ape.mopScoring", "distance", "ape.mopWeights", "500,400,300");
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        MopData data = StaticArtifactLoader.load(path, null, null,
+                new NdjsonSink(new PrintStream(buffer, true, "UTF-8"))).mopData;
+        JSONObject record = new JSONObject(new String(buffer.toByteArray(), StandardCharsets.UTF_8).trim());
+        assertEquals(2, record.getInt("cutPairs"));
+
+        MopContext mop = distance(data, new int[] {500, 400, 300}, new MopRetirement(4, 3));
+        ModelAction w = scored(mop, "w");
+        assertEquals("scored at d = 3", 300, w.getMopWeight());
+        assertEquals("targets 0 and 1; the d = 4 pairs were cut", 2,
+                MopCoinStage.targetCount(mop, ACTIVITY, w));
     }
 }

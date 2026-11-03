@@ -380,7 +380,7 @@ public class MopLauncherStageTest {
     }
 
     private static MopContext distanceContext(Census data, MopRetirement retirement, int dmax) {
-        return new MopContext(data.mop, data.statics, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 1, dmax,
+        return new MopContext(data.mop, data.statics, MopScoring.DISTANCE, 500, 300, new int[] {500, 400, 300}, 1, dmax,
                 retirement);
     }
 

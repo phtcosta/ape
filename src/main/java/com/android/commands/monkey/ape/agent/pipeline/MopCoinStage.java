@@ -203,7 +203,7 @@ public final class MopCoinStage implements DecisionStage {
      * behind its weight — both from the one {@link MopScorer#weigh}; 0 when no lookup has an
      * unretired pair.
      */
-    private static int targetCount(MopContext mop, String activity, ModelAction action) {
+    static int targetCount(MopContext mop, String activity, ModelAction action) {
         MopScorer.Scored scored = MopScorer.weigh(mop, activity, action);
         if (scored.distance == Integer.MAX_VALUE) {
             return 0;

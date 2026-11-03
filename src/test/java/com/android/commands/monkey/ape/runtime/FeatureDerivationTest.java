@@ -289,17 +289,15 @@ public class FeatureDerivationTest {
     }
 
     /**
-     * The neutral values of the six MOP scoring keys (run-spec delta, "The MOP scoring keys"):
-     * zero for a weight, as for {@code ape.mopWeightDirect}, and the default for the mode, the
-     * retirement count and the launcher bound.
+     * The neutral values of the four MOP scoring keys (run-spec "The MOP scoring keys"): the
+     * one-level ladder {@code 0} for {@code ape.mopWeights}, as zero for {@code ape.mopWeightDirect},
+     * and the default for the mode, the retirement count and the launcher bound.
      */
     @Test
-    public void theMopFeatureOwnsTheSixScoringKeysWithTheirNeutralValues() {
+    public void theMopFeatureOwnsTheFourScoringKeysWithTheirNeutralValues() {
         String[][] neutral = {
                 {"ape.mopScoring", "flag"},
-                {"ape.mopWeightD1", "0"},
-                {"ape.mopWeightD2", "0"},
-                {"ape.mopWeightD3", "0"},
+                {"ape.mopWeights", "0"},
                 {"ape.mopRetireAfter", "3"},
                 {"ape.mopLauncherDmax", "6"},
         };

@@ -35,7 +35,7 @@ public class ComponentInfoTest {
 
     private static StaticArtifactLoader.Loaded load(String components) throws Exception {
         StaticArtifactLoader.Loaded d = StaticArtifactLoader.load(writeArtifact(components),
-                null, null, false, new NoopSink());
+                null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink());
         assertNotNull("artifact must load", d);
         return d;
     }
@@ -126,7 +126,7 @@ public class ComponentInfoTest {
         java.net.URL url = ComponentInfoTest.class.getResource("/cryptoapp.apk.mop.json");
         assertNotNull("compact fixture on classpath", url);
         StaticArtifactLoader.Loaded loaded = StaticArtifactLoader.load(
-                new File(url.toURI()).getAbsolutePath(), null, null, false, new NoopSink());
+                new File(url.toURI()).getAbsolutePath(), null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink());
         assertNotNull(loaded);
         StaticGuiModel d = loaded.staticModel;
         assertEquals(4, d.activities().size());

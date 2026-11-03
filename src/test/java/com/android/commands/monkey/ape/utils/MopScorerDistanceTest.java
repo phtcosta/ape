@@ -131,7 +131,7 @@ public class MopScorerDistanceTest {
     }
 
     private static MopContext distance(MopData data, MopRetirement retirement) {
-        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 3, 6,
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, new int[] {500, 400, 300}, 3, 6,
                 retirement);
     }
 
@@ -183,7 +183,7 @@ public class MopScorerDistanceTest {
 
     @Test
     public void theLevelMappingIsTheContextsWeights() throws Exception {
-        MopContext mop = new MopContext(artifact(""), StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 41, 31, 23,
+        MopContext mop = new MopContext(artifact(""), StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, new int[] {41, 31, 23},
                 3, 6, null);
         assertEquals(41, MopScorer.distanceWeight(mop, 0));
         assertEquals(41, MopScorer.distanceWeight(mop, 1));
@@ -315,7 +315,7 @@ public class MopScorerDistanceTest {
         assertArrayEquals(new int[] {0, 0}, MopScorer.splitTies(mop, new int[] {0, 0}));
         assertArrayEquals(new int[0], MopScorer.splitTies(mop, new int[0]));
         // A share above the floor: W = 900, next 100, n = 2 -> 450.
-        MopContext wide = new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 900, 100, 50, 3, 6,
+        MopContext wide = new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, new int[] {900, 100, 50}, 3, 6,
                 null);
         assertArrayEquals(new int[] {450, 450, 50},
                 MopScorer.splitTies(wide, new int[] {900, 900, 50}));
@@ -323,6 +323,91 @@ public class MopScorerDistanceTest {
         assertArrayEquals(new int[] {500, 500, 300},
                 MopScorer.splitTies(TestMopContexts.flag(data, 500, 300),
                         new int[] {500, 500, 300}));
+    }
+
+    // -------------------------------------------------------------------------
+    // The ladder ape.mopWeights (gh-tbd-mop-weights-list)
+    // -------------------------------------------------------------------------
+
+    private static MopContext ladder(MopData data, int... weights) {
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, weights, 3, 6,
+                null);
+    }
+
+    /** Scenarios "Distance zero" and "Beyond the cut". */
+    @Test
+    public void distanceZeroIsLevelOneAndTheFourthLevelIsBeyondTheDefaultCut() throws Exception {
+        MopContext mop = ladder(artifact(""), 500, 400, 300);
+        assertEquals(500, MopScorer.distanceWeight(mop, 0));
+        assertEquals(0, MopScorer.distanceWeight(mop, 4));
+    }
+
+    /** Scenario "Above the old cut": a pair at d = 5 under a six-level ladder. */
+    @Test
+    public void aLongerLadderWeighsAboveTheOldCut() throws Exception {
+        MopContext mop = ladder(artifact(widget("w5", 1, 5) + "," + widget("w7", 2, 7)),
+                500, 400, 300, 300, 300, 300);
+        assertEquals(300, MopScorer.distanceWeight(mop, 5));
+        assertEquals(0, MopScorer.distanceWeight(mop, 7));
+        ModelAction five = click("w5");
+        assertEquals(300, MopScorer.score(mop, state(ACT, five), five));
+        ModelAction seven = click("w7");
+        assertEquals(0, MopScorer.score(mop, state(ACT, seven), seven));
+    }
+
+    /** Scenario "Flat ladder does not split". */
+    @Test
+    public void aFlatLadderDoesNotSplit() throws Exception {
+        MopData data = artifact(widget("a", 1, 1) + "," + widget("b", 2, 1) + ","
+                + widget("c", 3, 1) + "," + widget("d", 4, 1));
+        ModelAction[] all = {click("a"), click("b"), click("c"), click("d")};
+        pass(ladder(data, 300, 300, 300), ACT, all);
+        for (ModelAction x : all) {
+            assertBoost("flat x4", 300, 300, x);
+        }
+    }
+
+    /** Scenario "Single-level ladder splits fully". */
+    @Test
+    public void aSingleLevelLadderSplitsFully() throws Exception {
+        MopData data = artifact(widget("a", 1, 1) + "," + widget("b", 2, 0) + ","
+                + widget("c", 3, 1) + "," + widget("d", 4, 1) + "," + widget("e", 5, 2));
+        ModelAction[] tied = {click("a"), click("b"), click("c"), click("d")};
+        ModelAction far = click("e");
+        ModelAction[] all = {tied[0], tied[1], tied[2], tied[3], far};
+        MopContext mop = ladder(data, 500);
+        pass(mop, ACT, all);
+        for (ModelAction x : tied) {
+            assertBoost("single level x4", 500, 125, x);
+        }
+        assertBoost("d = 2 beyond the cut", 0, 0, far);
+        assertEquals(0, MopScorer.nextLevelWeight(mop, 500));
+    }
+
+    /**
+     * Scenario "Increasing ladder raises the share": under 300,500 the best weight 300 sits at
+     * level 1, whose next level weighs 500, so two ties each receive 500, above their weight.
+     */
+    @Test
+    public void anIncreasingLadderRaisesTheShareAboveTheWeight() throws Exception {
+        MopData data = artifact(widget("a", 1, 1) + "," + widget("b", 2, 0));
+        ModelAction[] tied = {click("a"), click("b")};
+        MopContext mop = ladder(data, 300, 500);
+        pass(mop, ACT, tied);
+        for (ModelAction x : tied) {
+            assertBoost("increasing x2", 300, 500, x);
+        }
+        assertArrayEquals(new int[] {500, 500}, MopScorer.splitTies(mop, new int[] {300, 300}));
+    }
+
+    /** An increasing ladder: 500 sits at level 2 = c, so W_next is 0 and two ties get 250. */
+    @Test
+    public void anIncreasingLadderSplitsWithoutAFloorAtTheLastLevel() throws Exception {
+        MopContext mop = ladder(artifact(""), 300, 500);
+        assertEquals(0, MopScorer.nextLevelWeight(mop, 500));
+        assertEquals(500, MopScorer.nextLevelWeight(mop, 300));
+        assertArrayEquals(new int[] {250, 250, 300},
+                MopScorer.splitTies(mop, new int[] {500, 500, 300}));
     }
 
     // -------------------------------------------------------------------------
@@ -360,9 +445,9 @@ public class MopScorerDistanceTest {
 
     /**
      * Scenario "a click on a widget flagged under another event reads its aggregate pairs": a click
-     * on a touch-listener widget weighs {@code mopWeightD2} under {@code distance}, as it weighs
-     * {@code mopWeightTransitive} under {@code flag}; a long-click on it weighs 0 under
-     * {@code distance}, because only a click reads the aggregate of pairs.
+     * on a touch-listener widget weighs level 2 of {@code ape.mopWeights} under {@code distance},
+     * as it weighs {@code mopWeightTransitive} under {@code flag}; a long-click on it weighs 0
+     * under {@code distance}, because only a click reads the aggregate of pairs.
      */
     @Test
     public void aClickReadsTheAggregatePairsAndALongClickDoesNot() throws Exception {

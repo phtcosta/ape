@@ -265,11 +265,43 @@ public class RunSpecAbortTest {
 
     @Test
     public void aNonIntegerDistanceKeyAborts() {
-        for (String key : new String[] {"ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3",
-                "ape.mopRetireAfter", "ape.mopLauncherDmax"}) {
+        for (String key : new String[] {"ape.mopWeights", "ape.mopRetireAfter", "ape.mopLauncherDmax"}) {
             RunSpecException failure = abort(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true", key, "near"));
             assertEquals(key, RunSpecException.Reason.INVALID_TYPE, failure.getReason());
             assertEquals(key, failure.getKey());
+        }
+    }
+
+    /** Scenario "Malformed value" (run-spec "Integer-List Value Type"). */
+    @Test
+    public void aMalformedLadderAbortsAsATypeErrorOnTheKey() {
+        for (String value : new String[] {"", "1,2,3,4,5,6,7,8,9,10,11", "500,-400,300", "500,4x0,300",
+                "500,,300"}) {
+            RunSpecException failure = abort(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                    "ape.mopScoring", "distance", "ape.mopWeights", value));
+            assertEquals("'" + value + "' must abort",
+                    RunSpecException.Reason.INVALID_TYPE, failure.getReason());
+            assertEquals("ape.mopWeights", failure.getKey());
+            assertTrue(failure.getDetail(),
+                    failure.getDetail().contains("1 to 10 comma-separated non-negative integers"));
+            assertTrue(failure.toDiagnostic().startsWith("reason=invalid_type key=ape.mopWeights "));
+        }
+        for (String value : new String[] {"1,2,3,4,5,6,7,8,9,10", "0"}) {
+            RunSpec.resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                    "ape.mopScoring", "distance", "ape.mopWeights", value),
+                    RunSpec.CliValues.of("sata", 42L, null));
+        }
+    }
+
+    /** Scenario "Retired key passed" (run-spec "Per-Level Distance Keys Retired"). */
+    @Test
+    public void thePerLevelDistanceKeysAreRetiredInFavourOfTheLadder() {
+        for (String key : new String[] {"ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3"}) {
+            RunSpecException failure = abort(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                    key, "400"));
+            assertEquals(key, RunSpecException.Reason.RETIRED_KEY, failure.getReason());
+            assertEquals(key, failure.getKey());
+            assertTrue(failure.getDetail(), failure.getDetail().contains("ape.mopWeights"));
         }
     }
 

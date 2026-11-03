@@ -10,7 +10,8 @@ import com.android.commands.monkey.ape.runtime.RunSpec;
  * Design "Part B: {@code MopContext}"): the loaded {@link MopData} for the targets, the
  * {@link StaticGuiModel} split from the same artifact for the WTG edges, the widget metadata and
  * the components (plan P-1: MOP reads both providers), the scoring mode ({@code ape.mopScoring}),
- * the weights of both modes, and the run's {@link MopRetirement}.
+ * the weights of both modes ({@code flag}'s direct and transitive weights, {@code distance}'s
+ * ladder {@code ape.mopWeights}), and the run's {@link MopRetirement}.
  *
  * <p>Built once by {@code StatefulAgent}, right after the artifact loads, and null when MOP is not
  * mounted — so a null context and a MOP-off cell are the same statement (design D-B14.21). It is
@@ -27,9 +28,7 @@ public final class MopContext {
     private final MopScoring scoring;
     private final int weightDirect;
     private final int weightTransitive;
-    private final int weightD1;
-    private final int weightD2;
-    private final int weightD3;
+    private final int[] weights;
     private final int retireAfter;
     private final int launcherDmax;
     private final MopRetirement retirement;
@@ -37,13 +36,15 @@ public final class MopContext {
     /**
      * @param staticModel the static model of the same artifact ({@link StaticGuiModel#EMPTY} in a
      *                    test that reads none of it)
+     * @param weights the {@code distance} ladder, element {@code l - 1} the weight of level
+     *                {@code l}; copied, so the caller keeps no handle on it
      * @param retirement the run's retirement; null under {@code flag} (INV-MOP-37). Under
      *                   {@code distance} {@link #fromSpec} always builds one; a null one there
      *                   (tests) retires nothing
      * @throws IllegalArgumentException when a retirement is given under {@code flag}
      */
     public MopContext(MopData data, StaticGuiModel staticModel, MopScoring scoring,
-            int weightDirect, int weightTransitive, int weightD1, int weightD2, int weightD3,
+            int weightDirect, int weightTransitive, int[] weights,
             int retireAfter, int launcherDmax, MopRetirement retirement) {
         this.data = Objects.requireNonNull(data, "data");
         this.staticModel = Objects.requireNonNull(staticModel, "staticModel");
@@ -53,9 +54,7 @@ public final class MopContext {
         }
         this.weightDirect = weightDirect;
         this.weightTransitive = weightTransitive;
-        this.weightD1 = weightD1;
-        this.weightD2 = weightD2;
-        this.weightD3 = weightD3;
+        this.weights = Objects.requireNonNull(weights, "weights").clone();
         this.retireAfter = retireAfter;
         this.launcherDmax = launcherDmax;
         this.retirement = retirement;
@@ -81,8 +80,8 @@ public final class MopContext {
                 ? new MopRetirement(data.targetCount(), params.retireAfter())
                 : null;
         return new MopContext(data, staticModel, params.scoring(), params.weightDirect(),
-                params.weightTransitive(), params.weightD1(), params.weightD2(),
-                params.weightD3(), params.retireAfter(), params.launcherDmax(), retirement);
+                params.weightTransitive(), params.weights(), params.retireAfter(),
+                params.launcherDmax(), retirement);
     }
 
     /** The loaded artifact's targets; never null. */
@@ -110,19 +109,24 @@ public final class MopContext {
         return weightTransitive;
     }
 
-    /** {@code ape.mopWeightD1}: the {@code distance} weight for {@code d <= 1}. */
-    public int weightD1() {
-        return weightD1;
+    /** {@code ape.mopWeights}: the {@code distance} ladder, as a fresh copy. */
+    public int[] weights() {
+        return weights.clone();
     }
 
-    /** {@code ape.mopWeightD2}: the {@code distance} weight for {@code d = 2}. */
-    public int weightD2() {
-        return weightD2;
+    /** The cut c: the ladder's length, the deepest level with a weight. */
+    public int cut() {
+        return weights.length;
     }
 
-    /** {@code ape.mopWeightD3}: the {@code distance} weight for {@code d = 3}. */
-    public int weightD3() {
-        return weightD3;
+    /**
+     * The ladder's weight of {@code level} (counting from 1): element {@code level - 1} when
+     * {@code level <= cut()}, and 0 beyond the cut.
+     *
+     * @param level a level, {@code >= 1}
+     */
+    public int levelWeight(int level) {
+        return level <= weights.length ? weights[level - 1] : 0;
     }
 
     /** {@code ape.mopRetireAfter}: first interactions after which a target retires. */

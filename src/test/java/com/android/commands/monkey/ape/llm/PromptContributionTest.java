@@ -131,7 +131,7 @@ public class PromptContributionTest {
                 + "\"w_far\":{\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[7,5]]}}");
         MopData data = loaded.mopData;
         MopRetirement retirement = new MopRetirement(data.targetCount(), 3);
-        MopContext distance = new MopContext(data, loaded.staticModel, MopScoring.DISTANCE, 500, 300, 500, 400, 300,
+        MopContext distance = new MopContext(data, loaded.staticModel, MopScoring.DISTANCE, 500, 300, new int[] {500, 400, 300},
                 3, 6, retirement);
         GUITreeNode retired = node(null, "android.widget.Button", "Ret", "w_ret");
         List<ModelAction> distanceActions = PromptFixtures.list(

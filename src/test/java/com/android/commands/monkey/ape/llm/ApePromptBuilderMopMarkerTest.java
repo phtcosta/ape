@@ -103,7 +103,7 @@ public class ApePromptBuilderMopMarkerTest {
     }
 
     private static MopContext distance(MopData data, MopRetirement retirement) {
-        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, 500, 400, 300, 3, 6,
+        return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, new int[] {500, 400, 300}, 3, 6,
                 retirement);
     }
 
