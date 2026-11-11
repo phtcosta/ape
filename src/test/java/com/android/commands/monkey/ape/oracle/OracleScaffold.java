@@ -237,7 +237,7 @@ import java.util.Set;
  * {@code leastVisitedPriorityTiebreak=true}, {@code backMenuPickCap=3},
  * {@code dynamicEpsilon=true}, {@code defaultEpsilon=0.05}, {@code minEpsilon=0.02},
  * {@code maxEpsilon=0.15}. Read only where {@code _mopContext} is present:
- * {@code activityTriggerEnabled=true}, {@code activityTriggerStagnationStep=50},
+ * {@code activityTriggerEnabled=true}, {@code activityTriggerStagnationStep=85},
  * {@code activityTriggerMaxPerRun=0}. Each preset test guard-asserts
  * the half it depends on (design D2). Scoring weights are deliberately <b>not</b> among them: they
  * are consumed above this entry point, so no golden can depend on one, and their guard belongs to

@@ -91,8 +91,8 @@ public class RunSpecResolveTest {
         RunSpec spec = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true"));
         Map<String, String> mop = spec.mop().values();
         assertEquals("flag", mop.get("ape.mopScoring"));
-        assertEquals("500,400,300", mop.get("ape.mopWeights"));
-        assertEquals("3", mop.get("ape.mopRetireAfter"));
+        assertEquals("194,146,97", mop.get("ape.mopWeights"));
+        assertEquals("10", mop.get("ape.mopRetireAfter"));
         assertEquals("6", mop.get("ape.mopLauncherDmax"));
         assertTrue("the plan states none of them, so none is inert", spec.inertKeys().isEmpty());
     }
@@ -101,8 +101,8 @@ public class RunSpecResolveTest {
     public void mopParamsReadsTheFourKeysThroughTypedAccessors() {
         RunSpec.MopParams defaults = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true")).mop();
         assertEquals(MopScoring.FLAG, defaults.scoring());
-        assertArrayEquals(new int[] {500, 400, 300}, defaults.weights());
-        assertEquals(3, defaults.retireAfter());
+        assertArrayEquals(new int[] {194, 146, 97}, defaults.weights());
+        assertEquals(10, defaults.retireAfter());
         assertEquals(6, defaults.launcherDmax());
 
         RunSpec.MopParams stated = resolve(entries(
@@ -272,7 +272,7 @@ public class RunSpecResolveTest {
     public void weightsReturnsAFreshCopy() {
         RunSpec.MopParams mop = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true")).mop();
         mop.weights()[0] = 1;
-        assertArrayEquals(new int[] {500, 400, 300}, mop.weights());
+        assertArrayEquals(new int[] {194, 146, 97}, mop.weights());
     }
 
     @Test
@@ -287,10 +287,197 @@ public class RunSpecResolveTest {
         Map<String, String> unset = new LinkedHashMap<>(spaced);
         unset.remove("ape.mopWeights");
         Map<String, String> statedDefault = new LinkedHashMap<>(spaced);
-        statedDefault.put("ape.mopWeights", "500,400,300");
+        statedDefault.put("ape.mopWeights", "194,146,97");
         assertEquals("a stated default equals the unset key in the digest",
                 resolve(unset).digest(), resolve(statedDefault).digest());
         assertNotEquals(resolve(unset).digest(), resolve(tight).digest());
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Calibrated MOP defaults (gh-tbd-mop-defaults-f1): calibration v6's finalist F1 as jar
+    // defaults, not preset keys; the neutrals follow them; E7 by explicit keys
+    // -----------------------------------------------------------------------------------------
+
+    /** The four keys calibration v6 searched, which F1 sets (run-spec "Calibrated MOP Defaults"). */
+    private static final String[] CALIBRATED_MOP_KEYS = {
+            "ape.mopWeights", "ape.mopRetireAfter", "ape.mopCoinLedgerMaxInteractions",
+            "ape.activityTriggerStagnationStep"};
+
+    /** The {@code mop} cell as the harness writes it: preset and artifact path, then the pairs. */
+    private static Map<String, String> mopCell(String... keyValues) {
+        Map<String, String> cell = entries("ape.preset", Presets.MOP, "ape.staticDataPath", MOP_PATH);
+        cell.putAll(entries(keyValues));
+        return cell;
+    }
+
+    /**
+     * Scenario "A MOP cell without stated keys runs F1" (run-spec "Calibrated MOP Defaults"): with
+     * only the harness keys, the four keys take F1's values. The cell mounts the distance mode, the
+     * launcher and the coin, so every accessor reads the plan, not an absent feature's fallback.
+     */
+    @Test
+    public void aMopCellWithoutStatedKeysRunsF1() {
+        RunSpec spec = resolve(mopCell("ape.variant", "mop"));
+        assertTrue(spec.has(Feature.MOP_LAUNCHER));
+        assertTrue(spec.has(Feature.MOP_COIN));
+        RunSpec.MopParams mop = spec.mop();
+        assertEquals(MopScoring.DISTANCE, mop.scoring());
+        assertArrayEquals("F1 has three levels, so the cut stays c = 3",
+                new int[] {194, 146, 97}, mop.weights());
+        assertEquals(10, mop.retireAfter());
+        assertEquals(4, mop.coinLedgerMaxInteractions());
+        assertEquals(85, mop.activityTriggerStagnationStep());
+        assertTrue("the cell states none of the four, so none is inert", spec.inertKeys().isEmpty());
+    }
+
+    /**
+     * Requirement "Calibrated Defaults Are Not Preset Keys" (design D1): a preset key counts as
+     * explicit, so a calibrated value in a preset would abort every variant that unmounts the
+     * launcher or the coin.
+     */
+    @Test
+    public void noPresetStatesTheCalibratedKeys() {
+        for (String preset : Presets.names()) {
+            Map<String, String> vector = Presets.resolve(preset);
+            for (String key : CALIBRATED_MOP_KEYS) {
+                assertFalse(preset + " states " + key, vector.containsKey(key));
+            }
+        }
+    }
+
+    /**
+     * Scenario "A variant without the launcher resolves", first half: rv-android's
+     * {@code mop_nolaunch} unmounts the launcher, and the cadence it never states is a jar
+     * default, not an explicit key, so nothing aborts.
+     */
+    @Test
+    public void aVariantWithoutTheLauncherResolves() {
+        RunSpec spec = resolve(mopCell("ape.activityTriggerEnabled", "false"));
+        assertTrue(spec.has(Feature.MOP));
+        assertFalse(spec.has(Feature.MOP_LAUNCHER));
+        assertEquals(Arrays.asList("ape.activityTriggerEnabled"), spec.inertKeys());
+        assertFalse("an absent launcher's cadence is not a plan value",
+                spec.effectiveValues().containsKey("ape.activityTriggerStagnationStep"));
+    }
+
+    /**
+     * Scenario "A variant without the launcher resolves", second half, and the cadence clause of
+     * "Neutral values follow the defaults": without the launcher the cadence is accepted only at
+     * its neutral value, which is the calibrated default 85; the E7 value 50 aborts (INV-RUN-05).
+     */
+    @Test
+    public void theCadenceWithoutTheLauncherIsInertAt85AndAbortsAt50() {
+        RunSpec spec = resolve(mopCell("ape.activityTriggerEnabled", "false",
+                "ape.activityTriggerStagnationStep", "85"));
+        assertFalse(spec.has(Feature.MOP_LAUNCHER));
+        assertEquals(Arrays.asList("ape.activityTriggerEnabled", "ape.activityTriggerStagnationStep"),
+                spec.inertKeys());
+        assertFalse(spec.effectiveValues().containsKey("ape.activityTriggerStagnationStep"));
+
+        RunSpecException failure = abort(mopCell("ape.activityTriggerEnabled", "false",
+                "ape.activityTriggerStagnationStep", "50"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
+        assertEquals("ape.activityTriggerStagnationStep", failure.getKey());
+    }
+
+    /**
+     * Scenario "Neutral values follow the defaults", retirement clause: without {@code ape.mop}
+     * the retirement count is neutral at its calibrated default 10, and the E7 value 3 aborts.
+     */
+    @Test
+    public void theRetirementCountWithoutMopIsInertAt10AndAbortsAt3() {
+        RunSpec spec = resolve(entries("ape.mopRetireAfter", "10"));
+        assertNull(spec.mop());
+        assertEquals(Arrays.asList("ape.mopRetireAfter"), spec.inertKeys());
+        assertFalse(spec.effectiveValues().containsKey("ape.mopRetireAfter"));
+
+        RunSpecException failure = abort(entries("ape.mopRetireAfter", "3"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
+        assertEquals("ape.mopRetireAfter", failure.getKey());
+    }
+
+    /**
+     * Scenario "Neutral values follow the defaults", coin clause: {@code ape.mopCoinPercentage=0}
+     * leaves {@code MOP_COIN} out, so k is neutral at its calibrated default 4, and the E7 value 1
+     * aborts. The accessor's fallback for an absent coin stays the floor 1, which nothing reads
+     * (design D3).
+     */
+    @Test
+    public void theCoinBudgetWithoutTheCoinIsInertAt4AndAbortsAt1() {
+        RunSpec spec = resolve(mopCell("ape.mopCoinPercentage", "0",
+                "ape.mopCoinLedgerMaxInteractions", "4"));
+        assertTrue(spec.has(Feature.MOP));
+        assertFalse(spec.has(Feature.MOP_COIN));
+        assertEquals(Arrays.asList("ape.mopCoinLedgerMaxInteractions", "ape.mopCoinPercentage"),
+                spec.inertKeys());
+        assertEquals("the absent coin's fallback is the floor, not the default (design D3)",
+                1, spec.mop().coinLedgerMaxInteractions());
+
+        RunSpecException failure = abort(mopCell("ape.mopCoinPercentage", "0",
+                "ape.mopCoinLedgerMaxInteractions", "1"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, failure.getReason());
+        assertEquals("ape.mopCoinLedgerMaxInteractions", failure.getKey());
+
+        // The rule compares the clamped value: a k below 1 is floored to 1, which is not neutral.
+        RunSpecException floored = abort(mopCell("ape.mopCoinPercentage", "0",
+                "ape.mopCoinLedgerMaxInteractions", "0"));
+        assertEquals(RunSpecException.Reason.MISSING_DEPENDENCY, floored.getReason());
+        assertEquals("ape.mopCoinLedgerMaxInteractions", floored.getKey());
+    }
+
+    /**
+     * Scenario "Neutral values follow the defaults", the clamp clause: without the launcher a
+     * cadence {@code <= 0} is clamped to the default 85, its neutral value, so it stays inert.
+     */
+    @Test
+    public void aCadenceAtOrBelowZeroWithoutTheLauncherIsInert() {
+        RunSpec spec = resolve(mopCell("ape.activityTriggerEnabled", "false",
+                "ape.activityTriggerStagnationStep", "0"));
+        assertFalse(spec.has(Feature.MOP_LAUNCHER));
+        assertEquals(Arrays.asList("ape.activityTriggerEnabled", "ape.activityTriggerStagnationStep"),
+                spec.inertKeys());
+    }
+
+    /**
+     * Scenario "E7 values stated" (run-spec "E7 Plan by Explicit Keys"): the four keys stated at
+     * the E7 jar's values give that jar's plan. Holds before and after the defaults change.
+     */
+    @Test
+    public void theFourE7ValuesStatedGiveTheE7Plan() {
+        RunSpec spec = resolve(mopCell("ape.variant", "mop",
+                "ape.mopWeights", "500,400,300",
+                "ape.mopRetireAfter", "3",
+                "ape.mopCoinLedgerMaxInteractions", "1",
+                "ape.activityTriggerStagnationStep", "50"));
+        assertTrue(spec.has(Feature.MOP_LAUNCHER));
+        assertTrue(spec.has(Feature.MOP_COIN));
+        RunSpec.MopParams mop = spec.mop();
+        assertEquals(MopScoring.DISTANCE, mop.scoring());
+        assertArrayEquals(new int[] {500, 400, 300}, mop.weights());
+        assertEquals(3, mop.retireAfter());
+        assertEquals(1, mop.coinLedgerMaxInteractions());
+        assertEquals(50, mop.activityTriggerStagnationStep());
+        assertTrue("every stated key parameterizes a mounted mechanism", spec.inertKeys().isEmpty());
+    }
+
+    /**
+     * Scenario "E7 without the launcher omits the cadence" (run-spec "E7 Recipe Omits Keys of
+     * Absent Features"): {@code mop_nolaunch} with the E7 ladder, N = 3 and Study 3's k = 2, and
+     * no cadence, resolves with the three stated values effective.
+     */
+    @Test
+    public void theE7RecipeWithoutTheLauncherOmitsTheCadence() {
+        RunSpec spec = resolve(mopCell("ape.activityTriggerEnabled", "false",
+                "ape.mopWeights", "500,400,300",
+                "ape.mopRetireAfter", "3",
+                "ape.mopCoinLedgerMaxInteractions", "2"));
+        assertFalse(spec.has(Feature.MOP_LAUNCHER));
+        assertTrue(spec.has(Feature.MOP_COIN));
+        RunSpec.MopParams mop = spec.mop();
+        assertArrayEquals(new int[] {500, 400, 300}, mop.weights());
+        assertEquals(3, mop.retireAfter());
+        assertEquals(2, mop.coinLedgerMaxInteractions());
+        assertEquals(Arrays.asList("ape.activityTriggerEnabled"), spec.inertKeys());
     }
 
     // -----------------------------------------------------------------------------------------
@@ -345,7 +532,7 @@ public class RunSpecResolveTest {
                 "ape.activityTriggerStagnationStep", "0",
                 "ape.activityTriggerMaxPerRun", "-5");
         RunSpec spec = resolve(arm);
-        assertEquals("50", spec.effectiveValues().get("ape.activityTriggerStagnationStep"));
+        assertEquals("85", spec.effectiveValues().get("ape.activityTriggerStagnationStep"));
         assertEquals("0", spec.effectiveValues().get("ape.activityTriggerMaxPerRun"));
 
         RunSpec coin = resolve(entries("ape.staticDataPath", MOP_PATH, "ape.mop", "true",
@@ -358,6 +545,31 @@ public class RunSpecResolveTest {
         RunSpec llm = resolve(entries("ape.llm", "true", "ape.llmUrl", LLM_URL, "ape.llmPercentage", "1.5"));
         assertEquals(1.0d,
                 Double.parseDouble(llm.effectiveValues().get("ape.llmPercentage")), 1e-9);
+    }
+
+    /**
+     * component-triggering "Cadence-Based MOP Activity Launch", scenario "invalid values clamped at
+     * load" (gh-tbd-mop-defaults-f1, design D3): a cadence at or below zero falls back to the key's
+     * jar default, the calibrated 85, read from {@code KeyOwnership} rather than kept as a literal.
+     */
+    @Test
+    public void aCadenceAtOrBelowZeroClampsToTheCalibratedDefault() {
+        RunSpec spec = resolve(entries(
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.activityTriggerEnabled", "true",
+                "ape.activityTriggerStagnationStep", "0",
+                "ape.activityTriggerMaxPerRun", "-3"));
+        assertEquals("85", spec.effectiveValues().get("ape.activityTriggerStagnationStep"));
+        assertEquals(85, spec.mop().activityTriggerStagnationStep());
+        assertEquals("the clamp falls back to the jar default",
+                KeyOwnership.defaultOf("ape.activityTriggerStagnationStep"),
+                spec.effectiveValues().get("ape.activityTriggerStagnationStep"));
+        assertEquals("0", spec.effectiveValues().get("ape.activityTriggerMaxPerRun"));
+
+        RunSpec negative = resolve(entries(
+                "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
+                "ape.activityTriggerStagnationStep", "-7"));
+        assertEquals("85", negative.effectiveValues().get("ape.activityTriggerStagnationStep"));
     }
 
     // -----------------------------------------------------------------------------------------

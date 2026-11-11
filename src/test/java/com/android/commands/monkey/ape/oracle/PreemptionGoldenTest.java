@@ -30,7 +30,7 @@ import static org.junit.Assert.assertTrue;
  * <h2>The scenario, and what each of its four steps is for</h2>
  * <ol>
  *   <li><b>{@code entry}, LLM accept.</b> The cadence counter is seeded at {@link #DUE_CADENCE} =
- *       49, so the step's open advances it to the cadence and the launcher is <i>due</i>. The
+ *       84, so the step's open advances it to the cadence and the launcher is <i>due</i>. The
  *       new-state stage accepts first, so the launcher is not reached; the counter has advanced
  *       anyway (global cadence, design D-B11, INV-ORA-05).</li>
  *   <li><b>{@code primed}, the new-state call declines.</b> The new-state stage makes the step's one
@@ -85,10 +85,10 @@ public class PreemptionGoldenTest {
             "br.unb.cic.cryptoapp.generated.CryptographyActivity";
 
     /**
-     * One below {@code ape.activityTriggerStagnationStep} (50): the step's open advances the counter
+     * One below {@code ape.activityTriggerStagnationStep} (85): the step's open advances the counter
      * to the cadence, so the launcher is due on the first step of the run.
      */
-    private static final int DUE_CADENCE = 49;
+    private static final int DUE_CADENCE = 84;
 
     /** The stagnation midpoint at the harness's threshold of 10, and a non-zero counter. */
     private static final int STABLE_COUNTER = 5;
@@ -159,7 +159,7 @@ public class PreemptionGoldenTest {
 
     @Test
     public void theSeededCadenceIsOneBelowTheConfiguredFiringPoint() {
-        // The whole scenario rests on this arithmetic: seeded at 49, the first step's open reaches
+        // The whole scenario rests on this arithmetic: seeded at 84, the first step's open reaches
         // the cadence.
         RunSpec spec = OracleScaffold.planOf(OracleScaffold.Cell.AS_MOP_LLM, SEED);
         assertEquals("ape.activityTriggerStagnationStep", DUE_CADENCE + 1,

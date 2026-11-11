@@ -174,8 +174,9 @@ public class MopScorer {
      * The {@code distance} weight of a nearest unretired target at distance {@code d}: the ladder
      * {@code ape.mopWeights} read at level {@code l = max(d, 1)}, so {@code d = 0} and {@code d = 1}
      * share level 1, and 0 beyond the cut c and for {@link Integer#MAX_VALUE} (no pair). At the
-     * default ladder 500,400,300 this is 500 for {@code d <= 1}, 400 for {@code d = 2}, 300 for
-     * {@code d = 3} and 0 from {@code d = 4} on. The one mapping from a distance to a weight.
+     * default ladder 194,146,97 (calibration v6's F1) this is 194 for {@code d <= 1}, 146 for
+     * {@code d = 2}, 97 for {@code d = 3} and 0 from {@code d = 4} on. The one mapping from a
+     * distance to a weight.
      */
     public static int distanceWeight(MopContext mop, int d) {
         return mop.levelWeight(Math.max(d, 1));

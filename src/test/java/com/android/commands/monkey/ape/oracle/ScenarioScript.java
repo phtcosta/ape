@@ -201,11 +201,12 @@ public final class ScenarioScript {
 
     /**
      * The value {@code _stepsSinceLauncherFiring} starts the run at (design D2). The launcher fires
-     * on an exact equality against {@code spec.mop().activityTriggerStagnationStep()} (50 by default) and
-     * the counter's increment is the block's first statement, so a run that starts at 0 reaches the
-     * fire on its 50th non-preempted pass. Declaring the starting value is how a scenario puts that
-     * fire on a step a reviewer can actually read. The driver never touches the counter afterwards —
-     * that prohibition is what finding 3.3-1 and INV-ORA-05 rest on.
+     * on the first step that reaches it with the counter at or past
+     * {@code spec.mop().activityTriggerStagnationStep()} (85 by default, pinned by
+     * {@link LadderConfigGuard}), and the counter advances at every step's open, preempted or not,
+     * so a run that starts at 0 is due on its 85th step. Declaring the starting value is how a
+     * scenario puts that fire on a step a reviewer can actually read. The driver never touches the
+     * counter afterwards — that prohibition is what finding 3.3-1 and INV-ORA-05 rest on.
      */
     public int getStepsSinceLauncherFiring() { return stepsSinceLauncherFiring; }
 

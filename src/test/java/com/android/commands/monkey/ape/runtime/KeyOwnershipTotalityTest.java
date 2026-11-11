@@ -189,8 +189,8 @@ public class KeyOwnershipTotalityTest {
     public void theFourMopScoringKeysAreOwnedByMopWithTheSpecsTypesAndDefaults() {
         String[][] table = {
                 {"ape.mopScoring", "flag"},
-                {"ape.mopWeights", "500,400,300"},
-                {"ape.mopRetireAfter", "3"},
+                {"ape.mopWeights", "194,146,97"},
+                {"ape.mopRetireAfter", "10"},
                 {"ape.mopLauncherDmax", "6"},
         };
         for (String[] row : table) {
@@ -221,7 +221,8 @@ public class KeyOwnershipTotalityTest {
     /**
      * The keys isolate-guidance-groups adds (design § Key contract v3.2), pinned against the
      * contract: owner, declared type and jar default. None has a {@code Config} field, so the
-     * drift guard above cannot see them.
+     * drift guard above cannot see them. The coin's budget {@code ape.mopCoinLedgerMaxInteractions}
+     * defaults to calibration v6's finalist F1, 4 (run-spec "Calibrated MOP Defaults").
      */
     @Test
     public void theGroupContractKeysHaveTheirOwnersTypesAndDefaults() {
@@ -233,7 +234,7 @@ public class KeyOwnershipTotalityTest {
                 {"ape.staticDataPath", Feature.STATIC_DATA, ValueType.STRING, null},
                 {"ape.mopStrictPackageMatch", Feature.STATIC_DATA, ValueType.BOOLEAN, "false"},
                 {"ape.mopCoinPercentage", Feature.MOP_COIN, ValueType.DOUBLE, "1.0"},
-                {"ape.mopCoinLedgerMaxInteractions", Feature.MOP_COIN, ValueType.INT, "1"},
+                {"ape.mopCoinLedgerMaxInteractions", Feature.MOP_COIN, ValueType.INT, "4"},
                 {"ape.llmGateMinActions", Feature.LLM, ValueType.INT, "3"},
                 {"ape.llmBreakerFailures", Feature.LLM, ValueType.INT, "3"},
                 {"ape.llmBreakerOpenMs", Feature.LLM, ValueType.LONG, "60000"},

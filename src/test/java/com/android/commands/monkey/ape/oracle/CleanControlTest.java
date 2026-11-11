@@ -3,6 +3,7 @@ package com.android.commands.monkey.ape.oracle;
 import android.util.Log;
 
 import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.KeyOwnership;
 import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.telemetry.NdjsonSink;
 
@@ -69,7 +70,14 @@ public class CleanControlTest {
                 .transition("home", "//*[@resource-id='h0']", "weighted")
                 .transition("home", "//*[@resource-id='h1']", "weighted")
                 .transition("home", "//*[@resource-id='h2']", "weighted")
-                .stepsSinceLauncherFiring(48);
+                // Two below the configured default of ape.activityTriggerStagnationStep, so the
+                // launcher still fires inside the four-step replay of the MOP cell whatever that
+                // default is (gh-tbd-mop-defaults-f1 design D7; theSameReplayInAMopCellCarriesTheSignals
+                // checks that it does). Derived rather than a literal: this test runs no guard and
+                // pins no launch step, so a literal would drop the launch from the non-vacuity
+                // replay unnoticed when the default moves. The clean cells mount no launcher.
+                .stepsSinceLauncherFiring(
+                        Integer.parseInt(KeyOwnership.defaultOf("ape.activityTriggerStagnationStep")) - 2);
         if (withLlm) {
             return builder.steps(
                     ScenarioScript.step(true, 0, ScenarioScript.accept(
@@ -180,18 +188,24 @@ public class CleanControlTest {
 
     /**
      * The gate is not vacuous: the same replay in a MOP cell writes the signals the clean cells
-     * must not, so the assertions above are reading the fields that would carry a leak.
+     * must not, so the assertions above are reading the fields that would carry a leak. The seed
+     * two below the default cadence puts a launch in that replay. The driver writes a non-model
+     * step with its action type as {@code dec.src} ({@code OracleDriver.decision}), not the
+     * production owner {@code launcher}, so the launch is read as {@code EVENT_TRIGGER_ACTIVITY}.
      */
     @Test
     public void theSameReplayInAMopCellCarriesTheSignals() throws Exception {
         boolean coin = false;
         boolean actBit = false;
+        boolean launch = false;
         for (JSONObject line : trace(OracleScaffold.Cell.AS_MOP_LLM)) {
             JSONObject dec = line.optJSONObject("dec");
             coin = coin || (dec != null && "mop_coin".equals(dec.optString("ch")));
             actBit = actBit || ("ACT".equals(line.optString("type")) && line.has("mop"));
+            launch = launch || (dec != null && "EVENT_TRIGGER_ACTIVITY".equals(dec.optString("src")));
         }
         assertTrue("the MOP coin's channel appears with MOP mounted", coin);
         assertTrue("the ACT mop bit appears with MOP mounted", actBit);
+        assertTrue("the seeded cadence puts a launch in the MOP replay", launch);
     }
 }

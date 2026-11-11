@@ -12,10 +12,16 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 /**
- * The differential test of run-spec "Default Plan Equivalence With the E7 Jar" and mop-guidance
- * scenario "Default ladder equals the E7 jar" (design D10): at the default ladder, the ladder-read
+ * The differential test of mop-guidance scenario "Default ladder equals the E7 jar"
+ * (gh-tbd-mop-weights-list design D10), the ladder of run-spec "E7 Plan by Explicit Keys": with the
+ * E7 ladder {@code ape.mopWeights=500,400,300} stated in the plan, the ladder-read
  * {@link MopScorer#distanceWeight}, {@link MopScorer#splitTies} and
  * {@link MopScorer#nextLevelWeight} return what the E7 jar {@code bc4bc1b8} returned.
+ *
+ * <p>The E7 ladder is not the plan's default ({@code 194,146,97}, calibration v6's F1), so the plan
+ * states it (gh-tbd-mop-defaults-f1 design D5, D6). The scenario's name keeps the word "Default"
+ * because {@code openspec archive} matches scenarios by name; {@code MopScorerDistanceTest} covers
+ * the default ladder.
  *
  * <p>The {@code frozen*} methods are the {@code bc4bc1b8} bodies verbatim, with the context's
  * {@code weightD1..3} replaced by the literals 500, 400 and 300 and the scoring-mode test dropped
@@ -85,10 +91,14 @@ public class MopLadderE7EquivalenceTest {
     // The comparison
     // -------------------------------------------------------------------------
 
-    /** The context of a {@code distance} run whose plan does not state {@code ape.mopWeights}. */
-    private static MopContext defaultLadder() {
+    /**
+     * The context of a {@code distance} run whose plan states the E7 ladder
+     * {@code ape.mopWeights=500,400,300}, read through the plan as a run reads it.
+     */
+    private static MopContext e7Ladder() {
         MopContext mop = MopContext.fromSpec(MopData.forTest(null, null), StaticGuiModel.EMPTY,
-                TestRunSpecs.mopSpec("ape.mopScoring", "distance").mop());
+                TestRunSpecs.mopSpec("ape.mopScoring", "distance",
+                        "ape.mopWeights", "500,400,300").mop());
         assertEquals(MopScoring.DISTANCE, mop.scoring());
         return mop;
     }
@@ -130,8 +140,8 @@ public class MopLadderE7EquivalenceTest {
     }
 
     @Test
-    public void theDefaultLadderEqualsTheE7Functions() {
-        MopContext mop = defaultLadder();
+    public void theStatedE7LadderEqualsTheE7Functions() {
+        MopContext mop = e7Ladder();
         List<String> mismatches = new ArrayList<>();
 
         int[] distances = distances();

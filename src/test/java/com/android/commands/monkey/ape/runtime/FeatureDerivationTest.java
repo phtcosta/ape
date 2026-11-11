@@ -298,7 +298,7 @@ public class FeatureDerivationTest {
         String[][] neutral = {
                 {"ape.mopScoring", "flag"},
                 {"ape.mopWeights", "0"},
-                {"ape.mopRetireAfter", "3"},
+                {"ape.mopRetireAfter", "10"},
                 {"ape.mopLauncherDmax", "6"},
         };
         for (String[] row : neutral) {

@@ -192,13 +192,14 @@ public enum Feature {
         // these neutrals concern only a plan without MOP (INV-RUN-05).
         MOP.own(MopScoring.KEY, "flag");
         MOP.own("ape.mopWeights", "0");
-        MOP.own("ape.mopRetireAfter", "3");
+        MOP.own("ape.mopRetireAfter", "10");
         MOP.own("ape.mopLauncherDmax", "6");
 
-        // The coin's budget of executions per ledger key (D-B17); 1 is the first-interaction rule.
-        MOP_COIN.own("ape.mopCoinLedgerMaxInteractions", "1");
+        // The coin's budget of executions per ledger key (D-B17), neutral at its default; k = 1
+        // would be the first-interaction rule.
+        MOP_COIN.own("ape.mopCoinLedgerMaxInteractions", "4");
 
-        MOP_LAUNCHER.own("ape.activityTriggerStagnationStep", "50");
+        MOP_LAUNCHER.own("ape.activityTriggerStagnationStep", "85");
         MOP_LAUNCHER.own("ape.activityTriggerMaxPerRun", "0");
 
         ACTIVITY_BUDGET.own("ape.activityBaseBudget", "50");

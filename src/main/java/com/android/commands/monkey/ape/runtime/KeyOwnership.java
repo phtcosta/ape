@@ -206,9 +206,17 @@ public final class KeyOwnership {
         // them, so the default drift guard does not see them and KeyOwnershipTotalityTest pins
         // them against the run-spec table instead. ape.mopWeights is the distance ladder: element
         // l weighs level l = max(d, 1), and its length is the cut c.
+        //
+        // ape.mopWeights, ape.mopRetireAfter, ape.mopCoinLedgerMaxInteractions and
+        // ape.activityTriggerStagnationStep default to calibration v6's finalist F1
+        // (rvsec-calibracao, 2026-11-aperv-calibracao-v6). The calibration searched only these four
+        // keys (its D22), in the mop cell. F1 is equivalent to the E7 mop arm (500,400,300, N 3,
+        // k 2 as Study 3's harness stated it, cadence 50) with the best point estimate, not an
+        // improvement: F1 − E7 at 900 s, S +0.53, 95% CI [−0.55, +1.64]. They are jar defaults and not preset keys, because a preset key counts as
+        // explicit and would abort a plan that unmounts the launcher or the coin (INV-RUN-05).
         feature(Feature.MOP, MopScoring.KEY, ValueType.MOP_SCORING, "flag");
-        feature(Feature.MOP, "ape.mopWeights", ValueType.INT_LIST, "500,400,300");
-        feature(Feature.MOP, "ape.mopRetireAfter", ValueType.INT, "3");
+        feature(Feature.MOP, "ape.mopWeights", ValueType.INT_LIST, "194,146,97");
+        feature(Feature.MOP, "ape.mopRetireAfter", ValueType.INT, "10");
         feature(Feature.MOP, "ape.mopLauncherDmax", ValueType.INT, "6");
 
         feature(Feature.WTG, "ape.mopWeightWtg", ValueType.INT, "200");
@@ -216,12 +224,12 @@ public final class KeyOwnership {
         feature(Feature.MOP_FRONTIER, "ape.mopFrontierWeight", ValueType.INT, "0");
 
         feature(Feature.MOP_LAUNCHER, "ape.activityTriggerEnabled", ValueType.BOOLEAN, "true");
-        feature(Feature.MOP_LAUNCHER, "ape.activityTriggerStagnationStep", ValueType.INT, "50");
+        feature(Feature.MOP_LAUNCHER, "ape.activityTriggerStagnationStep", ValueType.INT, "85");
         feature(Feature.MOP_LAUNCHER, "ape.activityTriggerMaxPerRun", ValueType.INT, "0");
 
         feature(Feature.MOP_ACTIVITY_SOURCE, "ape.mopActivitySourceComponents", ValueType.BOOLEAN, "false");
         feature(Feature.MOP_COIN, "ape.mopCoinPercentage", ValueType.DOUBLE, "1.0");
-        feature(Feature.MOP_COIN, "ape.mopCoinLedgerMaxInteractions", ValueType.INT, "1");
+        feature(Feature.MOP_COIN, "ape.mopCoinLedgerMaxInteractions", ValueType.INT, "4");
 
         feature(Feature.NAV_FRONTIER, "ape.frontierBoostWeight", ValueType.INT, "200");
         feature(Feature.TYPED_FUZZ, "ape.fuzzInputTyped", ValueType.BOOLEAN, "true");
@@ -322,14 +330,14 @@ public final class KeyOwnership {
                         + "(isolate-guidance-groups).");
         RETIRED.put("ape.mopTargetPickCap",
                 "replaced by ape.mopCoinLedgerMaxInteractions, the MOP coin's budget of picks per "
-                        + "activity and widget (default 1).");
+                        + "activity and widget.");
         RETIRED.put("ape.llmPercentageNoSubstrate",
                 "it never had a consumer: the widgetless-substrate predicate it waited for was never "
                         + "derived (isolate-guidance-groups D-B24).");
         for (String perLevel : new String[] {"ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3"}) {
             RETIRED.put(perLevel,
                     "replaced by ape.mopWeights, the distance ladder: element l weighs level l and "
-                            + "the list length is the cut (default 500,400,300).");
+                            + "the list length is the cut.");
         }
     }
 
