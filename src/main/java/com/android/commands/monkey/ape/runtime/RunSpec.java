@@ -785,6 +785,12 @@ public final class RunSpec {
             return (Double) ValueType.DOUBLE.parse(key, require(key, ValueType.DOUBLE));
         }
 
+        /** An {@link ValueType#INT_LIST} key's value as an unmodifiable list. */
+        @SuppressWarnings("unchecked")
+        public final List<Integer> intList(String key) {
+            return (List<Integer>) ValueType.INT_LIST.parse(key, require(key, ValueType.INT_LIST));
+        }
+
         /** A {@link ValueType#MOP_SCORING} key's value as its mode. */
         public final MopScoring mopScoring(String key) {
             return MopScoring.fromWire(
@@ -1109,19 +1115,18 @@ public final class RunSpec {
             return mopScoring(MopScoring.KEY);
         }
 
-        /** {@code distance} weight for a nearest unretired target at {@code d <= 1} (D18). */
-        public int weightD1() {
-            return integer("ape.mopWeightD1");
-        }
-
-        /** {@code distance} weight for a nearest unretired target at {@code d = 2} (D18). */
-        public int weightD2() {
-            return integer("ape.mopWeightD2");
-        }
-
-        /** {@code distance} weight for a nearest unretired target at {@code d = 3} (D18). */
-        public int weightD3() {
-            return integer("ape.mopWeightD3");
+        /**
+         * The {@code distance} ladder {@code ape.mopWeights} as a fresh array: element
+         * {@code l - 1} weighs level {@code l = max(d, 1)}, and the length is the cut c, in 1..10.
+         * A new array on each call, so no caller can change the plan.
+         */
+        public int[] weights() {
+            List<Integer> ladder = intList("ape.mopWeights");
+            int[] weights = new int[ladder.size()];
+            for (int i = 0; i < weights.length; i++) {
+                weights[i] = ladder.get(i);
+            }
+            return weights;
         }
 
         /** First interactions after which a target retires under {@code distance} (D19). */

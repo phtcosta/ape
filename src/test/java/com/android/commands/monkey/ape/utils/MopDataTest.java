@@ -117,7 +117,7 @@ public class MopDataTest {
     private static JSONObject onlyLoadRecord(String path, String pkg, String main,
             boolean activitySourceComponents) throws Exception {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        StaticArtifactLoader.load(path, pkg, main, activitySourceComponents,
+        StaticArtifactLoader.load(path, pkg, main, activitySourceComponents, StaticArtifactLoader.NO_CUT,
                 new NdjsonSink(new PrintStream(buffer, true, "UTF-8")));
         List<JSONObject> records = recordsIn(buffer);
         assertEquals("exactly one MOP_DATA record per load", 1, records.size());
@@ -171,6 +171,7 @@ public class MopDataTest {
         assertEquals(27, record.getInt("targets"));
         assertEquals(2, record.getInt("handlers"));
         assertEquals(0, record.getInt("droppedPairs"));
+        assertEquals("the test seam loads without a cut", 0, record.getInt("cutPairs"));
     }
 
     /**
@@ -234,7 +235,7 @@ public class MopDataTest {
 
         String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{\"mop\":"
                 + "{\"item_selected\":\"direct\"}}}}"));
-        MopData.Widget w = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData
+        MopData.Widget w = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData
                 .getWidget("p.A", "b");
         assertTrue("snake_case wire key matches camelCase query", w.isDirectMop("itemSelected"));
         assertTrue("snake_case wire key matches snake_case query", w.isDirectMop("item_selected"));
@@ -299,7 +300,7 @@ public class MopDataTest {
 
     private static StaticArtifactLoader.Loaded loadBoth(String name,
             boolean activitySourceComponents) {
-        return StaticArtifactLoader.load(fixturePath(name), null, null, activitySourceComponents,
+        return StaticArtifactLoader.load(fixturePath(name), null, null, activitySourceComponents, StaticArtifactLoader.NO_CUT,
                 new NoopSink());
     }
 
@@ -500,7 +501,7 @@ public class MopDataTest {
                 + "\"dist\":{\"click\":[[2,0],[5,1]]}},"
                 + "\"c\":{\"mop\":{\"long_click\":\"transitive\"},"
                 + "\"dist\":{\"long_click\":[[7,2]]}}}}"));
-        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
+        MopData d = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData;
         MopData.Widget b = d.getWidget("p.A", "b");
         assertEquals("[[2,0],[5,1]]", pairs(b.dist("click")));
         assertEquals(0, b.dist("scroll").length);
@@ -527,7 +528,7 @@ public class MopDataTest {
                 + "\"scroll\":[[2,0]],\"item_long_click\":[[5,0]],"
                 + "\"implicit_create_context_menu\":[[6,0]]}},"
                 + "\"n\":{\"mop\":{\"longclick\":\"direct\"}}}}"));
-        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
+        MopData d = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData;
         MopData.Widget t = d.getWidget("p.A", "t");
         assertEquals("[[9,1],[4,3]]", pairs(t.clickAggregate()));
         assertEquals("dist(click) keeps its meaning", 0, t.dist("click").length);
@@ -546,7 +547,7 @@ public class MopDataTest {
     public void testDistKeysCollapsingOntoOneEventMergeByMinimumPerTarget() throws Exception {
         String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{\"dist\":"
                 + "{\"long_click\":[[3,1],[5,2]],\"longClick\":[[3,0],[6,2]]}}}}"));
-        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
+        MopData d = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData;
         assertEquals("[[3,0],[5,2],[6,2]]", pairs(d.getWidget("p.A", "b").dist("longclick")));
     }
 
@@ -561,7 +562,7 @@ public class MopDataTest {
                 + "\"p.Compose$1\":{\"mop\":{\"click\":\"transitive\",\"longclick\":\"transitive\"},"
                 + "\"dist\":{\"click\":[[0,1]],\"long_click\":[[3,2]]}},"
                 + "\"p.Quiet\":{\"mop\":{\"click\":\"none\"}}}"));
-        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
+        MopData d = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData;
 
         MopData.Handler compose = d.getHandler("p.Compose$1");
         assertTrue(compose.isTransitiveMop("click"));
@@ -585,7 +586,8 @@ public class MopDataTest {
         JSONObject record = onlyLoadRecord(path, false);
         assertEquals("loaded", record.getString("status"));
         assertEquals(2, record.getInt("droppedPairs"));
-        assertEquals("[[16,3]]", pairs(StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData
+        assertEquals(0, record.getInt("cutPairs"));
+        assertEquals("[[16,3]]", pairs(StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData
                 .getWidget("p.A", "b").dist("click")));
     }
 
@@ -604,8 +606,9 @@ public class MopDataTest {
         assertEquals("loaded", record.getString("status"));
         assertEquals("2 on the widget, 3 on the activity, 3 on the handler",
                 8, record.getInt("droppedPairs"));
+        assertEquals(0, record.getInt("cutPairs"));
 
-        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
+        MopData d = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData;
         assertEquals("[[1,1]]", pairs(d.getWidget("p.A", "b").dist("click")));
         assertEquals("[[0,0]]", pairs(d.activityDist("p.A")));
         assertEquals("[[4,1]]", pairs(d.getHandler("p.L").dist("click")));
@@ -626,7 +629,7 @@ public class MopDataTest {
         };
         for (String artifact : skewed) {
             String path = writeTempJson(artifact);
-            assertNull(artifact, StaticArtifactLoader.load(path, null, null, false, new NoopSink()));
+            assertNull(artifact, StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()));
             JSONObject record = onlyLoadRecord(path, false);
             assertEquals(artifact, "rejected", record.getString("status"));
             assertEquals(artifact, "parse-error", record.getString("reason"));
@@ -642,7 +645,7 @@ public class MopDataTest {
         String path = writeTempJson(formatTwoEnvelope(",\"targets\":0,\"handlers\":{}"
                 + ",\"widgets\":{\"p.A\":{\"b\":{\"mop\":{\"click\":\"transitive\"}}}}"
                 + ",\"mopActivities\":[\"p.A\"]"));
-        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
+        MopData d = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData;
         assertNotNull(d);
         assertEquals(0, d.targetCount());
         assertTrue("the flags still load", d.getWidget("p.A", "b").isTransitiveMop("click"));
@@ -653,6 +656,7 @@ public class MopDataTest {
         assertEquals(0, record.getInt("targets"));
         assertEquals(0, record.getInt("handlers"));
         assertEquals(0, record.getInt("droppedPairs"));
+        assertEquals(0, record.getInt("cutPairs"));
     }
 
     /** The gh51-D5 timeout bucket in format 2: every member present and empty, and it loads. */
@@ -663,7 +667,7 @@ public class MopDataTest {
                 + ",\"mopActivities\":[],\"mopActivitiesAugmented\":[]"
                 + ",\"components\":{\"activities\":[],\"providers\":[],\"receivers\":[],"
                 + "\"services\":[]}"));
-        StaticArtifactLoader.Loaded both = StaticArtifactLoader.load(path, null, null, false,
+        StaticArtifactLoader.Loaded both = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT,
                 new NoopSink());
         assertNotNull(both);
         StaticGuiModel statics = both.staticModel;
@@ -768,7 +772,7 @@ public class MopDataTest {
      */
     @Test
     public void testLegacyFullJsonIsRejectedAsVersionMismatch() throws Exception {
-        assertNull(StaticArtifactLoader.load(fixturePath(FRESH), null, null, false, new NoopSink()));
+        assertNull(StaticArtifactLoader.load(fixturePath(FRESH), null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()));
         JSONObject record = onlyLoadRecord(fixturePath(FRESH), false);
         assertEquals("rejected", record.getString("status"));
         assertEquals("version-mismatch", record.getString("reason"));
@@ -787,7 +791,7 @@ public class MopDataTest {
                 + ",\"targets\":0,\"handlers\":{}"
                 + ",\"widgets\":{\"p.A\":{\"b\":{\"mop\":{\"click\":\"transitive\"}}}}"
                 + ",\"mopActivities\":[\"p.A\"]}");
-        assertNull(StaticArtifactLoader.load(path, null, null, false, new NoopSink()));
+        assertNull(StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()));
         JSONObject record = onlyLoadRecord(path, false);
         assertEquals("rejected", record.getString("status"));
         assertEquals("version-mismatch", record.getString("reason"));
@@ -807,7 +811,7 @@ public class MopDataTest {
     public void testPerEventDecodingKeepsExplicitNoneAndFallsBackOnAbsentKeys() throws Exception {
         String path = writeTempJson(compactArtifact(",\"widgets\":{\"p.A\":{\"b\":{\"mop\":"
                 + "{\"click\":\"both\",\"scroll\":\"none\"}}}}"));
-        MopData.Widget w = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData
+        MopData.Widget w = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData
                 .getWidget("p.A", "b");
 
         assertTrue(w.isDirectMop("click"));
@@ -839,7 +843,7 @@ public class MopDataTest {
                 + "\"d\":{\"mop\":{\"click\":\"direct\"}},"
                 + "\"t\":{\"mop\":{\"click\":\"transitive\"}},"
                 + "\"b\":{\"mop\":{\"click\":\"both\"}}}}"));
-        MopData d = StaticArtifactLoader.load(path, null, null, false, new NoopSink()).mopData;
+        MopData d = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink()).mopData;
 
         assertFalse(d.getWidget("p.A", "n").isDirectMop("click"));
         assertFalse(d.getWidget("p.A", "n").isTransitiveMop("click"));
@@ -923,7 +927,7 @@ public class MopDataTest {
         String path = writeTempJson(compactArtifact(",\"components\":{\"activities\":["
                 + "{\"className\":\"p.X\",\"deepLinkUri\":\"myapp://detail/x\"},"
                 + "{\"className\":\"p.Y\"}]}"));
-        StaticGuiModel d = StaticArtifactLoader.load(path, null, null, false, new NoopSink())
+        StaticGuiModel d = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT, new NoopSink())
                 .staticModel;
         assertEquals("myapp://detail/x", activityNamed(d, "p.X").deepLinkUri);
         assertNull("absent on the wire means the explicit-component intent",
@@ -953,7 +957,7 @@ public class MopDataTest {
                 + "\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[2,1]]}}}}"
                 + ",\"handlers\":{\"p.L\":{\"futureHandlerKey\":true,"
                 + "\"mop\":{\"click\":\"transitive\"},\"dist\":{\"click\":[[1,0]]}}}"));
-        StaticArtifactLoader.Loaded both = StaticArtifactLoader.load(path, null, null, false,
+        StaticArtifactLoader.Loaded both = StaticArtifactLoader.load(path, null, null, false, StaticArtifactLoader.NO_CUT,
                 new NoopSink());
         assertNotNull(both);
         MopData d = both.mopData;
@@ -970,14 +974,14 @@ public class MopDataTest {
     @Test
     public void testCompactPackageMismatchWarnsByDefault() {
         assertNotNull("default is warn-only, and the artifact is still served",
-                StaticArtifactLoader.load(fixturePath(COMPACT), "x.y.z.OTHER", null, false,
+                StaticArtifactLoader.load(fixturePath(COMPACT), "x.y.z.OTHER", null, false, StaticArtifactLoader.NO_CUT,
                         new NoopSink()));
     }
 
     @Test
     public void testCompactPackageMismatchRejectsWhenStrict() throws Exception {
         TestRunSpecs.installMop("ape.mopStrictPackageMatch", "true");
-        assertNull(StaticArtifactLoader.load(fixturePath(COMPACT), "x.y.z.OTHER", null, false,
+        assertNull(StaticArtifactLoader.load(fixturePath(COMPACT), "x.y.z.OTHER", null, false, StaticArtifactLoader.NO_CUT,
                 new NoopSink()));
         JSONObject record = onlyLoadRecord(fixturePath(COMPACT), "x.y.z.OTHER", null, false);
         assertEquals("rejected", record.getString("status"));
@@ -1023,7 +1027,7 @@ public class MopDataTest {
      */
     @Test
     public void testCompactArtifactNeedsNoCompletenessSentinel() throws Exception {
-        assertNotNull(StaticArtifactLoader.load(writeTempJson(compactArtifact("")), null, null, false,
+        assertNotNull(StaticArtifactLoader.load(writeTempJson(compactArtifact("")), null, null, false, StaticArtifactLoader.NO_CUT,
                 new NoopSink()));
     }
 
@@ -1031,7 +1035,7 @@ public class MopDataTest {
     @Test
     public void testCompactNullPathLoadsAndRecordsNothing() throws Exception {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        assertNull(StaticArtifactLoader.load(null, null, null, false,
+        assertNull(StaticArtifactLoader.load(null, null, null, false, StaticArtifactLoader.NO_CUT,
                 new NdjsonSink(new PrintStream(buffer, true, "UTF-8"))));
         assertTrue(recordsIn(buffer).isEmpty());
     }

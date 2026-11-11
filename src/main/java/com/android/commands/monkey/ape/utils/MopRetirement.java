@@ -52,11 +52,11 @@ public final class MopRetirement {
      * twice — a retired target at {@code d*} included, which changes nothing it reads — and returns,
      * ascending, the indices whose counter reached {@code retireAfter} on this call (empty when none
      * did). A target is therefore returned at most once per run. The pairs at any other distance are
-     * not counted (design D19 as amended 2026-10-09): a widget's list carries every target at
-     * {@code d <= 3}, and counting the whole list would retire targets the action was not weighted
-     * by. A lookup with no unretired pair has no {@code d*} and counts nothing. The caller passes a
-     * non-empty result to {@code EventSink.mopRetired} for the step's {@code dec.ret} (design
-     * D23).
+     * not counted (design D19 as amended 2026-10-09): a widget's list carries every target up to
+     * the cut c, the ladder's length, and counting the whole list would retire targets the action
+     * was not weighted by. A lookup with no unretired pair has no {@code d*} and counts nothing. The
+     * caller passes a non-empty result to {@code EventSink.mopRetired} for the step's
+     * {@code dec.ret} (design D23).
      *
      * @param weightLookup among the selected action's containment lookups
      *                     ({@link MopScorer#containmentLookups}), the one holding its smallest

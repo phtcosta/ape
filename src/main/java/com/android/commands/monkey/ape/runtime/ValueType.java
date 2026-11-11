@@ -15,6 +15,9 @@
  */
 package com.android.commands.monkey.ape.runtime;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -33,6 +36,10 @@ import java.util.Locale;
  * (llm-coordinate-single-base, design D18): a value other than exactly {@code flag} or
  * {@code distance} aborts like a non-boolean value of a boolean key, where a plain string would
  * have let a misspelt mode through to whatever reads it.
+ *
+ * <p>{@link #INT_LIST} is the type of {@code ape.mopWeights}, the {@code distance} ladder: 1 to
+ * {@value #INT_LIST_MAX} non-negative {@code int}s separated by commas. The bounds belong to the
+ * type, so a value outside them aborts as {@code invalid_type} rather than being clamped.
  */
 public enum ValueType {
     BOOLEAN,
@@ -41,12 +48,18 @@ public enum ValueType {
     DOUBLE,
     STRING,
     /** {@code ape.mopScoring}: a string matched exactly against {@link MopScoring}'s wire names. */
-    MOP_SCORING;
+    MOP_SCORING,
+    /** {@code ape.mopWeights}: 1 to {@value #INT_LIST_MAX} comma-separated non-negative integers. */
+    INT_LIST;
+
+    /** The most elements an {@link #INT_LIST} value may have. */
+    public static final int INT_LIST_MAX = 10;
 
     /**
      * Parses {@code raw} as this type.
      *
-     * @return a {@link Boolean}, {@link Integer}, {@link Long}, {@link Double} or {@link String}
+     * @return a {@link Boolean}, {@link Integer}, {@link Long}, {@link Double}, {@link String}, or
+     *         for {@link #INT_LIST} an unmodifiable {@code List<Integer>}
      * @throws RunSpecException with {@link RunSpecException.Reason#INVALID_TYPE} when it does not parse
      */
     public Object parse(String key, String raw) {
@@ -86,6 +99,8 @@ public enum ValueType {
                     throw invalid(key, raw, "expected one of " + MopScoring.validSet());
                 }
                 return raw;
+            case INT_LIST:
+                return parseIntList(key, raw);
             default:
                 return raw;
         }
@@ -104,7 +119,48 @@ public enum ValueType {
      * {@code 0.0} — the same number written two ways — cannot produce two digests.
      */
     public String canonical(String key, String raw) {
-        return raw == null ? "" : String.valueOf(parse(key, raw));
+        if (raw == null) {
+            return "";
+        }
+        Object value = parse(key, raw);
+        if (this == INT_LIST) {
+            StringBuilder joined = new StringBuilder();
+            for (Object element : (List<?>) value) {
+                joined.append(joined.length() == 0 ? "" : ",").append(element);
+            }
+            return joined.toString();
+        }
+        return String.valueOf(value);
+    }
+
+    /**
+     * Splits on {@code ,} keeping empty elements, so {@code 500,,300} and a trailing comma fail,
+     * and parses each element with the {@link #INT} rule.
+     */
+    private static List<Integer> parseIntList(String key, String raw) {
+        String expectation = "expected 1 to " + INT_LIST_MAX
+                + " comma-separated non-negative integers";
+        if (raw.trim().isEmpty()) {
+            throw invalid(key, raw, expectation);
+        }
+        String[] elements = raw.split(",", -1);
+        if (elements.length > INT_LIST_MAX) {
+            throw invalid(key, raw, expectation);
+        }
+        List<Integer> list = new ArrayList<>(elements.length);
+        for (String element : elements) {
+            int value;
+            try {
+                value = (Integer) INT.parse(key, element);
+            } catch (RunSpecException e) {
+                throw invalid(key, raw, expectation);
+            }
+            if (value < 0) {
+                throw invalid(key, raw, expectation);
+            }
+            list.add(value);
+        }
+        return Collections.unmodifiableList(list);
     }
 
     private static RunSpecException invalid(String key, String raw, String expectation) {

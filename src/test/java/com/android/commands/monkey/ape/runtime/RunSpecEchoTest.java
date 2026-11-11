@@ -334,12 +334,12 @@ public class RunSpecEchoTest {
         // weights; distance keys stated alongside are reported as inert.
         JSONObject json = record(resolve(entries(
                 "ape.staticDataPath", MOP_PATH, "ape.mop", "true",
-                "ape.mopWeightD2", "450",
+                "ape.mopWeights", "450,400,300",
                 "ape.mopRetireAfter", "5")));
         JSONObject params = json.getJSONObject("params");
         assertFalse(params.has("ape.mopScoring"));
         Set<String> inert = names(json.getJSONArray("inert"));
-        assertTrue(inert.contains("ape.mopWeightD2"));
+        assertTrue(inert.contains("ape.mopWeights"));
         assertTrue(inert.contains("ape.mopRetireAfter"));
         assertFalse(inert.contains("ape.mopWeightDirect"));
     }
@@ -348,7 +348,7 @@ public class RunSpecEchoTest {
     public void theDistanceArmIsReconstructibleFromItsOwnRecord() throws Exception {
         Map<String, String> plan = presetPlan(Presets.MOP);
         plan.put("ape.mopScoring", "distance");
-        plan.put("ape.mopWeightD2", "450");
+        plan.put("ape.mopWeights", "500,450,300");
         RunSpec original = resolve(plan);
         JSONObject json = record(original);
 
@@ -356,6 +356,22 @@ public class RunSpecEchoTest {
                 RunSpec.CliValues.of(json.getString("agent"), json.getLong("seed"), null));
         assertEquals(original.digest(), rebuilt.digest());
         assertEquals(original.effectiveValues(), rebuilt.effectiveValues());
+    }
+
+    /** Scenario "Echo and digest of a stated ladder" (run-spec "Integer-List Rendering"). */
+    @Test
+    public void theLadderIsEchoedAsAJsonArrayOnlyWhenNotTheDefault() throws Exception {
+        Map<String, String> plan = presetPlan(Presets.MOP);
+        plan.put("ape.mopWeights", "500, 400");
+        JSONObject params = record(resolve(plan)).getJSONObject("params");
+        JSONArray ladder = params.getJSONArray("ape.mopWeights");
+        assertEquals(2, ladder.length());
+        assertEquals(500, ladder.getInt(0));
+        assertEquals(400, ladder.getInt(1));
+        assertTrue(emit(resolve(plan)).contains("\"ape.mopWeights\":[500,400]"));
+
+        assertFalse("the default ladder is omitted",
+                record(resolve(presetPlan(Presets.MOP))).getJSONObject("params").has("ape.mopWeights"));
     }
 
     @Test
@@ -518,7 +534,18 @@ public class RunSpecEchoTest {
         Map<String, String> entries = new LinkedHashMap<>();
         for (Iterator<String> keys = params.keys(); keys.hasNext();) {
             String key = keys.next();
-            entries.put(key, String.valueOf(params.get(key)));
+            Object value = params.get(key);
+            if (value instanceof JSONArray) {
+                // An INT_LIST value: the property form joins its elements with commas.
+                JSONArray list = (JSONArray) value;
+                StringBuilder joined = new StringBuilder();
+                for (int i = 0; i < list.length(); i++) {
+                    joined.append(i == 0 ? "" : ",").append(list.get(i));
+                }
+                entries.put(key, joined.toString());
+            } else {
+                entries.put(key, String.valueOf(value));
+            }
         }
         // The inert list is the record saying "these keys were stated and parameterized nothing".
         // A key of an absent feature is inert at exactly one value — its neutral one — so the name

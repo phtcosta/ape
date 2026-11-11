@@ -202,13 +202,12 @@ public final class KeyOwnership {
 
         feature(Feature.MOP, "ape.mopWeightDirect", ValueType.INT, "500");
         feature(Feature.MOP, "ape.mopWeightTransitive", ValueType.INT, "300");
-        // The scoring mode and the distance mode's keys (llm-coordinate-single-base, D18–D20).
-        // Plan-owned: no Config field mirrors them, so the default drift guard does not see them
-        // and KeyOwnershipTotalityTest pins them against the run-spec delta instead.
+        // The scoring mode and the distance mode's keys. Plan-owned: no Config field mirrors
+        // them, so the default drift guard does not see them and KeyOwnershipTotalityTest pins
+        // them against the run-spec table instead. ape.mopWeights is the distance ladder: element
+        // l weighs level l = max(d, 1), and its length is the cut c.
         feature(Feature.MOP, MopScoring.KEY, ValueType.MOP_SCORING, "flag");
-        feature(Feature.MOP, "ape.mopWeightD1", ValueType.INT, "500");
-        feature(Feature.MOP, "ape.mopWeightD2", ValueType.INT, "400");
-        feature(Feature.MOP, "ape.mopWeightD3", ValueType.INT, "300");
+        feature(Feature.MOP, "ape.mopWeights", ValueType.INT_LIST, "500,400,300");
         feature(Feature.MOP, "ape.mopRetireAfter", ValueType.INT, "3");
         feature(Feature.MOP, "ape.mopLauncherDmax", ValueType.INT, "6");
 
@@ -327,6 +326,11 @@ public final class KeyOwnership {
         RETIRED.put("ape.llmPercentageNoSubstrate",
                 "it never had a consumer: the widgetless-substrate predicate it waited for was never "
                         + "derived (isolate-guidance-groups D-B24).");
+        for (String perLevel : new String[] {"ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3"}) {
+            RETIRED.put(perLevel,
+                    "replaced by ape.mopWeights, the distance ladder: element l weighs level l and "
+                            + "the list length is the cut (default 500,400,300).");
+        }
     }
 
     private KeyOwnership() {

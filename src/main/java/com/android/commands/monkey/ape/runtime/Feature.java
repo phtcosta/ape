@@ -185,15 +185,13 @@ public enum Feature {
 
         MOP.own("ape.mopWeightDirect", "0");
         MOP.own("ape.mopWeightTransitive", "0");
-        // The scoring mode and the distance mode's keys (llm-coordinate-single-base, D18–D20):
-        // zero for a weight, as for ape.mopWeightDirect; the default for the mode, the retirement
-        // count and the launcher bound. With MOP in the plan, the keys the selected mode does not
-        // read are inert for a second reason (INV-RUN-09), which RunSpec applies; these neutrals
-        // concern only a plan without MOP (INV-RUN-05).
+        // The scoring mode and the distance mode's keys: the one-level ladder 0 for
+        // ape.mopWeights, as zero for ape.mopWeightDirect; the default for the mode, the
+        // retirement count and the launcher bound. With MOP in the plan, the keys the selected
+        // mode does not read are inert for a second reason (INV-RUN-09), which RunSpec applies;
+        // these neutrals concern only a plan without MOP (INV-RUN-05).
         MOP.own(MopScoring.KEY, "flag");
-        MOP.own("ape.mopWeightD1", "0");
-        MOP.own("ape.mopWeightD2", "0");
-        MOP.own("ape.mopWeightD3", "0");
+        MOP.own("ape.mopWeights", "0");
         MOP.own("ape.mopRetireAfter", "3");
         MOP.own("ape.mopLauncherDmax", "6");
 

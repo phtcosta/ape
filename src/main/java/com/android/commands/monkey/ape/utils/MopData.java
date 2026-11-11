@@ -413,9 +413,10 @@ public class MopData {
         /**
          * Decoded from the wire's per-eventType {@code dist} map (format 2, design D15): normalized
          * event → pairs {@code {targetIndex, distance}}, in wire order (ascending distance, then
-         * index; the generator keeps every target at {@code d <= 3}, and the loader reads any
-         * length). Every stored index lies in {@code [0, targetCount())}: a
-         * malformed pair is dropped at load and counted ({@code MOP_DATA.droppedPairs}).
+         * index; the generator keeps every target up to its depth, and under {@code distance} the
+         * loader drops the pairs beyond the cut c, counted in {@code MOP_DATA.cutPairs}). Every
+         * stored index lies in {@code [0, targetCount())}: a malformed pair is dropped at load and
+         * counted ({@code MOP_DATA.droppedPairs}).
          * Callers read only.
          */
         public final Map<String, int[][]> distByEventType = new HashMap<>();

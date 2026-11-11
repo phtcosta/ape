@@ -19,7 +19,9 @@ import java.util.Map;
 import java.util.Set;
 
 import com.android.commands.monkey.ape.runtime.Feature;
+import com.android.commands.monkey.ape.runtime.MopScoring;
 import com.android.commands.monkey.ape.runtime.RunContext;
+import com.android.commands.monkey.ape.runtime.RunSpec;
 import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.utils.StaticGuiModel.WidgetMeta;
 import com.android.commands.monkey.ape.utils.StaticGuiModel.WtgTransition;
@@ -55,6 +57,9 @@ public final class StaticArtifactLoader {
      */
     private static final int SUPPORTED_FORMAT_VERSION = 2;
 
+    /** The cut of a load that cuts nothing: under {@code flag}, and in a cell without MOP. */
+    static final int NO_CUT = Integer.MAX_VALUE;
+
     private StaticArtifactLoader() {}
 
     /** The two providers of one loaded artifact; both non-null. */
@@ -81,6 +86,11 @@ public final class StaticArtifactLoader {
      * generator↔jar skew and a {@code parse-error}. A malformed distance pair, by contrast, is
      * dropped and counted ({@code MOP_DATA.droppedPairs}) and the load continues.
      *
+     * <p>Under MOP and {@code ape.mopScoring=distance} the load applies the cut c, the length of
+     * {@code ape.mopWeights}: every well-formed widget and handler pair at {@code d > c} is dropped
+     * as it is read and counted apart ({@code MOP_DATA.cutPairs}). {@code activityDist} is never
+     * cut. Under {@code flag}, and in a cell without MOP, nothing is cut.
+     *
      * @param path                  device-local path, or null
      * @param expectedPackage       package to compare against (T1.7), or null to skip
      * @param expectedMainActivity  main activity to compare against (T1.7), or null to skip
@@ -90,17 +100,22 @@ public final class StaticArtifactLoader {
      */
     public static Loaded load(String path, String expectedPackage, String expectedMainActivity,
             EventSink sink) {
+        RunSpec spec = RunContext.current().spec();
+        int cut = spec.has(Feature.MOP) && spec.mop().scoring() == MopScoring.DISTANCE
+                ? spec.mop().weights().length
+                : NO_CUT;
         return load(path, expectedPackage, expectedMainActivity,
-                RunContext.current().spec().has(Feature.MOP_ACTIVITY_SOURCE), sink);
+                spec.has(Feature.MOP_ACTIVITY_SOURCE), cut, sink);
     }
 
     /**
-     * Package-visible test seam: {@code load} with the A′ source choice passed in, so the JVM
-     * suite can drive both branches of INV-MOP-27 without a plan that mounts
-     * {@code MOP_ACTIVITY_SOURCE}. The public entry reads the plan.
+     * Package-visible test seam: {@code load} with the A′ source choice and the cut passed in, so
+     * the JVM suite can drive both branches of INV-MOP-27 without a plan that mounts
+     * {@code MOP_ACTIVITY_SOURCE}, and any cut without a plan ({@link #NO_CUT} for none). The
+     * public entry reads both from the plan.
      */
     static Loaded load(String path, String expectedPackage, String expectedMainActivity,
-            boolean activitySourceComponents, EventSink sink) {
+            boolean activitySourceComponents, int cut, EventSink sink) {
         if (path == null) {
             return null;
         }
@@ -137,7 +152,7 @@ public final class StaticArtifactLoader {
 
             // Format 2's two mandatory members (design D15). `get`/`getJSONObject` throw when the
             // member is absent or of the wrong kind, which lands in the parse-error branch below.
-            PairReader pairs = new PairReader(requireTargetCount(root));
+            PairReader pairs = new PairReader(requireTargetCount(root), cut);
             Map<String, MopData.Handler> handlers =
                     parseHandlers(root.getJSONObject("handlers"), pairs);
 
@@ -220,7 +235,7 @@ public final class StaticArtifactLoader {
                     selectedActivities.size(),
                     countOnlyIn(augmentedActivities, widgetDerivedActivities),
                     receivers.size() + services.size() + activities.size() + providers.size(),
-                    pairs.targets, handlers.size(), pairs.dropped);
+                    pairs.targets, handlers.size(), pairs.dropped, pairs.cutCount);
             return new Loaded(staticModel, mopData);
         } catch (JSONException e) {
             Logger.wprintln("StaticArtifactLoader: malformed artifact structure at " + path + ": "
@@ -296,7 +311,9 @@ public final class StaticArtifactLoader {
      * are the OR across the map, which is INV-MOP-17 by construction.
      *
      * <p>The pairs keep wire order: an event without a {@code dist} entry has no pair under its own
-     * key. Malformed pairs are dropped and counted by {@code pairs}.
+     * key. Malformed pairs, and pairs beyond the cut, are dropped and counted by {@code pairs}. The
+     * cut comes before the collision merge below and before the click aggregate; both keep the
+     * minimum distance per target, so the result equals cutting the merged lists.
      */
     private static void decodeEntry(JSONObject wire, MopData.MopEntry into, PairReader pairs)
             throws JSONException {
@@ -322,7 +339,7 @@ public final class StaticArtifactLoader {
         if (dist != null) {
             for (Iterator<String> it = dist.keys(); it.hasNext(); ) {
                 String eventType = it.next();
-                int[][] read = pairs.read(dist.optJSONArray(eventType));
+                int[][] read = pairs.read(dist.optJSONArray(eventType), true);
                 if (read.length > 0) {
                     // Same normalization as the flags; two wire keys collapsing onto one event
                     // merge by the minimum per target, the collision rule of the distances (D15).
@@ -364,7 +381,8 @@ public final class StaticArtifactLoader {
         }
         for (Iterator<String> it = activityDistObj.keys(); it.hasNext(); ) {
             String activity = it.next();
-            int[][] read = pairs.read(activityDistObj.optJSONArray(activity));
+            // Never cut: the launcher orders activities by its own bound, ape.mopLauncherDmax.
+            int[][] read = pairs.read(activityDistObj.optJSONArray(activity), false);
             if (read.length > 0) {
                 activityDist.put(activity, read);
             }
@@ -390,24 +408,29 @@ public final class StaticArtifactLoader {
     /**
      * The one reader of format-2 distance pairs, shared by a widget's {@code dist}, the
      * {@code activityDist} map and a handler's {@code dist}. It holds the artifact's target count,
-     * which bounds every index, and counts what it drops for the load record's
-     * {@code droppedPairs}.
+     * which bounds every index, and the cut, which bounds the distance of a widget or handler
+     * pair. It counts what it drops for the load record: malformed pairs in {@code droppedPairs},
+     * well-formed pairs beyond the cut in {@code cutPairs}, no pair in both.
      */
     private static final class PairReader {
         final int targets;
+        final int cutLimit;
         int dropped;
+        int cutCount;
 
-        PairReader(int targets) {
+        PairReader(int targets, int cutLimit) {
             this.targets = targets;
+            this.cutLimit = cutLimit;
         }
 
         /**
          * The well-formed pairs of a wire list, in wire order: each a two-integer array whose index
-         * lies in {@code [0, targets)} and whose distance is not negative. Every other element is
-         * dropped and counted, and the read goes on. A null list (absent, or not an array) has no
-         * pair.
+         * lies in {@code [0, targets)} and whose distance is not negative, and, when
+         * {@code applyCut} is set, whose distance is at most the cut. A malformed element is
+         * dropped and counted first; a well-formed pair beyond the cut is dropped and counted
+         * apart; the read goes on. A null list (absent, or not an array) has no pair.
          */
-        int[][] read(JSONArray list) {
+        int[][] read(JSONArray list, boolean applyCut) {
             if (list == null) {
                 return MopData.NO_PAIRS;
             }
@@ -419,7 +442,11 @@ public final class StaticArtifactLoader {
                 if (index instanceof Integer && distance instanceof Integer
                         && (Integer) index >= 0 && (Integer) index < targets
                         && (Integer) distance >= 0) {
-                    kept.add(new int[]{(Integer) index, (Integer) distance});
+                    if (applyCut && (Integer) distance > cutLimit) {
+                        cutCount++;
+                    } else {
+                        kept.add(new int[]{(Integer) index, (Integer) distance});
+                    }
                 } else {
                     dropped++;
                 }
@@ -670,6 +697,6 @@ public final class StaticArtifactLoader {
      */
     private static void reject(EventSink sink, String reason) {
         sink.mopData("rejected", reason, 0, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0);
+                0, 0, 0, 0);
     }
 }

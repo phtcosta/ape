@@ -591,7 +591,8 @@ public final class NdjsonSink implements EventSink {
     public void mopData(String status, String reason, int formatVersion, String sourceDigest,
             String pkg, int windows, int widgets, int flagged, int droppedNoId, int wtgEdges,
             int handlersUnmatched, int syntheticLambda, int recovered, int mopActivities,
-            int mopActsAugmented, int components, int targets, int handlers, int droppedPairs) {
+            int mopActsAugmented, int components, int targets, int handlers, int droppedPairs,
+            int cutPairs) {
         if (disabled) {
             return;
         }
@@ -629,6 +630,7 @@ public final class NdjsonSink implements EventSink {
             sideBuf.name("targets").value(targets);
             sideBuf.name("handlers").value(handlers);
             sideBuf.name("droppedPairs").value(droppedPairs);
+            sideBuf.name("cutPairs").value(cutPairs);
             write(sideBuf.endObject().toLine());
         } catch (Throwable failure) {
             latch("mopData", failure);

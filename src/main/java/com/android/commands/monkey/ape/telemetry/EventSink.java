@@ -357,11 +357,19 @@ public interface EventSink {
      * lists, and the number of malformed distance pairs the loader dropped. A conforming
      * generator emits no malformed pair, so a non-zero {@code droppedPairs} is a generator↔jar
      * skew signal.
+     *
+     * <p>{@code cutPairs} is the number of well-formed widget and handler pairs the loader dropped
+     * because their distance exceeds the cut c, the length of {@code ape.mopWeights}. The cut
+     * applies only under MOP and {@code ape.mopScoring=distance}, so it is 0 otherwise, and 0 at
+     * the default ladder with an artifact derived at the generator's default depth. A positive
+     * value means the artifact is deeper than the ladder, not that it is malformed: no pair is
+     * counted in both fields.
      */
     void mopData(String status, String reason, int formatVersion, String sourceDigest, String pkg,
             int windows, int widgets, int flagged, int droppedNoId, int wtgEdges,
             int handlersUnmatched, int syntheticLambda, int recovered, int mopActivities,
-            int mopActsAugmented, int components, int targets, int handlers, int droppedPairs);
+            int mopActsAugmented, int components, int targets, int handlers, int droppedPairs,
+            int cutPairs);
 
     /**
      * Records pipeline assembly provenance: the stages, the passes that were constructed, and every

@@ -1,0 +1,38 @@
+# Reproducibility check (task 6.3, report only), 2026-11-03
+
+Build command (both commits): nice -n 19 ionice -c3 mvn -o clean package
+
+Delivered jar, commit e6d1be2b (branch gh-tbd-mop-weights-list):
+  f4e9687d7f18d51091acf916146a041d017cf8fcbf50e58005090a4e2609f001  target/ape-rv.jar   BuildInfo GIT_SHA=e6d1be2 JAR_BUILT=2026-11-03T13:55:17Z
+
+bc4bc1b8 rebuilt in a throwaway worktree (git worktree add --detach <scratch> bc4bc1b8):
+  build 1: 2383abe43746135866bcf945d768a76880fca52dda5217583a153f814b0ce935  (tests 1495 run, 0 failures, 0 errors, 28 skipped)  JAR_BUILT=2026-11-03T13:55:42Z
+  build 2: e17ff681c5ec9b9d5ebab5eaee482e9252a40cd3e68e2dfffe946eea04a07caa  (-DskipTests)  JAR_BUILT=2026-11-03T13:56:31Z
+  E7 jar (campaign.env:32): 28f218be7727f6334dd4d18d440c27503535643e2f4ae590c1d8030b779ff6e5
+
+Result: the rebuilt bc4bc1b8 jar does not match E7's sha256, as expected. The jar has a single entry,
+classes.dex (d8 output), so a per-entry CRC cannot isolate BuildInfo. dexdump -d of the two bc4bc1b8
+builds differs only in BuildInfo.JAR_BUILT (pom.xml:24-26, git.build.time = maven.build.timestamp):
+
+<       value         : "2026-11-03T13:55:42Z"
+>       value         : "2026-11-03T13:56:31Z"
+< 0563de: 1a04 f401                              |00ad: const-string v4, "2026-11-03T13:55:42Z" // string@01f4
+> 0563de: 1a04 f401                              |00ad: const-string v4, "2026-11-03T13:56:31Z" // string@01f4
+
+So two builds of one commit differ only in the build timestamp.
+
+E7 jar, extracted from image phtcosta/rvandroid@sha256:50cf6088634e0126760ddf753a001a8a2e5201e293936264263024b759c5602f
+at /opt/rvsec/rv-android/modules/aperv-tool/src/aperv_tool/tools/aperv/ape-rv.jar (docker create + docker cp +
+docker rm; the container never ran, Pedro's OK 2026-11-03):
+  28f218be7727f6334dd4d18d440c27503535643e2f4ae590c1d8030b779ff6e5  (= campaign.env JAR_SHA256)
+  one entry, classes.dex, 722756 bytes, CRC 288426bf (the rebuilt bc4bc1b8 dex has the same length)
+
+dexdump -d of the E7 dex against the rebuilt bc4bc1b8 build 1 differs only in BuildInfo.JAR_BUILT
+(E7 left, rebuild right):
+
+<       value         : "2026-10-23T20:51:08Z"
+>       value         : "2026-11-03T13:55:42Z"
+< 0563de: 1a04 f401                              |00ad: const-string v4, "2026-10-23T20:51:08Z" // string@01f4
+> 0563de: 1a04 f401                              |00ad: const-string v4, "2026-11-03T13:55:42Z" // string@01f4
+
+Conclusion: the rebuilt bc4bc1b8 is the E7 jar's code; its bytes differ only in the build timestamp.

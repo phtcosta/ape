@@ -43,8 +43,7 @@ public enum MopScoring {
     FLAG("ape.mopWeightDirect", "ape.mopWeightTransitive"),
 
     /** The weight of the nearest unretired target, with retirement and the ordered launcher. */
-    DISTANCE("ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3", "ape.mopRetireAfter",
-            "ape.mopLauncherDmax");
+    DISTANCE("ape.mopWeights", "ape.mopRetireAfter", "ape.mopLauncherDmax");
 
     /** The key that selects the mode. */
     public static final String KEY = "ape.mopScoring";

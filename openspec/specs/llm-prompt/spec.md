@@ -210,9 +210,9 @@ The verdict depends on the run's `ape.mopScoring` mode (design D18):
 
 | Line's actions, under the active mode | Marker |
 |---|---|
-| At least one action is **direct** and has a **positive MOP weight**. Under `flag`: the lookup gives a direct flag for the action's event and `ape.mopWeightDirect > 0`. Under `distance`: the lookup has an unretired target at `d = 0` and `ape.mopWeightD1 > 0`. | `[DM]` |
+| At least one action is **direct** and has a **positive MOP weight**. Under `flag`: the lookup gives a direct flag for the action's event and `ape.mopWeightDirect > 0`. Under `distance`: the lookup has an unretired target at `d = 0` and the ladder's level-1 weight (the first element of `ape.mopWeights`) is positive. | `[DM]` |
 | Otherwise, at least one action has a **positive MOP weight**: the weight `MopScorer.score` gives it under the active mode is positive (design D18), before the tie split. | `[M]` |
-| Otherwise. This covers: lookup source `NONE`; a flag of `none` for the action's event; a stamped handler listed as reaching nothing; every target at `d ≥ 4` or retired; no resolved node. | (no marker) |
+| Otherwise. This covers: lookup source `NONE`; a flag of `none` for the action's event; a stamped handler listed as reaching nothing; every target beyond the ladder's cut (`d > c`, c the length of `ape.mopWeights`), at a level whose ladder weight is 0, or retired; no resolved node. | (no marker) |
 
 A line therefore carries a marker if and only if the score treats one of its actions as MOP; an arm that zeroes the MOP weights shows no marker. The marker follows the undivided weight (`mopWeight`), not the split boost. (rv-android's `mop_off_llm_off` zeroes them but runs without the LLM, so it has no prompt; no current arm zeroes the weights with the LLM on.) The two never disagree on the reason, because they use the same lookup and the same containment. Under `distance`, a target retires after `ape.mopRetireAfter` first interactions (design D19). A retired target stops counting toward the marker, so a line whose only targets have retired loses its marker from the next prompt on. Under `flag`, nothing retires.
 
@@ -288,7 +288,7 @@ Note: "Monitored operations" refers to operations being monitored by runtime ver
 - **WHEN** `ape.mopScoring=distance`, no target is retired, and no containment node carries a distance
 - **AND** three `MODEL_CLICK` lines have click lookups with `dist` `[[4, 0]]`, `[[2, 1]]` and `[[7, 5]]`
 - **THEN** the first line SHALL carry `[DM]`
-- **AND** the second SHALL carry `[M]`, even though `d = 1` takes the same weight as `d = 0` (`ape.mopWeightD1`)
+- **AND** the second SHALL carry `[M]`, even though `d = 1` takes the same weight as `d = 0` (level 1 of `ape.mopWeights`)
 - **AND** the third SHALL carry no marker
 
 #### Scenario: a line whose only target retired loses its marker

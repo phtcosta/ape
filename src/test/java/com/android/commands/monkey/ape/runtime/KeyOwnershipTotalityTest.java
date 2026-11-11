@@ -180,18 +180,16 @@ public class KeyOwnershipTotalityTest {
     }
 
     /**
-     * The six MOP scoring keys of llm-coordinate-single-base Part B (design D18–D20), pinned
-     * against the run-spec delta's table: owner, declared type and jar default. The neutral values
-     * are pinned beside the feature in {@code FeatureDerivationTest}. None of the six has a
-     * {@code Config} field, so the default drift guard above cannot see them; this is their guard.
+     * The four MOP scoring keys (run-spec "The MOP scoring keys"), pinned against the spec's table:
+     * owner, declared type and jar default. The neutral values are pinned beside the feature in
+     * {@code FeatureDerivationTest}. None of the four has a {@code Config} field, so the default
+     * drift guard above cannot see them; this is their guard.
      */
     @Test
-    public void theSixMopScoringKeysAreOwnedByMopWithTheDeltasTypesAndDefaults() {
+    public void theFourMopScoringKeysAreOwnedByMopWithTheSpecsTypesAndDefaults() {
         String[][] table = {
                 {"ape.mopScoring", "flag"},
-                {"ape.mopWeightD1", "500"},
-                {"ape.mopWeightD2", "400"},
-                {"ape.mopWeightD3", "300"},
+                {"ape.mopWeights", "500,400,300"},
                 {"ape.mopRetireAfter", "3"},
                 {"ape.mopLauncherDmax", "6"},
         };
@@ -200,7 +198,9 @@ public class KeyOwnershipTotalityTest {
             assertTrue(key + " must be owned", KeyOwnership.isKnown(key));
             assertEquals(key + " belongs to MOP", Feature.MOP, KeyOwnership.spec(key).feature());
             assertEquals(key + "'s jar default", row[1], KeyOwnership.defaultOf(key));
-            if (!"ape.mopScoring".equals(key)) {
+            if ("ape.mopWeights".equals(key)) {
+                assertEquals(key + " is an int list", ValueType.INT_LIST, KeyOwnership.typeOf(key));
+            } else if (!"ape.mopScoring".equals(key)) {
                 assertEquals(key + " is an int", ValueType.INT, KeyOwnership.typeOf(key));
             }
         }
@@ -264,7 +264,8 @@ public class KeyOwnershipTotalityTest {
                 "ape.saveVisGraph", "ape.saveStates", "ape.enableXPathAction",
                 "ape.mopWeightActivity", "ape.agentType", "ape.replayLog",
                 "ape.llmBoundaryBottomPct", "ape.mopDataPath", "ape.leastVisitedPriorityTiebreak",
-                "ape.mopTargetPickCap", "ape.llmPercentageNoSubstrate"));
+                "ape.mopTargetPickCap", "ape.llmPercentageNoSubstrate",
+                "ape.mopWeightD1", "ape.mopWeightD2", "ape.mopWeightD3"));
         assertEquals(expected, KeyOwnership.retiredKeys());
         for (String key : expected) {
             String reason = KeyOwnership.retiredReason(key);
