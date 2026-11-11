@@ -215,7 +215,7 @@ The other keys of the former addon features keep their names and owners; those f
 
 ### Requirement: Distance Ladder Key
 
-The `MOP` feature SHALL own `ape.mopWeights`, the `distance` ladder: 1 to 10 non-negative integers, element ℓ the weight of level ℓ, the length the cut c (`mop-guidance` "MopScorer — Priority Boost"). Default `194,146,97`, calibration v6's finalist F1 ("Calibrated MOP Defaults"), neutral `0` (INV-RUN-05). It is read only under `distance`, and is inert under `flag` (INV-RUN-09). `RunSpec.MopParams.weights()` returns a copy as `int[]`. No `Config` field mirrors it. An increasing or flat list is accepted (author, 2026-11-02).
+The `MOP` feature SHALL own `ape.mopWeights`, the `distance` ladder: 1 to 10 non-negative integers, element ℓ the weight of level ℓ, the length the cut c (`mop-guidance` "MopScorer — Priority Boost"). Default `194,146,97` ("Calibrated MOP Defaults"), neutral `0` (INV-RUN-05). It is read only under `distance`, and is inert under `flag` (INV-RUN-09). `RunSpec.MopParams.weights()` returns a copy as `int[]`. No `Config` field mirrors it. An increasing or flat list is accepted (author, 2026-11-02).
 
 #### Scenario: Default
 - **WHEN** a `mop` run does not set `ape.mopWeights`

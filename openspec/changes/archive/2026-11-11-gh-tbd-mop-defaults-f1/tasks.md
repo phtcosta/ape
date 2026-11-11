@@ -143,17 +143,26 @@
 
 ## 7. Delivery (Wave 5; each step needs Pedro's OK)
 
-- [ ] 7.1 Commit on branch `gh-tbd-mop-defaults-f1` (no Co-Authored-By line)
+- [x] 7.1 Commit on branch `gh-tbd-mop-defaults-f1` (no Co-Authored-By line) — 2026-11-11: `a867e471` (42 files: the 29 tracked files + the change directory; the `docs/*_prompt_*.md` left out; no attribution line)
 - [x] 7.2 `CLAUDE.md` Notes: the test count from 6.3 — 2026-11-11: `CLAUDE.md:342` 1537 → 1552 (skips 28 unchanged), the count of the full suite after the review fixes (`evidence/suite.md`, `evidence/review.md`); no source file changed since that run, so not re-measured
-- [ ] 7.3 Handoff for rv-android (untracked prompt in `docs/`, never committed): drop or change
+- [x] 7.3 Handoff for rv-android (untracked prompt in `docs/`, never committed): drop or change
       `MOP_COIN_LEDGER_MAX_INTERACTIONS = 2` (`tool.py:117`, Pedro decides which); do not write `ape.mopWeights` unless
       the DSL sets it; the E7 recipe, with the cadence omitted on `mop_nolaunch`; no `mvn install -Drvsec_home` until
       `tool.py` is aligned. Coordinate with the `gator` session's change `gh-tbd-gator-full-minified-horizon`, which
-      also edits `tool.py`
+      also edits `tool.py` — 2026-11-11: delivered as a message to the `gator` session (Pedro's choice, instead of a prompt
+      file): the four defaults and neutrals, k = 2 at `tool.py:117` (Pedro decides drop or 4), the stale "jar's default
+      is 1" comments (`:113-116`, `:231-233`), `mop_weights` only on a DSL override (already in gator's uncommitted
+      diff, no default ladder), the E7 recipe, no `mvn install -Drvsec_home`, push ordering
 - [ ] 7.4 Note for `rvsec-calibracao` task X.1: the adoption decision and this change's name and commit
-- [ ] 7.5 Archive (`openspec archive gh-tbd-mop-defaults-f1 -y`), then the hand-sync of design D10: the mop-guidance
+- [x] 7.5 Archive (`openspec archive gh-tbd-mop-defaults-f1 -y`), then the hand-sync of design D10: the mop-guidance
       Purpose "(default 1)" → 4, INV-MOP-38 "(default 1: no entry; ...)", and the hits 6.2 moved here; validate the
-      main specs strictly
+      main specs strictly — 2026-11-11: `openspec archive -y` → `2026-11-11-gh-tbd-mop-defaults-f1` (+6, ~10, −1 over
+      run-spec, mop-guidance, component-triggering, exploration); hand-sync: mop-guidance Purpose "(default 4)",
+      INV-MOP-38 "(default 4; at k = 1, no entry; design D-B17)"; the 6.2 pattern re-run on the main specs finds no
+      other Purpose or invariant hit. `validate --specs --strict` first showed one warning master lacks: the MODIFIED
+      run-spec "Distance Ladder Key" grew to 528 characters (the change validation checks length only on ADDED);
+      with Pedro's OK the clause "calibration v6's finalist F1" was dropped in the main spec and the archived delta
+      (498 characters); output then byte-identical to master `a0fb5c16` (`Totals: 1 passed, 23 failed (24 items)`)
 - [ ] 7.6 Merge into master (`--no-ff`) and push, when Pedro asks; remove the worktree afterwards. Before the push,
       confirm with Pedro how it is ordered against the rv-android image: the image build compiles the ape of GitHub's
       default branch (`origin/master`), so a push before rv-android drops k = 2 ships F1 with k = 2 (`gator` session,

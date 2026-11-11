@@ -130,7 +130,7 @@ Dependency validation SHALL distinguish explicit input from defaults: an **expli
 | `ape.mopStrictPackageMatch` | `STATIC_DATA` | bool | `false` | `false` | keeps its name; moves from `MOP` because the package check is on the static model (D-B14.3) |
 | `ape.llmUrl` | `LLM` | url | null | none | a plan with `LLM` and no URL aborts |
 | `ape.mopCoinPercentage` | `MOP_COIN` (POSITIVE) | double | `1.0` | `0` | `p_M`, clamped to `[0,1]` |
-| `ape.mopCoinLedgerMaxInteractions` | `MOP_COIN` | int | `1` | `1` | executions per ledger key the coin may take; `< 1` clamped to `1` at resolution, like the other plan clamps (`mop-guidance`, design D-B17) |
+| `ape.mopCoinLedgerMaxInteractions` | `MOP_COIN` | int | `4` | `4` | executions per ledger key the coin may take; `< 1` clamped to `1` at resolution, like the other plan clamps (`mop-guidance`, design D-B17) |
 | `ape.llmGateMinActions` | `LLM` | int | `3` | `3` | `0` = gate not mounted |
 | `ape.llmBreakerFailures` | `LLM` | int | `3` | `3` | `0` = gate not mounted |
 | `ape.llmBreakerOpenMs` | `LLM` | long | `60000` | `60000` | |
@@ -150,8 +150,8 @@ The other keys of the former addon features keep their names and owners; those f
 | Key | Type | Default | Neutral | Read under |
 |---|---|---|---|---|
 | `ape.mopScoring` | string, `flag` \| `distance` | `flag` | `flag` | both modes |
-| `ape.mopWeights` | int list, 1–10 non-negative integers ("Distance Ladder Key") | `500,400,300` | `0` | `distance` (the ladder: element ℓ weighs level ℓ = max(d, 1); the length is the cut c, `mop-guidance` "MopScorer — Priority Boost", "Distance-Pair Cut at Load") |
-| `ape.mopRetireAfter` | int | `3` | `3` | `distance` (first interactions after which a target retires, `mop-guidance` "Target Retirement") |
+| `ape.mopWeights` | int list, 1–10 non-negative integers ("Distance Ladder Key") | `194,146,97` | `0` | `distance` (the ladder: element ℓ weighs level ℓ = max(d, 1); the length is the cut c, `mop-guidance` "MopScorer — Priority Boost", "Distance-Pair Cut at Load") |
+| `ape.mopRetireAfter` | int | `10` | `10` | `distance` (first interactions after which a target retires, `mop-guidance` "Target Retirement") |
 | `ape.mopLauncherDmax` | int | `6` | `6` | `distance` (largest distance the launcher orders by, `component-triggering` "Cadence-Based MOP Activity Launch") |
 
 `ape.mopWeightDirect` (500) and `ape.mopWeightTransitive` (300) are read under `flag` only. The neutral value is the one INV-RUN-05 accepts when `MOP` is absent: zero for a weight, as for `ape.mopWeightDirect`, and the one-level ladder `0` for `ape.mopWeights`, and the default for the mode, the retirement count and the launcher bound.
@@ -188,7 +188,7 @@ The other keys of the former addon features keep their names and owners; those f
 #### Scenario: the six MOP scoring keys resolve to their defaults
 
 - **WHEN** a properties file sets `ape.staticDataPath`, `ape.mop=true` and none of the four MOP scoring keys (`ape.mopScoring`, `ape.mopWeights`, `ape.mopRetireAfter`, `ape.mopLauncherDmax`; the scenario's title counts the six keys the plan had before `ape.mopWeights` replaced `ape.mopWeightD1..D3`)
-- **THEN** `MopParams` SHALL report scoring mode `flag`, the ladder `[500, 400, 300]`, retirement after 3 and launcher bound 6
+- **THEN** `MopParams` SHALL report scoring mode `flag`, the ladder `[194, 146, 97]`, retirement after 10 and launcher bound 6 ("Calibrated MOP Defaults")
 - **AND** `RUN_START.inert` SHALL list none of them, since the plan states none
 
 #### Scenario: distance arm from the mop preset
@@ -307,7 +307,7 @@ This case is not a compatibility affordance and does not depend on any particula
 3. **Retired key** (dedicated message naming the replacement): `ape.apePureMode` (purity is structural — owner decision D3), `ape.modelFile`, `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, `ape.saveStates` (persistence protocol removed), `ape.enableXPathAction` (injection channel removed), `ape.mopWeightActivity` (dead key), `ape.llmBoundaryBottomPct` (on the display base the jar maps answers in, the navigation bar is outside every reachable pixel, so the band only rejected app content — `llm-coordinate-single-base`), `ape.agentType` and `ape.replayLog` when present in a **file** (CLI-only values — closes the `/sdcard` agent-swap hole), and the four keys retired by `isolate-guidance-groups`:
    - `ape.mopDataPath` — "renamed ape.staticDataPath: the artifact feeds STATIC and MOP (isolate-guidance-groups)";
    - `ape.leastVisitedPriorityTiebreak` — "replaced by the scorer-sum tie (X1/R2), which equals APE with zero scorers";
-   - `ape.mopTargetPickCap` — "replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of picks per activity and widget (default 1)";
+   - `ape.mopTargetPickCap` — "replaced by `ape.mopCoinLedgerMaxInteractions`, the MOP coin's budget of picks per activity and widget";
    - `ape.llmPercentageNoSubstrate` — "it never had a consumer: the widgetless-substrate predicate it waited for was never derived" (design D-B24). The abort is on the key's name, like every retired key, not on its value.
 4. **Invalid type**: a non-numeric value for a numeric key; a boolean key whose value is not literally `true`/`false` (case-insensitive); a value of `ape.mopScoring` other than exactly `flag` or `distance` (the one string key with a closed value set; the diagnostic names the valid set — `llm-coordinate-single-base`, design D18). Documented value-semantics clamps (cadence `<= 0`, launch cap `< 0`, `ape.mopCoinLedgerMaxInteractions < 1`, the percentage clamps of `ape.llmPercentage`, `ape.mopCoinPercentage` and `ape.componentPercentage` to `[0,1]`) remain clamps, not aborts (INV-RUN-11).
 5. **Missing dependency / invalid combination**: per the Feature Model requirement — including a group key stated `true` whose data root or URL is missing (`ape.static`/`ape.mop` without `ape.staticDataPath`, `ape.llm` without `ape.llmUrl`); plus `--ape replay` without `--ape-replay`.
@@ -527,11 +527,11 @@ The build SHALL embed a `BuildInfo` class generated at build time (Maven git-com
 
 ### Requirement: Distance Ladder Key
 
-The `MOP` feature SHALL own `ape.mopWeights`, the `distance` ladder: 1 to 10 non-negative integers, element ℓ the weight of level ℓ, the length the cut c (`mop-guidance` "MopScorer — Priority Boost"). Default `500,400,300`, neutral `0` (INV-RUN-05). It is read only under `distance`, and is inert under `flag` (INV-RUN-09). `RunSpec.MopParams.weights()` returns a copy as `int[]`. No `Config` field mirrors it. An increasing or flat list is accepted (author, 2026-11-02).
+The `MOP` feature SHALL own `ape.mopWeights`, the `distance` ladder: 1 to 10 non-negative integers, element ℓ the weight of level ℓ, the length the cut c (`mop-guidance` "MopScorer — Priority Boost"). Default `194,146,97` ("Calibrated MOP Defaults"), neutral `0` (INV-RUN-05). It is read only under `distance`, and is inert under `flag` (INV-RUN-09). `RunSpec.MopParams.weights()` returns a copy as `int[]`. No `Config` field mirrors it. An increasing or flat list is accepted (author, 2026-11-02).
 
 #### Scenario: Default
 - **WHEN** a `mop` run does not set `ape.mopWeights`
-- **THEN** `MopParams.weights()` SHALL be `[500, 400, 300]`, so the effective ladder is 500, 400, 300 and the cut is 3
+- **THEN** `MopParams.weights()` SHALL be `[194, 146, 97]`, so the effective ladder is 194, 146, 97 and the cut is 3
 - **AND** `RUN_START.params` SHALL NOT carry `ape.mopWeights`
 
 #### Scenario: Inert under flag, neutral without MOP
@@ -566,7 +566,7 @@ The canonical form of an `INT_LIST` value, used by the plan digest and by `sameV
 - **WHEN** a `mop` run sets `ape.mopWeights=500, 400`
 - **THEN** `RUN_START.params` SHALL carry `"ape.mopWeights":[500,400]`
 - **AND** the digest SHALL equal that of the same plan written `ape.mopWeights=500,400`
-- **AND WHEN** a `mop` run sets `ape.mopWeights=500,400,300`
+- **AND WHEN** a `mop` run sets `ape.mopWeights=194,146,97`
 - **THEN** its digest SHALL equal that of the `mop` run that does not set the key
 
 ### Requirement: Per-Level Distance Keys Retired
@@ -579,10 +579,65 @@ The canonical form of an `INT_LIST` value, used by the plan digest and by `sameV
 - **AND** the detail SHALL name `ape.mopWeights`
 - **AND** the same SHALL hold for `ape.mopWeightD1` and `ape.mopWeightD3`
 
-### Requirement: Default Plan Equivalence With the E7 Jar
+### Requirement: Calibrated MOP Defaults
 
-With `ape.mopWeights` at its default, every MOP cell SHALL resolve to the plan of `bc4bc1b8` except for the one key that replaces three. No preset states the ladder, and `params` lists only non-default keys. So the `RUN_START` fixtures of the `mop`, `as_mop` and `as_mop_llm` cells SHALL differ from those of `bc4bc1b8` only in `digest`.
+`KeyOwnership` SHALL give four MOP keys the values of calibration v6's finalist F1 (`rvsec-calibracao`, change `2026-11-aperv-calibracao-v6`, adopted by the author on 2026-11-11): `ape.mopWeights=194,146,97`, `ape.mopRetireAfter=10`, `ape.mopCoinLedgerMaxInteractions=4` and `ape.activityTriggerStagnationStep=85`. F1 has three levels, so the cut stays c = 3 (`mop-guidance` "Distance-Pair Cut at Load").
 
-#### Scenario: Cell fixtures
-- **WHEN** the run-start fixtures of the `mop`, `as_mop` and `as_mop_llm` cells (`src/test/resources/cells/*.run_start.json`) are produced by this jar
-- **THEN** each SHALL differ from its `bc4bc1b8` version only in the `digest` field
+#### Scenario: A MOP cell without stated keys runs F1
+- **WHEN** the `mop` cell resolves with only the harness keys (`ape.staticDataPath`, `ape.variant`)
+- **THEN** `MopParams.weights()` SHALL be `[194, 146, 97]`, the retirement count 10, `coinLedgerMaxInteractions()` 4 and `activityTriggerStagnationStep()` 85
+- **AND** `RUN_START.params` SHALL carry none of the four keys
+
+### Requirement: Calibrated Defaults Are Not Preset Keys
+
+No preset SHALL state the four calibrated keys. A preset key counts as explicit (`RunSpec.resolve`, step 2), and an explicit launcher or coin key at a non-neutral value aborts a plan that leaves its feature out (INV-RUN-05), as `ape.mopWeightOpenMenu` would in the `mop` cell (`guidance-groups`, design D-B14.1). A jar default is not explicit, so a variant that unmounts the launcher or the coin resolves.
+
+#### Scenario: A variant without the launcher resolves
+- **WHEN** a properties file states `ape.preset=mop`, the artifact path and `ape.activityTriggerEnabled=false` (rv-android's `mop_nolaunch`)
+- **THEN** resolution SHALL succeed with `MOP_LAUNCHER` absent from `features`
+- **AND WHEN** the same file also states `ape.activityTriggerStagnationStep=85`
+- **THEN** resolution SHALL succeed and `RUN_START.inert` SHALL list the key
+
+### Requirement: Neutral Values Follow the Calibrated Defaults
+
+The neutral values of `ape.mopRetireAfter`, `ape.mopCoinLedgerMaxInteractions` and `ape.activityTriggerStagnationStep` SHALL be their defaults, 10, 4 and 85 (`Feature`; for a sub-parameter the neutral is the jar default, INV-RUN-05). The neutral of `ape.mopWeights` SHALL stay the one-level ladder `0`. The rule compares the clamped value: a k below 1 is floored to 1 and aborts without the coin, a cadence `<= 0` is clamped to 85 and stays inert.
+
+#### Scenario: Neutral values follow the defaults
+- **WHEN** a properties file without `ape.mop` states `ape.mopRetireAfter=10`
+- **THEN** resolution SHALL succeed and list the key as inert
+- **AND WHEN** it states `ape.mopRetireAfter=3`
+- **THEN** resolution SHALL abort with `reason=missing_dependency key=ape.mopRetireAfter`
+- **AND WHEN** a `mop` plan states `ape.activityTriggerEnabled=false` and `ape.activityTriggerStagnationStep=50`
+- **THEN** resolution SHALL abort with `reason=missing_dependency key=ape.activityTriggerStagnationStep`
+- **AND WHEN** a `mop` plan states `ape.mopCoinPercentage=0`, which leaves `MOP_COIN` out, and `ape.mopCoinLedgerMaxInteractions=1`
+- **THEN** resolution SHALL abort with `reason=missing_dependency key=ape.mopCoinLedgerMaxInteractions`
+- **AND WHEN** the same plan states `ape.mopCoinLedgerMaxInteractions=0` instead, which the floor clamps to 1
+- **THEN** resolution SHALL abort with `reason=missing_dependency key=ape.mopCoinLedgerMaxInteractions`
+- **AND WHEN** a `mop` plan states `ape.activityTriggerEnabled=false` and `ape.activityTriggerStagnationStep=0`, which the clamp maps to 85
+- **THEN** resolution SHALL succeed and list the key as inert
+
+### Requirement: Calibrated Defaults Described as Equivalent
+
+The documentation of the four defaults (`CLAUDE.md` and the `KeyOwnership` comment) SHALL describe them as equivalent to the E7 values with the best point estimate, not as a measured improvement: F1 − E7 at 900 s in the `mop` cell, S +0.53, 95% CI [−0.55, +1.64]. It SHALL say that the calibration searched only these four keys (its decision D22).
+
+#### Scenario: Documentation states the evidence
+- **WHEN** `CLAUDE.md` describes `ape.mopWeights`, `ape.mopRetireAfter`, `ape.mopCoinLedgerMaxInteractions` or `ape.activityTriggerStagnationStep`
+- **THEN** it SHALL name calibration v6's F1 as the source and give the interval `[−0.55, +1.64]`
+- **AND** it SHALL NOT call the defaults an improvement
+
+### Requirement: E7 Plan by Explicit Keys
+
+A MOP cell SHALL resolve every key to the effective value of the E7 jar `bc4bc1b8` when its properties state `ape.mopWeights=500,400,300`, `ape.mopRetireAfter=3`, `ape.mopCoinLedgerMaxInteractions=1` and `ape.activityTriggerStagnationStep=50`, `ape.mopWeights` standing for the three keys it replaced. `RUN_START.params` then carries the four keys. Study 3's E7 `mop` arm stated `ape.mopCoinLedgerMaxInteractions=2` through its harness, so its reproduction states 2.
+
+#### Scenario: E7 values stated
+- **WHEN** the `mop` cell resolves with the harness keys and `ape.mopWeights=500,400,300`, `ape.mopRetireAfter=3`, `ape.mopCoinLedgerMaxInteractions=1` and `ape.activityTriggerStagnationStep=50`
+- **THEN** `MopParams.weights()` SHALL be `[500, 400, 300]`, the retirement count 3, `coinLedgerMaxInteractions()` 1 and `activityTriggerStagnationStep()` 50
+- **AND** `RUN_START.params` SHALL carry the four keys, `ape.mopWeights` as `[500,400,300]`
+
+### Requirement: E7 Recipe Omits Keys of Absent Features
+
+A plan that leaves `MOP_LAUNCHER` out (`ape.activityTriggerEnabled=false`) SHALL omit `ape.activityTriggerStagnationStep` from the E7 recipe, and a plan that leaves `MOP_COIN` out (`ape.mopCoinPercentage=0`) SHALL omit `ape.mopCoinLedgerMaxInteractions`: at the E7 value either key is non-neutral for an absent feature and aborts (INV-RUN-05).
+
+#### Scenario: E7 without the launcher omits the cadence
+- **WHEN** a properties file states `ape.preset=mop`, the artifact path, `ape.activityTriggerEnabled=false`, `ape.mopWeights=500,400,300`, `ape.mopRetireAfter=3` and `ape.mopCoinLedgerMaxInteractions=2`
+- **THEN** resolution SHALL succeed with `MOP_LAUNCHER` absent and the three stated values effective
