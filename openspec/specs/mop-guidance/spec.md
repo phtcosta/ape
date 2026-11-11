@@ -4,7 +4,7 @@
 
 MOP guidance steers exploration toward widgets and activities that reach monitored operations (MOP specs). It is one of the behaviour groups mounted by declaration (`guidance-groups`, design D-B1): the group is switched by `ape.mop`, every MOP member (`WTG`, `MENU_GATEWAY`, `MOP_FRONTIER`, `MOP_LAUNCHER`, `MOP_ACTIVITY_SOURCE`, `MOP_COIN`) depends on it, and a member whose group is off is absent from the plan. A use site asks for its member through `RunContext.current().spec().has(Feature.X)` and reads its parameters through `spec().mop()`.
 
-`ape.staticDataPath` (`STATIC_DATA`) points at the **compact artifact, format 2**, on the device, and the jar reads that format only (INV-MOP-34): besides the format-1 flags, activity sets, menus, WTG and components, it carries the target count `targets`, per-widget distance pairs `dist` (`[i, d]`, every target at `d ≤ 3`), per-activity pairs `activityDist` (the three nearest targets), a `handlers` table from handler class to flags and pairs and, additively, the reduced intent-filter `data` of receivers and services (D-B13). The artifact is loaded if and only if `STATIC` or `MOP` is mounted (D-B14.20). `StaticArtifactLoader.load` reads it once and splits it into two read-only providers: `StaticGuiModel` (package, main activity, WTG, widget metadata, components) and `MopData` (targets, distances, handlers, MOP activities). STATIC reads only the first; MOP reads both (D-B2). Typed input and the prompt's widget metadata belong to STATIC and read `StaticGuiModel`. Without `MOP`, no `MopData` reaches any consumer, even when the artifact was loaded for STATIC (D-B14.21).
+`ape.staticDataPath` (`STATIC_DATA`) points at the **compact artifact, format 2**, on the device, and the jar reads that format only (INV-MOP-34): besides the format-1 flags, activity sets, menus, WTG and components, it carries the target count `targets`, per-widget distance pairs `dist` (`[i, d]`, every target up to the generator's depth; under `distance` the jar cuts at c, the length of `ape.mopWeights`, "Distance-Pair Cut at Load"), per-activity pairs `activityDist` (the three nearest targets), a `handlers` table from handler class to flags and pairs and, additively, the reduced intent-filter `data` of receivers and services (D-B13). The artifact is loaded if and only if `STATIC` or `MOP` is mounted (D-B14.20). `StaticArtifactLoader.load` reads it once and splits it into two read-only providers: `StaticGuiModel` (package, main activity, WTG, widget metadata, components) and `MopData` (targets, distances, handlers, MOP activities). STATIC reads only the first; MOP reads both (D-B2). Typed input and the prompt's widget metadata belong to STATIC and read `StaticGuiModel`. Without `MOP`, no `MopData` reaches any consumer, even when the artifact was loaded for STATIC (D-B14.21).
 
 One lookup, `MopData.lookup`, answers what MOP knows about a node for an event: the handler stamp's class when `handlers` lists it, else the resource-id key (INV-MOP-36). `MopScorer` turns that answer into a weight in one of two modes selected by `ape.mopScoring`: `flag` (default), the direct/transitive mark, or `distance`, a weight by the nearest unretired target, with targets retiring after a number of first interactions (INV-MOP-37). The boosts are applied by the MOP scoring passes (`MopWidgetPass`, `MopFrontierPass`, `MenuGatewayPass`, `WtgPass`) that run inside `StatefulAgent.adjustActionsByGUITree()`, after the base SATA priority is assigned and before the agent selects; they do not read the interaction ledger (D-B19, reverted).
 
@@ -218,13 +218,13 @@ Unknown JSON keys within `formatVersion: 2` are ignored (INV-MOP-11). This toler
 
 On an unstamped APK every lookup takes the id key, so `flag` reproduces the E6 weights. `MopRetirement` is null under `flag`, and distances are not read.
 
-**`distance` mode.** Let `d` be the smallest distance over the pairs of all the action's containment lookups whose target is not retired ("Target Retirement"). The weight is `ape.mopWeightD1` (500) for `d ≤ 1`, `ape.mopWeightD2` (400) for `d = 2`, `ape.mopWeightD3` (300) for `d = 3`, and `0` for `d ≥ 4` or when no unretired pair exists. Flags are not read. `score` returns this weight before the tie split.
+**`distance` mode.** Let `d` be the smallest distance over the pairs of all the action's containment lookups whose target is not retired ("Target Retirement"). The weights come from the ladder `ape.mopWeights` (`run-spec` "Distance Ladder Key"; default `500,400,300`), a list of c non-negative integers, with c, its length, the cut. The **level** of `d` is `ℓ = max(d, 1)`, so `d = 0` and `d = 1` share level 1. The weight SHALL be element ℓ of the ladder (counting from 1) when `ℓ ≤ c`, and `0` when `ℓ > c` or when no unretired pair exists (`d = Integer.MAX_VALUE`). At the default this is 500 for `d ≤ 1`, 400 for `d = 2`, 300 for `d = 3` and 0 from `d = 4` on, the weights of `bc4bc1b8`. The loader has already dropped every widget and handler pair beyond c ("Distance-Pair Cut at Load"), so a lookup never offers the scorer a pair at `ℓ > c`. The rule is still total. Flags are not read. `score` returns this weight before the tie split. `MopScorer.distanceWeight(MopContext, int d)` is the one mapping from a distance to a weight.
 
-**Tie split (`distance` only).** `MopWidgetPass.apply` SHALL first compute the weight and `d` of every scored action of the state. Ties are by weight level, not by exact `d`: `d = 0` and `d = 1` form one level (weight `ape.mopWeightD1`), and `d = 2` and `d = 3` one level each. The tied actions are those whose undivided weight equals the state's best level, the largest positive undivided weight among the state's scored actions. When there are `n > 1` of them, each SHALL receive `max(W / n, W_next)`, with `W` the weight of that level, `n` the number of tied actions, integer division, and `W_next` the weight of the next level (`ape.mopWeightD2` for the `d ≤ 1` level, `ape.mopWeightD3` for `d = 2`, `0` for `d = 3`). The floor is the author's decision of 2026-10-07: without it, two actions at `d ≤ 1` would get 250 each and fall below a single action at `d = 2` (400). Actions at a worse level keep their undivided weight. The split value is what is added to the priority and stored as `mopBoost`. The undivided weight SHALL be stored beside it as the action's `mopWeight`, which the MOP coin ranks by ("MOP Coin Decider", design D-B10) and which is never part of the scorer sum (`scoring-pipeline`), and reset with `mopBoost`. Under `flag` `mopWeight` equals `mopBoost`. The levels are found by weight value, so the floor assumes `ape.mopWeightD1 >= ape.mopWeightD2 >= ape.mopWeightD3`, as the defaults are: a plan with equal or inverted level weights is accepted, not rejected (author, 2026-10-09; review NT-02).
+**Tie split (`distance` only).** `MopWidgetPass.apply` SHALL first compute the weight and `d` of every scored action of the state. Ties are by weight value, not by exact `d` and not by level, as in `bc4bc1b8`. The tied actions are those whose undivided weight equals the state's best weight, the largest positive undivided weight among the state's scored actions. When there are `n > 1` of them, each SHALL receive `max(W / n, W_next)`, with `W` that best weight, `n` the number of tied actions, and integer division. `W_next` is the weight of the level after W's level. W's level is the first ℓ in `1..c` whose ladder element equals W. The level after it weighs element `ℓ + 1` when `ℓ < c`, and `0` when `ℓ = c` (`MopScorer.nextLevelWeight`). At the default, `W_next` is 400 for the `d ≤ 1` level, 300 for `d = 2` and 0 for `d = 3`, as in `bc4bc1b8`. On a strictly decreasing ladder, ties by value are ties by level. On a ladder with a plateau (equal neighbouring elements), actions at different levels can tie, and `W_next = W` there, so nothing is split: under `300,300,300` four actions tied at level 1 each receive 300. Under a single-level ladder `500`, `W_next` is 0, so four tied actions each receive 125. The floor is the author's decision of 2026-10-07: without it, two actions at `d ≤ 1` would get 250 each and fall below a single action at `d = 2` (400). Actions at a worse level keep their undivided weight. The split value is what is added to the priority and stored as `mopBoost`. The undivided weight SHALL be stored beside it as the action's `mopWeight`, which the MOP coin ranks by ("MOP Coin Decider", design D-B10) and which is never part of the scorer sum (`scoring-pipeline`), and reset with `mopBoost`. Under `flag` `mopWeight` equals `mopBoost`. The levels are found by weight value, so the floor assumes a non-increasing ladder, as the default and every ladder the calibration sends are. A ladder with equal or increasing elements is accepted, not rejected (author, 2026-10-09, review NT-02; confirmed for the list key 2026-11-02). Its split stays defined by the rule above. For example, under `300,500` the best weight 500 sits at level 2 = c, so its `W_next` is 0. When the best weight sits at a level whose successor weighs more, `W_next` exceeds it and each tied action receives more than its undivided weight, as `bc4bc1b8` gives with `D1 = 300`, `D2 = 500` (author, 2026-11-03, review WR-01).
 
 **Every weighted action is boosted, tried or not** (design D-B19, reverted 2026-10-19). The pass SHALL NOT read `MopInteractionLedger`: whether an action's (activity, `xpath|ActionType`) key was already executed changes neither its boost nor the tie split.
 
-Under rule R1 (`scoring-pipeline` "Scorer Independence (Rule R1)") the scorer reads neither the action's priority nor another scorer's field. `mopWeightDirect`/`mopWeightTransitive` are inert under `distance`, and `mopWeightD1..3` under `flag`; `RUN_START.inert` reports them (`run-spec`). The menu-gateway, WTG and MOP-frontier passes are the same in both modes. WTG and the MOP frontier read `activityHasMop`; the menu gateway reads `activityHasMopOptionsMenu`, which load computes from `optionsMenus` and the WTG edges of `StaticGuiModel` into the selected MOP set. Neither changes meaning with the mode. The STATIC `NavFrontierPass` reads no MOP datum (`wtg-navigation`).
+Under rule R1 (`scoring-pipeline` "Scorer Independence (Rule R1)") the scorer reads neither the action's priority nor another scorer's field. `mopWeightDirect`/`mopWeightTransitive` are inert under `distance`, and `ape.mopWeights` under `flag`; `RUN_START.inert` reports them (`run-spec`). The menu-gateway, WTG and MOP-frontier passes are the same in both modes. WTG and the MOP frontier read `activityHasMop`; the menu gateway reads `activityHasMopOptionsMenu`, which load computes from `optionsMenus` and the WTG edges of `StaticGuiModel` into the selected MOP set. Neither changes meaning with the mode. The STATIC `NavFrontierPass` reads no MOP datum (`wtg-navigation`).
 
 The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged widget and a `NONE` lookup — including on a MOP-bearing activity — both score `0`. `MopData.activityHasMop(activity)` remains a predicate consumed by WTG scoring, the MOP frontier and `stateMopDensity`, and is not a branch of `MopScorer.score`.
 
@@ -279,6 +279,37 @@ The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged
 - **THEN** a click on `buttonGenerateHash`, `btn_cipher_encrypt` or `executeButton` SHALL score 300, as in E6
 - **AND WHEN** the same run is under `distance`
 - **THEN** the same three clicks, alone on their screens, SHALL score 400 (`d = 2`), 0 (`d = 4`) and 300 (`d = 3`)
+
+#### Scenario: Distance zero
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300` an action's nearest unretired pair has `d = 0`
+- **THEN** `distanceWeight` SHALL return 500, the weight of level 1
+
+#### Scenario: Beyond the cut
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300` `distanceWeight` is asked for `d = 4`
+- **THEN** it SHALL return 0
+
+#### Scenario: Above the old cut
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300,300,300,300` an action's nearest unretired pair has `d = 5`
+- **THEN** its weight before the tie split SHALL be 300
+- **AND** at `d = 7` its weight SHALL be 0
+
+#### Scenario: Flat ladder does not split
+- **WHEN** under `distance` with `ape.mopWeights=300,300,300` four actions of a state tie at level 1 (each `mopWeight` 300) and no other action weighs more
+- **THEN** each SHALL receive a `mopBoost` of 300 (`max(300 / 4, 300)`)
+
+#### Scenario: Single-level ladder splits fully
+- **WHEN** under `distance` with `ape.mopWeights=500` four actions of a state tie at level 1
+- **THEN** each SHALL receive a `mopBoost` of 125 (`max(500 / 4, 0)`)
+- **AND** an action whose nearest unretired pair is at `d = 2` SHALL weigh 0
+
+#### Scenario: Increasing ladder raises the share
+- **WHEN** under `distance` with `ape.mopWeights=300,500` two actions of a state tie at level 1 (each `mopWeight` 300) and no other action weighs more
+- **THEN** each SHALL receive a `mopBoost` of 500 (`max(300 / 2, 500)`), above its undivided weight
+- **AND** each SHALL keep a `mopWeight` of 300
+
+#### Scenario: Default ladder equals the E7 jar
+- **WHEN** `ape.mopWeights` is at its default and `distanceWeight` and `splitTies` are evaluated over every `d` in `0..10` and `Integer.MAX_VALUE` and over every tie size `n` in `1..20` at each level
+- **THEN** every result SHALL equal that of frozen copies of the `bc4bc1b8` `distanceWeight`, `splitTies` and `nextLevelWeight` built from `500`, `400`, `300`
 
 ### Requirement: Parent/child widget granularity reconciliation
 
@@ -620,7 +651,7 @@ The production call site (`StatefulAgent` constructor, reached only when `STATIC
 
 `StaticArtifactLoader.load` SHALL emit exactly one load status record per invocation with a non-null path, on both outcomes. The record is the out-of-step `MOP_DATA` NDJSON record of the event sink (`EventSink.mopData`), which stays the census of the whole artifact load (both providers):
 
-- success: `status` `loaded`, with the fields `formatVersion`, `sourceDigest` (omitted when the artifact has no `source.digest`), `package`, `windows`, `widgets`, `flagged`, `droppedNoId`, `wtgEdges`, `handlersUnmatched`, `syntheticLambda`, `recovered`, `mopActivities`, `mopActsAugmented`, `components`, `targets`, `handlers`, `droppedPairs`. `windows`, `widgets`, `flagged`, `droppedNoId`, `wtgEdges`, `handlersUnmatched`, `syntheticLambda` and `recovered` are the artifact's generator-computed `stats` echo (host facts, echoed not recomputed; `stats.orphanDialogs` is not echoed). `components` counts the loaded receivers, services, activities and providers. `targets` is the artifact's target count, `handlers` the number of classes in the handler table, and `droppedPairs` the number of malformed distance pairs dropped at load ("MopData — Static Analysis JSON Loader")
+- success: `status` `loaded`, with the fields `formatVersion`, `sourceDigest` (omitted when the artifact has no `source.digest`), `package`, `windows`, `widgets`, `flagged`, `droppedNoId`, `wtgEdges`, `handlersUnmatched`, `syntheticLambda`, `recovered`, `mopActivities`, `mopActsAugmented`, `components`, `targets`, `handlers`, `droppedPairs`, `cutPairs`. `windows`, `widgets`, `flagged`, `droppedNoId`, `wtgEdges`, `handlersUnmatched`, `syntheticLambda` and `recovered` are the artifact's generator-computed `stats` echo (host facts, echoed not recomputed; `stats.orphanDialogs` is not echoed). `components` counts the loaded receivers, services, activities and providers. `targets` is the artifact's target count, `handlers` the number of classes in the handler table, `droppedPairs` the number of malformed distance pairs dropped at load ("MopData — Static Analysis JSON Loader"), and `cutPairs` the number of well-formed widget and handler pairs dropped by the cut at load ("Distance-Pair Cut at Load"). A pair is counted in at most one of the two: `droppedPairs` > 0 signals a malformed artifact, `cutPairs` > 0 an artifact deeper than the ladder
 - failure: `status` `rejected` with `reason` one of `file-missing`, `parse-error`, `version-mismatch`, `package-mismatch`
 
 `mopActsAugmented` SHALL be `|mopActivitiesAugmented \ mopActivities|` over the two wire sets — what the augmented source would contribute — and SHALL NOT vary with `MOP_ACTIVITY_SOURCE`. `mopActivities` remains the size of the **selected** set, so the two fields answer different questions on purpose.
@@ -639,7 +670,7 @@ When `ape.staticDataPath` is unset, or when it is set and neither `STATIC` nor `
 
 #### Scenario: successful load emits counters
 - **WHEN** `StaticArtifactLoader.load` parses a format-2 artifact derived from a full JSON whose SHA-256 is `d`, with 30 widgets, 3 flagged, 0 dropped, 16 WTG edges, `targets: 27` and 2 handler classes
-- **THEN** one `MOP_DATA` record with `status` `loaded` SHALL be emitted carrying `formatVersion:2`, the artifact's `source.digest` (`sha256:d`) as `sourceDigest`, those counters, `targets:27`, `handlers:2` and `droppedPairs:0`
+- **THEN** one `MOP_DATA` record with `status` `loaded` SHALL be emitted carrying `formatVersion:2`, the artifact's `source.digest` (`sha256:d`) as `sourceDigest`, those counters, `targets:27`, `handlers:2`, `droppedPairs:0` and `cutPairs:0`
 
 #### Scenario: transitions present, click edges absent
 - **WHEN** the artifact's `wtg` map is empty because the producer's document carried transitions but none of them a `click` event
@@ -679,7 +710,7 @@ When `ApeAgent.generateInputText` resolves the static widget for an `EditText` u
 `MopScorer.stateMopDensity(State, MopContext, int timestamp)` SHALL return `0` when the context is null or the state's activity does not satisfy `activityHasMop(activity)` (cheap early-out, no widget resolution). Otherwise it SHALL return `1 + count`, where `count` counts the valid, target-requiring actions resolved at `timestamp` whose resolved node's own lookup, `MopData.lookup(activity, node, eventTypeOf(action))` with no containment walk (INV-MOP-36, design D17), counts under the scoring mode (`MopScorer.countsTowardDensity`):
 
 - under `flag`, the lookup reports a direct or transitive flag;
-- under `distance`, the lookup alone gives a positive weight: an unretired pair at `d ≤ 3` (`MopScorer.best` over that one lookup).
+- under `distance`, the lookup alone gives a positive weight: its nearest unretired pair has a positive ladder weight (`MopScorer.best` over that one lookup; at the default, a pair at `d ≤ 3`).
 
 In the scenarios below, "MOP-flagged" reads as "counts under the mode".
 
@@ -807,7 +838,7 @@ On an APK instrumented without `--stamp-handlers`, every stamp is null, every lo
 #### Scenario: a click on a widget flagged under another event reads its aggregate pairs
 - **WHEN** an unstamped node's widget has `mop: {drag: transitive}` and `dist: {drag: [[9,2]]}` (a touch listener; GATOR's `drag`), and no `click` key
 - **THEN** `lookup(activity, node, "click")` SHALL return `transitive = true`, `dist = [[9,2]]` and source `ID`
-- **AND** under `ape.mopScoring=distance` a click on it SHALL weigh `ape.mopWeightD2` (400) before the tie split, as under `flag` it weighs `ape.mopWeightTransitive`
+- **AND** under `ape.mopScoring=distance` a click on it SHALL weigh level 2 of `ape.mopWeights` (400 at the default) before the tie split, as under `flag` it weighs `ape.mopWeightTransitive`
 - **AND** `lookup(activity, node, "longClick")` SHALL return `transitive = true` (the flags' aggregate fallback) and no pair, so a long-click on it weighs 0 under `distance`
 
 #### Scenario: the click aggregate leaves out long-press events
@@ -841,7 +872,7 @@ Known limits, kept as decided (D19 of `llm-coordinate-single-base`):
 - the key comes from `Name.toXPath()`, so a refinement that renames a widget makes its next interaction a first one again;
 - **batch retirement** (recorded, not changed; author 2026-10-18): one first interaction counts every target at `d*` of its lookup, so three touches of widgets whose generic handler reaches many targets at one distance retire the whole set together. In `e03igg` the 16 steps that retired 5 or more targets hold 240 of 721 retirements and 170 of the 234 targets never reached in their task (owncloud: 84 in one step from the login screen); a target retiring alone had been reached already in 80 % of cases.
 
-Only the targets at `d*` are counted: widget and handler lists carry every target at `d ≤ 3`, and counting a whole list would retire up to several hundred targets through one interaction.
+Only the targets at `d*` are counted: widget and handler lists carry every target at `d ≤ c`, the ladder length ("Distance-Pair Cut at Load"), and counting a whole list would retire up to several hundred targets through one interaction.
 
 #### Scenario: first interaction counts each target of the node's own lookup once
 - **WHEN** under `distance` the agent executes a click on a node whose own lookup has `dist = [[16,3],[17,3],[18,3]]`, no containment node carries a nearer unretired pair, and the ledger has no entry for the widget's key in its activity
@@ -883,7 +914,7 @@ Only the targets at `d*` are counted: widget and handler lists carry every targe
 
 #### Scenario: retired target ignored by distance scoring
 - **WHEN** under `distance` an action's lookup carries `dist = [[4,1],[7,2]]` and target 4 is retired
-- **THEN** the action's distance SHALL be 2 and its weight before the tie split SHALL be `ape.mopWeightD2` (400)
+- **THEN** the action's distance SHALL be 2 and its weight before the tie split SHALL be level 2 of `ape.mopWeights` (400 at the default)
 - **AND WHEN** target 7 is also retired
 - **THEN** the action's weight SHALL be 0 and it SHALL NOT be eligible for the MOP coin
 
@@ -913,7 +944,7 @@ Visit count is not a condition: an action visited in the abstract state but neve
 **Ranking.** Among the eligible actions, the stage SHALL take, each key consulted only to break a tie on the keys before it:
 
 1. the largest `mopWeight` (undivided: the tie split of `distance` is not read, so three actions at `d ≤ 1` split to 400 each do not tie with one at `d = 2`);
-2. under `ape.mopScoring=distance` only, the larger number of distinct unretired targets within `d + 1` over the pairs of the same lookup that produced the weight, `d` being the distance behind that weight;
+2. under `ape.mopScoring=distance` only, the larger number of distinct unretired targets within `d + 1` over the pairs of the same lookup that produced the weight, `d` being the distance behind that weight (`MopCoinStage.targetCount`, `MopRetirement.countWithin(retirement, lookup.dist, d + 1)`). The window reads only the pairs that survived the cut at load ("Distance-Pair Cut at Load"), so at `d = c` it never counts a target at `c + 1`;
 3. the first in `State.getActions()` order.
 
 Priority SHALL NOT be a key, so no ADDONS or STATIC scorer can steer the coin (rule R1, `scoring-pipeline`).
@@ -970,6 +1001,22 @@ Priority SHALL NOT be a key, so no ADDONS or STATIC scorer can steer the coin (r
 - **THEN** the LLM SHALL take the step and the MOP coin SHALL NOT be reached
 - **AND WHEN** `u_L = 0.3`, the new-state stage has already called the model on the step and its answer was declined
 - **THEN** the LLM coin SHALL return `Continue` without a second call, and the MOP coin SHALL take the step with `u_M = 0.1`
+
+#### Scenario: Window boundary
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300,300,300` (c = 5) an eligible action's weight lookup has, as nearest unretired pair, `[0,1]` (`d = 1`), and further unretired pairs `[1,2]` (`d + 1`) and `[2,3]` (`d + 2`)
+- **THEN** its second key SHALL be 2, counting targets 0 and 1 and not target 2
+- **AND** against an action of equal `mopWeight` whose lookup is `[[5,1],[6,1],[7,3]]` (second key 2), the first in `getActions()` order SHALL win
+
+#### Scenario: Retired target excluded
+- **WHEN** under `distance` an eligible action is scored at `d = 1` through an unretired pair `[0,1]`, and the only other pair within `d + 1` of its weight lookup, `[1,2]`, names a retired target
+- **THEN** its second key SHALL be 1
+- **AND WHEN** every target of the lookup is retired, as `[[1,1]]` with target 1 retired
+- **THEN** the second key (`MopCoinStage.targetCount`) SHALL be 0, because no unretired pair gives the action a distance, and the action, weighing 0, SHALL NOT be eligible
+
+#### Scenario: Window never passes the cut
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300` (c = 3) an artifact gives a widget's `click` list `[[0,3],[1,3],[2,4],[3,4]]`, and an action on that widget is scored at `d = 3`
+- **THEN** the loader SHALL keep `[[0,3],[1,3]]` and count 2 in `cutPairs`
+- **AND** the action's second key SHALL be 2, as in `bc4bc1b8`, whose artifacts carried no widget or handler pair beyond 3
 
 ### Requirement: MopInteractionLedger — Executions per Activity and Key
 
@@ -1037,6 +1084,66 @@ Both variants read `MopData` through `MopScorer.stateMopDensity` ("MopScorer —
 - **WHEN** the `as` cell, whose plan loads the artifact for STATIC but has no `MOP`, reaches the ABA scan and the trivial-path choice
 - **THEN** `stateMopDensity` SHALL NOT be called and the APE defaults SHALL decide
 
+### Requirement: Distance-Pair Cut at Load
+
+When the plan carries `MOP` and `ape.mopScoring=distance`, `StaticArtifactLoader` SHALL drop, while it reads the artifact, every well-formed pair with `d > c` from the widget `dist` lists (every event) and the handler `dist` lists, c being the ladder length (`run-spec` "Distance Ladder Key"). It SHALL NOT drop any `activityDist` pair. A list the cut empties reads as no pair. Flags, `mop` keys, handler membership and activity sets are not touched.
+
+#### Scenario: Activity pair beyond the cut
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300` (c = 3) the artifact's `activityDist` gives activity `A` the pairs `[[0,5]]`
+- **THEN** the loaded `activityDist` of `A` SHALL still be `[[0,5]]`
+- **AND** with `ape.mopLauncherDmax=6` the launcher SHALL still find `A` eligible and order it at distance 5
+
+#### Scenario: Deeper artifact under the default cut
+- **WHEN** an artifact whose widget and handler lists carry pairs up to `d = 10` is loaded under `distance` with c = 3
+- **AND** a second artifact, equal except that its widget and handler lists keep only the pairs with `d ≤ 3`, is loaded the same way
+- **THEN** both loads SHALL yield the same `MopData`: the same pairs for every widget, event, handler and activity, the same click aggregates, the same flags and activity sets
+- **AND** the two `MOP_DATA` records SHALL differ in `cutPairs` only, which counts the dropped pairs of the first artifact and is 0 for the second
+
+#### Scenario: Ladder longer than the artifact's depth
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300,300,300,300` (c = 6) an artifact whose widget pairs reach only `d = 3` is loaded
+- **THEN** no pair SHALL be cut and `cutPairs` SHALL be 0
+
+#### Scenario: Cut below the generator's depth
+- **WHEN** under `distance` with `ape.mopWeights=500,400` (c = 2) a widget's `click` list is `[[1,1],[2,2],[3,3]]`
+- **THEN** the loaded list SHALL be `[[1,1],[2,2]]` and `cutPairs` SHALL count 1
+
+#### Scenario: Stamped handler emptied by the cut still wins
+- **WHEN** under `distance` with c = 2 a node's stamp names a handler listed in `handlers` whose only `click` pair is `[4,3]`
+- **THEN** the loaded handler SHALL have no `click` pair, `lookup` SHALL still return source `STAMP` (INV-MOP-36), and a click on the node SHALL weigh 0
+
+### Requirement: Cut Pairs Counted Apart From Malformed Pairs
+
+The pair reader SHALL first check that a pair is well formed and count a malformed one in `droppedPairs`. It SHALL apply the cut only to a well-formed pair, and count a cut pair in `cutPairs` ("MopData — Load Status Line and Fail-Fast"). No pair SHALL be counted in both.
+
+#### Scenario: Malformed and cut pairs counted apart
+- **WHEN** under `distance` with c = 3 a widget's `click` list is `[[0,1],[1,7],[2,-1],[99,2]]` and `targets` is 27
+- **THEN** the loaded list SHALL be `[[0,1]]`
+- **AND** `droppedPairs` SHALL count 2 (`[2,-1]`, a negative distance, and `[99,2]`, an index out of range) and `cutPairs` SHALL count 1 (`[1,7]`)
+
+### Requirement: Cut Applied Before the Merges
+
+The cut SHALL be applied to each wire list as it is read, before the shortId-collision merge (INV-MOP-19) and before the click aggregate (`MopData.Widget.clickAggregate()`) is built. Both merges keep the minimum distance per target, so the result equals cutting the merged lists.
+
+#### Scenario: Click aggregate over cut lists
+- **WHEN** under `distance` with c = 2 an unstamped widget has no `click` key, `dist.drag = [[5,3]]` and `dist.select = [[5,1],[6,4]]`
+- **THEN** its click aggregate SHALL be `[[5,1]]`, the same as the aggregate of the uncut lists cut at 2
+
+### Requirement: No Cut Outside the Distance Mode
+
+Under `ape.mopScoring=flag`, and in a cell without `MOP` (an `as` cell loads the artifact for `STATIC` only), the pair reader SHALL NOT cut, and `cutPairs` SHALL be 0. *(Author, 2026-11-03: the acceptance contract scopes `ape.mopWeights` to `distance` and is silent on `flag`; `flag` reads no widget or handler distance, so a cut would change only the load record.)*
+
+#### Scenario: No cut under flag
+- **WHEN** under `flag` an artifact whose widget lists carry pairs at `d = 7` is loaded with any `ape.mopWeights`
+- **THEN** every well-formed pair SHALL be kept and `cutPairs` SHALL be 0
+
+### Requirement: Readers Unchanged on the Remaining Pairs
+
+On the pairs that survive the cut, the scorer, the tie split, the MOP coin's eligibility and ranking (its `d + 1` window included), retirement at `d*`, the prompt marker and `stateMopDensity` SHALL behave exactly as in `bc4bc1b8`.
+
+#### Scenario: E7 artifact at the default ladder
+- **WHEN** an artifact derived at the generator's default depth (widget and handler pairs at `d ≤ 3`) is loaded under `distance` with `ape.mopWeights` at its default
+- **THEN** no pair SHALL be cut, `cutPairs` SHALL be 0, and the loaded `MopData` SHALL equal the one `bc4bc1b8` loads from the same file
+
 ## Invariants
 
 - **INV-MOP-01**: `StaticArtifactLoader.load()` SHALL never throw a checked exception or a JSON parse exception to the caller. Read and parse errors SHALL be caught internally and result in a `null` return with a WARNING log and a `MOP_DATA` rejection record.
@@ -1053,7 +1160,7 @@ Both variants read `MopData` through `MopScorer.stateMopDensity` ("MopScorer —
 - **INV-MOP-21**: Every `StaticArtifactLoader.load` invocation with a non-null path SHALL record exactly one `MOP_DATA` sink record — the census of the loaded artifact, or `status` `rejected` with its reason — never to logcat.
 - **INV-MOP-22**: A run whose plan mounts `STATIC` or `MOP` SHALL either obtain both providers from `StaticArtifactLoader.load` or abort; it SHALL never run with a mounted group and no data.
 - **INV-MOP-23**: Static-widget resolution for typed input and MOP resolution SHALL walk the same containment node set (`MopScorer.containmentNodes`): the node, up to two ancestors, and its descendants two levels down. On each node, MOP resolution applies `MopData.lookup` (stamp, then id key), and typed-input resolution applies `StaticGuiModel.widget` (id key). The two paths SHALL NOT diverge in which nodes they visit or in the order they visit them.
-- **INV-MOP-24**: Above the `+1` activity-substrate floor, `stateMopDensity` SHALL count only actions whose resolved node's own lookup counts under the scoring mode: under `flag` a direct or transitive flag for the action's event, under `distance` a positive weight (an unretired pair at `d ≤ 3`). It SHALL never reduce to a total action count, and the floor SHALL be exactly `1` (never proportional to action count or widget count).
+- **INV-MOP-24**: Above the `+1` activity-substrate floor, `stateMopDensity` SHALL count only actions whose resolved node's own lookup counts under the scoring mode: under `flag` a direct or transitive flag for the action's event, under `distance` a positive weight (an unretired pair whose ladder level has a positive weight; at the default ladder, a pair at `d ≤ 3`). It SHALL never reduce to a total action count, and the floor SHALL be exactly `1` (never proportional to action count or widget count).
 - **INV-MOP-32**: The `MOP_DATA` counters — `mopActivities`, `mopActsAugmented`, and the `stats` echo (`windows`, `widgets`, `flagged`, `droppedNoId`, `wtgEdges`, `handlersUnmatched`, `syntheticLambda`, `recovered`) — SHALL be pure counters over the load; their presence or values SHALL NOT change widget flags, the selected MOP-activity set, or the loaded/rejected decision.
 - **INV-MOP-33**: The navigation tie-break log SHALL be emitted only by the X4 MOP variant and only on its decisive branch; it SHALL NOT alter which path is selected.
 - **INV-MOP-19**: On a `shortId` collision within a base activity, the widget's MOP flags SHALL be the strongest (direct > transitive > unflagged), an unflagged widget SHALL never overwrite a flagged one, and the widget's `dist` list for each event SHALL be the merge of the colliding widgets' lists by the minimum distance per target, cut to the targets at `d ≤ 3` (design D15 as amended 2026-10-09). Both outcomes SHALL be order-independent. Both rules are applied by the generator (design D15); on this side a JSON object admits one value per key, so a collision is unrepresentable.

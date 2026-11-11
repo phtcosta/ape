@@ -140,9 +140,9 @@
       output; (5) one line per scenario of the seven acceptance requirements (test `file:line`, method, result);
       (6) the `[E7-EQUIV]` line (inputs, 0 mismatches); (7) `evidence/cells_diff.txt` (digest only); and the
       reproducibility result of 6.3 — 2026-11-03, `delivery-v6.md` written
-- [ ] 6.5 Commit the delivery note (Pedro's OK); then send session `calibracao` one message with the commit, the jar
-      path and the sha256
-- [ ] 6.6 At archive (only when Pedro decides): hand-sync what deltas cannot carry. In `run-spec` `## Invariants`,
+- [x] 6.5 Commit the delivery note (Pedro's OK); then send session `calibracao` one message with the commit, the jar
+      path and the sha256 — 2026-11-03: note committed `f5e47dd3`; message sent to `calibracao`
+- [x] 6.6 At archive (only when Pedro decides): hand-sync what deltas cannot carry. In `run-spec` `## Invariants`,
       INV-RUN-09's key set (`ape.mopWeights` replaces `ape.mopWeightD1..D3`; "six Part B keys" → four). In
       `mop-guidance` `## Purpose`, `every target at d ≤ 3` → `every target up to the generator's depth; the jar cuts at
-      c`. In `## Invariants`, INV-MOP-24's `d ≤ 3`
+      c`. In `## Invariants`, INV-MOP-24's `d ≤ 3` — 2026-11-11, archived as `2026-11-11-gh-tbd-mop-weights-list` (+10, ~10 across five main specs); INV-RUN-09, the `mop-guidance` Purpose (the cut stated only under `distance`, per D6) and INV-MOP-24 edited by hand
