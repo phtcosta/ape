@@ -22,8 +22,9 @@ import static org.junit.Assert.assertNull;
  *       driver writing no ledger; the component trigger fires on this step under the seed.</li>
  * </ol>
  *
- * <p>The seeded cadence (two below the fire) is what makes that sequence fit in four steps instead
- * of fifty — a declared scenario input, per design D2, not a lowered default.
+ * <p>The seeded cadence (83, two below the fire at {@code ape.activityTriggerStagnationStep} = 85)
+ * is what makes that sequence fit in four steps instead of eighty-five — a declared scenario input,
+ * per design D2, not a lowered default.
  */
 public class ParityOracleAsMopLlmTest {
 
@@ -37,7 +38,7 @@ public class ParityOracleAsMopLlmTest {
     private static final String EXPECTED_TRIGGER =
             "br.unb.cic.cryptoapp.generated.CryptographyActivity";
 
-    private static final int SEEDED_CADENCE = 48;
+    private static final int SEEDED_CADENCE = 83;
 
     private static final int BOOSTED_PRIORITY = 20;
     private static final int PLAIN_PRIORITY = 12;

@@ -547,7 +547,7 @@ The table below lists the configuration keys relevant to the exploration engine 
 | `ape.defaultGUIThrottle` | long (ms) | 200 | Delay between injected events |
 | `ape.trivialActivityRankThreshold` | int | 3 | Minimum activity count before trivial-activity logic activates |
 
-The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present. The keys `ape.mopDataPath` (renamed `ape.staticDataPath`), `ape.leastVisitedPriorityTiebreak` (replaced by the X1 scorer-sum tie) and `ape.mopTargetPickCap` (replaced by `ape.mopCoinLedgerMaxInteractions`, k, the MOP coin's limit on executions by any owner per activity and `xpath|ActionType` key (default 1)) are retired and abort resolution with `retired_key` (`run-spec`).
+The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.saveStates` are retired (persistence removal) and abort resolution if present. The keys `ape.mopDataPath` (renamed `ape.staticDataPath`), `ape.leastVisitedPriorityTiebreak` (replaced by the X1 scorer-sum tie) and `ape.mopTargetPickCap` (replaced by `ape.mopCoinLedgerMaxInteractions`, k, the MOP coin's limit on executions by any owner per activity and `xpath|ActionType` key) are retired and abort resolution with `retired_key` (`run-spec`).
 
 #### Scenario: Property file present on device
 
@@ -577,8 +577,6 @@ The keys `ape.saveObjModel`, `ape.saveDotGraph`, `ape.saveVisGraph`, and `ape.sa
 - **THEN** `APE_FIXES` SHALL be in the plan
 - **AND WHEN** the `base` or `mop` cell resolves
 - **THEN** `APE_FIXES` SHALL be absent, so every point it decides runs upstream APE's code
-
----
 
 ### Requirement: StatefulAgent — LLM Router Integration
 

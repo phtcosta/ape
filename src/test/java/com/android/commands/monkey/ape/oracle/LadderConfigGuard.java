@@ -84,7 +84,7 @@ final class LadderConfigGuard {
             // The launcher's cadence the scenario's declared counter is seeded against, and the
             // MOP coin's dose.
             assertTrue("ape.activityTriggerEnabled", spec.has(Feature.MOP_LAUNCHER));
-            assertEquals("ape.activityTriggerStagnationStep", 50,
+            assertEquals("ape.activityTriggerStagnationStep", 85,
                     spec.mop().activityTriggerStagnationStep());
             assertEquals("ape.activityTriggerMaxPerRun", 0, spec.mop().activityTriggerMaxPerRun());
             assertEquals("ape.mopCoinPercentage", 1.0, spec.mop().coinPercentage(), 0.0);

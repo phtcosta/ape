@@ -129,7 +129,10 @@ final class PipelineFixture {
         int restartDueCalls;
         /** The owners that abandoned the buffer, in order. */
         final List<String> abandoned = new ArrayList<>();
-        /** The run's execution ledger, as a plan with MOP holds one at the default k = 1. */
+        /**
+         * The run's execution ledger, at k = 1 (the first-interaction rule). No test records into
+         * it, so every key is below budget whatever k is.
+         */
         final MopInteractionLedger ledger = new MopInteractionLedger(1);
 
         FakeAgent(StubLlm llm, ModelAction fromTheChain) {
@@ -241,7 +244,7 @@ final class PipelineFixture {
      * The {@code as_mop_llm} cell, which puts the launcher between the LLM stages and the chain.
      *
      * @param cadence the launcher's firing period, so a test can put the firing point where it needs
-     *        it rather than counting to the jar default of fifty
+     *        it rather than counting to the jar default
      */
     static RunSpec llmWithLauncherPlan(int cadence) {
         return preset(Presets.AS_MOP_LLM, join(new String[] {

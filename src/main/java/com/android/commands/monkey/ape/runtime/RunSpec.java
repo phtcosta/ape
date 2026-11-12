@@ -261,7 +261,9 @@ public final class RunSpec {
     /**
      * The load-time clamps, preserved as clamps. They are documented value semantics — a cadence
      * of zero and a negative cap are meaningful mistakes with a defined reading — not typos, which
-     * is why they do not abort.
+     * is why they do not abort. A cadence {@code <= 0} reads as the key's jar default, taken from
+     * {@link KeyOwnership#defaultOf} so the default has one home; the coin's {@code < 1} is a
+     * floor.
      */
     private static String clamp(String key, String raw) {
         if (raw == null) {
@@ -269,7 +271,7 @@ public final class RunSpec {
         }
         if ("ape.activityTriggerStagnationStep".equals(key)) {
             int value = (Integer) ValueType.INT.parse(key, raw);
-            return value <= 0 ? "50" : raw;
+            return value <= 0 ? KeyOwnership.defaultOf(key) : raw;
         }
         if ("ape.activityTriggerMaxPerRun".equals(key)) {
             int value = (Integer) ValueType.INT.parse(key, raw);

@@ -427,6 +427,88 @@ public class RunSpecEchoTest {
     }
 
     // -----------------------------------------------------------------------------------------
+    // Calibrated MOP defaults (gh-tbd-mop-defaults-f1): F1 is omitted, E7 is carried
+    // -----------------------------------------------------------------------------------------
+
+    /** The four keys calibration v6 searched, which F1 sets (run-spec "Calibrated MOP Defaults"). */
+    private static final String[] CALIBRATED_MOP_KEYS = {
+            "ape.mopWeights", "ape.mopRetireAfter", "ape.mopCoinLedgerMaxInteractions",
+            "ape.activityTriggerStagnationStep"};
+
+    /** The {@code mop} cell as the harness writes it: the preset, the artifact path, the variant. */
+    private static Map<String, String> harnessMopCell() {
+        Map<String, String> plan = presetPlan(Presets.MOP);
+        plan.put("ape.variant", "mop");
+        return plan;
+    }
+
+    /**
+     * Scenario "A MOP cell without stated keys runs F1", its {@code RUN_START} clause: the cell
+     * states none of the four keys, each sits at its jar default, and the record omits it.
+     */
+    @Test
+    public void aDefaultMopCellCarriesNoneOfTheCalibratedKeys() throws Exception {
+        JSONObject params = record(resolve(harnessMopCell())).getJSONObject("params");
+        for (String key : CALIBRATED_MOP_KEYS) {
+            assertFalse(key + " is at its jar default, so the record omits it", params.has(key));
+        }
+    }
+
+    /**
+     * The same clause from the other side: F1's values are the jar defaults, so a cell that states
+     * them has chosen nothing, and its record carries none of the four, as the unset cell's does.
+     */
+    @Test
+    public void theF1ValuesStatedAreDefaultsTheRecordOmits() throws Exception {
+        Map<String, String> plan = harnessMopCell();
+        plan.put("ape.mopWeights", "194,146,97");
+        plan.put("ape.mopRetireAfter", "10");
+        plan.put("ape.mopCoinLedgerMaxInteractions", "4");
+        plan.put("ape.activityTriggerStagnationStep", "85");
+        JSONObject params = record(resolve(plan)).getJSONObject("params");
+        for (String key : CALIBRATED_MOP_KEYS) {
+            assertFalse(key + " stated at F1 is a jar default, so the record omits it",
+                    params.has(key));
+        }
+    }
+
+    /**
+     * Scenario "E7 values stated" (run-spec "E7 Plan by Explicit Keys"): the E7 values are no
+     * longer jar defaults, so the record carries all four, the ladder as the JSON array
+     * {@code [500,400,300]}, and the E7 arm reconstructs from it.
+     */
+    @Test
+    public void theE7ValuesStatedAreCarriedWithTheLadderAsAJsonArray() throws Exception {
+        Map<String, String> plan = harnessMopCell();
+        plan.put("ape.mopWeights", "500,400,300");
+        plan.put("ape.mopRetireAfter", "3");
+        plan.put("ape.mopCoinLedgerMaxInteractions", "1");
+        plan.put("ape.activityTriggerStagnationStep", "50");
+        RunSpec original = resolve(plan);
+        JSONObject json = record(original);
+        JSONObject params = json.getJSONObject("params");
+
+        for (String key : CALIBRATED_MOP_KEYS) {
+            assertTrue(key + " stated at E7 is not a jar default, so the record carries it",
+                    params.has(key));
+        }
+        JSONArray ladder = params.getJSONArray("ape.mopWeights");
+        assertEquals(3, ladder.length());
+        assertEquals(500, ladder.getInt(0));
+        assertEquals(400, ladder.getInt(1));
+        assertEquals(300, ladder.getInt(2));
+        assertTrue(emit(original).contains("\"ape.mopWeights\":[500,400,300]"));
+        assertEquals(3, params.getInt("ape.mopRetireAfter"));
+        assertEquals(1, params.getInt("ape.mopCoinLedgerMaxInteractions"));
+        assertEquals(50, params.getInt("ape.activityTriggerStagnationStep"));
+
+        RunSpec rebuilt = RunSpec.resolve(paramsAsEntries(json),
+                RunSpec.CliValues.of(json.getString("agent"), json.getLong("seed"), null));
+        assertEquals("the E7 arm reconstructs from its record", original.digest(), rebuilt.digest());
+        assertEquals(original.effectiveValues(), rebuilt.effectiveValues());
+    }
+
+    // -----------------------------------------------------------------------------------------
     // Hostile values survive the whole path, not just the serializer
     // -----------------------------------------------------------------------------------------
 

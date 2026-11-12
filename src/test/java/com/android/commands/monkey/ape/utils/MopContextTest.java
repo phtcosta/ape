@@ -27,9 +27,10 @@ public class MopContextTest {
         assertEquals(MopScoring.FLAG, mop.scoring());
         assertEquals(500, mop.weightDirect());
         assertEquals(300, mop.weightTransitive());
-        assertArrayEquals(new int[] {500, 400, 300}, mop.weights());
+        // Calibration v6's F1 (gh-tbd-mop-defaults-f1): three levels, so the cut stays 3.
+        assertArrayEquals(new int[] {194, 146, 97}, mop.weights());
         assertEquals(3, mop.cut());
-        assertEquals(3, mop.retireAfter());
+        assertEquals(10, mop.retireAfter());
         assertEquals(6, mop.launcherDmax());
         assertNull("no retirement under flag", mop.retirement());
     }

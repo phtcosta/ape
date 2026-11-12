@@ -69,8 +69,15 @@ public class StatefulAgentMopTelemetryTest {
         setField(agent, "_coverageTracker", new UICoverageTracker());
     }
 
+    /**
+     * The {@code distance} plan. The retirement scenarios retire a target at its third count, so
+     * it states {@code ape.mopRetireAfter=3} instead of reading the jar default; the hand-set
+     * boosts (500 at {@code d = 0}, 400 at {@code d = 2}) are the E7 ladder's, so it states
+     * {@code ape.mopWeights=500,400,300} too.
+     */
     private void distance() throws Exception {
-        install(TestRunSpecs.mopSpec("ape.mopScoring", "distance"));
+        install(TestRunSpecs.mopSpec("ape.mopScoring", "distance",
+                "ape.mopWeights", "500,400,300", "ape.mopRetireAfter", "3"));
     }
 
     private void flag() throws Exception {

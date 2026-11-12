@@ -1,5 +1,6 @@
 package com.android.commands.monkey.ape.oracle;
 
+import com.android.commands.monkey.ape.runtime.KeyOwnership;
 import com.android.commands.monkey.ape.telemetry.EventSink;
 import com.android.commands.monkey.ape.telemetry.NdjsonSink;
 import com.android.commands.monkey.ape.telemetry.NoopSink;
@@ -65,8 +66,16 @@ public class SinkNeutralityTest {
     private static final int NAV_PRIORITY = 5;
     private static final int DECLARED_WEIGHT = 7;
 
-    /** Two below the cadence, so the launcher fires inside a four-step scenario (design D2). */
-    private static final int SEEDED_CADENCE = 48;
+    /**
+     * Two below the configured default of {@code ape.activityTriggerStagnationStep}, so the launcher
+     * fires inside the four-step replay of the MOP cells whatever that default is (gh-tbd-mop-defaults-f1
+     * design D7; the same seed in {@code CleanControlTest} is checked to produce a launch). The
+     * seed is derived rather than a literal: this test runs no {@link LadderConfigGuard} and pins no
+     * launch step, so a literal would let the launcher drop out of the replay unnoticed when the
+     * default moves.
+     */
+    private static final int SEEDED_CADENCE =
+            Integer.parseInt(KeyOwnership.defaultOf("ape.activityTriggerStagnationStep")) - 2;
 
     @After
     public void leaveNoHeartbeatsBehind() {

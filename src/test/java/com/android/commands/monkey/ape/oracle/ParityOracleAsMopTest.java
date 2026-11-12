@@ -16,7 +16,7 @@ import static org.junit.Assert.assertNull;
  * <ol>
  *   <li><b>The cadence launcher.</b> {@code MopLauncherStage} advances its counter at every step's
  *       open and fires on the first step it is reached at or past {@code ape.activityTriggerStagnationStep}
- *       (50, design D-B11). The scenario declares the counter seeded at 48 (design D2), which puts the
+ *       (85, design D-B11). The scenario declares the counter seeded at 83 (design D2), which puts the
  *       fire on step 1. Under the MOP block's {@code distance} mode the candidate is the census
  *       activity nearest to an unretired target ({@code activityDist}, D20), and the screens run on
  *       the fixture's <b>main</b> activity: the launcher skips any activity already in the graph,
@@ -49,11 +49,11 @@ public class ParityOracleAsMopTest {
             "br.unb.cic.cryptoapp.generated.CryptographyActivity";
 
     /**
-     * Two below the cadence: the block's increment is its first statement, so step 0 lands on 49
+     * Two below the cadence: the block's increment is its first statement, so step 0 lands on 84
      * and step 1 lands on the fire. Seeding one below would fire on step 0 and cost the golden the
      * step that shows the launcher <i>not</i> firing.
      */
-    private static final int SEEDED_CADENCE = 48;
+    private static final int SEEDED_CADENCE = 83;
 
     private static final int BOOSTED_PRIORITY = 20;
     private static final int PLAIN_PRIORITY = 12;

@@ -8,7 +8,7 @@ MOP guidance steers exploration toward widgets and activities that reach monitor
 
 One lookup, `MopData.lookup`, answers what MOP knows about a node for an event: the handler stamp's class when `handlers` lists it, else the resource-id key (INV-MOP-36). `MopScorer` turns that answer into a weight in one of two modes selected by `ape.mopScoring`: `flag` (default), the direct/transitive mark, or `distance`, a weight by the nearest unretired target, with targets retiring after a number of first interactions (INV-MOP-37). The boosts are applied by the MOP scoring passes (`MopWidgetPass`, `MopFrontierPass`, `MenuGatewayPass`, `WtgPass`) that run inside `StatefulAgent.adjustActionsByGUITree()`, after the base SATA priority is assigned and before the agent selects; they do not read the interaction ledger (D-B19, reverted).
 
-MOP does not decide inside SATA. Its decider is the **MOP coin** (`MOP_COIN`), a stage after the LLM coin (`decision-pipeline`): eligible when the screen holds an action with a positive unretired weight whose (activity, `xpath|ActionType`) key `MopInteractionLedger` has counted fewer than `ape.mopCoinLedgerMaxInteractions` times (default 1), it takes the action with the largest weight with probability `p_M` (`ape.mopCoinPercentage`, default 1.0), drawn from its own stream (D-A10, D-A15, D-B10, D-B17). `ape.mopTargetPickCap` is a retired key. Inside SATA, MOP data is read only by the MOP variants of the extension points X3 and X4 (`action-selection`, D-A7, D-B12), mounted only with `MOP`. The launcher (`MOP_LAUNCHER`) and its cadence are specified in `component-triggering` and `decision-pipeline`, and the telemetry fields in `event-sink`.
+MOP does not decide inside SATA. Its decider is the **MOP coin** (`MOP_COIN`), a stage after the LLM coin (`decision-pipeline`): eligible when the screen holds an action with a positive unretired weight whose (activity, `xpath|ActionType`) key `MopInteractionLedger` has counted fewer than `ape.mopCoinLedgerMaxInteractions` times (default 4), it takes the action with the largest weight with probability `p_M` (`ape.mopCoinPercentage`, default 1.0), drawn from its own stream (D-A10, D-A15, D-B10, D-B17). `ape.mopTargetPickCap` is a retired key. Inside SATA, MOP data is read only by the MOP variants of the extension points X3 and X4 (`action-selection`, D-A7, D-B12), mounted only with `MOP`. The launcher (`MOP_LAUNCHER`) and its cadence are specified in `component-triggering` and `decision-pipeline`, and the telemetry fields in `event-sink`.
 
 **The jar derives nothing.** The cross-referencing that identifies which widgets reach a monitored operation — call-graph reachability and distances, listener-to-handler joins, collision resolution between widgets sharing a short id — happens **host-side**, in the rv-android generator that produces the artifact. What reaches the device is the result: per `(baseActivity, shortId)` a widget carries a per-event `mop` flag distinguishing a direct from a transitive reach and its per-event distance pairs, a handler class carries the same for its events, activities arrive as two precomputed sets with their distance pairs, and the trigger surface arrives as declared fields. So the artifact has no `windows[]`, no `reachability[]` and no `transitions[]` to parse, and a **legacy full static-analysis JSON is rejected rather than parsed**, as is a format-1 artifact: the version gate refuses both.
 
@@ -218,9 +218,9 @@ Unknown JSON keys within `formatVersion: 2` are ignored (INV-MOP-11). This toler
 
 On an unstamped APK every lookup takes the id key, so `flag` reproduces the E6 weights. `MopRetirement` is null under `flag`, and distances are not read.
 
-**`distance` mode.** Let `d` be the smallest distance over the pairs of all the action's containment lookups whose target is not retired ("Target Retirement"). The weights come from the ladder `ape.mopWeights` (`run-spec` "Distance Ladder Key"; default `500,400,300`), a list of c non-negative integers, with c, its length, the cut. The **level** of `d` is `ℓ = max(d, 1)`, so `d = 0` and `d = 1` share level 1. The weight SHALL be element ℓ of the ladder (counting from 1) when `ℓ ≤ c`, and `0` when `ℓ > c` or when no unretired pair exists (`d = Integer.MAX_VALUE`). At the default this is 500 for `d ≤ 1`, 400 for `d = 2`, 300 for `d = 3` and 0 from `d = 4` on, the weights of `bc4bc1b8`. The loader has already dropped every widget and handler pair beyond c ("Distance-Pair Cut at Load"), so a lookup never offers the scorer a pair at `ℓ > c`. The rule is still total. Flags are not read. `score` returns this weight before the tie split. `MopScorer.distanceWeight(MopContext, int d)` is the one mapping from a distance to a weight.
+**`distance` mode.** Let `d` be the smallest distance over the pairs of all the action's containment lookups whose target is not retired ("Target Retirement"). The weights come from the ladder `ape.mopWeights` (`run-spec` "Distance Ladder Key"; default `194,146,97`, calibration v6's finalist F1, `run-spec` "Calibrated MOP Defaults"), a list of c non-negative integers, with c, its length, the cut. The **level** of `d` is `ℓ = max(d, 1)`, so `d = 0` and `d = 1` share level 1. The weight SHALL be element ℓ of the ladder (counting from 1) when `ℓ ≤ c`, and `0` when `ℓ > c` or when no unretired pair exists (`d = Integer.MAX_VALUE`). At the default this is 194 for `d ≤ 1`, 146 for `d = 2`, 97 for `d = 3` and 0 from `d = 4` on. The weights of `bc4bc1b8`, 500, 400 and 300, are the ladder `500,400,300` stated explicitly (`run-spec` "E7 Plan by Explicit Keys"); the scenarios below that state it keep the E7 arithmetic. The loader has already dropped every widget and handler pair beyond c ("Distance-Pair Cut at Load"), so a lookup never offers the scorer a pair at `ℓ > c`. The rule is still total. Flags are not read. `score` returns this weight before the tie split. `MopScorer.distanceWeight(MopContext, int d)` is the one mapping from a distance to a weight.
 
-**Tie split (`distance` only).** `MopWidgetPass.apply` SHALL first compute the weight and `d` of every scored action of the state. Ties are by weight value, not by exact `d` and not by level, as in `bc4bc1b8`. The tied actions are those whose undivided weight equals the state's best weight, the largest positive undivided weight among the state's scored actions. When there are `n > 1` of them, each SHALL receive `max(W / n, W_next)`, with `W` that best weight, `n` the number of tied actions, and integer division. `W_next` is the weight of the level after W's level. W's level is the first ℓ in `1..c` whose ladder element equals W. The level after it weighs element `ℓ + 1` when `ℓ < c`, and `0` when `ℓ = c` (`MopScorer.nextLevelWeight`). At the default, `W_next` is 400 for the `d ≤ 1` level, 300 for `d = 2` and 0 for `d = 3`, as in `bc4bc1b8`. On a strictly decreasing ladder, ties by value are ties by level. On a ladder with a plateau (equal neighbouring elements), actions at different levels can tie, and `W_next = W` there, so nothing is split: under `300,300,300` four actions tied at level 1 each receive 300. Under a single-level ladder `500`, `W_next` is 0, so four tied actions each receive 125. The floor is the author's decision of 2026-10-07: without it, two actions at `d ≤ 1` would get 250 each and fall below a single action at `d = 2` (400). Actions at a worse level keep their undivided weight. The split value is what is added to the priority and stored as `mopBoost`. The undivided weight SHALL be stored beside it as the action's `mopWeight`, which the MOP coin ranks by ("MOP Coin Decider", design D-B10) and which is never part of the scorer sum (`scoring-pipeline`), and reset with `mopBoost`. Under `flag` `mopWeight` equals `mopBoost`. The levels are found by weight value, so the floor assumes a non-increasing ladder, as the default and every ladder the calibration sends are. A ladder with equal or increasing elements is accepted, not rejected (author, 2026-10-09, review NT-02; confirmed for the list key 2026-11-02). Its split stays defined by the rule above. For example, under `300,500` the best weight 500 sits at level 2 = c, so its `W_next` is 0. When the best weight sits at a level whose successor weighs more, `W_next` exceeds it and each tied action receives more than its undivided weight, as `bc4bc1b8` gives with `D1 = 300`, `D2 = 500` (author, 2026-11-03, review WR-01).
+**Tie split (`distance` only).** `MopWidgetPass.apply` SHALL first compute the weight and `d` of every scored action of the state. Ties are by weight value, not by exact `d` and not by level, as in `bc4bc1b8`. The tied actions are those whose undivided weight equals the state's best weight, the largest positive undivided weight among the state's scored actions. When there are `n > 1` of them, each SHALL receive `max(W / n, W_next)`, with `W` that best weight, `n` the number of tied actions, and integer division. `W_next` is the weight of the level after W's level. W's level is the first ℓ in `1..c` whose ladder element equals W. The level after it weighs element `ℓ + 1` when `ℓ < c`, and `0` when `ℓ = c` (`MopScorer.nextLevelWeight`). At the default, `W_next` is 146 for the `d ≤ 1` level, 97 for `d = 2` and 0 for `d = 3`; under the E7 ladder `500,400,300` it is 400, 300 and 0, as in `bc4bc1b8`. On a strictly decreasing ladder, ties by value are ties by level. On a ladder with a plateau (equal neighbouring elements), actions at different levels can tie, and `W_next = W` there, so nothing is split: under `300,300,300` four actions tied at level 1 each receive 300. Under a single-level ladder `500`, `W_next` is 0, so four tied actions each receive 125. The floor is the author's decision of 2026-10-07: without it, two actions at `d ≤ 1` would get 250 each and fall below a single action at `d = 2` (400). Actions at a worse level keep their undivided weight. The split value is what is added to the priority and stored as `mopBoost`. The undivided weight SHALL be stored beside it as the action's `mopWeight`, which the MOP coin ranks by ("MOP Coin Decider", design D-B10) and which is never part of the scorer sum (`scoring-pipeline`), and reset with `mopBoost`. Under `flag` `mopWeight` equals `mopBoost`. The levels are found by weight value, so the floor assumes a non-increasing ladder, as the default and every ladder the calibration sends are. A ladder with equal or increasing elements is accepted, not rejected (author, 2026-10-09, review NT-02; confirmed for the list key 2026-11-02). Its split stays defined by the rule above. For example, under `300,500` the best weight 500 sits at level 2 = c, so its `W_next` is 0. When the best weight sits at a level whose successor weighs more, `W_next` exceeds it and each tied action receives more than its undivided weight, as `bc4bc1b8` gives with `D1 = 300`, `D2 = 500` (author, 2026-11-03, review WR-01).
 
 **Every weighted action is boosted, tried or not** (design D-B19, reverted 2026-10-19). The pass SHALL NOT read `MopInteractionLedger`: whether an action's (activity, `xpath|ActionType`) key was already executed changes neither its boost nor the tie split.
 
@@ -229,7 +229,7 @@ Under rule R1 (`scoring-pipeline` "Scorer Independence (Rule R1)") the scorer re
 The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged widget and a `NONE` lookup — including on a MOP-bearing activity — both score `0`. `MopData.activityHasMop(activity)` remains a predicate consumed by WTG scoring, the MOP frontier and `stateMopDensity`, and is not a branch of `MopScorer.score`.
 
 #### Scenario: a tried key keeps its boost
-- **WHEN** under `distance` a state of activity `A` holds X and Y, both at `d ≤ 1` (undivided weight 500), and the ledger holds X's key for `A`
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300` a state of activity `A` holds X and Y, both at `d ≤ 1` (undivided weight 500), and the ledger holds X's key for `A`
 - **THEN** X and Y SHALL both be tied, each with `mopBoost` `max(500/2, 400)` = 400 added to its priority, and `mopWeight` 500
 - **AND** the step's `dec.mopx` SHALL be `[2, n]` (`event-sink`)
 
@@ -255,12 +255,12 @@ The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged
 - **THEN** the returned boost SHALL be `0` in both modes
 
 #### Scenario: Distance weights by nearest unretired target
-- **WHEN** under `distance` with default weights, an action's containment lookups carry, as nearest unretired pair, `d = 0`, `1`, `2`, `3` or `4`, and no other action of the state has a positive weight
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300`, an action's containment lookups carry, as nearest unretired pair, `d = 0`, `1`, `2`, `3` or `4`, and no other action of the state has a positive weight
 - **THEN** its boost SHALL be 500, 500, 400, 300 or 0 respectively
 - **AND** an action whose lookups carry no pair SHALL score 0
 
 #### Scenario: Weight split among the actions tied at the state's best distance
-- **WHEN** under `distance` with default weights, a state has two actions at `d = 1`, one action at `d = 3`, and the rest at no pair
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300`, a state has two actions at `d = 1`, one action at `d = 3`, and the rest at no pair
 - **THEN** each of the two `d = 1` actions SHALL receive a `mopBoost` of 400 (`max(500 / 2, 400)`: the floor at the `d = 2` weight)
 - **AND** the two `d = 1` actions SHALL keep a `mopWeight` of 500, the value the MOP coin ranks by
 - **AND** the `d = 3` action SHALL receive 300, undivided
@@ -270,14 +270,14 @@ The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged
 - **THEN** each SHALL receive 75 (`max(300 / 4, 0)`)
 
 #### Scenario: d = 0 and d = 1 are one tie level
-- **WHEN** under `distance` with default weights, a state has two actions at `d = 0`, one action at `d = 1`, and no other action with a positive weight
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300`, a state has two actions at `d = 0`, one action at `d = 1`, and no other action with a positive weight
 - **THEN** all three SHALL be tied at level D1, since each has the undivided weight 500
 - **AND** each SHALL receive a `mopBoost` of 400 (`max(500 / 3, 400)`), the `d = 0` actions included
 
 #### Scenario: flag mode reproduces the E6 mark on an unstamped APK
 - **WHEN** under `flag` the format-2 cryptoapp fixture is loaded in a cell with `MOP` and the tree carries no stamp
 - **THEN** a click on `buttonGenerateHash`, `btn_cipher_encrypt` or `executeButton` SHALL score 300, as in E6
-- **AND WHEN** the same run is under `distance`
+- **AND WHEN** the same run is under `distance` with `ape.mopWeights=500,400,300`
 - **THEN** the same three clicks, alone on their screens, SHALL score 400 (`d = 2`), 0 (`d = 4`) and 300 (`d = 3`)
 
 #### Scenario: Distance zero
@@ -308,8 +308,16 @@ The scorer SHALL NOT apply any activity-level fallback. A resolved-but-unflagged
 - **AND** each SHALL keep a `mopWeight` of 300
 
 #### Scenario: Default ladder equals the E7 jar
-- **WHEN** `ape.mopWeights` is at its default and `distanceWeight` and `splitTies` are evaluated over every `d` in `0..10` and `Integer.MAX_VALUE` and over every tie size `n` in `1..20` at each level
+- **WHEN** `ape.mopWeights=500,400,300` is stated (the E7 ladder, no longer the default; the header is kept because `openspec archive` matches scenarios by name) and `distanceWeight` and `splitTies` are evaluated over every `d` in `0..10` and `Integer.MAX_VALUE` and over every tie size `n` in `1..20` at each level
 - **THEN** every result SHALL equal that of frozen copies of the `bc4bc1b8` `distanceWeight`, `splitTies` and `nextLevelWeight` built from `500`, `400`, `300`
+
+#### Scenario: Distance weights at the default ladder
+- **WHEN** under `distance` with `ape.mopWeights` at its default `194,146,97`, an action's nearest unretired pair has `d = 0`, `1`, `2`, `3` or `4`, and no other action of the state has a positive weight
+- **THEN** its boost SHALL be 194, 194, 146, 97 or 0 respectively
+- **AND WHEN** two actions of a state share the best `d = 1`
+- **THEN** each SHALL receive a `mopBoost` of 146 (`max(194 / 2, 146)`) and keep a `mopWeight` of 194
+- **AND WHEN** four actions share the best `d = 3`
+- **THEN** each SHALL receive 24 (`max(97 / 4, 0)`, integer division)
 
 ### Requirement: Parent/child widget granularity reconciliation
 
@@ -861,7 +869,7 @@ Under `ape.mopScoring=distance`, the agent SHALL keep one counter per target, si
 
 Retirement SHALL compose on `MopInteractionLedger` ("MopInteractionLedger — Executions per Activity and Key") and keep no first-interaction record of its own. In `StatefulAgent.moveForward`, for the model action about to be executed, the agent SHALL first read `MopInteractionLedger.tried(activity, xpath|ActionType)`; if the key is not yet there, this is a **first interaction**. It SHALL then record the execution, whether first or not (every execution adds one, design D-B17); only a first interaction counts targets. Novelty is per (widget, action type) and per activity, so a long-click on a widget already clicked in the activity is a first interaction.
 
-On a first interaction, the agent SHALL take the **weight's lookup** for the action's event (`MopScorer.eventTypeOf`): among the action's containment lookups ("Parent/child widget granularity reconciliation"), the one holding the action's smallest unretired distance, ties going to the earlier node in containment order (the node itself, its ancestors, then its descendants). It is the lookup behind `dec.mopd`/`dec.mops` (`event-sink`) and the MOP coin's target count, so what gives an action its weight is what retires it. Only an action the score treats as MOP retires anything: when the action's weight before the tie split is 0, nothing is counted. Otherwise the agent SHALL call `MopRetirement.onFirstInteraction(weightLookup)`, which adds one to the counter of each target index in the lookup's `dist` whose pair lies at `d*`, the lookup's smallest unretired distance, each index once, and returns the indices whose counter reached `ape.mopRetireAfter` (default 3) on this call. Those indices are the step's `dec.ret` (`EventSink.mopRetired`, `event-sink`).
+On a first interaction, the agent SHALL take the **weight's lookup** for the action's event (`MopScorer.eventTypeOf`): among the action's containment lookups ("Parent/child widget granularity reconciliation"), the one holding the action's smallest unretired distance, ties going to the earlier node in containment order (the node itself, its ancestors, then its descendants). It is the lookup behind `dec.mopd`/`dec.mops` (`event-sink`) and the MOP coin's target count, so what gives an action its weight is what retires it. Only an action the score treats as MOP retires anything: when the action's weight before the tie split is 0, nothing is counted. Otherwise the agent SHALL call `MopRetirement.onFirstInteraction(weightLookup)`, which adds one to the counter of each target index in the lookup's `dist` whose pair lies at `d*`, the lookup's smallest unretired distance, each index once, and returns the indices whose counter reached `ape.mopRetireAfter` (default 10) on this call. Those indices are the step's `dec.ret` (`EventSink.mopRetired`, `event-sink`).
 
 The count is applied at `moveForward` without a pending step, and only for an action that is executed. On the stage path (the pipeline assembled `RESTART`, `decision-pipeline` "Restart Guard Stage") the restart is a guard placed before selection, so no selected action is replaced after selection; a step the `RESTART` guard takes selects the restart action, which has no target and counts nothing. On the post-selection path (no `RESTART` stage, as in the `mop` cell, `decision-pipeline` "Post-Selection Restart") an action that `checkRestart` replaces by a start action is not executed: `StatefulAgent.updateStateInternal` resets the trace instead of calling `moveForward`, so the replaced action records no ledger key, counts no target and retires nothing, and the step carries no `dec.ret`. No `checkRestart` override applies or discards a count in either path.
 
@@ -886,7 +894,7 @@ Only the targets at `d*` are counted: widget and handler lists carry every targe
 - **THEN** `d*` SHALL be 2 and the counters of targets 7 and 11 SHALL each increase by exactly 1, while target 4's SHALL NOT change
 
 #### Scenario: a weight won through containment retires its own targets
-- **WHEN** under `distance` the agent executes the first interaction of a click on a clickable `LinearLayout` with no resource id and no stamp, whose child `TextView` resolves through the id key to `dist = [[7,2]]`, so the action's weight (400) comes from the child
+- **WHEN** under `distance` with `ape.mopWeights=500,400,300` the agent executes the first interaction of a click on a clickable `LinearLayout` with no resource id and no stamp, whose child `TextView` resolves through the id key to `dist = [[7,2]]`, so the action's weight (400) comes from the child
 - **THEN** the counter of target 7 SHALL increase by exactly 1
 - **AND** `dec.mopd` of that step SHALL be 2, from the same lookup
 
@@ -914,7 +922,7 @@ Only the targets at `d*` are counted: widget and handler lists carry every targe
 
 #### Scenario: retired target ignored by distance scoring
 - **WHEN** under `distance` an action's lookup carries `dist = [[4,1],[7,2]]` and target 4 is retired
-- **THEN** the action's distance SHALL be 2 and its weight before the tie split SHALL be level 2 of `ape.mopWeights` (400 at the default)
+- **THEN** the action's distance SHALL be 2 and its weight before the tie split SHALL be level 2 of `ape.mopWeights` (146 at the default)
 - **AND WHEN** target 7 is also retired
 - **THEN** the action's weight SHALL be 0 and it SHALL NOT be eligible for the MOP coin
 
@@ -934,16 +942,16 @@ Only the targets at `d*` are counted: widget and handler lists carry every targe
 **Eligibility.** The stage is eligible on a step when the new state's `getActions()` holds at least one action that is valid, enabled and target-requiring, and that meets the three conditions of design D-B10:
 
 1. its undivided weight `ModelAction.getMopWeight()` is positive — under `distance`, the weight of an unretired target ("MopScorer — Priority Boost", "Target Retirement"); under `flag`, the direct/transitive mark;
-2. `MopInteractionLedger.count(activity, xpath|ActionType)` is below `ape.mopCoinLedgerMaxInteractions` (default 1, so `tried` is false; "MopInteractionLedger — Executions per Activity and Key", design D-B17);
+2. `MopInteractionLedger.count(activity, xpath|ActionType)` is below `ape.mopCoinLedgerMaxInteractions` (default 4; at 1 the condition is that `tried` is false; "MopInteractionLedger — Executions per Activity and Key", design D-B17);
 3. when `FORM_COMPLETION` is in the plan, it is not the submit candidate the form-completion context excludes (INV-FORM-06).
 
-Visit count is not a condition: an action visited in the abstract state but never tried in the activity is eligible, and one tried in another state of the same activity is not, at the default k = 1 (with k > 1, until its key counts k executions).
+Visit count is not a condition: an action visited in the abstract state but never tried in the activity is eligible, and one tried in another state of the same activity is not, at k = 1 (at the default k = 4, until its key counts four executions).
 
 **The coin.** The stage reads `u_M`, drawn at step open from the MOP coin's own stream (`StepRng.mopCoin()`, `decision-pipeline`, P-3). When the step is eligible and `u_M < p_M`, the stage SHALL select; otherwise it continues to the SATA chain. With `p_M = 1.0` the stage selects on every eligible step it reaches.
 
 **Ranking.** Among the eligible actions, the stage SHALL take, each key consulted only to break a tie on the keys before it:
 
-1. the largest `mopWeight` (undivided: the tie split of `distance` is not read, so three actions at `d ≤ 1` split to 400 each do not tie with one at `d = 2`);
+1. the largest `mopWeight` (undivided: the tie split of `distance` is not read, so under the ladder `500,400,300` three actions at `d ≤ 1` split to 400 each do not tie with one at `d = 2`);
 2. under `ape.mopScoring=distance` only, the larger number of distinct unretired targets within `d + 1` over the pairs of the same lookup that produced the weight, `d` being the distance behind that weight (`MopCoinStage.targetCount`, `MopRetirement.countWithin(retirement, lookup.dist, d + 1)`). The window reads only the pairs that survived the cut at load ("Distance-Pair Cut at Load"), so at `d = c` it never counts a target at `c + 1`;
 3. the first in `State.getActions()` order.
 
@@ -972,11 +980,11 @@ Priority SHALL NOT be a key, so no ADDONS or STATIC scorer can steer the coin (r
 - **THEN** the stage SHALL select X
 
 #### Scenario: an action tried in the activity is not eligible
-- **WHEN** at the default `ape.mopCoinLedgerMaxInteractions=1` the only action with `mopWeight > 0` targets widget W, whose key `xpath|MODEL_CLICK` the ledger holds for activity `A` from an execution in another state of `A`
+- **WHEN** with `ape.mopCoinLedgerMaxInteractions=1` the only action with `mopWeight > 0` targets widget W, whose key `xpath|MODEL_CLICK` the ledger holds for activity `A` from an execution in another state of `A`
 - **THEN** the step SHALL NOT be eligible and SHALL continue to the SATA chain, with no `dec.src:"mop"`
 
 #### Scenario: an unvisited-but-tried action and a visited-but-untried action
-- **WHEN** at the default `ape.mopCoinLedgerMaxInteractions=1` action X is unvisited in the current abstract state but its key is in the ledger for the activity, and action Y has `visitedCount=2` in this state but its key is not in the ledger (both `mopWeight=300`)
+- **WHEN** with `ape.mopCoinLedgerMaxInteractions=1` action X is unvisited in the current abstract state but its key is in the ledger for the activity, and action Y has `visitedCount=2` in this state but its key is not in the ledger (both `mopWeight=300`)
 - **THEN** only Y SHALL be eligible
 
 #### Scenario: excluded submit is skipped when form completion is mounted
@@ -1024,7 +1032,7 @@ Priority SHALL NOT be a key, so no ADDONS or STATIC scorer can steer the coin (r
 
 The agent SHALL record into the ledger, in `StatefulAgent.moveForward`, every executed model action that has a resolved target, whatever owner selected it (SATA, the LLM, the coin). A `MODEL_LLM_TAP` off the tree has no node and records nothing. An action that a post-selection restart replaces by a start action (`decision-pipeline` "Post-Selection Restart", a plan whose pipeline did not assemble `RESTART`, such as the `mop` cell) is not executed and never reaches `moveForward`, so it records nothing, whichever owner selected it; it stays marked visited in the graph, as in APE, which the ledger does not read. Recording a key already present adds one to its count. The ledger is independent of `UICoverageTracker`, which belongs to the ADDONS coverage scorer: a cell without ADDONS still has a ledger when it has `MOP`.
 
-The MOP coin reads `belowBudget` for eligibility, against `ape.mopCoinLedgerMaxInteractions` (k, `MOP_COIN`, int, default 1, `< 1` clamped to 1 at resolution, as the other plan clamps); target retirement reads it to decide whether an execution is a first interaction ("Target Retirement"), reading before `record` writes. Neither keeps a first-interaction record of its own (INV-MOP-40). Because the coin's own pick is recorded when executed, a key can be taken by the coin at most k times per run (once at the default), which is the property `ape.mopTargetPickCap` used to bound. Retirement reads only `tried`, so k does not change what retires.
+The MOP coin reads `belowBudget` for eligibility, against `ape.mopCoinLedgerMaxInteractions` (k, `MOP_COIN`, int, default 4, `< 1` clamped to 1 at resolution, as the other plan clamps); target retirement reads it to decide whether an execution is a first interaction ("Target Retirement"), reading before `record` writes. Neither keeps a first-interaction record of its own (INV-MOP-40). Because the coin's own pick is recorded when executed, a key can be taken by the coin at most k times per run (four times at the default), which is the property `ape.mopTargetPickCap` used to bound. Retirement reads only `tried`, so k does not change what retires.
 
 #### Scenario: every execution adds one to its key's count
 - **WHEN** a cell with `MOP` executes a `MODEL_CLICK` on widget `/a/b` in activity `A`, twice in two different states of `A`
@@ -1047,7 +1055,7 @@ The MOP coin reads `belowBudget` for eligibility, against `ape.mopCoinLedgerMaxI
 #### Scenario: an action replaced after selection records nothing
 - **WHEN** in the `mop` cell SATA selects a `MODEL_CLICK` on widget `/a/b` in activity `A` whose key the ledger does not hold, and a post-selection restart replaces it by a start action
 - **THEN** `tried("A", "/a/b|MODEL_CLICK")` SHALL still be false after the step
-- **AND** the action on `/a/b` SHALL remain eligible for the MOP coin in `A` at the default `ape.mopCoinLedgerMaxInteractions=1`
+- **AND** the action on `/a/b` SHALL remain eligible for the MOP coin in `A` with `ape.mopCoinLedgerMaxInteractions=1`
 
 ### Requirement: Lookup Names the Stamped Handler
 
@@ -1170,7 +1178,7 @@ On the pairs that survive the cut, the scorer, the tie split, the MOP coin's eli
 - **INV-MOP-35**: The jar SHALL NOT parse, store or expose `reachability[]`, `windows[]` or raw `transitions[]` data. Every value it serves SHALL come from the artifact's precomputed fields, plus two derivations made at load from artifact fields only: the OPTIONSMENU gateway set (INV-MOP-13) and a widget's click aggregate (`MopData.clickAggregate`).
 - **INV-MOP-36**: Every reader of MOP flags or MOP distances for a node and an event SHALL obtain them from `MopData.lookup(activity, node, eventType)`: the scoring pass, the MOP coin's ranking, the prompt marker and the `MOP NAVIGATION` count (`llm-prompt`), and the retirement trigger. A stamp SHALL be consulted only for the events `click` and `longClick`, and only when `handlers` lists the stamped class. A listed class SHALL decide the result even when it reaches nothing. Static widget metadata SHALL be read only through `StaticGuiModel.widget` (the prompt's metadata and typed input).
 - **INV-MOP-37**: Retirement SHALL exist only under `ape.mopScoring=distance`. A target's counter SHALL change only when a model action is executed whose (activity, `xpath|ActionType`) key was not yet in `MopInteractionLedger`, by one for each target of the action's weight's lookup whose pair lies at that lookup's smallest unretired distance `d*`. An action that a post-selection restart replaces is not executed and changes no counter. Counters SHALL never decrease. Under `flag`, no counter exists and no target is retired.
-- **INV-MOP-38**: The MOP coin SHALL select only an action that is valid, enabled, target-requiring, has `mopWeight > 0`, whose (activity, `xpath|ActionType`) key has a `MopInteractionLedger` count below `ape.mopCoinLedgerMaxInteractions` (default 1: no entry; design D-B17), and is not the submit candidate excluded by form completion when `FORM_COMPLETION` is mounted. Its ranking SHALL NOT read `priority`.
+- **INV-MOP-38**: The MOP coin SHALL select only an action that is valid, enabled, target-requiring, has `mopWeight > 0`, whose (activity, `xpath|ActionType`) key has a `MopInteractionLedger` count below `ape.mopCoinLedgerMaxInteractions` (default 4; at k = 1, no entry; design D-B17), and is not the submit candidate excluded by form completion when `FORM_COMPLETION` is mounted. Its ranking SHALL NOT read `priority`.
 - **INV-MOP-39**: The MOP coin's draw `u_M` SHALL come from its own stream, drawn once at every step open while `MOP` is mounted, before any stage runs; whether the coin is eligible, wins or is reached SHALL NOT change any draw of the agent or helper stream.
 - **INV-MOP-40**: `MopInteractionLedger` SHALL be written only after a model action with a resolved target is executed (an action that a post-selection restart replaces is not executed and records nothing), SHALL count every such execution of a key, and SHALL never forget a key; the coin and retirement SHALL read the same ledger and keep no first-interaction record of their own.
 - **INV-MOP-41**: No MOP data SHALL be read by SATA outside the MOP variants of X3 and X4 and the scorer fields of the mounted MOP passes.

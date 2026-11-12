@@ -139,7 +139,7 @@ public class ActivityFrontierTest {
         assertTrue(MopLauncherStage.shouldFire(10, 10, 0, 0));
         assertFalse("below cadence", MopLauncherStage.shouldFire(9, 10, 0, 0));
         assertTrue("past cadence: the stage was not reached at its point", MopLauncherStage.shouldFire(11, 10, 0, 0));
-        // same shape at the default cadence 50
+        // same shape at a cadence of 50
         assertTrue(MopLauncherStage.shouldFire(50, 50, 0, 0));
         assertFalse(MopLauncherStage.shouldFire(49, 50, 0, 0));
     }

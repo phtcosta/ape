@@ -69,7 +69,10 @@ public class StatefulAgentMopRetirementTest {
                     }
                     return null;
                 });
-        RunContext.installForTest(TestRunSpecs.mopSpec("ape.mopScoring", "distance"), recording);
+        // The scenarios retire a target at its third count ("a target retires at the third count"
+        // states ape.mopRetireAfter=3), so the plan states N = 3 instead of reading the jar default.
+        RunContext.installForTest(TestRunSpecs.mopSpec("ape.mopScoring", "distance",
+                "ape.mopRetireAfter", "3"), recording);
         agent = allocate(SataAgent.class);
         tracker = new UICoverageTracker();
         setField(agent, "_coverageTracker", tracker);

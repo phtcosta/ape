@@ -26,9 +26,12 @@ import static org.junit.Assert.*;
 /**
  * mop-guidance "MopScorer — Priority Boost", the {@code distance} mode and the tie split
  * (llm-coordinate-single-base, design D18, task 13.3): the weight of the nearest unretired target
- * (500/500/400/300/0 for d = 0/1/2/3/4, 0 with no pair), the split among the actions tied at the
- * state's best weight level as {@code max(W / n, W_next)}, the undivided weight kept beside the
- * split one as {@code mopWeight}, and {@code flag} unchanged on the format-2 fixture.
+ * (500/500/400/300/0 for d = 0/1/2/3/4 under the E7 ladder {@code 500,400,300} the fixture
+ * {@code distance} states, 0 with no pair), the split among the actions tied at the state's best
+ * weight level as {@code max(W / n, W_next)}, the undivided weight kept beside the split one as
+ * {@code mopWeight}, and {@code flag} unchanged on the format-2 fixture. Other ladders are stated
+ * too (gh-tbd-mop-weights-list), and the plan's default ladder {@code 194,146,97} is read from the
+ * plan (gh-tbd-mop-defaults-f1).
  *
  * <p>Single-action scenarios go through {@link MopScorer#score}; the split needs every action of the
  * state, so those go through {@link MopWidgetPass#apply}, the one place it is applied.
@@ -130,6 +133,7 @@ public class MopScorerDistanceTest {
         return state;
     }
 
+    /** {@code distance} under the E7 ladder {@code 500,400,300}, stated (not the default). */
     private static MopContext distance(MopData data, MopRetirement retirement) {
         return new MopContext(data, StaticGuiModel.EMPTY, MopScoring.DISTANCE, 500, 300, new int[] {500, 400, 300}, 3, 6,
                 retirement);
@@ -408,6 +412,70 @@ public class MopScorerDistanceTest {
         assertEquals(500, MopScorer.nextLevelWeight(mop, 300));
         assertArrayEquals(new int[] {250, 250, 300},
                 MopScorer.splitTies(mop, new int[] {500, 500, 300}));
+    }
+
+    // -------------------------------------------------------------------------
+    // The default ladder (gh-tbd-mop-defaults-f1)
+    // -------------------------------------------------------------------------
+
+    /**
+     * The context of a {@code distance} run whose plan does not state {@code ape.mopWeights}: the
+     * ladder is the plan's default, read through {@link MopContext#fromSpec} as a run reads it, not
+     * an array the test states.
+     */
+    private static MopContext defaultLadder(MopData data) {
+        MopContext mop = MopContext.fromSpec(data, StaticGuiModel.EMPTY,
+                TestRunSpecs.mopSpec("ape.mopScoring", "distance").mop());
+        assertEquals(MopScoring.DISTANCE, mop.scoring());
+        return mop;
+    }
+
+    /**
+     * Scenario "Distance weights at the default ladder", first part: an action whose nearest
+     * unretired pair has d = 0, 1, 2, 3 or 4, beside an action with no pair, weighs and receives
+     * 194, 194, 146, 97 or 0.
+     */
+    @Test
+    public void theDefaultLadderWeighsEachDistanceLevel() throws Exception {
+        MopData data = artifact(widget("w0", 0, 0) + "," + widget("w1", 1, 1) + ","
+                + widget("w2", 2, 2) + "," + widget("w3", 3, 3) + "," + widget("w4", 4, 4));
+        MopContext mop = defaultLadder(data);
+        int[] expected = {194, 194, 146, 97, 0};
+        for (int d = 0; d <= 4; d++) {
+            ModelAction a = click("w" + d);
+            assertEquals("d = " + d, expected[d], MopScorer.score(mop, state(ACT, a), a));
+            ModelAction none = click("none");
+            pass(mop, ACT, a, none);
+            assertBoost("d = " + d + ", alone", expected[d], expected[d], a);
+            assertBoost("no pair", 0, 0, none);
+        }
+    }
+
+    /**
+     * Scenario "Distance weights at the default ladder", the split: two actions at the best
+     * d = 1 each receive {@code max(194 / 2, 146)} = 146 and keep 194; four at the best d = 3,
+     * the last level, each receive {@code max(97 / 4, 0)} = 24 (integer division) and keep 97.
+     */
+    @Test
+    public void theDefaultLadderSplitsTiesWithTheNextLevelFloor() throws Exception {
+        MopData two = artifact(widget("a", 1, 1) + "," + widget("b", 2, 1));
+        MopContext twoMop = defaultLadder(two);
+        ModelAction a = click("a");
+        ModelAction b = click("b");
+        pass(twoMop, ACT, a, b);
+        assertBoost("d = 1 x2", 194, 146, a);
+        assertBoost("d = 1 x2", 194, 146, b);
+        assertEquals("the level after 194", 146, MopScorer.nextLevelWeight(twoMop, 194));
+
+        MopData four = artifact(widget("a", 1, 3) + "," + widget("b", 2, 3) + ","
+                + widget("c", 3, 3) + "," + widget("d", 4, 3));
+        MopContext fourMop = defaultLadder(four);
+        ModelAction[] all = {click("a"), click("b"), click("c"), click("d")};
+        pass(fourMop, ACT, all);
+        for (ModelAction x : all) {
+            assertBoost("d = 3 x4", 97, 24, x);
+        }
+        assertEquals("97 is the last level", 0, MopScorer.nextLevelWeight(fourMop, 97));
     }
 
     // -------------------------------------------------------------------------
