@@ -153,7 +153,8 @@
       file): the four defaults and neutrals, k = 2 at `tool.py:117` (Pedro decides drop or 4), the stale "jar's default
       is 1" comments (`:113-116`, `:231-233`), `mop_weights` only on a DSL override (already in gator's uncommitted
       diff, no default ladder), the E7 recipe, no `mvn install -Drvsec_home`, push ordering
-- [ ] 7.4 Note for `rvsec-calibracao` task X.1: the adoption decision and this change's name and commit
+- [x] 7.4 Note for `rvsec-calibracao` task X.1: the adoption decision and this change's name and commit — dropped by
+      Pedro on 2026-11-11 (no new calibration follows): no note written
 - [x] 7.5 Archive (`openspec archive gh-tbd-mop-defaults-f1 -y`), then the hand-sync of design D10: the mop-guidance
       Purpose "(default 1)" → 4, INV-MOP-38 "(default 1: no entry; ...)", and the hits 6.2 moved here; validate the
       main specs strictly — 2026-11-11: `openspec archive -y` → `2026-11-11-gh-tbd-mop-defaults-f1` (+6, ~10, −1 over
